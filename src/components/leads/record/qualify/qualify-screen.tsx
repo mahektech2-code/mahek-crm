@@ -1539,7 +1539,7 @@ export function CompleteQualificationDialog({
       >
         <div
           onClick={(e) => e.stopPropagation()}
-          className="flex h-[760px] max-h-[calc(100vh-48px)] w-[1160px] max-w-[calc(100vw-48px)] flex-col overflow-hidden rounded-[6px] bg-surface whitespace-normal shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
+          className="flex max-h-[calc(100vh-48px)] w-[1160px] max-w-[calc(100vw-48px)] flex-col overflow-hidden rounded-[6px] bg-surface whitespace-normal shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
         >
           {/* ------------------------------------------------------- header */}
           <div className="flex items-start gap-4 border-b border-divider px-6 py-4">
@@ -1597,32 +1597,45 @@ export function CompleteQualificationDialog({
           </div>
 
           {/* --------------------------------------------------------- body */}
-          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5" data-testid="complete-qualification-questions">
+          <div className="min-h-0 flex-1 overflow-y-auto bg-canvas/40 px-6 py-5" data-testid="complete-qualification-questions">
             {step === "answers" ? (
-              <div className="grid grid-cols-1 gap-x-8 gap-y-5 md:grid-cols-2">
-                {conditions.map((c, i) => (
-                  <div key={c.id} className="min-w-0">
-                    <div className="mb-1.5 flex flex-wrap items-center gap-2">
-                      <span className="text-[14px] font-medium text-ink">
-                        {i + 1}. {c.says}
-                      </span>
-                      {c.optional ? <Pill tone="neutral">Optional</Pill> : null}
+              /* TWO COLUMNS THAT FLOW, not a grid of rows: the questions are different
+                 heights, and a row grid leaves a hole beside every short one. Each
+                 question stays whole (`break-inside-avoid`); short boxes inside a
+                 question sit two to a row. */
+              <div className="columns-1 gap-x-8 md:columns-2">
+                {conditions.map((c, i) => {
+                  const fields = SHOP_FIELDS[c.id] ?? [];
+                  return (
+                    <div key={c.id} className="mb-5 break-inside-avoid rounded-[6px] border border-divider bg-surface px-4 py-3.5">
+                      <div className="mb-2 flex flex-wrap items-center gap-2">
+                        <span className="flex h-5 w-5 flex-none items-center justify-center rounded-full bg-canvas text-[11px] font-semibold text-muted">
+                          {i + 1}
+                        </span>
+                        <span className="text-[14px] font-medium text-ink">{c.says}</span>
+                        {c.optional ? <Pill tone="neutral">Optional</Pill> : null}
+                      </div>
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
+                        {fields.map((f) => {
+                          const wide =
+                            f.kind === "long" || f.kind === "product" || Boolean(f.suggestions) || fields.length <= 2;
+                          return (
+                            <div key={f.key} className={wide ? "col-span-2 min-w-0" : "min-w-0"}>
+                              <FieldControl
+                                spec={f}
+                                value={valueOf(f)}
+                                disabled={busy}
+                                customerId={customerId}
+                                productName={f.kind === "product" ? requiredProductName : null}
+                                onChange={(v) => setDraft((d) => ({ ...d, [f.key]: v }))}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
-                    <div className="flex flex-col gap-2">
-                      {(SHOP_FIELDS[c.id] ?? []).map((s) => (
-                        <FieldControl
-                          key={s.key}
-                          spec={s}
-                          value={valueOf(s)}
-                          disabled={busy}
-                          customerId={customerId}
-                          productName={s.kind === "product" ? requiredProductName : null}
-                          onChange={(v) => setDraft((d) => ({ ...d, [s.key]: v }))}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : null}
 
