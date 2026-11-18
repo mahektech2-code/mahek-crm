@@ -198,6 +198,27 @@ jobs:
         env:
           NEXT_BUILD_SKIP_TYPECHECK: "1"
 
+      # HANDED TO `links`, which used to run this same build a second time on
+      # a runner of its own — and that second build is where the runner kept
+      # being lost to memory, swap or no swap, Postgres up or not. What
+      # `next start` serves is the build output without its cache, the dev
+      # server's leftovers or the standalone copy the image uses: ~100 MB.
+      # `.next` is a dot-directory, which upload-artifact skips by default.
+      - name: Keep the build for the link check
+        uses: actions/upload-artifact@v4
+        with:
+          name: next-build
+          include-hidden-files: true
+          retention-days: 1
+          if-no-files-found: error
+          path: |
+            .next
+            !.next/cache
+            !.next/dev
+            !.next/standalone
+            !.next/trace
+            !.next/trace-build
+
   # THE SIX §11 JOURNEYS AND EVERYTHING ELSE THAT NEEDS A REAL POSTGRES.
   #
   # One matrix entry is one runner, one Postgres container and one
@@ -453,9 +474,16 @@ jobs:
 
   # The link crawler needs something no other check does: a *running* app on a
   # *seeded* database. That is why it is a second job rather than more steps on
-  # the first — it costs a duplicate install and build, and buys a signal that
-  # says "a link is broken" instead of a red tick shared with the tests.
+  # the first — it costs a duplicate install (the build it borrows from
+  # `build`), and buys a signal that says "a link is broken" instead of a red
+  # tick shared with the tests.
   links:
+    # It crawls the build the `build` job made rather than making its own.
+    # `always()` because `links` is a required check, and a required job
+    # skipped for a failed `build` would read as passed; the first step turns
+    # that into a red `links` instead.
+    needs: build
+    if: always()
     runs-on: ubuntu-latest
 
     env:
@@ -463,6 +491,15 @@ jobs:
       BASE_URL: http://127.0.0.1:3000
 
     steps:
+      - name: The `build` job passed
+        env:
+          BUILD: ${{ needs.build.result }}
+        run: |
+          if [ "$BUILD" != "success" ]; then
+            echo "::error::No build to crawl: the build job ended '$BUILD'."
+            exit 1
+          fi
+
       - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v7
@@ -480,21 +517,17 @@ jobs:
       - name: Write .env.local
         run: echo "DATABASE_URL=\"$DATABASE_URL\"" > .env.local
 
-      # The type check is the `build` job's, run on its own there. Inside
-      # `next build` it ran straight after the compile and the runner was shut
-      # down part-way through it — the same memory ceiling the `build` job
-      # already steps round. This job checks links, not types.
-      #
-      # BUILT BEFORE POSTGRES STARTS (2026-11-18). With the database container
-      # up and seeded beside it, this build swapped for 48 minutes until the
-      # runner stopped answering, while the same build in `build` took ten —
-      # the memory the container holds was the difference. The build needs no
-      # database; the crawl after it does.
-      - uses: ./.github/actions/swap
-
-      - run: npm run build
-        env:
-          NEXT_BUILD_SKIP_TYPECHECK: "1"
+      # NOT BUILT HERE (2026-11-18). This job used to run its own
+      # `next build` — the third full build of every change, beside `build`
+      # and the image in `stack` — and that was the one GitHub's runner kept
+      # dying in: lost to memory with swap added, and again with the build
+      # moved before Postgres started. It now crawls exactly what `build`
+      # built, so it waits for `build` and cannot fail for a build of its own.
+      - name: The build from the `build` job
+        uses: actions/download-artifact@v4
+        with:
+          name: next-build
+          path: .next
 
       # Not a `services:` container: see .github/actions/postgres.
       - uses: ./.github/actions/postgres
