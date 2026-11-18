@@ -17,33 +17,42 @@ flowchart TD
 
 ## Making the day's plan
 
-1. Open **Sales → Under Process** (beside Orders and the Dispatch desk) and press **Create daily plan**. The date starts at today. There is one plan per day: if the day already has one, it opens. Once today has a plan the button reads **Plan another day** and starts at tomorrow. A plan cannot be made for a day that has passed.
-2. Press **Add line** on the section the work belongs to. Pick the **work category**, the **product**, and type the **quantity**. The size and current stock are filled in from the product.
-3. Press **Add**, or **Add and add another** to keep going. Every line is saved the moment you add it.
+1. Open **Sales → Under Process** and press **Create daily plan**. The date starts at today. There is one plan per day: if the day already has one, it opens. Once today has a plan the button reads **Plan another day** and starts at tomorrow. A plan cannot be made for a day that has passed.
+2. The plan is one page: one table with a tick box on every row. Every product the orders ask for and every base they need is already a row.
+3. Tick what the floor makes today, change **Make today** where needed, and press **Print plan**. Only ticked rows are printed.
 
-| Category | You pick | Size | Unit |
-|---|---|---|---|
-| SFG manufacturing | the SFG base | none | Litre or Kg |
-| Loose can preparation | product and can size | from the product | Cans |
-| Packing | the boxed SKU | from the SKU | Boxes or Cans |
+<Wireframe url="/erp/under-process?plan=…" nav={["Order Hub", "MRP check", "Orders", "Under Process", "Dispatch desk"]} active="Under Process">
+  <WfBar>
+    <WfTitle>Plan · Wed 18 Nov · Godown A</WfTitle>
+    <WfSpacer />
+    <WfButton>Add a line</WfButton>
+    <WfButton primary>Print plan (2)</WfButton>
+  </WfBar>
+  <WfTable columns={["", "Product", "Confirmed", "Waiting", "In stock", "If all approved", "Make today", "Unit"]} rows={[["☑", "Product A 20 L", "18", "Accounts 30", "52", "Enough", "18", "Cans"], ["☐", "Product B 5 L", "—", "MRP check 36", "12", "Short 24", "36", "Cans"], ["☑", "Base C", "300 L", "—", "120 L", "Short 180 L", "180", "Litre"]]} />
+</Wireframe>
 
-**Available now** is the stock at the godown the plan was made at. It is read from the stock screens and is never typed. The plan does not move any stock.
+| Column | What it says |
+|---|---|
+| Product | the product, its size and how it is packed |
+| Confirmed | cans (or litres of base) on orders Accounts approved and the MRP check cleared |
+| Waiting | what still waits: **MRP check N**, **Accounts N**, or **Expected N L** for a base |
+| In stock | stock at the plan's godown, read from the stock screens |
+| If all approved | **Enough**, or **Short N** if everything waiting is approved |
+| Make today | the quantity to print; editing it ticks the row |
+| Unit | Cans, Boxes or Cans for packing, Litre or Kg for a base |
 
-## Adding more during the day
+Rows are split into **Loose cans and packing** and **Bases (SFG)**. Rows with confirmed work start ticked; rows that only wait for the MRP check or Accounts start unticked. Tick one and it prints as an ordinary line.
 
-Open the plan and use **Add line** again. Nothing already on the plan changes. If the product is already on the plan, the dialog says so, and the new quantity goes on its own line so the floor sees it as new.
+- **Search** narrows the table by product.
+- The **funnel** on a column heading filters by its values (for example Waiting → MRP check). Filters on show as chips above the table; **Clear** removes them all.
+- **Select confirmed** ticks every row with confirmed work.
+- **Add a line** types work no order asks for (a base, loose cans or packing). It appears as its own ticked row.
 
-Each line is marked against the last sheet that was printed:
-
-- **Given** (green): on the last sheet, unchanged.
-- **New** or **Edited** (amber): not printed yet. An edited quantity shows the old figure struck through.
-- **Removed** (red): deleted after the floor had it. The next print tells them.
-
-A banner says how many lines changed since the last print.
+The plan does not move any stock. The work itself is still recorded on SFG batches, FG filling and Packing batches.
 
 ## Printing
 
-Press **Print plan**. The A5 sheet opens; use **Print or save as PDF**, with **Margins** left on **Default** in the print dialog ("None" removes the sheet's margins and its page numbers).
+Press **Print plan**. The ticked rows become the plan and the A5 sheet opens; use **Print or save as PDF**, with **Margins** left on **Default** in the print dialog ("None" removes the sheet's margins and its page numbers).
 
 The sheet carries the Mahek logo and the date and weekday at the top. Each section heading says how many lines it has and what they add up to. Every line has a row number, the product, quantity and unit, and under **Remarks** what the customer wrote on the order. Product codes and order numbers are not printed. The plan number, godown, number of lines, print number, who created the plan and when it was printed sit in the bottom margin of every page with the page number. A long plan fills the first page before it starts a second, a line never splits across pages, and every later page repeats the column headings and names the plan, date and print at the top.
 
@@ -51,55 +60,12 @@ From the second print of the day:
 
 - new and edited lines are **underlined** and starred;
 - an edited quantity says what it **was**, in small type under the new quantity (Remarks stay the customer's words only, blank when the order has none);
-- deleted lines are listed once in a **Removed since last print** box.
+- lines unticked since the last print are listed once in a **Removed since last print** box.
 
 Every print is kept. **Last print** (on today's plan and against each previous plan) opens the sheet exactly as it was handed out. When nothing has changed since the last print, the plan's button reads **Open Print N** and records no new print.
 
-**A past day's plan is read-only.** It is the record of that day: its lines no longer follow the orders, nothing on it can be added, edited or deleted, it cannot be printed again, and it shows no current stock. Its earlier prints can still be opened.
+**A past day's plan is read-only.** It is the record of that day: nothing on it can be ticked, added or changed, it cannot be printed again, and it shows no current stock. Its earlier prints can still be opened.
 
 ## Previous plans
 
 The list shows every earlier plan, newest first. Pick a date and press **Search** to find one.
-
-
-## Orders under process come in by themselves
-
-Every order line whose Production status is **Under Process** on Orders → Production comes into today's plan without anybody typing it, one line per product, marked **From orders**. What the customers wrote in **Remark / customer instructions** on those orders comes with it, each remark once, and is printed under **Remarks**.
-
-- A loose product goes under **Loose can preparation**, in cans.
-- A boxed product goes under **Packing**, in boxes — or in cans where the orders do not add up to whole boxes.
-- When an order line is marked Ready, held or cancelled, its line leaves the plan: it shows as **Removed**, and the next print tells the floor.
-- These lines cannot be edited or deleted on the plan. Change the order, and the plan follows.
-
-SFG manufacturing is still typed by the Production Head: how much liquid the day needs is a judgement, not a sum.
-
-## Planning before Accounts approve
-
-The floor starts at ten and Accounts approve at twelve, so the plan also shows what is **expected**: orders Accounts approved that wait for your MRP check, and TOs still waiting for Accounts. Expected work is shown and counted so the day can be planned. It is never filled or packed until Accounts approve and the MRP check clears it.
-
-<Wireframe url="/erp/under-process?plan=…" nav={["Order Hub", "MRP check", "Orders", "Under Process", "Dispatch desk"]} active="Under Process">
-  <WfBar>
-    <WfTitle sub="10:05 · Accounts not in yet">Plan · Wed 18 Nov · Godown A</WfTitle>
-    <WfSpacer />
-    <WfButton>Add a line</WfButton>
-    <WfButton primary>Print plan</WfButton>
-  </WfBar>
-  <WfBar>
-    <WfCard title="Confirmed">3 orders</WfCard>
-    <WfCard title="Waiting for MRP check">2 orders</WfCard>
-    <WfCard title="Waiting for Accounts">5 TOs</WfCard>
-    <WfCard title="Short if all approved" tone="warn">2 products</WfCard>
-  </WfBar>
-  <WfTabs items={["By product", "Expected orders (7)", "Bases (SFG)"]} active="By product" />
-  <WfTable columns={["Product", "Confirmed", "+ MRP check", "+ Accounts", "In stock", "If all approved"]} rows={[["Product A 20 L", "18 cans", "40", "30", "52", "Short 36 cans · 720 L"], ["Product B 5 L", "24 cans", "36", "12", "96", "Enough · 24 spare"]]} />
-</Wireframe>
-
-- **By product**: per product, the confirmed cans, what waits for the MRP check, what waits for Accounts, what is in stock, and whether it is enough if everything is approved. **Show orders** lists the orders and TOs behind each figure.
-- **Expected orders**: every order and TO not confirmed yet, where it is, and a stock check for planning. A TO **on hold** is greyed and not counted. A TO with no godown says **Pick a godown to check**.
-- **Bases (SFG)**: the base each product needs, for confirmed and for expected orders, against the approved base in the tank.
-
-**Make the base ahead** (on Bases, or under a short stock check) adds an SFG line to the plan marked **For expected orders**, with the litres still needed filled in. Only the base can be started ahead; filling and packing stay locked.
-
-When Accounts approve a TO it moves to the MRP check column by itself. When you clear it at the MRP check it becomes a firm plan line, marked New, and the next print underlines it. A declined or cancelled TO drops off. A base already made stays in the tank for the next order.
-
-The printed sheet adds a dashed box, **Expected · not approved yet · do not fill or pack**, listing each expected product and what it waits for (MRP check, Accounts). A base made ahead prints with **For expected orders** under Remarks.

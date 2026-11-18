@@ -10,6 +10,22 @@ The marking rule is pure:
 
 <Code file="src/lib/erp/production-plan.ts" symbol="recordPlanPrint" collapsed />
 
+## The one-page board
+
+The rows are pure, in `src/lib/erp/engines/plan-board.ts`:
+
+<Code file="src/lib/erp/engines/plan-board.ts" symbol="buildBoard" />
+
+<Code file="src/lib/erp/engines/plan-board.ts" symbol="beyondConfirmed" collapsed />
+
+<Code file="src/lib/erp/engines/plan-board.ts" symbol="facetValues" collapsed />
+
+<Code file="src/lib/erp/production-plan.ts" symbol="planBoard" collapsed />
+
+<Code file="src/lib/erp/production-plan.ts" symbol="printPicks" collapsed />
+
+`erpPlanPrintPicks` sends the ticked rows; `printPicks` writes them as lines, deletes the rest and records the print. Tests: `src/lib/erp/engines/plan-board.test.ts`.
+
 ## Tables
 
 <DbTable name="erp_production_plans" />
