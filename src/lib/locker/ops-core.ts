@@ -245,6 +245,12 @@ export async function setLockerModules(actor: User, userId: string, modules: str
   const [person] = await db.select({ name: users.name }).from(users).where(eq(users.id, userId)).limit(1);
   if (!person) return err("Nobody was chosen.", "not_found");
   const before = await holdersByUser(userId);
+  /* A reviewer without Admin › Access may only TAKE AWAY — what a review
+     decides. The action takes any person and any list, so without this a
+     reviewer could hand themselves Admin › Access and the vault. */
+  if (refused && wanted.some((k) => !before.includes(k))) {
+    return err("An access review can only remove Locker access. Giving access needs Admin › Access.", "not_permitted");
+  }
   await db.transaction(async (tx) => {
     const [held] = await tx.select({ id: appAccess.id }).from(appAccess).where(and(eq(appAccess.userId, userId), eq(appAccess.app, "locker"))).limit(1);
     if (!wanted.length) {
