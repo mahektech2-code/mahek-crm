@@ -643,14 +643,20 @@ describe("M — every mutation persists, and the screen is told what the databas
 
     const noReason = await decideSample(rec.sample!.id, { approve: false });
     assert.equal(noReason.ok, false, "a refusal needs a reason");
-    const approved = await decideSample(rec.sample!.id, { approve: true });
-    assert.equal(approved.ok, true, approved.ok ? "" : approved.error);
+    /* A double-click: one decision lands, the other writes nothing. */
+    const approvals = await Promise.all([decideSample(rec.sample!.id, { approve: true }), decideSample(rec.sample!.id, { approve: true })]);
+    assert.equal(approvals.filter((r) => r.ok).length, 1, JSON.stringify(approvals));
+    const decidedRows = (await db.execute(sql`select count(*)::int as n from audit_log where action = 'sample.approved' and entity_id = ${rec.sample!.id}`)) as unknown as { n: number }[];
+    assert.equal(Number(decidedRows[0].n), 1, "one decision on the record, not two");
     rec = (await pipelineLead(lead.id, DAY))!.lead;
     assert.equal(rec.sample?.state, "approved");
     assert.equal(rec.gate.kind, "markDispatched");
 
-    const dispatched = await dispatchSample(rec.sample!.id, { courierName: "Blue Dart", trackingNumber: "BD123", expectedDeliveryDate: NEXT_WEEK });
-    assert.equal(dispatched.ok, true, dispatched.ok ? "" : dispatched.error);
+    const dispatches = await Promise.all([
+      dispatchSample(rec.sample!.id, { courierName: "Blue Dart", trackingNumber: "BD123", expectedDeliveryDate: NEXT_WEEK }),
+      dispatchSample(rec.sample!.id, { courierName: "Blue Dart", trackingNumber: "BD123", expectedDeliveryDate: NEXT_WEEK }),
+    ]);
+    assert.equal(dispatches.filter((r) => r.ok).length, 1, JSON.stringify(dispatches));
     rec = (await pipelineLead(lead.id, DAY))!.lead;
     assert.equal(rec.sample?.state, "dispatched");
     assert.equal(rec.sample?.courier, "Blue Dart");
