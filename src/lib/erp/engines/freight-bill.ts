@@ -100,7 +100,11 @@ export function staleShares(stored: StoredShare[], now: Map<string, LineNow>): S
     const n = now.get(s.orderId);
     if (!n || n.gone) out.push({ orderId: s.orderId, was: s.litres, now: null, why: "gone" });
     else if (freightKey(n.freightTerm) !== "paid") out.push({ orderId: s.orderId, was: s.litres, now: n.litres, why: "not_paid" });
-    else if (n.litres == null || Math.round(n.litres * 1000) !== Math.round(s.litres * 1000)) out.push({ orderId: s.orderId, was: s.litres, now: n.litres, why: "litres" });
+    /* Compared in hundredths of a litre — the precision the share was STORED
+       at (allocateByLitres keeps two decimals). Compared at three, a 375 ml
+       can stored as 0.38 never matched its live 0.375, so the bill was stale
+       for ever and re-splitting stored the same 0.38 again. */
+    else if (n.litres == null || Math.round(n.litres * 100) !== Math.round(s.litres * 100)) out.push({ orderId: s.orderId, was: s.litres, now: n.litres, why: "litres" });
   }
   return out;
 }
