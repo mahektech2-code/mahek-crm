@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { founderAccess } from "@/lib/command-centre/access";
+import { founderPageAccess } from "@/lib/command-centre/access";
 import { deadlinesOverview } from "@/lib/services/accounts-sla-service";
 import { ADMIN } from "@/lib/admin-routes";
 import { nowMs } from "@/lib/format";
@@ -15,7 +15,7 @@ export const metadata = { title: "Accounts deadlines - Founder Command Centre - 
  * the accounts desk's until they decide it.
  */
 export default async function AccountsDeadlinesPage() {
-  const access = await founderAccess();
+  const access = await founderPageAccess();
   if (!access.allowed.includes("deadlines")) redirect("/founder");
   const overview = await deadlinesOverview(30);
   return (

@@ -268,14 +268,14 @@ function claim(id: string): boolean {
  *   ones are silent; with none on screen, one of them asks a minute apart —
  *   enough for the chime and the desktop alert, which are claimed once per
  *   browser anyway.
- * - Signed out, every five minutes: the sign-in page shares this layout, and
- *   signing in starts asking at once (the pathname effect below).
+ * - Signed out, never: the bell is not mounted on the sign-in pages at all
+ *   (`bellAsksOn`), and a 401 anywhere else stops the cadence until the next
+ *   navigation asks once more (the pathname effect below).
  * - Focus and coming into view ask at once, but not twice within a few seconds.
  */
 const ACTIVE_EVERY_MS = 20_000;
 const IDLE_EVERY_MS = 60_000;
 const HIDDEN_EVERY_MS = 60_000;
-const SIGNED_OUT_EVERY_MS = 5 * 60_000;
 /* No input for this long and an on-screen tab counts as idle. */
 const IDLE_AFTER_MS = 3 * 60_000;
 /* Focus, a return to view and a timer landing together are one ask. */
@@ -407,26 +407,33 @@ export function NotificationCenter() {
     }
   }, [announce]);
 
-  // The cadence: quick while looked at, slower in the background, slowest
-  // when nobody is signed in (the sign-in page shares this root layout).
+  /* Starts the cadence again after it stopped on a 401. Set by the effect below. */
+  const resume = React.useRef<(() => void) | null>(null);
+
+  // The cadence: quick while looked at, slower in the background, and STOPPED
+  // once the server says nobody is signed in — a session that has ended does
+  // not come back by being asked every few minutes, and each ask was a 401 in
+  // the log. A navigation asks once more (below), which is how a sign-in in
+  // this tab or another one starts it again.
   React.useEffect(() => {
-    let timer: ReturnType<typeof setTimeout>;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const schedule = () => {
+      clearTimeout(timer);
+      if (signedOut.current) return;
       const hidden = document.visibilityState === "hidden";
-      const every = signedOut.current
-        ? SIGNED_OUT_EVERY_MS
-        : hidden
-          ? HIDDEN_EVERY_MS
-          : Date.now() - lastInput > IDLE_AFTER_MS
-            ? IDLE_EVERY_MS
-            : ACTIVE_EVERY_MS;
+      const every = hidden
+        ? HIDDEN_EVERY_MS
+        : Date.now() - lastInput > IDLE_AFTER_MS
+          ? IDLE_EVERY_MS
+          : ACTIVE_EVERY_MS;
       timer = setTimeout(async () => {
         /* Behind other tabs: leave it to whichever tab asked last, if it was recent. */
-        const skip = !signedOut.current && document.visibilityState === "hidden" && Date.now() - readStamp() < HIDDEN_EVERY_MS;
+        const skip = document.visibilityState === "hidden" && Date.now() - readStamp() < HIDDEN_EVERY_MS;
         if (!skip) await poll(true);
         schedule();
       }, every);
     };
+    resume.current = () => void poll(true).then(schedule);
     lastInput = Date.now();
     void poll(true).then(schedule);
     const input = () => {
@@ -435,10 +442,12 @@ export function NotificationCenter() {
     const inputs = ["pointerdown", "keydown", "wheel", "touchstart"] as const;
     inputs.forEach((e) => window.addEventListener(e, input, { passive: true, capture: true }));
     /* Something on the page changed the list: always ask. */
-    const now = () => void poll(true);
+    const now = () => {
+      if (!signedOut.current) void poll(true);
+    };
     const onFocus = () => {
       lastInput = Date.now();
-      void poll();
+      if (!signedOut.current) void poll();
     };
     const onVisible = () => {
       if (document.visibilityState === "visible") onFocus();
@@ -448,6 +457,7 @@ export function NotificationCenter() {
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       clearTimeout(timer);
+      resume.current = null;
       inputs.forEach((e) => window.removeEventListener(e, input, { capture: true }));
       window.removeEventListener("mahek:notifications-refresh", now);
       window.removeEventListener("focus", onFocus);
@@ -455,10 +465,11 @@ export function NotificationCenter() {
     };
   }, [poll]);
 
-  // A new page after signing in is the moment to stop being "signed out".
+  // A new page after signing in is the moment to stop being "signed out":
+  // ask once, and the cadence starts again if somebody is.
   React.useEffect(() => {
-    if (signedOut.current) void poll(true);
-  }, [pathname, poll]);
+    if (signedOut.current) resume.current?.();
+  }, [pathname]);
 
   /* Moving into another app asks for ITS list at once. `known` starts again,
      so what pops on arrival is only what is fresh and was never announced —

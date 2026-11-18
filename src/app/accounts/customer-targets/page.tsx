@@ -1,6 +1,7 @@
 import { canFor, requireCapability } from "@/lib/access-control";
 import { getScope, scopeLabel } from "@/lib/scope";
 import { requireUser } from "@/lib/auth";
+import { requireAppForPage } from "@/lib/access";
 import { currentPeriod, listAmFilterOptions } from "@/lib/queries";
 import { listTargetsPage } from "@/lib/services/worklist-services";
 import { MonthlyTargetsScreen } from "@/components/customers/monthly-targets-screen";
@@ -37,6 +38,8 @@ export default async function Page({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  /* The layout's gate first, so a refused visit ends in its redirect rather than a thrown refusal. */
+  await requireAppForPage((await requireUser()).id, "accounts");
   await requireCapability("target.set");
 
   const params = await searchParams;

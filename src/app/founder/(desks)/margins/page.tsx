@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { founderAccess } from "@/lib/command-centre/access";
+import { founderPageAccess } from "@/lib/command-centre/access";
 import { readPeriodState } from "@/lib/command-centre/period";
 import { marginLines, marginRules, MARGIN_LINE_CAP } from "@/lib/services/margin-service";
 import { ADMIN } from "@/lib/admin-routes";
@@ -19,7 +19,7 @@ export default async function MarginsPage({
   searchParams: Promise<{ p?: string; from?: string; to?: string; v?: string }>;
 }) {
   const params = await searchParams;
-  const access = await founderAccess();
+  const access = await founderPageAccess();
   if (!access.allowed.includes("margins")) redirect("/founder");
 
   const period = await readPeriodState(params.p, { from: params.from, to: params.to });
