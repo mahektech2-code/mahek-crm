@@ -4,6 +4,7 @@ import { db } from "@/db";
 import {
   erpFgLevels,
   erpGodowns,
+  erpPoCorrections,
   erpPoLines,
   erpProductPacking,
   erpPurchaseOrders,
@@ -36,6 +37,9 @@ import {
   poLabel,
   poName,
   poRouteOf,
+  expectedQuantity,
+  lineDone,
+  quantityDifferenceNote,
   poLineFigures,
   poStatusAfterReceipt,
   poTotals,
@@ -86,7 +90,7 @@ export type ReqView = {
   method: "direct" | "quotation" | null;
   preferredSupplierId: string | null;
   supplier: string | null;
-  po: { id: string; number: number; name: string; source: string; status: string; lineId: string; ordered: number; received: number; ratePaise: number; gstBp: number; drums: number | null; supplier: string } | null;
+  po: { id: string; number: number; name: string; source: string; status: string; lineId: string; ordered: number; originalQty: number; received: number; ratePaise: number; gstBp: number; drums: number | null; supplier: string } | null;
   legacy: boolean;
   by: string | null;
 };
@@ -105,6 +109,41 @@ export async function receivedByLine(tx: Tx | typeof db = db): Promise<Map<strin
     ) x group by line
   `)) as unknown as { line: string; q: number }[];
   return new Map(rows.map((r) => [r.line, Number(r.q)]));
+}
+
+/** One correction line, as every screen reads it (`erp_po_corrections`, 0357). */
+export type PoCorrection = typeof erpPoCorrections.$inferSelect & { by: string | null; cancelledBy: string | null; rateBy: string | null };
+
+/** Every correction on these PO lines, live and cancelled, oldest first. */
+export async function correctionsByLine(lineIds: string[], tx: Tx | typeof db = db): Promise<Map<string, PoCorrection[]>> {
+  const out = new Map<string, PoCorrection[]>();
+  if (!lineIds.length) return out;
+  const who = (col: unknown) => sql<string | null>`(select name from users u where u.id = ${col})`;
+  const rows = await tx
+    .select({ c: erpPoCorrections, by: who(erpPoCorrections.createdById), cancelledBy: who(erpPoCorrections.cancelledById), rateBy: who(erpPoCorrections.rateChangedById) })
+    .from(erpPoCorrections)
+    .where(inArray(erpPoCorrections.poLineId, lineIds))
+    .orderBy(asc(erpPoCorrections.createdAt), asc(erpPoCorrections.id));
+  for (const r of rows) (out.get(r.c.poLineId) ?? out.set(r.c.poLineId, []).get(r.c.poLineId)!).push({ ...r.c, by: r.by, cancelledBy: r.cancelledBy, rateBy: r.rateBy });
+  return out;
+}
+
+/** What a line now expects: its quantity plus its live corrections. */
+export function expectedOf(quantity: number, corrections: PoCorrection[] | undefined): number {
+  return expectedQuantity(quantity, (corrections ?? []).map((c) => ({ quantity: c.quantity, cancelled: !!c.cancelledAt })));
+}
+
+/** A PO's lines as money: each line, then each live correction at its own rate — what every total is added from. */
+export function pricedLines(p: Pick<PoView, "lines">): { quantity: number; ratePaise: number; gstBp: number }[] {
+  return p.lines.flatMap((l) => [
+    { quantity: l.quantity, ratePaise: l.ratePaise, gstBp: l.gstBp },
+    ...l.corrections.filter((c) => !c.cancelledAt).map((c) => ({ quantity: c.quantity, ratePaise: c.ratePaise, gstBp: c.gstBp })),
+  ]);
+}
+
+/** A correction line's label under its line: "1a", "1b"… in the order they were made, cancelled ones included. */
+export function correctionLabel(lineIndex: number, i: number): string {
+  return `${lineIndex + 1}${String.fromCharCode(97 + (i % 26))}`;
 }
 
 export async function requirementViews(where?: { ids?: string[] }): Promise<ReqView[]> {
@@ -148,6 +187,7 @@ export async function requirementViews(where?: { ids?: string[] }): Promise<ReqV
       : Promise.resolve([]),
     receivedByLine(),
   ]);
+  const corr = await correctionsByLine(lines.map((x) => x.l.id));
   const poOf = new Map<string, ReqView["po"]>();
   lines
     .sort((a, b) => +a.createdAt - +b.createdAt)
@@ -159,7 +199,8 @@ export async function requirementViews(where?: { ids?: string[] }): Promise<ReqV
         source: x.source,
         status: x.status,
         lineId: x.l.id,
-        ordered: x.l.quantity,
+        ordered: expectedOf(x.l.quantity, corr.get(x.l.id)),
+        originalQty: x.l.quantity,
         received: received.get(x.l.id) ?? 0,
         ratePaise: x.l.ratePaise,
         gstBp: x.l.gstBp,
@@ -195,7 +236,7 @@ export function stageOf(v: ReqView): Stage {
     rule: v.rule,
     method: v.method,
     supplierId: v.r.supplierId,
-    po: v.po ? { status: v.po.status, ordered: v.po.ordered, received: v.po.received } : null,
+    po: v.po ? { status: v.po.status, ordered: v.po.ordered, received: v.po.received, done: lineDone({ ordered: v.po.ordered, received: v.po.received }) } : null,
     legacy: v.legacy,
   });
 }
@@ -217,7 +258,17 @@ export const REQUIREMENT_ACTION_STAGES = ["Waiting for PO number", "Create PO", 
 
 /* -------------------------------------------------------------- the POs */
 
-export type PoLineView = typeof erpPoLines.$inferSelect & { item: string; itemType: string; received: number; label: string; requirementGodown: string };
+export type PoLineView = typeof erpPoLines.$inferSelect & {
+  item: string;
+  itemType: string;
+  received: number;
+  label: string;
+  requirementGodown: string;
+  /** Its correction lines, live and cancelled (0357). */
+  corrections: PoCorrection[];
+  /** What it now expects: its quantity plus its live corrections. */
+  expected: number;
+};
 export type PoView = {
   po: typeof erpPurchaseOrders.$inferSelect;
   supplier: string;
@@ -233,11 +284,12 @@ export function poOption(p: { po: { poNumber: number; qmPoNo?: string | null }; 
   return `${poName(p.po)} · ${p.supplier}`;
 }
 
-export async function purchaseOrderViews(where?: { ids?: string[]; status?: string[] }): Promise<PoView[]> {
+export async function purchaseOrderViews(where?: { ids?: string[]; status?: string[]; updatedSince?: Date }): Promise<PoView[]> {
   const approver = sql<string | null>`(select name from users u2 where u2.id = ${erpPurchaseOrders.approvedById})`;
   const conds = [
     where?.ids ? inArray(erpPurchaseOrders.id, where.ids.length ? where.ids : ["-"]) : undefined,
     where?.status ? inArray(erpPurchaseOrders.status, where.status) : undefined,
+    where?.updatedSince ? sql`${erpPurchaseOrders.updatedAt} >= ${where.updatedSince.toISOString()}` : undefined,
   ].filter(Boolean);
   const rows = await db
     .select({
@@ -269,10 +321,21 @@ export async function purchaseOrderViews(where?: { ids?: string[]; status?: stri
       : Promise.resolve([]),
     receivedByLine(),
   ]);
+  const corr = await correctionsByLine(lines.map((x) => x.l.id));
   const byPo = new Map<string, PoLineView[]>();
   lines.forEach((x) => {
     const list = byPo.get(x.l.poId) ?? byPo.set(x.l.poId, []).get(x.l.poId)!;
-    list.push({ ...x.l, item: x.item, itemType: x.itemType, received: received.get(x.l.id) ?? 0, label: `${list.length + 1}. ${x.item}`, requirementGodown: x.godown });
+    const corrections = corr.get(x.l.id) ?? [];
+    list.push({
+      ...x.l,
+      item: x.item,
+      itemType: x.itemType,
+      received: received.get(x.l.id) ?? 0,
+      label: `${list.length + 1}. ${x.item}`,
+      requirementGodown: x.godown,
+      corrections,
+      expected: expectedOf(x.l.quantity, corrections),
+    });
   });
   return rows.map((r) => ({
     po: r.po,
@@ -297,12 +360,13 @@ export async function refreshPurchaseOrder(tx: Tx, poId: string | null | undefin
   if (!po) return;
   const lines = await tx.select().from(erpPoLines).where(eq(erpPoLines.poId, poId));
   const received = await receivedByLine(tx);
-  const state = lines.map((l) => ({ id: l.id, req: l.requisitionId, ordered: l.quantity, received: received.get(l.id) ?? 0 }));
+  const corr = await correctionsByLine(lines.map((l) => l.id), tx);
+  const state = lines.map((l) => ({ id: l.id, req: l.requisitionId, ordered: expectedOf(l.quantity, corr.get(l.id)), received: received.get(l.id) ?? 0 }));
   const status = poStatusAfterReceipt(po.status, state);
   if (status !== po.status) await tx.update(erpPurchaseOrders).set({ status, updatedAt: new Date() }).where(eq(erpPurchaseOrders.id, poId));
   if (!["Approved", "Sent", "Partly received", "Received"].includes(status)) return;
   for (const l of state) {
-    const st = l.received >= l.ordered ? "Received" : "Order Placed";
+    const st = lineDone(l) ? "Received" : "Order Placed";
     await tx.update(erpRequisitions).set({ status: st, updatedAt: new Date() }).where(eq(erpRequisitions.id, l.req));
   }
 }
@@ -1241,8 +1305,8 @@ async function savePurchaseOrder(ctx: ErpContext, h: Record<string, string>, lin
   return res;
 }
 
-function poPanel(p: PoView, money: boolean) {
-  const t = poTotals(p.lines, p.po.freightPaise);
+function poPanel(p: PoView, money: boolean, flagPercent: number) {
+  const t = poTotals(pricedLines(p), p.po.freightPaise);
   const step = ["Pending approval", "Approved"].includes(p.po.status) ? STEP.po : ["Sent", "Partly received"].includes(p.po.status) ? STEP.receipt : ["Received", "Closed"].includes(p.po.status) ? FLOW_STEPS.length : -1;
   const history: { l: string; v: string }[] = [{ l: "Raised", v: stampLine(p.by, p.po.createdAt).replace(/^Created /, "") }];
   if (p.po.approvedAt) history.push({ l: p.po.status === "Rejected" ? "Sent back" : "Approved", v: stampLine(p.approver, p.po.approvedAt).replace(/^Created /, "") + (p.po.decisionNote ? ` — ${p.po.decisionNote}` : "") });
@@ -1256,18 +1320,33 @@ function poPanel(p: PoView, money: boolean) {
       step,
       status: p.po.status,
       money,
-      lines: p.lines.map((l) => {
+      revision: p.po.revision,
+      lines: p.lines.map((l, li) => {
         const f = poLineFigures(l);
+        const live = l.corrections.filter((c) => !c.cancelledAt);
         return {
           item: l.item,
           ordered: `${nf(l.quantity)} ${l.unit}`,
+          /* What it now expects, said only where a correction moved it. */
+          expected: live.length ? `${nf(l.expected)} ${l.unit}` : null,
           received: `${nf(l.received)} ${l.unit}`,
-          pending: `${nf(Math.max(0, l.quantity - l.received))} ${l.unit}`,
-          done: l.received >= l.quantity,
+          pending: `${nf(Math.max(0, l.expected - l.received))} ${l.unit}`,
+          done: lineDone({ ordered: l.expected, received: l.received }),
           rate: money ? inrRate(l.ratePaise) : null,
           gst: `${l.gstBp / 100}%`,
           total: money ? inr(f.totalPaise) : null,
           requirement: erpLink("requisitions", { open: l.requisitionId }),
+          flag: quantityDifferenceNote(l.quantity, l.expected, l.received, flagPercent),
+          corrections: l.corrections.map((c, ci) => ({
+            label: correctionLabel(li, ci),
+            quantity: `${c.quantity > 0 ? "+" : "−"}${nf(Math.abs(c.quantity))} ${l.unit}`,
+            kind: c.kind === "extra" ? "Extra received" : "Not delivered",
+            note: [c.prNumber != null ? `PR ${c.prNumber}` : "", c.by ?? "", fd(calendarDate(c.createdAt))].filter(Boolean).join(" · "),
+            rate: money ? inrRate(c.ratePaise) : null,
+            total: money ? inr(poLineFigures(c).totalPaise) : null,
+            rateNote: c.rateChangedAt && c.originalRatePaise != null ? `Rate changed from ${inrRate(c.originalRatePaise)} by ${c.rateBy ?? "an administrator"}${c.rateChangeReason ? `: ${c.rateChangeReason}` : ""}` : null,
+            cancelled: c.cancelledAt ? `Cancelled by ${c.cancelledBy ?? "someone"}, ${fd(calendarDate(c.cancelledAt))}: ${c.cancelReason ?? ""}` : null,
+          })),
         };
       }),
       totals: money ? { amount: inr(t.amountPaise), gst: inr(t.gstPaise), freight: inr(t.freightPaise), total: inr(t.totalPaise) } : null,
@@ -1289,10 +1368,22 @@ async function approvalRefusal(ctx: ErpContext, poId: string): Promise<Result<un
   return err("Only the PO approver decides a purchase order.", "not_permitted");
 }
 
+/** The correction a prompt named ("1a · Toluene +150 kg"), on this PO. */
+async function pickCorrection(poId: string, picked: string | undefined): Promise<Result<{ c: PoCorrection; label: string }>> {
+  const want = (picked ?? "").split(" · ")[0].trim();
+  if (!want) return fieldErr("correction", "Pick the correction");
+  const [p] = await purchaseOrderViews({ ids: [poId] });
+  if (!p) return err("That PO no longer exists.", "not_found");
+  for (const [li, l] of p.lines.entries())
+    for (const [ci, c] of l.corrections.entries()) if (correctionLabel(li, ci) === want) return ok({ c, label: want });
+  return fieldErr("correction", "That correction is not on this PO any more");
+}
+
 const purchaseOrders: ScreenModule = {
   key: "purchaseOrders",
   async load(ctx) {
-    const [pos, form] = await Promise.all([purchaseOrderViews(), purchaseOrderForm(ctx)]);
+    const [pos, form, config] = await Promise.all([purchaseOrderViews(), purchaseOrderForm(ctx), getConfig()]);
+    const flagPercent = config["erp.purchase.receiptTolerancePercent"];
     const money = ctx.powers.has("viewPurchaseMoney");
     /* Imported here: po-share reads this file's PO views. */
     const shareSpecs = await (await import("../po-share")).poShareSpecs(pos, money);
@@ -1316,9 +1407,11 @@ const purchaseOrders: ScreenModule = {
     const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
     const rows: ListRow[] = pos.map((p) => {
       const s = p.po.status;
-      const t = poTotals(p.lines, p.po.freightPaise);
+      const t = poTotals(pricedLines(p), p.po.freightPaise);
       const anyReceived = p.lines.some((l) => l.received > 0);
-      const doneLines = p.lines.filter((l) => l.received >= l.quantity).length;
+      const doneLines = p.lines.filter((l) => lineDone({ ordered: l.expected, received: l.received })).length;
+      const differs = p.lines.map((l) => quantityDifferenceNote(l.quantity, l.expected, l.received, flagPercent)).filter((x): x is string => !!x);
+      const liveCorrections = p.lines.flatMap((l, li) => l.corrections.map((c, ci) => ({ c, l, label: correctionLabel(li, ci) }))).filter((x) => !x.c.cancelledAt);
       const self = p.po.createdById === ctx.user.id && !ctx.administrator;
       const actions: ActionSpec[] = [];
       const approveWhy = approver ? "" : "Only the PO approver approves";
@@ -1366,8 +1459,41 @@ const purchaseOrders: ScreenModule = {
           impact: { kind: "erp-po-cancel", id: p.po.id },
         });
       if (p.po.approvedAt && s !== "Rejected") actions.push({ id: "print", l: "Print PO", href: erpPoHref(p.po.id) });
+      /* A correction line made at the gate is undone by cancelling it, with a reason; only an ERP administrator re-rates one. */
+      if (liveCorrections.length) {
+        const opts = liveCorrections.map((x) => `${x.label} · ${x.l.item} ${x.c.quantity > 0 ? "+" : "−"}${nf(Math.abs(x.c.quantity))} ${x.l.unit}`);
+        actions.push({
+          id: "cancelCorrection",
+          l: "Cancel a correction",
+          prompt: {
+            title: `Cancel a correction on ${poName(p.po)}`,
+            sub: "The line goes back to what it expected before. Goods already received stay received. The correction stays on the PO, struck through, with your reason.",
+            submit: "Cancel correction",
+            fields: [
+              { k: "correction", l: "Correction", t: "select", req: true, opts, def: opts.length === 1 ? opts[0] : undefined },
+              { k: "reason", l: "Why", t: "area", req: true },
+            ],
+          },
+        });
+        actions.push({
+          id: "correctionRate",
+          l: "Change a correction's rate",
+          why: ctx.administrator ? "" : "Only an ERP administrator changes the rate on a correction line",
+          prompt: {
+            title: `Change the rate on a correction · ${poName(p.po)}`,
+            sub: "The original line keeps its rate.",
+            submit: "Change rate",
+            fields: [
+              { k: "correction", l: "Correction", t: "select", req: true, opts, def: opts.length === 1 ? opts[0] : undefined },
+              { k: "rate", l: "New rate (₹ per unit)", t: "num", req: true, min: 0, qtyUnit: false },
+              { k: "reason", l: "Why", t: "area", req: true },
+            ],
+          },
+        });
+      }
       const flags: string[] = [];
       if (s === "Pending approval") flags.push("awaitingApproval");
+      if (differs.length) flags.push("qtyDiffers");
       if (RECEIVABLE_PO.includes(s) && p.po.deliveryDate < day) flags.push("deliveryLate");
       return {
         id: p.po.id,
@@ -1383,7 +1509,7 @@ const purchaseOrders: ScreenModule = {
             terms: p.po.paymentTerms,
             received:
               p.lines.length === 1
-                ? `${nf(p.lines[0].received)} of ${nf(p.lines[0].quantity)} ${p.lines[0].unit}`
+                ? `${nf(p.lines[0].received)} of ${nf(p.lines[0].expected)} ${p.lines[0].unit}${p.lines[0].expected !== p.lines[0].quantity ? ` (ordered ${nf(p.lines[0].quantity)})` : ""}`
                 : p.lines.length
                   ? `${doneLines} of ${p.lines.length} items in full`
                   : "—",
@@ -1393,22 +1519,22 @@ const purchaseOrders: ScreenModule = {
           hiddenKeys,
         ),
         flags,
-        title: `${poName(p.po)} · ${p.supplier}`,
-        header: `${fd(p.po.poDate)} · deliver to ${p.godown} by ${fd(p.po.deliveryDate)} · ${p.po.paymentTerms}`,
+        title: `${poName(p.po)}${p.po.revision ? ` · Rev ${p.po.revision}` : ""} · ${p.supplier}`,
+        header: `${differs.length ? `Quantity differs from PO: ${differs.join(", ")} · ` : ""}${fd(p.po.poDate)} · deliver to ${p.godown} by ${fd(p.po.deliveryDate)} · ${p.po.paymentTerms}`,
         fields: [{ l: "Remarks", v: p.po.remarks || "—" }],
         contacts: [
           ...(p.supplierPhone ? [{ l: `Call ${p.supplierPhone}`, href: `tel:${p.supplierPhone.replace(/\D/g, "")}` }] : []),
           ...(p.supplierEmail ? [{ l: "Email", href: `mailto:${p.supplierEmail}` }] : []),
         ],
         actions,
-        panel: poPanel(p, money),
+        panel: poPanel(p, money, flagPercent),
         by: stampLine(p.by, p.po.createdAt),
       };
     });
     return {
       spec: {
         screen: "purchaseOrders",
-        rowMenu: ["share", "print", "receive", "edit", "close", "cancel"],
+        rowMenu: ["share", "print", "receive", "edit", "close", "cancel", "cancelCorrection", "correctionRate"],
         cols,
         hidden,
         groups: ["status"],
@@ -1420,6 +1546,7 @@ const purchaseOrders: ScreenModule = {
           /* Only POs raised the old way wait on an approver; the card goes once none is left. */
           ...(rows.some((r) => r.flags?.includes("awaitingApproval")) ? [{ l: "Awaiting approval", where: { flag: "awaitingApproval" }, tone: "warn" as const }] : []),
           { l: "Delivery late", where: { flag: "deliveryLate" }, tone: "danger" },
+          { l: "Quantity differs", where: { flag: "qtyDiffers" }, tone: "warn" },
         ],
         filters: ["vendor", "deliverTo", "terms", "value"],
         newForm: money ? (form ?? undefined) : undefined,
@@ -1499,6 +1626,60 @@ const purchaseOrders: ScreenModule = {
         return okVoid(`${poName(po)} closed short`);
       });
       if (res.ok) await erpAudit(ctx, "erp.purchaseOrder.closeShort", "erp_purchase_order", id, null, { reason });
+      return res;
+    },
+    /* Cancel a correction line made at the gate: struck through with its reason, never deleted. */
+    async cancelCorrection(ctx, id, values) {
+      const reason = text(values.reason);
+      if (!reason) return fieldErr("reason", "Say why the correction is cancelled");
+      const pick = await pickCorrection(id, values.correction);
+      if (!pick.ok) return pick;
+      const { c, label } = pick.data;
+      const res = await inTx(async (tx) => {
+        const [po] = await tx.select().from(erpPurchaseOrders).where(eq(erpPurchaseOrders.id, id)).for("update");
+        if (!po) return err("That PO no longer exists.", "not_found");
+        const done = await tx
+          .update(erpPoCorrections)
+          .set({ cancelledAt: new Date(), cancelledById: ctx.user.id, cancelReason: reason })
+          .where(and(eq(erpPoCorrections.id, c.id), sql`${erpPoCorrections.cancelledAt} is null`))
+          .returning({ id: erpPoCorrections.id });
+        if (!done.length) return err("That correction was already cancelled.", "conflict");
+        await tx.update(erpPurchaseOrders).set({ revision: sql`${erpPurchaseOrders.revision} + 1`, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpPurchaseOrders.id, id));
+        await refreshPurchaseOrder(tx, id);
+        return okVoid(`Correction ${label} cancelled · ${poName(po)} is now Rev ${po.revision + 1}`);
+      });
+      if (res.ok) await erpAudit(ctx, "erp.purchaseOrder.correctionCancel", "erp_po_correction", c.id, { quantity: c.quantity }, { reason });
+      return res;
+    },
+    /* Only an ERP administrator re-rates a correction line; the original line keeps its rate. */
+    async correctionRate(ctx, id, values) {
+      if (!ctx.administrator) return err("Only an ERP administrator changes the rate on a correction line.", "not_permitted");
+      const rate = paise(values.rate);
+      if (rate == null || rate < 0) return fieldErr("rate", "Type the new rate in rupees");
+      const reason = text(values.reason);
+      if (!reason) return fieldErr("reason", "Say why the rate changes");
+      const pick = await pickCorrection(id, values.correction);
+      if (!pick.ok) return pick;
+      const { c, label } = pick.data;
+      if (c.cancelledAt) return err("A cancelled correction keeps the rate it had.", "conflict");
+      if (rate === c.ratePaise) return fieldErr("rate", "That is the rate it already has");
+      const res = await inTx(async (tx) => {
+        const [po] = await tx.select().from(erpPurchaseOrders).where(eq(erpPurchaseOrders.id, id)).for("update");
+        if (!po) return err("That PO no longer exists.", "not_found");
+        await tx
+          .update(erpPoCorrections)
+          .set({
+            ratePaise: rate,
+            originalRatePaise: c.originalRatePaise ?? c.ratePaise,
+            rateChangedAt: new Date(),
+            rateChangedById: ctx.user.id,
+            rateChangeReason: reason,
+          })
+          .where(eq(erpPoCorrections.id, c.id));
+        await tx.update(erpPurchaseOrders).set({ revision: sql`${erpPurchaseOrders.revision} + 1`, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpPurchaseOrders.id, id));
+        return okVoid(`Correction ${label} now at ${inrRate(rate)} · ${poName(po)} is now Rev ${po.revision + 1}`);
+      });
+      if (res.ok) await erpAudit(ctx, "erp.purchaseOrder.correctionRate", "erp_po_correction", c.id, { ratePaise: c.ratePaise }, { ratePaise: rate, reason });
       return res;
     },
     async cancel(ctx, id, values) {

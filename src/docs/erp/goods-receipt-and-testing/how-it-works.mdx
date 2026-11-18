@@ -24,8 +24,8 @@ Goods inward starts from the item that arrived: the receipt is searched by item,
 In Mahek Plus anything could be received from anybody. Tying every receipt to a PO means every lot in stock answers a requirement a department raised, bought the way its item's purchase rule says. No PO is approved any more — see [Purchase orders](/docs/erp/purchase-orders/how-it-works).
 </Callout>
 
-<Rule title="A little over, never a lot over">
-A line may receive up to <Setting k="erp.purchase.receiptTolerancePercent" />% more than its PO line ordered, counting everything already received against it and the other lines of the same save. Beyond that the receipt is refused and the extra needs its own requirement and PO.
+<Rule title="A receipt is never refused for its quantity; it corrects the PO">
+Whatever arrived is received. The line's difference from what its PO line still expects (its quantity plus earlier corrections, less what was received, counting the other lines of the same save) becomes a **correction line** under the PO line: the extra, unless the gate chose to leave the PO alone, or the shortfall, only where the gate said nothing more is coming. A correction carries the PO line's own rate and GST and moves the PO's revision on by one. The PO line itself is never edited. A PO received in full in the last 30 days still takes a late truck, as an extra. A correction beyond <Setting k="erp.purchase.receiptTolerancePercent" />% of the original quantity is flagged, never refused. Before November 2026 anything past the PO plus 5% was refused.
 </Rule>
 
 <Rule title="A kilogram chemical is weighed, not typed">

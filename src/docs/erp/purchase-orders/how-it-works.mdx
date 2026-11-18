@@ -84,8 +84,8 @@ Goods inward names an Approved, Sent or Partly received PO and one of its lines.
 A PO line's received quantity is the sum of the inward lines and hand-entered register lots against it, read each time. After every receipt the PO's status and its requirements' status are rewritten from that figure in the same save: some received is Partly received, every line in full is Received.
 </Rule>
 
-<Rule title="A little over is fine; a lot over needs its own PO">
-A line may receive up to <Setting k="erp.purchase.receiptTolerancePercent" />% more than was ordered — drums never weigh exactly what was ordered. Beyond that the receipt is refused: "Raise a requirement for the extra."
+<Rule title="The goods receipt corrects the PO">
+A receipt is never refused for its quantity. More than the line expects adds a **correction line** (+ the extra) under it; less, where the gate says nothing more is coming, adds one that takes the shortfall off. Both are at the line's own rate and GST, and the line itself always reads as ordered. A line now expects its quantity plus its live corrections, and is complete once that has arrived. Each correction, its cancellation (with a reason, kept struck through) and an ERP administrator's change to its rate moves the PO's **revision** on by one ("Rev 1"). A line that ends more than <Setting k="erp.purchase.receiptTolerancePercent" />% from its original quantity flags the PO "Quantity differs from PO". The print, the PDF and Share all carry the corrections.
 </Rule>
 
 ## Ending a PO early

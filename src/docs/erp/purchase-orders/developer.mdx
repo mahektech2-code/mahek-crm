@@ -4,7 +4,7 @@ Purchase orders are the `purchaseOrders` screen module in `lib/erp/screens/purch
 
 | Layer | File | What lives there |
 |---|---|---|
-| Engine (pure) | `src/lib/erp/engines/purchase-flow.ts` | `LIVE_PO`, `RECEIVABLE_PO`, `poRouteOf`, `poLabel`, `poName`, `pickQuotePoCell`, `quoteRatePaise`, `poLineFigures`, `poTotals`, `poStatusAfterReceipt`, `receivableQuantity` |
+| Engine (pure) | `src/lib/erp/engines/purchase-flow.ts` | `LIVE_PO`, `RECEIVABLE_PO`, `poRouteOf`, `poLabel`, `poName`, `pickQuotePoCell`, `quoteRatePaise`, `poLineFigures`, `poTotals`, `poStatusAfterReceipt`, `expectedQuantity`, `receiptGap`, `correctionFor`, `lineDone`, `quantityDifferenceNote` |
 | Reading | `src/lib/erp/screens/purchase-flow.ts` | `purchaseOrderViews`, `receivedByLine`, `poOption` |
 | Form | same | `poFormData`, `purchaseOrderForm` (New PO and Edit: header + lines from the vendor's requirements ready for a PO; rate and GST typed per line) |
 | Writes | same | `savePurchaseOrder` (New PO and Edit, written Approved); actions `share`, `close`, `cancel`, and `approve` / `sendBack` for a leftover Pending approval PO; form loader `receive` → `inwardFormForPo` |
@@ -74,7 +74,11 @@ A WhatsApp share goes through Wati only where `poWatiRoute` says so: the founder
 
 <Code file="src/lib/erp/engines/purchase-flow.ts" symbol="poStatusAfterReceipt" />
 
-<Code file="src/lib/erp/engines/purchase-flow.ts" symbol="receivableQuantity" />
+<Code file="src/lib/erp/engines/purchase-flow.ts" symbol="receiptGap" />
+
+<Code file="src/lib/erp/engines/purchase-flow.ts" symbol="correctionFor" />
+
+<Code file="src/lib/erp/screens/purchase-flow.ts" symbol="correctionsByLine" />
 
 <Code file="src/lib/erp/screens/purchase-flow.ts" symbol="refreshPurchaseOrder" />
 
@@ -109,6 +113,13 @@ A WhatsApp share goes through Wati only where `poWatiRoute` says so: the founder
   gst_bp: "Basis points (1800 = 18%); erp.purchase.poGstPercent on Create PO and a Quotation manager line.",
   quote_row_id: "With quote_column_id, the Quotation manager cell this line was bought on.",
   drums: "Drums bought, as Purchase it recorded them.",
+}} />
+
+<DbTable name="erp_po_corrections" note={{
+  quantity: "Signed: + an extra received, − a shortfall nothing more will make up. A line expects its quantity plus its live corrections.",
+  rate_paise: "The PO line's rate, copied when it is made. Only an ERP administrator changes it; original_rate_paise keeps what it was.",
+  inward_id: "The goods receipt line it was made on. Plain text, not a key.",
+  cancelled_at: "A wrong correction is cancelled with a reason, never deleted; it stays on the PO struck through.",
 }} />
 
 ## Permissions

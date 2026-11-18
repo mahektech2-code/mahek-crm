@@ -571,7 +571,21 @@ type PoData = {
   step: number;
   status: string;
   money: boolean;
-  lines: { item: string; ordered: string; received: string; pending: string; done: boolean; rate: string | null; gst: string; total: string | null; requirement: string }[];
+  revision?: number;
+  lines: {
+    item: string;
+    ordered: string;
+    expected?: string | null;
+    received: string;
+    pending: string;
+    done: boolean;
+    rate: string | null;
+    gst: string;
+    total: string | null;
+    requirement: string;
+    flag?: string | null;
+    corrections?: { label: string; quantity: string; kind: string; note: string; rate: string | null; total: string | null; rateNote: string | null; cancelled: string | null }[];
+  }[];
   totals: { amount: string; gst: string; freight: string; total: string } | null;
   history: { l: string; v: string }[];
   print: string | null;
@@ -582,7 +596,7 @@ function PurchaseOrder({ data }: PanelProps) {
   return (
     <section className={cx("grid gap-3", insetClass)}>
       <div className="flex items-baseline justify-between gap-3">
-        <SectionLabel>Purchase flow</SectionLabel>
+        <SectionLabel>Purchase flow{p.revision ? ` · Rev ${p.revision}` : ""}</SectionLabel>
         {p.print ? (
           <a href={p.print} className={linkClass("brand", "text-xs")}>
             Print PO
@@ -603,7 +617,7 @@ function PurchaseOrder({ data }: PanelProps) {
             </div>
             <dl className={cx("mt-1 grid gap-x-3 text-xs", p.money ? "grid-cols-5" : "grid-cols-4")}>
               {[
-                ["Ordered", l.ordered, ""],
+                ["Ordered", l.expected ? `${l.ordered} → ${l.expected}` : l.ordered, ""],
                 ["Received", l.received, l.done ? "text-success" : ""],
                 ["Pending", l.done ? "—" : l.pending, ""],
                 ...(p.money ? [["Rate", l.rate ?? "—", ""]] : []),
@@ -617,6 +631,24 @@ function PurchaseOrder({ data }: PanelProps) {
                 </div>
               ))}
             </dl>
+            {/* Correction lines made at the gate, under the line they correct; a cancelled one stays, struck through. */}
+            {(l.corrections ?? []).map((c) => (
+              <div key={c.label} className={cx("mt-2 rounded-control bg-brand-soft px-2 py-1.5 text-xs", c.cancelled && "opacity-70")}>
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className={cx("min-w-0 break-words text-ink", c.cancelled && "line-through")}>
+                    <span className="font-semibold">{c.label}</span> · Correction: {c.kind} {c.quantity}
+                  </span>
+                  {p.money && c.total ? <span className={cx("flex-none tabular-nums text-ink", c.cancelled && "line-through")}>{c.total}</span> : null}
+                </div>
+                <div className="text-muted">
+                  {c.note}
+                  {p.money && c.rate ? ` · ${c.rate}` : ""}
+                </div>
+                {c.rateNote ? <div className="text-muted">{c.rateNote}</div> : null}
+                {c.cancelled ? <div className="text-muted">{c.cancelled}</div> : null}
+              </div>
+            ))}
+            {l.flag ? <div className="mt-1.5 text-xs font-medium text-warn-ink">Quantity differs from PO · {l.flag}</div> : null}
           </div>
         ))}
         {p.totals ? (

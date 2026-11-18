@@ -18,6 +18,7 @@ import {
   appAccess,
   appSettings,
   erpInward,
+  erpPoCorrections,
   erpPoLines,
   erpPoShares,
   erpPrCosts,
@@ -367,13 +368,8 @@ describe("inward", () => {
   });
 
   test("a GRN takes the PO number as typed", async () => {
-    const r = await mod("inward").forms!.new(await as(admin), { date: TODAY, po: "po-1", godown: "Bhiwandi", transportMode: NONE }, [{ poLine: flowLine["1 L Tin Can"], qty: "26" }]);
-    assert.ok(!r.ok && /More than the PO allows/.test(r.fieldErrors?.[0].message ?? ""), "found by its bare number — and refused only for the quantity");
-  });
-
-  test("more than the PO allows is refused, beyond the tolerance", async () => {
-    const r = await mod("inward").forms!.new(await as(admin), { date: TODAY, po: flowPo, godown: "Bhiwandi", transportMode: NONE }, [{ poLine: flowLine["1 L Tin Can"], qty: "26" }]);
-    assert.ok(!r.ok && /More than the PO allows/.test(r.fieldErrors?.[0].message ?? ""), JSON.stringify(r));
+    const r = await mod("inward").forms!.new(await as(admin), { date: TODAY, po: "po-1", godown: "Bhiwandi", transportMode: NONE }, [{ poLine: flowLine["1 L Tin Can"], qty: "-4" }]);
+    assert.ok(!r.ok && r.fieldErrors?.[0].message === "Quantity cannot be below 0.", "found by its bare number — and refused only for the minus quantity");
   });
 
   test("a minus quantity is refused in a sentence", async () => {
@@ -1112,17 +1108,13 @@ describe("correcting a goods receipt", () => {
     return (await db.select().from(erpInward).where(eq(erpInward.id, mekId)))[0];
   };
 
-  test("a row's edit carries on to the purchase and stock, and the PO limit still holds", async () => {
+  test("a row's edit carries on to the purchase and stock, and is never refused for its quantity", async () => {
     const ctx = await as(admin);
     const r = await mekLine();
     const row = (await mod("inward").load(ctx)).rows.find((x) => x.id === r.id);
     assert.ok(row?.actions?.some((a) => a.id === "edit" && a.loadsForm), "every line offers Edit");
     const form = (await mod("inward").formLoaders!.edit(ctx, r.id))!;
     assert.equal(form.init?.weight, String(r.weightWithDrum));
-
-    const refused = await mod("inward").forms!.edit(ctx, { date: r.receivedDate, godown: "Bhiwandi", drums: "1", weight: "9999999", emptyDrum: "15" }, [], r.id);
-    assert.equal(refused.ok, false, "more than the PO allows");
-    assert.equal((await mekLine()).weightWithDrum, r.weightWithDrum, "a refusal writes nothing");
 
     const saved = await mod("inward").forms!.edit(ctx, { date: r.receivedDate, godown: "Bhiwandi", drums: "1", weight: "95", emptyDrum: "15", remark: "Rechecked on the scale" }, [], r.id);
     assert.ok(saved.ok, JSON.stringify(saved));
@@ -1258,5 +1250,95 @@ describe("a selection, by its shape", () => {
     assert.equal((await db.select().from(erpInward).where(eq(erpInward.id, tol.id)))[0].routed, "Testing");
     assert.ok(!(await inw.bulk!.toTesting(ctx, [tol.id], {})).ok, "nothing left to send");
     assert.ok(!(await inw.bulk!.toPurchase(ctx, [tol.id], {})).ok);
+  });
+});
+
+describe("the goods receipt corrects the PO (0357)", () => {
+  const grn = (ctx: Awaited<ReturnType<typeof as>>, po: string, line: Record<string, string>) =>
+    mod("inward").forms!.new(ctx, { date: TODAY, po, godown: "Bhiwandi", transportMode: NONE }, [line]);
+  const corrections = (poId: string) => db.select().from(erpPoCorrections).where(eq(erpPoCorrections.poId, poId)).orderBy(asc(erpPoCorrections.createdAt));
+  const poRow = async (poId: string) => (await db.select().from(erpPurchaseOrders).where(eq(erpPurchaseOrders.id, poId)))[0];
+
+  test("more than ordered is received, and the extra is a correction line at the line's own rate", async () => {
+    const ctx = await as(admin);
+    const a = await approvedPo("Asian Solvents", [{ item: "1 L Tin Can", quantity: 1000, ratePaise: 8950 }]);
+    const r = await grn(ctx, a.po, { poLine: a.lines["1 L Tin Can"], qty: "1150" });
+    assert.ok(r.ok, JSON.stringify(r));
+    assert.match(r.message ?? "", /PO corrected: PO-\d+ \+150/);
+    const [c, ...more] = await corrections(a.poId);
+    assert.equal(more.length, 0);
+    assert.equal(c.kind, "extra");
+    assert.equal(c.quantity, 150);
+    assert.equal(c.ratePaise, 8950, "the line's rate, copied");
+    assert.equal(c.gstBp, 1800);
+    const [line] = await db.select().from(erpPoLines).where(eq(erpPoLines.poId, a.poId));
+    assert.equal(line.quantity, 1000, "the original line is never edited");
+    const po = await poRow(a.poId);
+    assert.equal(po.status, "Received");
+    assert.equal(po.revision, 1);
+    const { rows } = await mod("purchaseOrders").load(ctx);
+    const row = rows.find((x) => x.id === a.poId)!;
+    assert.ok(row.flags?.includes("qtyDiffers"), "15% over the order is flagged");
+    assert.match(String(row.v.received), /1,150 of 1,150 .*ordered 1,000/);
+
+    /* Leaving the PO alone is a choice too: the goods are still received. */
+    const b = await approvedPo("Asian Solvents", [{ item: "1 L Tin Can", quantity: 100 }]);
+    const left = await grn(ctx, b.po, { poLine: b.lines["1 L Tin Can"], qty: "104", extra: "Leave the PO as it is" });
+    assert.ok(left.ok, JSON.stringify(left));
+    assert.equal((await corrections(b.poId)).length, 0);
+    assert.equal((await poRow(b.poId)).status, "Received");
+    assert.ok(!(await mod("purchaseOrders").load(ctx)).rows.find((x) => x.id === b.poId)!.flags?.includes("qtyDiffers"), "4% is within 10%");
+  });
+
+  test("less: more is coming leaves the PO open; nothing more coming takes the rest off", async () => {
+    const ctx = await as(admin);
+    const a = await approvedPo("Asian Solvents", [{ item: "1 L Tin Can", quantity: 1000 }]);
+    const first = await grn(ctx, a.po, { poLine: a.lines["1 L Tin Can"], qty: "300" });
+    assert.ok(first.ok, JSON.stringify(first));
+    assert.equal((await corrections(a.poId)).length, 0, "the default is that more is coming");
+    assert.equal((await poRow(a.poId)).status, "Partly received");
+    const last = await grn(ctx, a.po, { poLine: a.lines["1 L Tin Can"], qty: "500", short: "That is everything: take the rest off the PO" });
+    assert.ok(last.ok, JSON.stringify(last));
+    const [c] = await corrections(a.poId);
+    assert.equal(c.kind, "short");
+    assert.equal(c.quantity, -200);
+    const po = await poRow(a.poId);
+    assert.equal(po.status, "Received", "800 of 1,000 − 200");
+    const [req] = await db.select().from(erpRequisitions).innerJoin(erpPoLines, eq(erpPoLines.requisitionId, erpRequisitions.id)).where(eq(erpPoLines.poId, a.poId));
+    assert.equal(req.erp_requisitions.status, "Received");
+
+    /* A late truck on a PO received in full is still taken, as an extra. */
+    const late = await grn(ctx, a.po, { poLine: a.lines["1 L Tin Can"], qty: "50" });
+    assert.ok(late.ok, JSON.stringify(late));
+    assert.deepEqual((await corrections(a.poId)).map((x) => x.quantity), [-200, 50]);
+    assert.equal((await poRow(a.poId)).revision, 2);
+  });
+
+  test("a correction is cancelled with a reason and stays; only an ERP administrator re-rates one", async () => {
+    const ctx = await as(admin);
+    const a = await approvedPo("Asian Solvents", [{ item: "1 L Tin Can", quantity: 1000, ratePaise: 8950 }]);
+    assert.ok((await grn(ctx, a.po, { poLine: a.lines["1 L Tin Can"], qty: "1150" })).ok);
+    const pos = mod("purchaseOrders");
+    const label = "1a · 1 L Tin Can +150 Pcs";
+
+    const refused = await pos.actions!.correctionRate(await as(clerk), a.poId, { correction: label, rate: "85", reason: "Agreed on the phone" });
+    assert.ok(!refused.ok && /Only an ERP administrator/.test((refused as { error?: string }).error ?? ""), JSON.stringify(refused));
+    const rerated = await pos.actions!.correctionRate(ctx, a.poId, { correction: label, rate: "85", reason: "Agreed on the phone" });
+    assert.ok(rerated.ok, JSON.stringify(rerated));
+    let [c] = await corrections(a.poId);
+    assert.equal(c.ratePaise, 8500);
+    assert.equal(c.originalRatePaise, 8950);
+    assert.equal((await poRow(a.poId)).revision, 2);
+
+    assert.ok(!(await pos.actions!.cancelCorrection(ctx, a.poId, { correction: label })).ok, "a reason is required");
+    const cancelled = await pos.actions!.cancelCorrection(ctx, a.poId, { correction: label, reason: "Added on the wrong PO" });
+    assert.ok(cancelled.ok, JSON.stringify(cancelled));
+    [c] = await corrections(a.poId);
+    assert.ok(c.cancelledAt, "kept, cancelled");
+    assert.equal(c.cancelReason, "Added on the wrong PO");
+    const po = await poRow(a.poId);
+    assert.equal(po.revision, 3);
+    assert.equal(po.status, "Received", "1,150 received against 1,000 is still in full");
+    assert.ok(!(await pos.actions!.cancelCorrection(ctx, a.poId, { correction: label, reason: "again" })).ok, "only once");
   });
 });

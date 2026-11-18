@@ -1,7 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { erpContext } from "@/lib/erp/access";
 import { erpLink } from "@/lib/erp/registry";
-import { purchaseOrderViews } from "@/lib/erp/screens/purchase-flow";
+import { correctionLabel, pricedLines, purchaseOrderViews } from "@/lib/erp/screens/purchase-flow";
 import { poName, poLineFigures, poTotals } from "@/lib/erp/engines/purchase-flow";
 import { fdLong, inr, inrRate, nf } from "@/lib/erp/ui";
 import { SectionLabel, Td, Th, Tr } from "@/components/ui/primitives";
@@ -38,7 +38,25 @@ export default async function PurchaseOrderPrint({ params }: { params: Promise<{
       </div>
     );
   const money = ctx.powers.has("viewPurchaseMoney");
-  const t = poTotals(p.lines, p.po.freightPaise);
+  const t = poTotals(pricedLines(p), p.po.freightPaise);
+  /* Each line as ordered, then its live correction lines (0357), so the paper says what the PO now is. */
+  let no = 0;
+  const rows = p.lines.flatMap((l, li) => [
+    { key: l.id, label: String(++no), item: l.item, quantity: l.quantity, unit: l.unit, ratePaise: l.ratePaise, gstBp: l.gstBp, correction: false },
+    ...l.corrections
+      .map((c, ci) => ({ c, label: correctionLabel(li, ci) }))
+      .filter((x) => !x.c.cancelledAt)
+      .map(({ c, label }) => ({
+        key: c.id,
+        label,
+        item: `${l.item} · correction: ${c.kind === "extra" ? "extra received" : "not delivered"}${c.prNumber != null ? ` (PR ${c.prNumber})` : ""}`,
+        quantity: c.quantity,
+        unit: l.unit,
+        ratePaise: c.ratePaise,
+        gstBp: c.gstBp,
+        correction: true,
+      })),
+  ]);
   return (
     <div className="mx-auto grid w-full max-w-[860px] gap-4 p-6">
       <style>{`@media print { body * { visibility: hidden; } .po-paper, .po-paper * { visibility: visible; } .po-paper { position: absolute; inset: 0 auto auto 0; width: 100%; border: 0 !important; } }`}</style>
@@ -58,7 +76,10 @@ export default async function PurchaseOrderPrint({ params }: { params: Promise<{
             <div className="text-body">Purchase order</div>
           </div>
           <div className="text-right">
-            <div className="text-2xl font-semibold tracking-tight">{poName(p.po)}</div>
+            <div className="text-2xl font-semibold tracking-tight">
+              {poName(p.po)}
+              {p.po.revision ? ` · Rev ${p.po.revision}` : ""}
+            </div>
             <div className="text-body">Date {fdLong(p.po.poDate)}</div>
           </div>
         </header>
@@ -93,13 +114,14 @@ export default async function PurchaseOrderPrint({ params }: { params: Promise<{
             </tr>
           </thead>
           <tbody>
-            {p.lines.map((l, i) => {
+            {rows.map((l) => {
               const f = poLineFigures(l);
               return (
-                <Tr key={l.id}>
-                  <Td className="tabular-nums">{i + 1}</Td>
-                  <Td className="font-medium whitespace-normal text-ink">{l.item}</Td>
+                <Tr key={l.key}>
+                  <Td className="tabular-nums">{l.label}</Td>
+                  <Td className={l.correction ? "whitespace-normal text-body" : "font-medium whitespace-normal text-ink"}>{l.item}</Td>
                   <Td align="right" className="tabular-nums">
+                    {l.quantity > 0 && l.correction ? "+" : ""}
                     {nf(l.quantity)} {l.unit}
                   </Td>
                   {money ? (

@@ -5,7 +5,11 @@ import {
   poStatusAfterReceipt,
   poTotals,
   purchaseUnit,
-  receivableQuantity,
+  expectedQuantity,
+  receiptGap,
+  correctionFor,
+  lineDone,
+  quantityDifferenceNote,
   requirementStage,
   type RequirementState,
 } from "./purchase-flow";
@@ -63,12 +67,6 @@ test("a PO's status follows what was received, and only in the receiving states"
   assert.equal(poStatusAfterReceipt("Approved", [{ ordered: 10, received: 0 }]), "Approved");
   assert.equal(poStatusAfterReceipt("Pending approval", [{ ordered: 10, received: 10 }]), "Pending approval");
   assert.equal(poStatusAfterReceipt("Closed", [{ ordered: 10, received: 3 }]), "Closed");
-});
-
-test("receipt tolerance is a share of what was ordered", () => {
-  assert.equal(receivableQuantity(200, 0, 5), 210);
-  assert.equal(receivableQuantity(200, 190, 5), 20);
-  assert.equal(receivableQuantity(200, 215, 5), 0);
 });
 
 test("PO totals add GST per line and freight once", () => {
@@ -158,4 +156,46 @@ test("a PO number the Quotation manager made is the ERP's own number; a typed on
   assert.equal(seriesNumberOf(poLabel(1243)), 1243);
   assert.equal(seriesNumberOf(" po-77 "), 77);
   assert.equal(seriesNumberOf("MM/PO/2627/121"), null);
+});
+
+test("the GRN corrects the PO: an extra is added, a shortfall only when nothing more is coming", () => {
+  assert.equal(expectedQuantity(1000, [{ quantity: 150 }, { quantity: -40, cancelled: true }]), 1150);
+  assert.deepEqual(receiptGap(1000, 0, 1150), { kind: "more", quantity: 150 });
+  assert.deepEqual(receiptGap(1000, 0, 800), { kind: "less", quantity: 200 });
+  assert.deepEqual(receiptGap(1000, 600, 400), { kind: "exact", quantity: 0 });
+  /* A line already complete takes a late truck whole, as an extra. */
+  assert.deepEqual(receiptGap(800, 800, 200), { kind: "more", quantity: 200 });
+  const yes = { addExtra: true, nothingMoreComing: true };
+  assert.deepEqual(correctionFor(receiptGap(1000, 0, 1150), yes), { kind: "extra", quantity: 150 });
+  assert.deepEqual(correctionFor(receiptGap(1000, 0, 800), yes), { kind: "short", quantity: -200 });
+  assert.equal(correctionFor(receiptGap(1000, 0, 800), { addExtra: true, nothingMoreComing: false }), null, "more is coming: the line stays open");
+  assert.equal(correctionFor(receiptGap(1000, 0, 1150), { addExtra: false, nothingMoreComing: false }), null);
+  assert.equal(lineDone({ ordered: 800, received: 800 }), true);
+  assert.equal(lineDone({ ordered: 1000, received: 800 }), false);
+  assert.equal(poStatusAfterReceipt("Sent", [{ ordered: 1150, received: 1150 }]), "Received");
+  assert.equal(poStatusAfterReceipt("Sent", [{ ordered: 1000, received: 800 }]), "Partly received");
+  assert.equal(poStatusAfterReceipt("Approved", [{ ordered: 10, received: 0 }]), "Approved");
+});
+
+test("a correction beyond the flag percent is pointed out, either way", () => {
+  assert.equal(quantityDifferenceNote(1000, 1150, 1150, 10), "15% more than ordered");
+  assert.equal(quantityDifferenceNote(1000, 800, 800, 10), "20% less than ordered");
+  assert.equal(quantityDifferenceNote(1000, 950, 950, 10), null, "within 10%");
+  assert.equal(quantityDifferenceNote(1000, 1000, 1200, 10), "20% more than ordered", "an extra received without a correction counts too");
+  assert.equal(quantityDifferenceNote(1000, 1000, 800, 10), null, "still open, more is coming");
+});
+
+test("the GRN line asks about the extra only when more arrived, and whether more is coming only when less did", async () => {
+  await import("../calcs");
+  const { whenHolds } = await import("../ui");
+  const { runCalc } = await import("../calc");
+  const data = { pendingQtyOf: { "PO-1243 · Shree|1. Toluene": 1000 }, rateOf: { "PO-1243 · Shree|1. Toluene": "₹89.50 per kg" }, unitOf: { Toluene: "Kg" } };
+  const line = (qty: string) => ({ po: "PO-1243 · Shree", poLine: "1. Toluene", item: "Toluene", qty });
+  assert.equal(whenHolds({ calc: "inward.isMore" }, line("1150"), data), true);
+  assert.equal(whenHolds({ calc: "inward.isLess" }, line("1150"), data), false);
+  assert.equal(whenHolds({ calc: "inward.isLess" }, line("800"), data), true);
+  assert.equal(whenHolds({ calc: "inward.gap" }, line("1000"), data), false, "exactly as ordered asks nothing");
+  assert.match(runCalc("inward.diff", { h: {}, l: line("1150"), lines: [], i: 0, data }), /^150 Kg more than PO-1243 .*₹89\.50 per kg/);
+  /* A kg chemical is read off the scale: 6 drums, 1,247.8 kg with drums, 16.3 kg each. */
+  assert.equal(whenHolds({ calc: "inward.isMore" }, { ...line(""), drums: "6", weight: "1247.8", emptyDrum: "16.3" }, data), true);
 });

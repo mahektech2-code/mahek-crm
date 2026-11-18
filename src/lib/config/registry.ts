@@ -5046,12 +5046,12 @@ export const SETTINGS = [
     key: "erp.purchase.receiptTolerancePercent",
     type: "integer",
     category: "erp",
-    label: "Receipt above the PO quantity",
+    label: "Quantity difference that is flagged",
     description:
-      "How far above a PO line's quantity goods may be received against it, in percent of what was ordered — drums never weigh exactly what was ordered. Beyond it the receipt is refused and a new requirement and PO are needed for the extra.",
-    default: 5,
+      "A goods receipt is never refused for its quantity: whatever arrives is received, and the person making the GRN corrects the PO with a correction line (the extra, or a shortfall when nothing more is coming), at the line's own rate. This is how far, in percent of what was ordered and in either direction, a PO line may end up from its original quantity before the PO is flagged \"Quantity differs from PO\" for the purchase desk. The flag stops nothing.",
+    default: 10,
     min: 0,
-    max: 50,
+    max: 100,
   },
   {
     key: "erp.purchase.poWatiTemplate",

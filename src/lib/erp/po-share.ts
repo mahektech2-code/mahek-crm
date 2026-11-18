@@ -24,7 +24,7 @@ import {
   type ShareRecipient,
 } from "./engines/po-share";
 import { poPdfFilename, renderPoPdf, type PoPdfInput } from "./po-pdf";
-import { purchaseOrderViews, type PoView } from "./screens/purchase-flow";
+import { correctionLabel, pricedLines, purchaseOrderViews, type PoView } from "./screens/purchase-flow";
 import { publicLinkOrigin } from "@/lib/public-links";
 
 /* ---------------------------------------------------------------------------
@@ -83,7 +83,7 @@ export async function poShareLink(token: string): Promise<string | null> {
 /** The PO as the PDF draws it. */
 export function poPdfInput(p: PoView): PoPdfInput {
   return {
-    name: poName(p.po),
+    name: `${poName(p.po)}${p.po.revision ? ` Rev ${p.po.revision}` : ""}`,
     date: fdLong(p.po.poDate),
     company: COMPANY,
     vendor: { name: p.supplier, phone: p.supplierPhone, email: p.supplierEmail },
@@ -92,7 +92,21 @@ export function poPdfInput(p: PoView): PoPdfInput {
     paymentTerms: p.po.paymentTerms,
     freightPaise: p.po.freightPaise,
     remarks: p.po.remarks,
-    lines: p.lines.map((l) => ({ item: l.item, quantity: l.quantity, unit: l.unit, ratePaise: l.ratePaise, gstBp: l.gstBp })),
+    /* Each line as ordered, then its live correction lines at their own rates (0357): the PDF says what the PO now is. */
+    lines: p.lines.flatMap((l, li) => [
+      { item: l.item, quantity: l.quantity, unit: l.unit, ratePaise: l.ratePaise, gstBp: l.gstBp },
+      ...l.corrections
+        .map((c, ci) => ({ c, label: correctionLabel(li, ci) }))
+        .filter((x) => !x.c.cancelledAt)
+        .map(({ c, label }) => ({
+          item: `${l.item}, correction: ${c.kind === "extra" ? "extra received" : "not delivered"}${c.prNumber != null ? ` (PR ${c.prNumber})` : ""}`,
+          quantity: c.quantity,
+          unit: l.unit,
+          ratePaise: c.ratePaise,
+          gstBp: c.gstBp,
+          label,
+        })),
+    ]),
     approvedBy: p.approver,
     approvedOn: p.po.approvedAt ? fdLong(calendarDate(p.po.approvedAt)) : null,
   };
@@ -158,7 +172,7 @@ async function poWatiRoute(): Promise<WatiRoute> {
 export const PO_WATI_PARAMS = ["name", "vendor", "po", "items", "total", "deliver_to", "delivery", "link", "message"] as const;
 
 function totalOf(p: PoView): number {
-  return poTotals(p.lines, p.po.freightPaise).totalPaise;
+  return poTotals(pricedLines(p), p.po.freightPaise).totalPaise;
 }
 
 /** The Share window for one PO. Cheap: it asks nothing of Wati — the send does that. */

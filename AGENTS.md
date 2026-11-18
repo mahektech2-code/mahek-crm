@@ -2341,9 +2341,27 @@ Approved PO to Sent. The PDF has rates, so sharing needs `viewPurchaseMoney`.
 **What has been received against a PO line is READ, never stored**
 (`receivedByLine`: inward lines plus hand-entered register lots), and
 `refreshPurchaseOrder` rewrites the PO's receiving status and its
-requirements' status inside the receipt's own transaction. A receipt above the
-line is refused beyond `erp.purchase.receiptTolerancePercent` — the extra needs
-its own requirement and PO.
+requirements' status inside the receipt's own transaction.
+
+**A RECEIPT IS NEVER REFUSED FOR ITS QUANTITY; IT CORRECTS THE PO (Nov 2026, a
+reversal).** It used to refuse anything past the PO plus a tolerance, and a
+shortfall waited for somebody to close the PO short. Weights and counts at the
+gate never match the PO, so whatever arrives is received and the person making
+the GRN corrects the PO there: a row in `erp_po_corrections` (0357) under the
+PO line, signed — `extra` (+, unless they chose "Leave the PO as it is") or
+`short` (−, only where they said nothing more is coming) — at the LINE'S OWN
+rate and GST, copied. The line itself is never edited. A line now EXPECTS its
+quantity plus its live corrections (`expectedOf`), and every status, pending
+figure, total (`pricedLines`), the print, the PDF and Share read that. A wrong
+correction is cancelled with a reason and stays struck through; only an ERP
+administrator changes a correction's rate (`original_rate_paise` keeps the
+old one). Each of the three moves `erp_purchase_orders.revision` ("Rev n").
+`erp.purchase.receiptTolerancePercent` (now 10) only FLAGS a line that ends that
+far from its original quantity ("Quantity differs from PO"); it stops nothing.
+A PO received in full in the last 30 days still takes a late truck, as an
+extra. The GRN line's questions are drawn by `when: { calc }` from
+`inward.isMore` / `inward.isLess`. Rules: `receiptGap`, `correctionFor` and
+`quantityDifferenceNote` in `engines/purchase-flow.ts`.
 
 **A lot is registered at the PO line's rate and GST**, so goods received
 against a PO reach stock without anybody typing a rate. The supplier's bill

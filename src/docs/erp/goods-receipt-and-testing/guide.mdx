@@ -45,8 +45,13 @@ How the goods came: **Supplier Transport**, **Mahek Own Vehicle**, **Third-Party
 </Step>
 </Steps>
 
-<Callout kind="warn" title="More than the PO allows is refused">
-A line may take a little more than was ordered — drums never weigh exactly — but beyond that the receipt is refused: "More than the PO allows: … Raise a requirement for the extra."
+<Callout kind="note" title="Any quantity is received, and the PO is corrected">
+Weights and counts never match the PO exactly, so the GRN never refuses a quantity. When a line differs from what the PO still expects, the screen says by how much:
+
+- **More arrived:** the extra is added to the PO as a correction line at the same rate ("Add the extra to the PO at the same rate"). Choose "Leave the PO as it is" to receive it without changing the PO.
+- **Less arrived:** answer **Is more coming?** "More is coming" leaves the PO open for the next truck. "That is everything" adds a correction line that takes the rest off the PO, at the same rate.
+
+The original PO line always stays as it was ordered. The PO's revision goes up by one, and a difference beyond <Setting k="erp.purchase.receiptTolerancePercent" />% is flagged "Quantity differs from PO" for the purchase desk. Share the PO afterwards to send the vendor the corrected copy.
 </Callout>
 
 ### After saving
