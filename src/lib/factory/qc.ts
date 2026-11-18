@@ -17,10 +17,18 @@ import type { QcInput, QcKit, QcLot, QcSave } from "./types";
  * same `erp_sfg_qc` row and audited under the same action names — so the fill
  * gate, the batch drawer and the trace cannot tell which door it came in by.
  * The Testing list (ERP → Settings → Reference lists) is asked test by test,
- * Pass or Fail, and `readQcTests` is the one rule: approving needs every
- * active test answered and every answer Pass; rejecting records what was run
- * and needs a reason. The list is read again here at the save, so a phone
- * holding an older list cannot approve past a test added since.
+ * Pass or Fail, and `readQcTests` is the FLOOR's rule: approving from the
+ * phone needs every active test answered and every answer Pass; rejecting
+ * records what was run and needs a reason. The list is read again here at the
+ * save, so a phone holding an older list cannot approve past a test added
+ * since.
+ *
+ * It is NOT the ERP's rule, on purpose. Since #793 ERP → SFG batches asks for
+ * the Lot testing EVIDENCE instead (photos, smell, pH, density, a video), none
+ * of it required, and does not call `readQcTests` — see the header of
+ * `erp/engines/sfg-tests.ts`, which describes both shapes. The phone keeps
+ * Pass / Fail until its own QC screen moves to the evidence form; until then
+ * the two doors write the same `erp_sfg_qc` verdict by different checks.
  *
  * Who may decide is `FactoryCtx.qc`: the Mixing & Blending department.
  * ------------------------------------------------------------------------- */
