@@ -1,4 +1,5 @@
 import "server-only";
+import { money } from "../format";
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
@@ -45,8 +46,9 @@ import { err, ok, okVoid, type Result } from "../result";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
-const rupees = (paise: number) =>
-  `₹${Math.round(paise / 100).toLocaleString("en-IN")}`;
+/* format.ts's money(), which shows the paise when there are any; rounding to
+   the rupee here told someone a bill had "₹1,200 open" when ₹1,199.62 was. */
+const rupees = (paise: number) => money(paise);
 
 export type CreditNoteRequest = {
   complaintId: string;

@@ -132,13 +132,23 @@ export async function factoryFindPhone(phone: string): Promise<{ ok: true; who: 
 export async function factoryFindBadge(code: string): Promise<{ ok: true; who: Who } | Fail> {
   const c = String(code).trim();
   if (!c) return { ok: false, error: NOT_FOUND };
+  /* Throttled like the phone lookup. Employee codes are short and printed on
+     ID cards, and a hit answers with a name and a mobile, so an open lookup
+     let anybody step through the codes and list every factory-app holder. */
+  const account = accountKey(null, `badge:${c}`);
+  const address = await clientAddress();
+  const refused = await signInRefusal(account, address);
+  if (refused) return { ok: false, error: refused };
   const [row] = (await db.execute(sql`
     select u.id from users u
       left join factory_staff s on s.user_id = u.id
       left join employees e on e.id = u.employee_id
      where upper(s.badge_code) = upper(${c}) or upper(e.employee_code) = upper(${c})
      limit 1`)) as unknown as { id: string }[];
-  if (!row) return { ok: false, error: NOT_FOUND };
+  if (!row) {
+    await recordSignInFailure(account, address);
+    return { ok: false, error: NOT_FOUND };
+  }
   const [user] = await db.select().from(users).where(eq(users.id, row.id));
   return user ? whoFor(user, "") : { ok: false, error: NOT_FOUND };
 }
@@ -160,15 +170,20 @@ export async function factorySignInPin(userId: string, pin: string): Promise<Sig
   const address = await clientAddress();
   const refused = await signInRefusal(account, address);
   if (refused) return { ok: false, error: refused };
-  const [s] = (await db.execute(sql`select pin_hash as "pinHash", pin_failures as "pinFailures" from factory_staff where user_id = ${user.id}`)) as unknown as { pinHash: string | null; pinFailures: number }[];
+  const [s] = (await db.execute(sql`select pin_hash as "pinHash" from factory_staff where user_id = ${user.id}`)) as unknown as { pinHash: string | null }[];
   if (!s?.pinHash) return { ok: false, error: "noPin" };
-  if (Number(s.pinFailures) >= FACTORY_PIN_TRIES) return { ok: false, error: "pinLocked" };
+  /* The try is COUNTED before the PIN is checked, in one guarded statement.
+     Read-then-increment let a burst of parallel guesses all see 0 failures
+     while the slow hash ran, so the whole 10,000-PIN space could be tried at
+     once. A right PIN gives its try back below. */
+  const [claimed] = (await db.execute(sql`
+    update factory_staff set pin_failures = pin_failures + 1, updated_at = now()
+     where user_id = ${user.id} and pin_failures < ${FACTORY_PIN_TRIES}
+     returning pin_failures as "pinFailures"`)) as unknown as { pinFailures: number }[];
+  if (!claimed) return { ok: false, error: "pinLocked" };
   if (!/^\d{4}$/.test(String(pin)) || !(await verifyPassword(String(pin), s.pinHash))) {
     await recordSignInFailure(account, address);
-    const [n] = (await db.execute(sql`
-      update factory_staff set pin_failures = pin_failures + 1, updated_at = now()
-       where user_id = ${user.id} returning pin_failures as "pinFailures"`)) as unknown as { pinFailures: number }[];
-    const left = FACTORY_PIN_TRIES - Number(n?.pinFailures ?? FACTORY_PIN_TRIES);
+    const left = FACTORY_PIN_TRIES - Number(claimed.pinFailures);
     if (left <= 0) {
       const fc = await contextFor(user);
       if (fc) await factoryAudit(fc, "factory.pin-locked", null, `${FACTORY_PIN_TRIES} wrong PINs — PIN shut until a new one is set`);

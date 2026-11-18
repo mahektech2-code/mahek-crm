@@ -24,7 +24,7 @@ import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { LEAD_VIEWS, VIEW_CHIPS, VIEW_TEXT, viewFromParam } from "@/lib/lead-views";
 import { leadsPage } from "@/lib/services/sales-service";
 import { leadWorklistCounts } from "@/lib/services/lead-views-service";
-import { leadsWithoutNextAction } from "@/lib/services/lead-console-service";
+import { leadsWithoutNextAction, prospectiveDistributors } from "@/lib/services/lead-console-service";
 import { outstandingHandovers } from "@/lib/services/lead-oversight-service";
 import { pipelineList } from "@/lib/sales-lead-pipeline/sales-manager-pipeline-service";
 import { testPhone } from "@/lib/test-phone";
@@ -343,5 +343,17 @@ describe("nothing was moved by moving the question", () => {
     assert.equal((await outstandingHandovers()).total, 0);
     const [row] = await db.select().from(customers).where(eq(customers.leadStage, "qualification")).limit(1);
     assert.ok(row);
+  });
+});
+
+describe("prospective distributors", () => {
+  test("the desk reads, and carries the lead's phone", async () => {
+    // It selected c.mobile, a column customers never had, and the screen
+    // showed its error boundary to everybody who opened it.
+    const lead = await makeLead({ leadSalesType: "distributor" });
+    const { rows, total } = await prospectiveDistributors(DAY);
+    assert.equal(total, 1);
+    assert.equal(rows[0].customerId, lead.id);
+    assert.equal(rows[0].mobile, lead.phone);
   });
 });

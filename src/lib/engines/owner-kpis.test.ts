@@ -520,6 +520,15 @@ describe("the owner's periods", () => {
     );
   });
 
+  test("a whole month is compared with the whole of the month before", () => {
+    // April against all of March, not 1-30 March; February against all of January.
+    assert.deepEqual(comparableRange({ from: "2026-04-01", to: "2026-04-30" }, "last-month"), { from: "2026-03-01", to: "2026-03-31" });
+    assert.deepEqual(comparableRange({ from: "2026-02-01", to: "2026-02-28" }, "last-month"), { from: "2026-01-01", to: "2026-01-31" });
+    assert.deepEqual(comparableRange({ from: "2026-01-01", to: "2026-03-31" }, "last-quarter"), { from: "2025-10-01", to: "2025-12-31" });
+    // A single last day is still a single day.
+    assert.deepEqual(comparableRange({ from: "2026-04-30", to: "2026-04-30" }, "month"), { from: "2026-03-30", to: "2026-03-30" });
+  });
+
   test("same window last year is the same dates", () => {
     assert.deepEqual(sameRangeLastYear({ from: "2026-08-01", to: "2026-08-22" }), {
       from: "2025-08-01",

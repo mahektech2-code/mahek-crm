@@ -152,6 +152,17 @@ test("wrong guesses run out, and then even the right code is refused", async () 
   if (!r.ok) assert.match(r.error, /Too many wrong tries/);
 });
 
+test("guesses sent all at once use up the tries as they arrive, not all at once", async () => {
+  await configure();
+  await sendOtp(priya.id, "login");
+  const wrong = lastCode === "000000" ? "111111" : "000000";
+  const answers = await Promise.all(Array.from({ length: 20 }, () => verifyOtp(priya.id, "login", wrong)));
+  const counted = answers.filter((a) => !a.ok && /not right/.test(a.error)).length;
+  assert.equal(counted, 5, "exactly the allowance is compared; the rest are refused unread");
+  const [row] = await db.select().from(authOtps).where(eq(authOtps.userId, priya.id));
+  assert.equal(row.attempts, 5);
+});
+
 test("an expired code is refused and says to ask again", async () => {
   await configure();
   await sendOtp(priya.id, "login");

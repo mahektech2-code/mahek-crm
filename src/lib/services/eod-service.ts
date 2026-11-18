@@ -26,6 +26,7 @@ import {
 } from "../engines/eod";
 import { today } from "../recompute";
 import { billedInMonthSql, orderCountsSql } from "../order-status";
+import { creditedToSql } from "../sales-attribution";
 import {
   monthKey,
   rangeBoundaryWindow,
@@ -155,13 +156,20 @@ export async function eodMetricsForRange(
         and m.status in ('sent_manually','sent','delivered','read')
         and coalesce(m.confirmed_sent_at, m.sent_at) >= ${w.start}::timestamptz
         and coalesce(m.confirmed_sent_at, m.sent_at) <  ${w.end}::timestamptz)::int as whatsapp_sent,
+      -- Whose month a customer counts towards is the credited seat
+      -- (creditedToSql: sales seat, else back office), over the population
+      -- Monthly Targets measures: direct, not deactivated. owner_id is where
+      -- the account STARTED, and a handover never moves it.
       (select coalesce(sum(t.target_amount),0) from monthly_targets t
         join customers cu on cu.id = t.customer_id
-        where cu.owner_id = ${userId} and t.year = ${year} and t.month = ${month}) as target_amount,
+        where ${creditedToSql("cu")} = ${userId}
+          and cu.kind = 'customer' and not cu.third_party and cu.status <> 'deactivated'
+          and t.year = ${year} and t.month = ${month}) as target_amount,
       -- Measured against the SAME customers the target above sums, by bill
       -- date, net of GST — billedInMonthSql, what Monthly Targets reads.
       (select coalesce(sum(${billedInMonthSql("cu.id", period)}),0) from customers cu
-        where cu.owner_id = ${userId}) as target_achieved
+        where ${creditedToSql("cu")} = ${userId}
+          and cu.kind = 'customer' and not cu.third_party and cu.status <> 'deactivated') as target_achieved
   `);
 
   const n = (k: string) => Number(row?.[k] ?? 0);

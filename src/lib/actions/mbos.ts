@@ -3320,22 +3320,9 @@ async function handlePayment(principal: MbosPrincipal, item: SyncItem): Promise<
 
     // A remainder becomes money on account rather than being refused at the
     // door: refusing it is how a receipt gets recorded for the wrong amount to
-    // make the screen accept it.
-    if (allocation.onAccount > 0) {
-      await tx.insert(payments).values({
-        id: gen("pay"),
-        receiptId: item.entityId,
-        billId: null,
-        customerId: customer.id,
-        amount: allocation.onAccount,
-        paidAt: receivedAt,
-        mode: p.mode ?? "Cash",
-        reference: p.reference ?? null,
-        externalRef: serverNumber,
-        recordedById: principal.user.id,
-        createdById: principal.user.id,
-      });
-    }
+    // make the screen accept it. allocate() already puts that remainder in
+    // allocation.lines as a billId-null line, so the loop above has written
+    // it. A second insert here used to record it twice.
 
     await writeTimeline(tx, {
       customerId: customer.id,

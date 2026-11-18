@@ -234,8 +234,24 @@ export function buildQueue(
      * visit, or leaving them alone. Presenting them as an ordinary order call
      * beside that would invite a sixth unanswered ring.
      */
+    // A reminder is a promise the telecaller made. It overrides the quiet
+    // window and the no-order cooldown, but not do-not-contact.
+    const hasReminderReason = all.some(
+      (r) => r.kind === "reminderOverdue" || r.kind === "reminderDueToday",
+    );
+
+    // Facts about the WHOLE customer (see the note where `held` is used
+    // below). Read before the unreachable branch too: that branch used to
+    // push and continue first, so a customer marked do-not-contact after the
+    // ladder ran out came back every single day.
+    const held = suppressionReason(c, today, config, hasReminderReason, nowMs);
+
     const unreachable = all.find((r) => r.kind === "unreachable");
     if (unreachable) {
+      if (held) {
+        suppressed.push({ customerId: c.customerId, name: c.name, reason: held });
+        continue;
+      }
       entries.push({
         customerId: c.customerId,
         name: c.name,
@@ -250,12 +266,6 @@ export function buildQueue(
       });
       continue;
     }
-
-    // A reminder is a promise the telecaller made. It overrides the quiet
-    // window and the no-order cooldown, but not do-not-contact.
-    const hasReminderReason = all.some(
-      (r) => r.kind === "reminderOverdue" || r.kind === "reminderDueToday",
-    );
 
     // The quiet window silences ORDER CHASING, not the customer. Order reasons
     // are stripped rather than the whole customer suppressed, so a telecaller
@@ -310,8 +320,8 @@ export function buildQueue(
     // the standing instruction never appears anywhere.
     //
     // Only the sentence moves. A customer held by either is held by both, so
-    // nobody enters or leaves the list because of this.
-    const held = suppressionReason(c, today, config, hasReminderReason, nowMs);
+    // nobody enters or leaves the list because of this. (`held` is read at
+    // the top of the loop.)
 
     if (!reasons.length) {
       // Nothing left but a reason one of the four windows says not yet. Shown
