@@ -225,6 +225,7 @@ export const NAV: NavGroup[] = [
         icon: "people",
       },
       { href: at("/leads/lost"), label: "Lost", icon: "warning" },
+      { href: at("/leads/dead"), label: "Dead Leads", icon: "lock" },
       /* ---- out of the main navigation; see `NavItem.legacy` -------------- */
       {
         href: at("/leads/funnel"),

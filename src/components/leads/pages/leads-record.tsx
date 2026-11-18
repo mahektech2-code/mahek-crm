@@ -3,6 +3,8 @@ import { canVerifyLeadById, gstValidatorRefusalById, qualificationCollectorRefus
 import { callRefusalFor } from "@/lib/services/qualification-call-gate";
 import { nextActionOwnerCandidates } from "@/lib/services/lead-actions-service";
 import { sampleEligibility } from "@/lib/services/lead-qualification-flow-service";
+import { deadFactsOf } from "@/lib/services/lead-dead-service";
+import { DeadRecordBar } from "@/components/leads/dead/dead-record-bar";
 import { type LeadWorkspace } from "@/lib/lead-workspace";
 import { qualificationAccess } from "@/lib/lead-qualification-access";
 import { canOpenModule } from "@/lib/access";
@@ -116,6 +118,9 @@ export async function Body({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { id } = await params;
+  /* A permanently Dead lead is read-only: every control below that would act on
+     it is withheld, and the server and the database refuse it regardless. */
+  const dead = Boolean((await deadFactsOf(id)).deadAt);
   const query = await searchParams;
   const day = await today();
   const user = await requireUser();
@@ -309,6 +314,8 @@ export async function Body({
   };
 
   return (
+    <>
+    <DeadRecordBar leadId={id} />
     <LeadRecordScreen workspace={workspace}
       record={record}
       photoIds={photoIds}
@@ -362,24 +369,24 @@ export async function Body({
       parkCandidates={await nextActionOwnerCandidates()}
       discountThresholdPercent={config["leads.distributorDiscountApprovalPercent"]}
       creditLimitThresholdPaise={config["leads.distributorCreditLimitApprovalPaise"]}
-      canVerify={await canVerifyLeadById(user, id, { designated: true })}
+      canVerify={(await canVerifyLeadById(user, id, { designated: true })) && !dead}
       callLockedReason={await callRefusalFor(id)}
-      canWork={await canLead(user, "lead.work")}
+      canWork={(await canLead(user, "lead.work")) && !dead}
       qualifyBarred={await qualificationCollectorRefusalById(user, id)}
-      canTrash={await canFor(user, "lead.trash")}
+      canTrash={(await canFor(user, "lead.trash")) && !dead}
       /* §22 — naming who RUNS the relationship, which moves no revenue and no
          target and is therefore a manager's. Moving the sales seat is the
          other act, stays accounts' and admin's under `customer.reassign`, and
          is done on the customer record. Refused by the capability in the
          action as well as here — a server action is a URL. */
-      canHandOver={await canLead(user, "customer.handOver")}
+      canHandOver={(await canLead(user, "customer.handOver")) && !dead}
       /* Moving a lead off the retired distributor ladder. `lead.override` on
          its own, and not the line below it: that one is the same capability
          AND `leads.allowManagerOverride`, which is about passing a shut gate.
          This passes none — the ladder was retired underneath these leads and
          nobody in the building can give the approval it ends at — so the
          action does not read that setting and neither does this. */
-      canMigrate={await canLead(user, "lead.override")}
+      canMigrate={(await canLead(user, "lead.override")) && !dead}
       /* §2 — moving a lead onto a different LADDER once it is past Prospect.
          The same capability `holdsOverride` reads inside `setLeadSalesType`,
          and deliberately not `canOverride` below it: that one is the
@@ -388,7 +395,7 @@ export async function Body({
          started on, and the answers underneath it are what the reason the
          action demands is for. Below Prospect the action asks for neither, and
          the control asks for neither either. */
-      canChangeLadder={await canLead(user, "lead.override")}
+      canChangeLadder={(await canLead(user, "lead.override")) && !dead}
       /* §7 — who covers this lead's region, as the action's own default
          function answered it. The head of this list is the person
          `assignLeadManager` seats when nobody names anybody, so the picker and
@@ -396,22 +403,23 @@ export async function Body({
       leadManagers={leadManagers}
       assignees={await ownerChoices()}
       canReassign={
-        (await canLead(user, "lead.verify")) && (await canOpenModule(user.id, DESK_MODULE))
+        (await canLead(user, "lead.verify")) && (await canOpenModule(user.id, DESK_MODULE)) && !dead
       }
       canReassignSalesman={
         (await canOpenModule(user.id, "crm.sales-manager")) &&
-        (await workableLeadIds([record.customerId], user.id)).length > 0
+        (await workableLeadIds([record.customerId], user.id)).length > 0 &&
+        !dead
       }
-      canOverride={(await canLead(user, "lead.override")) && config["leads.allowManagerOverride"]}
+      canOverride={(await canLead(user, "lead.override")) && config["leads.allowManagerOverride"] && !dead}
       /* §4.1 — how hard to push this lead is the manager's word, and
          `lead.verify` is the capability that already means exactly that: the
          sales manager's own judgement about a lead, which the salesman working
          it may not make about his own work. The action asks for the same one —
          a server action is a URL. See `actions/lead-priority.ts` for why
          `lead.override` and `lead.work` were the wrong two to reach for. */
-      canPrioritise={await canLead(user, "lead.verify")}
+      canPrioritise={(await canLead(user, "lead.verify")) && !dead}
       /* §11.6 — the answer and the sentence, never the rule itself. */
-      canValidateGst={canValidateGst}
+      canValidateGst={canValidateGst && !dead}
       gstBlockedReason={gstBlockedReason}
       /* §5.3 — the SAME boolean the engine was given, so the panel and the
          rail cannot say different things about one lead on one afternoon. */
@@ -454,6 +462,7 @@ export async function Body({
       })}
       openCall={single(query.call) === "1"}
     />
+    </>
   );
 }
 

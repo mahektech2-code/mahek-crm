@@ -1,5 +1,6 @@
 import "server-only";
 import { eq, sql } from "drizzle-orm";
+import { DEAD_SKIP_REASON, deadLeadIds, recordDeadSkips, type DeadSkip } from "./lead-dead-service";
 import { randomUUID } from "node:crypto";
 import { db } from "@/db";
 import { customers, sheetCustomerMasterRows } from "@/db/schema";
@@ -210,6 +211,9 @@ export async function projectCustomerMaster(
     result.heldReasons[reason] = (result.heldReasons[reason] ?? 0) + 1;
   };
 
+  const deadIds = await deadLeadIds();
+  const deadSkips: DeadSkip[] = [];
+
   for (const row of staged) {
     result.considered++;
 
@@ -294,6 +298,15 @@ export async function projectCustomerMaster(
     if (pin) result.withGps++;
 
     const existingId = existingByKey.get(key);
+
+    /* A PERMANENTLY DEAD LEAD IS NOT ENRICHED. Held through the same `hold`
+       every other refusal uses, so it is counted in `heldReasons` and printed
+       in the run's detail, and the rest of the master carries on. */
+    if (existingId && deadIds.has(existingId)) {
+      hold(DEAD_SKIP_REASON);
+      deadSkips.push({ customerId: existingId, name: row.customerName, what: "shop master enrichment" });
+      continue;
+    }
 
     /*
      * Counted HERE rather than inside the write, so a dry run reports the one
@@ -384,6 +397,8 @@ export async function projectCustomerMaster(
         .where(eq(sheetCustomerMasterRows.id, row.id));
     }
   }
+
+  if (!dryRun) await recordDeadSkips("sheet.customer-master", deadSkips);
 
   const held = Object.entries(result.heldReasons)
     .map(([r, n]) => `${n} ${r}`)

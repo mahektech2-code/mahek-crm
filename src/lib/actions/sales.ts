@@ -47,6 +47,7 @@ import {
 import { applyAccountManagerChange } from "@/lib/services/account-manager-service";
 import { salesGateRefusal, scopeCovers } from "@/lib/sales-gate";
 import { inCrmSalesManagerWorkspace } from "@/lib/services/crm-sales-manager-scope";
+import { deadFactsFor } from "@/lib/services/lead-dead-service";
 import { getConfig, updateSettings } from "@/lib/config/store";
 import { bindAttachments } from "@/lib/services/attachment-service";
 import { APP_TIMEZONE } from "@/lib/business-date";
@@ -2973,13 +2974,24 @@ async function bulkLeads(
 ): Promise<{ leads: ScopedLead[]; missing: BulkOutcome["failed"] }> {
   const wanted = bulkIds(ids);
   if (!wanted.length) return { leads: [], missing: [] };
-  const leads = await leadsInScope(wanted);
-  const found = new Set(leads.map((l) => l.id));
+  const inScope = await leadsInScope(wanted);
+  const found = new Set(inScope.map((l) => l.id));
+  /* A PERMANENTLY DEAD LEAD IS READ-ONLY, so none of the four bulk writes may
+     touch it. It is named back as not done rather than silently dropped, and
+     the database refuses it too — this only keeps one Dead row from failing
+     the whole selection. */
+  const dead = await deadFactsFor(inScope.map((l) => l.id));
+  const leads = inScope.filter((l) => !dead.get(l.id)?.deadAt);
   return {
     leads,
-    missing: wanted
-      .filter((id) => !found.has(id))
-      .map((id) => ({ id, name: "A lead", why: "no longer here, or not yours to change" })),
+    missing: [
+      ...wanted
+        .filter((id) => !found.has(id))
+        .map((id) => ({ id, name: "A lead", why: "no longer here, or not yours to change" })),
+      ...inScope
+        .filter((l) => dead.get(l.id)?.deadAt)
+        .map((l) => ({ id: l.id, name: l.name, why: "permanently Dead and read-only" })),
+    ],
   };
 }
 

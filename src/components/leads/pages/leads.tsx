@@ -281,6 +281,7 @@ export async function Body({
       /* Deleting moves a lead to the trash — a manager's, checked again in
          `trashLeads`. Restoring is the Admin Console's alone. */
       canTrash={await canFor(user, "lead.trash")}
+      canMarkDead={await canLead(user, "lead.work")}
       /* WORDS, never rights. See `lib/lead-vantage.ts` — this decides which
          instruction each row prints and nothing whatever about what may be
          done to the lead, which every action goes on checking for itself. */

@@ -1835,6 +1835,10 @@ export type LeadRow = {
   archived: boolean;
   archivedAt: Date | null;
   lostReason: string | null;
+  /** When the lead was made permanently Dead, or null. */
+  deadAt: string | null;
+  /** A request to mark it Dead is waiting on its manager. */
+  deadRequestPending: boolean;
   /** Set on conversion. The lead is not deleted — it is where the account began. */
   convertedCustomerId: string | null;
   convertedAt: Date | null;
@@ -2007,6 +2011,9 @@ const LEAD_ROW_SELECT = sql`
            c.lead_archived as archived,
            c.lead_archived_at as "archivedAt",
            c.lead_lost_reason as "lostReason",
+           c.lead_dead_at::text as "deadAt",
+           exists (select 1 from lead_dead_requests dr
+                    where dr.customer_id = c.id and dr.state = 'pending') as "deadRequestPending",
            case when c.lead_converted_at is not null then c.id end as "convertedCustomerId",
            c.lead_converted_at as "convertedAt",
            case when c.lead_converted_at is not null then c.health_score end as "customerHealthScore",

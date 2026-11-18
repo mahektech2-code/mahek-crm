@@ -1,5 +1,6 @@
 "use server";
 
+import { deadFactsFor } from "@/lib/services/lead-dead-service";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
@@ -246,6 +247,19 @@ export async function assignSalesManager(
           ? "Those customers no longer exist."
           : "Nothing matches those filters.",
         "not_found",
+      );
+    }
+
+    /* A permanently Dead lead is read-only: its seats cannot be moved by anybody.
+       Refused whole rather than quietly skipped, so a selection that included one
+       is never reported as done. The Sales Manager column is a cache the nightly
+       pass may still rewrite; the HUMAN act of choosing one is what is blocked. */
+    const deadHere = await deadFactsFor(rows.map((r) => r.id));
+    const deadNames = rows.filter((r) => deadHere.get(r.id)?.deadAt).map((r) => r.name);
+    if (deadNames.length) {
+      return err(
+        `${deadNames.slice(0, 3).join(", ")}${deadNames.length > 3 ? ` and ${deadNames.length - 3} more` : ""} ${deadNames.length === 1 ? "is" : "are"} permanently Dead and read-only, so ${deadNames.length === 1 ? "its" : "their"} manager cannot be changed. Take ${deadNames.length === 1 ? "it" : "them"} out of the selection.`,
+        "rule_violation",
       );
     }
 

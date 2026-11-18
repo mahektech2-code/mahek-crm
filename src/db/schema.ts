@@ -1540,6 +1540,19 @@ export const customers = pgTable(
     leadArchived: boolean("lead_archived").notNull().default(false),
     leadArchivedAt: timestamp("lead_archived_at", { withTimezone: true }),
     /**
+     * PERMANENTLY DEAD — a subset of Lost, never a stage of its own.
+     *
+     * Set once, by `decideLeadDead`, when the requester's reporting manager
+     * approves. `lead_stage` stays `lost`, so every Lost count, filter and
+     * history reads exactly as before. NULL means not dead; once set, a
+     * trigger (`customers_dead_lead_lock`, migration 0189) refuses every change
+     * to the row's business state and this column can never be cleared.
+     * Whether a request is merely PENDING is in `lead_dead_requests`.
+     */
+    leadDeadAt: timestamp("lead_dead_at", { withTimezone: true }),
+    leadDeadById: text("lead_dead_by_id").references(() => users.id),
+    leadDeadRequestId: text("lead_dead_request_id"),
+    /**
      * Derived cache: the last day anything happened on this LEAD. Its own
      * column rather than `lastContactDate`, which is the CRM's cache of calls
      * and confirmed WhatsApp — folding the two would let a nightly recompute
@@ -7389,6 +7402,62 @@ export const leadStageTransitions = pgTable(
        optional: several transitions of one lead share a second. */
     index("lead_stage_transitions_customer_idx").on(t.customerId, t.at, t.id),
     index("lead_stage_transitions_stage_idx").on(t.toStage, t.at),
+  ],
+);
+
+/**
+ * A REQUEST TO MAKE A LOST LEAD PERMANENTLY DEAD, and what became of it.
+ *
+ * One row per ask, kept for ever: a rejected request stays in the history and
+ * the employee may ask again, so the table is a log and never a flag on the
+ * lead. The approver is RESOLVED AND STORED at submission from the Org Chart
+ * (`users.employee_id` → `employee_reporting.manager_id` → that employee's
+ * linked user) and is the only person who may decide it; nobody is ever
+ * substituted if they are away, and a request that cannot be routed is not
+ * written at all.
+ *
+ * The rules are also held by the database (migration 0189) because the actions
+ * are not the only writers: one pending request per lead (partial unique
+ * index), no self-approval, only the stored approver may decide, and only a
+ * Lost lead may be asked about.
+ */
+export const leadDeadRequests = pgTable(
+  "lead_dead_requests",
+  {
+    id: text("id").primaryKey(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id),
+    requestedById: text("requested_by_id")
+      .notNull()
+      .references(() => users.id),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+    /** A code from `leads.deadReasons`. */
+    reasonCode: text("reason_code").notNull(),
+    note: text("note"),
+    /** Resolved from the Org Chart at submission and never re-routed. */
+    approverId: text("approver_id")
+      .notNull()
+      .references(() => users.id),
+    requesterEmployeeId: text("requester_employee_id"),
+    approverEmployeeId: text("approver_employee_id"),
+    /** `pending` · `approved` · `rejected` · `withdrawn` (by the person who asked, before a decision). */
+    state: text("state").notNull().default("pending"),
+    /** Whoever closed it: the approver for approved / rejected, the requester for withdrawn. */
+    decidedById: text("decided_by_id").references(() => users.id),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    /** Mandatory on a rejection. */
+    decisionNote: text("decision_note"),
+    /** The Lost reason and the rung it was lost from, as they stood when asked. */
+    lostReasonAtRequest: text("lost_reason_at_request"),
+    lostFromStageAtRequest: text("lost_from_stage_at_request"),
+  },
+  (t) => [
+    uniqueIndex("lead_dead_requests_one_pending_key")
+      .on(t.customerId)
+      .where(sql`state = 'pending'`),
+    index("lead_dead_requests_approver_idx").on(t.approverId, t.state, t.requestedAt),
+    index("lead_dead_requests_customer_idx").on(t.customerId, t.requestedAt),
   ],
 );
 

@@ -13,6 +13,7 @@ import {
   HeadCell,
   Pill,
   Row,
+  RowMenu,
   ScreenHeader,
   Table,
   plural,
@@ -20,6 +21,8 @@ import {
 import { shortDate } from "@/lib/format";
 import { SALES_TYPE_BUCKETS, type FilterOption } from "@/lib/lead-filters";
 import { BulkReopenDialog, ReopenLostDialog, type ReopenOffer } from "./reopen-lost-dialog";
+import { MarkDeadDialog } from "@/components/leads/dead/mark-dead-dialog";
+import { deadRequestEligibility } from "@/lib/lead-dead";
 import {
   ALL_LEAD_STAGES,
   LOST_REASONS,
@@ -70,7 +73,10 @@ export function LostLeadsScreen({
   ownerOptions,
   tiles,
   reopen = null,
+  canMarkDead = false,
 }: {
+  /** Holds `lead.work` — the one thing asking for Dead needs. The server asks again. */
+  canMarkDead?: boolean;
   /** Set only for somebody who holds one of the two reverse doors. Null leaves the list read-only. */
   reopen?: ReopenOffer | null;
   workspace: LeadWorkspace;
@@ -102,6 +108,8 @@ export function LostLeadsScreen({
      that left, so a hidden selection can never be reversed by accident. */
   const [picked, setPicked] = React.useState<Set<string>>(new Set());
   const [bulkOpen, setBulkOpen] = React.useState(false);
+  const [marking, setMarking] = React.useState<LostLeadRow | null>(null);
+  const hasActions = Boolean(reopen) || canMarkDead;
 
   const navigate = React.useCallback(
     (patch: Record<string, string | number | undefined>) => {
@@ -232,7 +240,7 @@ export function LostLeadsScreen({
               ) : null}
               <Table
                 chrome={false}
-                minWidth={reopen ? 1424 : 1270}
+                minWidth={hasActions ? 1424 : 1270}
                 head={
                   <>
                     {reopen ? (
@@ -258,7 +266,7 @@ export function LostLeadsScreen({
                     <HeadCell width={120}>Lost date</HeadCell>
                     <HeadCell width={150}>Lost by</HeadCell>
                     <HeadCell width={130}>Last activity</HeadCell>
-                    {reopen ? <HeadCell width={110}>Reverse</HeadCell> : null}
+                    {hasActions ? <HeadCell width={110}>Actions</HeadCell> : null}
                   </>
                 }
               >
@@ -284,6 +292,15 @@ export function LostLeadsScreen({
                       >
                         {l.name}
                       </Link>
+                      {l.deadAt ? (
+                        <span className="mt-0.5 block" title="Permanently Dead — read-only. It can be viewed but never changed or reopened.">
+                          <Pill tone="danger">Dead</Pill>
+                        </span>
+                      ) : l.deadRequestPending ? (
+                        <span className="mt-0.5 block" title="A request to mark this lead Dead is waiting on its manager. It cannot be reversed meanwhile.">
+                          <Pill tone="warn">Dead request pending</Pill>
+                        </span>
+                      ) : null}
                       <span className="block truncate text-[12px] text-muted">
                         {[l.companyName, l.city].filter(Boolean).join(" · ") || l.mobile || "—"}
                       </span>
@@ -324,18 +341,20 @@ export function LostLeadsScreen({
                     <Cell>
                       {l.lastActivityDate ? shortDate(l.lastActivityDate) : <span className="text-muted">—</span>}
                     </Cell>
-                    {reopen ? (
-                      <Cell>
-                        {/* The desk may not take back a loss the Sales Manager closed on a failed
-                            verification — the server refuses it too, this only keeps the button honest. */}
-                        {reopen.seat === "calling_desk" && l.lostReason === VERIFICATION_FAILED_CODE ? (
-                          <span className="text-[12px] text-muted" title="Closed on a failed verification — the Sales Manager's to reverse.">
-                            Manager only
+                    {hasActions ? (
+                      <Cell align="right" onClick={(e: React.MouseEvent) => e.stopPropagation()}>
+                        {l.deadAt ? (
+                          <span className="text-[12px] text-muted" title="Permanently Dead — nothing can be done to it.">
+                            Read-only
                           </span>
                         ) : (
-                          <Button onClick={() => setReversing(l)}>
-                            Reverse
-                          </Button>
+                          <LostRowActions
+                            lead={l}
+                            reopen={reopen}
+                            canMarkDead={canMarkDead}
+                            onReverse={() => setReversing(l)}
+                            onMarkDead={() => setMarking(l)}
+                          />
                         )}
                       </Cell>
                     ) : null}
@@ -367,6 +386,7 @@ export function LostLeadsScreen({
           }}
         />
       ) : null}
+      {marking ? <MarkDeadDialog key={marking.id} lead={marking} onClose={() => setMarking(null)} /> : null}
       {reversing && reopen ? (
         <ReopenLostDialog key={reversing.id} lead={reversing} offer={reopen} onClose={() => setReversing(null)} />
       ) : null}
@@ -596,4 +616,57 @@ function Pager({
       </span>
     </div>
   );
+}
+
+/**
+ * One row's actions: Reverse (for the two doors that hold it) and Mark as Dead.
+ *
+ * Both are drawn on every Lost row and DISABLED, with the reason, where they do
+ * not apply — a control that vanishes teaches nobody why. A pending Dead request
+ * disables Reverse (the loss is frozen until its manager answers); the server
+ * and the database refuse it too.
+ */
+function LostRowActions({
+  lead,
+  reopen,
+  canMarkDead,
+  onReverse,
+  onMarkDead,
+}: {
+  lead: LostLeadRow;
+  reopen: ReopenOffer | null;
+  canMarkDead: boolean;
+  onReverse: () => void;
+  onMarkDead: () => void;
+}) {
+  const dead = deadRequestEligibility({ stage: "lost", deadAt: lead.deadAt, pending: lead.deadRequestPending });
+  const deskBlocked = reopen?.seat === "calling_desk" && lead.lostReason === VERIFICATION_FAILED_CODE;
+  const items = [
+    ...(reopen
+      ? [
+          {
+            label: "Reverse Lead",
+            run: onReverse,
+            disabled: deskBlocked || lead.deadRequestPending,
+            title: deskBlocked
+              ? "Closed on a failed verification — the Sales Manager's to reverse."
+              : lead.deadRequestPending
+                ? "A request to mark this lead Dead is waiting on its manager, so it cannot be reversed until that is decided."
+                : undefined,
+          },
+        ]
+      : []),
+    ...(canMarkDead
+      ? [
+          {
+            label: "Mark as Dead",
+            danger: true,
+            run: onMarkDead,
+            disabled: !dead.offer,
+            title: dead.offer ? undefined : dead.reason,
+          },
+        ]
+      : []),
+  ];
+  return <RowMenu items={items} />;
 }

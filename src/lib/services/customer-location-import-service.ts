@@ -1,5 +1,6 @@
 import "server-only";
 import { inArray, sql } from "drizzle-orm";
+import { DEAD_SKIP_REASON, recordDeadSkips } from "./lead-dead-service";
 import { db } from "@/db";
 import { fieldCustomerPins } from "@/db/schema";
 import { parseCsv } from "@/lib/csv";
@@ -177,7 +178,7 @@ export async function importCustomerLocationsCsv(
   };
 }
 
-export type ApplyGpsOutcome = { applied: number };
+export type ApplyGpsOutcome = { applied: number; skippedDead: number };
 
 /**
  * Writes coordinates from every confidently-matched, not-yet-applied pin
@@ -188,6 +189,24 @@ export type ApplyGpsOutcome = { applied: number };
  */
 export async function applyMatchedGps(): Promise<ApplyGpsOutcome> {
   return db.transaction(async (tx) => {
+    /* A pin that matches a permanently Dead lead is NOT applied — the database
+       would refuse the write and, being one statement, fail every other pin
+       with it. Counted and named; the pin stays unapplied. */
+    const deadPins = await tx.execute<{ id: string; customerId: string; name: string }>(sql`
+      select p.id, c.id as "customerId", c.name
+        from field_customer_pins p
+        join customers c on c.id = p.matched_customer_id
+       where p.customer_match_status = 'matched'
+         and p.lat is not null and p.lng is not null
+         and p.gps_applied_at is null
+         and c.gps_lat is null and c.gps_lng is null
+         and c.lead_dead_at is not null
+    `);
+    await recordDeadSkips(
+      "sheet.field-pins",
+      deadPins.map((r) => ({ customerId: r.customerId, name: r.name, what: DEAD_SKIP_REASON })),
+    );
+
     const applied = await tx.execute<{ id: string }>(sql`
       update customers c
          set gps_lat = p.lat,
@@ -199,6 +218,7 @@ export async function applyMatchedGps(): Promise<ApplyGpsOutcome> {
          and p.lat is not null and p.lng is not null
          and p.gps_applied_at is null
          and c.gps_lat is null and c.gps_lng is null
+         and c.lead_dead_at is null
       returning p.id
     `);
     const pinIds = applied.map((r) => r.id);
@@ -208,6 +228,6 @@ export async function applyMatchedGps(): Promise<ApplyGpsOutcome> {
         .set({ gpsAppliedAt: new Date(), updatedAt: new Date() })
         .where(inArray(fieldCustomerPins.id, pinIds));
     }
-    return { applied: pinIds.length };
+    return { applied: pinIds.length, skippedDead: deadPins.length };
   });
 }

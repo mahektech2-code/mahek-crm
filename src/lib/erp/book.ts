@@ -1,6 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
+import { DEAD_SKIP_REASON, deadLeadIds, recordDeadSkips, type DeadSkip } from "@/lib/services/lead-dead-service";
 import { db } from "@/db";
 import { bills, customers, erpOrderHolds, erpOrders, orders, type OrderLine as BookLine } from "@/db/schema";
 import { APP_TIMEZONE } from "@/lib/business-date";
@@ -167,8 +168,19 @@ async function freeBillNo(tally: string | null, orderNo: number, mine: string | 
   return `ERP-${orderNo}-${randomUUID().slice(0, 4)}`;
 }
 
-async function syncOne(orderNo: number, lines: LineRow[]): Promise<string[]> {
+/** Thrown by `syncOne` BEFORE it writes anything, so a skipped order leaves no half of itself behind. */
+class DeadLeadSkip extends Error {
+  constructor(public readonly customerId: string) {
+    super(DEAD_SKIP_REASON);
+  }
+}
+
+async function syncOne(orderNo: number, lines: LineRow[], dead: Set<string>): Promise<string[]> {
   const ref = bookOrderRef(orderNo);
+  /* An order billed to a permanently Dead lead is not written to the book: the
+     database refuses it. Asked up front, before the first write, so nothing of
+     this order is half done. */
+  if (lines.length && dead.has(lines[0].billing)) throw new DeadLeadSkip(lines[0].billing);
   const [existing] = await db
     .select({ id: orders.id, status: orders.status, approvedAt: orders.approvedAt, customerId: orders.customerId })
     .from(orders)
@@ -286,7 +298,19 @@ export async function syncBookOrders(orderNos: number[]): Promise<void> {
   const unique = [...new Set(orderNos)];
   const all = await linesOf(unique);
   const touched = new Set<string>();
-  for (const n of unique) for (const c of await syncOne(n, all.filter((l) => l.orderNo === n))) touched.add(c);
+  const dead = await deadLeadIds();
+  const skips: DeadSkip[] = [];
+  for (const n of unique) {
+    try {
+      for (const c of await syncOne(n, all.filter((l) => l.orderNo === n), dead)) touched.add(c);
+    } catch (e) {
+      /* ONE DEAD LEAD DOES NOT STOP THE REST. Skipped, named, and every other
+         order in this call is still written. */
+      if (!(e instanceof DeadLeadSkip)) throw e;
+      skips.push({ customerId: e.customerId, what: `ERP order ${n}` });
+    }
+  }
+  await recordDeadSkips("erp.book", skips);
   for (const c of touched) {
     await recomputeBuyingCycle(c);
     await recomputeOutstanding(c);

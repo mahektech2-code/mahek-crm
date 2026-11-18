@@ -1,6 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { and, eq, getTableColumns, inArray, sql } from "drizzle-orm";
+import { DEAD_SKIP_REASON, deadLeadIds, recordDeadSkips, type DeadSkip } from "./lead-dead-service";
 import { db } from "@/db";
 import {
   bills,
@@ -103,6 +104,8 @@ export type ProjectionReport = {
     withoutPhone: number;
     /** Created in nobody's book, so visible on no list. */
     unassigned: number;
+    /** Matched a permanently Dead lead and were left exactly as they are. */
+    skippedDead: number;
   };
   orders: { created: number; updated: number; lines: number };
   bills: {
@@ -511,7 +514,21 @@ export async function projectCustomers(
     }
   }
 
+  /* A PERMANENTLY DEAD LEAD IS NOT UPDATED BY THE SHEET. The database refuses
+     it, and one refused row would fail its whole flight of updates and leave
+     the others half applied — so it is taken out first, counted and named. */
+  const dead = await deadLeadIds();
+  const deadSkips: DeadSkip[] = [];
+  for (let i = toUpdate.length - 1; i >= 0; i -= 1) {
+    if (!dead.has(toUpdate[i].id)) continue;
+    const held = existing.find((c) => c.id === toUpdate[i].id);
+    deadSkips.push({ customerId: toUpdate[i].id, name: held?.name ?? null, what: "customer update from the Sales Party tab" });
+    toUpdate.splice(i, 1);
+    updated -= 1;
+  }
+
   if (!options.dryRun) {
+    await recordDeadSkips("sheet.customers", deadSkips);
     for (const batch of chunked(toInsert)) {
       await db.insert(customers).values(batch);
     }
@@ -524,7 +541,7 @@ export async function projectCustomers(
     }
   }
 
-  return { created, updated, adoptedLeads, withoutPhone, unassigned };
+  return { created, updated, adoptedLeads, withoutPhone, unassigned, skippedDead: deadSkips.length };
 }
 
 /* ---------------------------------------------------------------- orders */
@@ -598,6 +615,8 @@ export async function projectOrders(
   const skipReasons = new Map<string, number>();
   const skip = (reason: string) =>
     skipReasons.set(reason, (skipReasons.get(reason) ?? 0) + 1);
+  const deadForOrders = await deadLeadIds();
+  const deadOrderSkips: DeadSkip[] = [];
 
   for (const [orderNumber, group] of grouped) {
     const head = group[0];
@@ -607,6 +626,14 @@ export async function projectOrders(
 
     if (!customerId) {
       skip("no matching customer for the billing party");
+      continue;
+    }
+    /* An order for a permanently Dead lead is not written — the database would
+       refuse it, and the batch it was in with it. Skipped, said so, and the
+       rest of the sheet carries on. */
+    if (deadForOrders.has(customerId)) {
+      skip(DEAD_SKIP_REASON);
+      deadOrderSkips.push({ customerId, name: head.billingPartyName, what: `sheet order ${orderNumber}` });
       continue;
     }
     if (!head.orderDate) {
@@ -765,6 +792,8 @@ export async function projectOrders(
     // actually changed something.
     updated = Math.max(0, written - created);
   }
+
+  if (!options.dryRun) await recordDeadSkips("sheet.orders", deadOrderSkips);
 
   return {
     orders: { created, updated, lines: lineCount },
@@ -1432,7 +1461,7 @@ export async function projectSheet(
   if ((await getConfig())["erp.orders.live"]) {
     const none = { created: 0, updated: 0, payments: 0, paidWithoutDate: 0, blankStatus: 0, clashed: 0, unstated: 0, skipped: true };
     return {
-      customers: { created: 0, updated: 0, adoptedLeads: 0, withoutPhone: 0, unassigned: 0 },
+      customers: { created: 0, updated: 0, adoptedLeads: 0, withoutPhone: 0, unassigned: 0, skippedDead: 0 },
       orders: { created: 0, updated: 0, lines: 0 },
       bills: none,
       skipped: [{ reason: "the ERP takes the orders (erp.orders.live), so the order tab writes no customers, orders or bills", count: 0 }],
@@ -1441,7 +1470,12 @@ export async function projectSheet(
 
   const customerResult = await projectCustomers(options);
 
-  const { orders: orderResult, skipped } = await projectOrders(options);
+  const { orders: orderResult, skipped: orderSkips } = await projectOrders(options);
+  /* The customer pass Dead skips join the order pass, in the one list the
+     report and the Admin Console already print. */
+  const skipped = customerResult.skippedDead
+    ? [...orderSkips, { reason: DEAD_SKIP_REASON + " (customer update)", count: customerResult.skippedDead }]
+    : orderSkips;
 
   // A sales bill is the order, so bills come from the order history by
   // default and every one starts settled EXCEPT the ones the Payment Status
