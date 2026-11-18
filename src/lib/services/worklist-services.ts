@@ -434,8 +434,14 @@ export async function completeReminder(
     .from(reminders)
     .where(eq(reminders.id, reminderId));
   if (!existing) return err("That reminder no longer exists.", "not_found");
+  /* Only a pending reminder is completed. A dismissed one keeps the reason
+     somebody gave for it, and a completed one keeps who closed it and how. */
+  if (existing.status === "completed") return okVoid("Already completed");
+  if (existing.status !== "pending") {
+    return err("That reminder was dismissed. It cannot be completed now.", "conflict");
+  }
 
-  await db
+  const moved = await db
     .update(reminders)
     .set({
       status: "completed",
@@ -449,7 +455,10 @@ export async function completeReminder(
       updatedAt: new Date(),
       updatedById: ctx.user.id,
     })
-    .where(eq(reminders.id, reminderId));
+    .where(and(eq(reminders.id, reminderId), eq(reminders.status, "pending")))
+    .returning({ id: reminders.id });
+  // Closed by somebody (or by evidence) between the read and the write.
+  if (!moved.length) return okVoid("Already closed");
 
   await db.insert(auditLog).values({
     id: id("aud"),
