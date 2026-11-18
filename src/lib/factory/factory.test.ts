@@ -27,7 +27,7 @@ import { isLorryTask, lorryKeyOf, stepsOf, boxCode, stickerCode, emptyBoxShort, 
 import { boxInfo, loadBoard, lrKit, saveLr, scanBox, unloadBox } from "./dispatch";
 import { lorryBoard, lorryDecide, lorryFind, lorryOverride, lorryScan, lorryUnload, lorryWords } from "./lorry";
 import { lorryScanBatch } from "./scan-batch";
-import { factoryFindPhone, factorySetPin, factorySignInPin } from "@/lib/actions/factory";
+import { factoryFindBadge, factoryFindPhone, factorySetPin, factorySignInPin } from "@/lib/actions/factory";
 import { lorryPack } from "./lorry-pack";
 import { recordDevice } from "./devices";
 import { listFactoryHandsets } from "@/lib/services/factory-handset-service";
@@ -1489,5 +1489,28 @@ describe("signing in", () => {
     assert.ok(again.ok && !again.who.pinLocked);
     assert.deepEqual(await factorySignInPin(u.id, "0000"), { ok: false, error: "wrongPin", left: 2 }, "the count starts again from three");
     await db.execute(sql`update factory_staff set pin_failures = 0 where user_id = ${u.id}`);
+  });
+
+  test("guesses sent all at once are counted as they arrive: three tries, however many in parallel", async () => {
+    const u = floor.users["sunita"];
+    const answers = await Promise.all(Array.from({ length: 12 }, (_, i) => factorySignInPin(u.id, String(1000 + i))));
+    const wrong = answers.filter((a) => !a.ok && a.error === "wrongPin").length;
+    const shut = answers.filter((a) => !a.ok && a.error === "pinLocked").length;
+    assert.equal(wrong + shut, 12);
+    assert.equal(wrong, 2, "two are told how many are left; the third and every one after is shut");
+    const [row] = (await db.execute(sql`select pin_failures as n from factory_staff where user_id = ${u.id}`)) as unknown as { n: number }[];
+    assert.equal(Number(row.n), 3);
+    await db.execute(sql`update factory_staff set pin_failures = 0 where user_id = ${u.id}`);
+    await db.execute(sql`delete from sign_in_failures`);
+  });
+
+  test("a badge code that matches nobody counts as a failed sign-in, and enough of them shut the lookup", async () => {
+    const answers = [];
+    for (let i = 0; i < 12; i++) answers.push(await factoryFindBadge("NO-SUCH-BADGE"));
+    assert.equal(answers[0].ok, false);
+    assert.equal(!answers[0].ok && answers[0].error, "notFound");
+    const last = answers[answers.length - 1];
+    assert.ok(!last.ok && last.error !== "notFound", "the lookup is refused, not answered");
+    await db.execute(sql`delete from sign_in_failures`);
   });
 });

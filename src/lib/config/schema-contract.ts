@@ -240,6 +240,12 @@ export function toConsole(
       return Array.isArray(stored) ? stored.map(String) : [];
     case "time":
       return String(stored ?? "");
+    case "longtext":
+      // The fallback for a structured setting with no declared control. The
+      // box renders String(value), which made an object "[object Object]"
+      // and the setting impossible to edit; validateSetting parses the JSON
+      // back on save.
+      return stored !== null && typeof stored === "object" ? JSON.stringify(stored, null, 2) : stored;
     default:
       return stored;
   }

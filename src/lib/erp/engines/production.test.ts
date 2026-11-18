@@ -55,6 +55,14 @@ test("each failed fill check says its own thing (A-11)", () => {
   assert.equal(fillRefusal({ ...base, packingAvailable: null, packingType: "Naket" }), null);
 });
 
+test("a fill needs an empty can for every can filled, not just one in stock (M4)", () => {
+  const base = { useLitres: 50, sfgAvailable: 10000, cans: 500, packingAvailable: 1, packingType: "Can" };
+  assert.equal(fillRefusal(base), "Only 1 of this packing is available here; 500 needed.");
+  assert.equal(fillRefusal({ ...base, packingAvailable: 500 }), null);
+  assert.equal(fillRefusal({ ...base, cans: 3, packingAvailable: 2, packingType: "Drum" }), "Only 2 of this packing are available here; 3 needed.");
+  assert.equal(fillRefusal({ ...base, packingAvailable: null, packingType: "Naket" }), null);
+});
+
 test("a packing batch is complete only when its lines draw exactly its cans", () => {
   assert.deepEqual(batchState(10, 6, [{ id: "a", cans: 40 }]), { totalCans: 60, usedCans: 40, remaining: 20, complete: false });
   assert.equal(batchState(10, 6, [{ id: "a", cans: 40 }, { id: "b", cans: 20 }]).complete, true);

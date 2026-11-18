@@ -39,7 +39,7 @@ export default async function PurchaseOrderPrint({ params }: { params: Promise<{
     );
   const money = ctx.powers.has("viewPurchaseMoney");
   const t = poTotals(pricedLines(p), p.po.freightPaise);
-  /* Each line as ordered, then its live correction lines (0356), so the paper says what the PO now is. */
+  /* Each line as ordered, then its live correction lines (0357), so the paper says what the PO now is. */
   let no = 0;
   const rows = p.lines.flatMap((l, li) => [
     { key: l.id, label: String(++no), item: l.item, quantity: l.quantity, unit: l.unit, ratePaise: l.ratePaise, gstBp: l.gstBp, correction: false },

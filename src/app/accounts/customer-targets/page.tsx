@@ -1,6 +1,7 @@
 import { canFor, requireCapability } from "@/lib/access-control";
 import { getScope, scopeLabel } from "@/lib/scope";
 import { requireUser } from "@/lib/auth";
+import { requireAppForPage } from "@/lib/access";
 import { currentPeriod, listAmFilterOptions } from "@/lib/queries";
 import { listTargetsPage } from "@/lib/services/worklist-services";
 import { MonthlyTargetsScreen } from "@/components/customers/monthly-targets-screen";
@@ -37,6 +38,8 @@ export default async function Page({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  /* The layout's gate first, so a refused visit ends in its redirect rather than a thrown refusal. */
+  await requireAppForPage((await requireUser()).id, "accounts");
   await requireCapability("target.set");
 
   const params = await searchParams;
@@ -48,7 +51,9 @@ export default async function Page({
 
   const user = await requireUser();
   const scope = await getScope(user);
-  const activePeriod = one("period") ?? (await currentPeriod());
+  // A malformed ?period= falls back to this month rather than reaching SQL.
+  const typedPeriod = one("period");
+  const activePeriod = typedPeriod && /^\d{4}-(0[1-9]|1[0-2])$/.test(typedPeriod) ? typedPeriod : await currentPeriod();
 
   const canSet = await canFor(user, "target.set");
   const perPage = Number(one("per") ?? 25);

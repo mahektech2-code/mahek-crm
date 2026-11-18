@@ -111,7 +111,7 @@ export async function receivedByLine(tx: Tx | typeof db = db): Promise<Map<strin
   return new Map(rows.map((r) => [r.line, Number(r.q)]));
 }
 
-/** One correction line, as every screen reads it (`erp_po_corrections`, 0356). */
+/** One correction line, as every screen reads it (`erp_po_corrections`, 0357). */
 export type PoCorrection = typeof erpPoCorrections.$inferSelect & { by: string | null; cancelledBy: string | null; rateBy: string | null };
 
 /** Every correction on these PO lines, live and cancelled, oldest first. */
@@ -264,7 +264,7 @@ export type PoLineView = typeof erpPoLines.$inferSelect & {
   received: number;
   label: string;
   requirementGodown: string;
-  /** Its correction lines, live and cancelled (0356). */
+  /** Its correction lines, live and cancelled (0357). */
   corrections: PoCorrection[];
   /** What it now expects: its quantity plus its live corrections. */
   expected: number;

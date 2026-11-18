@@ -85,10 +85,14 @@ export const crmBadgeCounts = cache(async function crmBadgeCounts(): Promise<{
           and (${teamWide} or r.assigned_user_id = ${user.id})
           -- the same count the Reminders list shows: none for a trashed lead
           and not exists (select 1 from customers x where x.id = r.customer_id and x.deleted_at is not null))::int as reminders,
+      -- The Complaints list's own narrowing, scopedToUsers: whose book the
+      -- customer sits in now, never the original owner (a handover moves
+      -- sales_am_id, not owner_id), and nothing for a trashed lead.
       (select count(*) from complaints c
-        join customers cu on cu.id = c.customer_id
+        join customers on customers.id = c.customer_id
         where c.status in ('open','in_progress','awaiting_customer')
-          and (${teamWide} or cu.owner_id = ${user.id}))::int as complaints
+          and customers.deleted_at is null
+          and (${teamWide} or ${scopedToUsers([user.id])}))::int as complaints
   `);
 
   return {

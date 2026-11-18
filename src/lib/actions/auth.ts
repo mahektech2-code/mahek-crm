@@ -321,8 +321,20 @@ export async function requestSignInCode(
   identifier: string,
   purpose: "login" | "password_reset" = "login",
 ): Promise<ActionResult<{ sentTo: string; expiresInMinutes: number }>> {
+  /* The refusal says plainly that no account has this number — see above —
+     so the lookup is throttled like a password sign-in: a number that
+     matches nobody counts as a failure against the address, and enough of
+     them shut the door. Otherwise the screen answers "who works here" for
+     any list of mobiles. */
+  const typedKey = accountKey(null, `code:${identifier}`);
+  const address = await clientAddress();
+  const refused = await signInRefusal(typedKey, address);
+  if (refused) return fail(refused);
   const user = identifier.trim() ? await findAccountForCode(identifier) : null;
-  if (!user || !user.active) return fail(WRONG_CODE_NUMBER);
+  if (!user || !user.active) {
+    await recordSignInFailure(typedKey, address);
+    return fail(WRONG_CODE_NUMBER);
+  }
   const sent = await sendOtp(user.id, purpose, { surface: "web", requestedWith: identifier });
   if (!sent.ok) return fail(sent.error);
   await audit(user, purpose === "login" ? "sign-in-code-sent" : "reset-code-sent", "user", user.id);
@@ -346,8 +358,15 @@ export async function signInWithCode(
     remember: formData.get("remember") === "on",
   });
   if (!parsed.success) return fail(parsed.error.issues[0].message);
+  const typedKey = accountKey(null, `code:${parsed.data.identifier}`);
+  const address = await clientAddress();
+  const refused = await signInRefusal(typedKey, address);
+  if (refused) return fail(refused);
   const user = await findAccountForCode(parsed.data.identifier);
-  if (!user || !user.active) return fail(WRONG_CODE_NUMBER);
+  if (!user || !user.active) {
+    await recordSignInFailure(typedKey, address);
+    return fail(WRONG_CODE_NUMBER);
+  }
   const verified = await verifyOtp(user.id, "login", parsed.data.code);
   if (!verified.ok) return fail(verified.error);
   return completeSignIn(user, parsed.data.remember, "sign-in-code");

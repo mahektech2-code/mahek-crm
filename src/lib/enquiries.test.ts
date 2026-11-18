@@ -713,7 +713,7 @@ describe("createEnquiryFromWebsite — defaults", () => {
     const created = await createEnquiryFromWebsite({
       sourceForm: "QUOTE",
       externalRef,
-      receivedAt: new Date("2026-09-11T09:00:00.000Z"),
+      receivedAt: new Date("2027-09-10T09:00:00.000Z"),
       submission: { name: "Test", message: "Quote please" },
     });
 
@@ -1080,7 +1080,7 @@ describe("createEnquiryReminder — routed through the shared reminder service",
     });
     const result = await createEnquiryReminder({
       enquiryId: enquiry.id,
-      dueDate: "2026-09-15",
+      dueDate: "2027-09-14",
       note: "Call back",
       type: "call_back",
       assignedUserId: enquiriesUser.id,
@@ -1102,7 +1102,7 @@ describe("createEnquiryReminder — routed through the shared reminder service",
 
     const result = await createEnquiryReminder({
       enquiryId: enquiry.id,
-      dueDate: "2026-09-15",
+      dueDate: "2027-09-14",
       note: "Call back",
       type: "call_back",
       assignedUserId: "usr_does_not_exist",
@@ -1129,7 +1129,7 @@ describe("createEnquiryReminder — routed through the shared reminder service",
 
     const result = await createEnquiryReminder({
       enquiryId: enquiry.id,
-      dueDate: "2026-09-20",
+      dueDate: "2027-09-19",
       note: "Follow up on the quote",
       type: "call_back",
       assignedUserId: enquiriesUser.id,
@@ -1170,10 +1170,10 @@ describe("createEnquiryReminder — routed through the shared reminder service",
     });
     await linkCustomer(enquiry.id, customer.id);
 
-    // 2026-09-13 is a Sunday.
+    // 2027-09-12 is a Sunday.
     const result = await createEnquiryReminder({
       enquiryId: enquiry.id,
-      dueDate: "2026-09-13",
+      dueDate: "2027-09-12",
       note: "Should roll forward off a non-working day",
       type: "call_back",
       assignedUserId: enquiriesUser.id,
@@ -1181,7 +1181,7 @@ describe("createEnquiryReminder — routed through the shared reminder service",
     assert.equal(result.ok, true, result.ok ? "" : result.error);
 
     const [row] = await db.select().from(reminders).where(eq(reminders.enquiryId, enquiry.id));
-    assert.notEqual(row.dueDate, "2026-09-13", "a Sunday due date was not rolled forward — the shared working-day rule did not run");
+    assert.notEqual(row.dueDate, "2027-09-12", "a Sunday due date was not rolled forward — the shared working-day rule did not run");
   });
 
   test("an Enquiries-authorized associate can create a reminder for a customer owned by a DIFFERENT CRM user (Deep Audit Finding #1)", async () => {
@@ -1206,7 +1206,7 @@ describe("createEnquiryReminder — routed through the shared reminder service",
 
     const result = await createEnquiryReminder({
       enquiryId: enquiry.id,
-      dueDate: "2026-09-20",
+      dueDate: "2027-09-19",
       note: "Follow up — customer belongs to another CRM user's book",
       type: "call_back",
       assignedUserId: enquiriesUser.id,
@@ -1235,10 +1235,10 @@ describe("createEnquiryReminder — routed through the shared reminder service",
     });
     await linkCustomer(enquiry.id, customer.id);
 
-    // 2026-09-13 is a Sunday.
+    // 2027-09-12 is a Sunday.
     const result = await createEnquiryReminder({
       enquiryId: enquiry.id,
-      dueDate: "2026-09-13",
+      dueDate: "2027-09-12",
       note: "Should roll forward even for an out-of-book customer",
       type: "call_back",
       assignedUserId: enquiriesUser.id,
@@ -1246,7 +1246,7 @@ describe("createEnquiryReminder — routed through the shared reminder service",
     assert.equal(result.ok, true, result.ok ? "" : result.error);
 
     const [row] = await db.select().from(reminders).where(eq(reminders.enquiryId, enquiry.id));
-    assert.notEqual(row.dueDate, "2026-09-13", "a Sunday due date was not rolled forward for a different-owner customer");
+    assert.notEqual(row.dueDate, "2027-09-12", "a Sunday due date was not rolled forward for a different-owner customer");
   });
 });
 
@@ -1299,7 +1299,7 @@ describe("createEnquiryReminder — the reminder type is one centralized list (M
 
       const result = await createEnquiryReminder({
         enquiryId: enquiry.id,
-        dueDate: "2026-09-20",
+        dueDate: "2027-09-19",
         note: `Reminder of type ${type}`,
         type,
         assignedUserId: enquiriesUser.id,
@@ -1327,7 +1327,7 @@ describe("createEnquiryReminder — the reminder type is one centralized list (M
     // must not have replaced that runtime check with a compile-time-only one.
     const result = await createEnquiryReminder({
       enquiryId: enquiry.id,
-      dueDate: "2026-09-20",
+      dueDate: "2027-09-19",
       note: "Should be refused",
       type: "not_a_real_type" as EnquiryReminderType,
       assignedUserId: enquiriesUser.id,
@@ -1685,7 +1685,7 @@ describe("assignment cannot hand enquiry work to somebody who cannot see it (cap
 
     const result = await createEnquiryReminder({
       enquiryId: enquiry.id,
-      dueDate: "2026-09-20",
+      dueDate: "2027-09-19",
       note: "Should not be assignable to an outsider",
       type: "call_back",
       assignedUserId: outsider.id,
@@ -1913,12 +1913,12 @@ describe("launcherApps — the Website Enquiries tile reflects real unassigned e
 describe("order and duplicate dates use the business's own calendar day, not UTC (timezone)", () => {
   test("getEnquiry's linkedOrders reports the IST calendar date for an order placed just after midnight IST", async () => {
     const customer = await makeCustomer(enquiriesUser.id);
-    // 2026-09-10T20:00:00Z is 2026-09-11 01:30 IST — after midnight in the
-    // business's own timezone but still "2026-09-10" in UTC. A bare
+    // 2027-09-09T20:00:00Z is 2027-09-10 01:30 IST — after midnight in the
+    // business's own timezone but still "2027-09-09" in UTC. A bare
     // `.toISOString()` read back through a date-only formatter would show
     // the WRONG, earlier day.
     const order = await makeOrder(customer.id, enquiriesUser.id, {
-      orderedAt: new Date("2026-09-10T20:00:00.000Z"),
+      orderedAt: new Date("2027-09-09T20:00:00.000Z"),
     });
     const enquiry = await createEnquiryFromWebsite({
       sourceForm: "CONTACT",
@@ -1932,7 +1932,7 @@ describe("order and duplicate dates use the business's own calendar day, not UTC
     const detail = await getEnquiry(enquiry.id);
     assert.equal(
       detail?.linkedOrders[0]?.orderedAt,
-      "2026-09-11",
+      "2027-09-10",
       "the order's IST calendar date, not the UTC one, must be reported",
     );
   });
@@ -1940,7 +1940,7 @@ describe("order and duplicate dates use the business's own calendar day, not UTC
   test("ordersForLinking reports the same IST calendar date for a candidate order", async () => {
     const customer = await makeCustomer(enquiriesUser.id);
     const order = await makeOrder(customer.id, enquiriesUser.id, {
-      orderedAt: new Date("2026-09-10T20:00:00.000Z"),
+      orderedAt: new Date("2027-09-09T20:00:00.000Z"),
     });
     const enquiry = await createEnquiryFromWebsite({
       sourceForm: "CONTACT",
@@ -1953,7 +1953,7 @@ describe("order and duplicate dates use the business's own calendar day, not UTC
     const candidates = await ordersForLinking(enquiry.id);
     const candidate = candidates.find((c) => c.id === order.id);
     assert.ok(candidate);
-    assert.equal(candidate.orderedAt, "2026-09-11");
+    assert.equal(candidate.orderedAt, "2027-09-10");
   });
 
   test("findPossibleDuplicateEnquiries reports the IST calendar date an enquiry was actually received on", async () => {
@@ -1962,7 +1962,7 @@ describe("order and duplicate dates use the business's own calendar day, not UTC
     const duplicate = await createEnquiryFromWebsite({
       sourceForm: "CONTACT",
       externalRef: randomUUID(),
-      receivedAt: new Date("2026-09-10T20:00:00.000Z"),
+      receivedAt: new Date("2027-09-09T20:00:00.000Z"),
       submission: { phone },
     });
     const enquiry = await createEnquiryFromWebsite({
@@ -1975,7 +1975,7 @@ describe("order and duplicate dates use the business's own calendar day, not UTC
     const found = await findPossibleDuplicateEnquiries(enquiry.id, phone);
     const match = found.find((d) => d.id === duplicate.id);
     assert.ok(match, "the other enquiry sharing this phone must be found");
-    assert.equal(match.receivedAt, "2026-09-11");
+    assert.equal(match.receivedAt, "2027-09-10");
   });
 
   test("a normal, non-boundary order date is unaffected", async () => {
@@ -1983,7 +1983,7 @@ describe("order and duplicate dates use the business's own calendar day, not UTC
     // Comfortably midday IST — UTC and IST calendar dates agree here, so this
     // proves the fix did not merely shift every date by a day.
     const order = await makeOrder(customer.id, enquiriesUser.id, {
-      orderedAt: new Date("2026-09-10T09:00:00.000Z"),
+      orderedAt: new Date("2027-09-09T09:00:00.000Z"),
     });
     const enquiry = await createEnquiryFromWebsite({
       sourceForm: "CONTACT",
@@ -1995,7 +1995,7 @@ describe("order and duplicate dates use the business's own calendar day, not UTC
     await linkOrder(enquiry.id, order.id);
 
     const detail = await getEnquiry(enquiry.id);
-    assert.equal(detail?.linkedOrders[0]?.orderedAt, "2026-09-10");
+    assert.equal(detail?.linkedOrders[0]?.orderedAt, "2027-09-09");
   });
 });
 

@@ -71,6 +71,10 @@ const files = [
   "src/lib/lead-scope.test.ts",
   // Editing a field order before approval, and asking to change it after.
   "src/lib/order-change.test.ts",
+  // A field payment's remainder is on account once, not twice.
+  "src/lib/mbos-payment-on-account.test.ts",
+  // A reminder is due on a real day, not in the past, and only its people move it.
+  "src/lib/reminder-guards.test.ts",
   // The ERP: access, powers, working location and the masters.
   "src/lib/erp/erp-foundation.test.ts",
   "src/lib/erp/erp-designations.test.ts",
@@ -317,6 +321,8 @@ const files = [
   // persisted, the distributor track, and authorisation — including the one
   // place read scope and write scope disagree, pinned rather than fixed.
   "src/lib/sales-manager-pipeline.test.ts",
+  // A "Login as …" link opens one session, however often it is submitted.
+  "src/lib/impersonation-token.test.ts",
   // The same screens mounted in the CRM: one scope (sales_manager_id) for what
   // is drawn and for what may be done to it, admin sees all, owner-only and
   // unassigned leads are nobody's, and no other screen's scope moved.

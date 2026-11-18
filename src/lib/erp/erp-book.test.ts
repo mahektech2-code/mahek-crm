@@ -27,6 +27,8 @@ import {
   erpProductPacking,
   finishedGoods,
   orders,
+  paymentReceipts,
+  payments,
   productBrands,
   productFormulations,
   products,
@@ -41,7 +43,7 @@ import { screenModule } from "@/lib/erp/screens";
 import { bookStatus, bookStatusForStage, syncAllBookOrders, syncBookOrders } from "@/lib/erp/book";
 import { approveOrder, declineOrder } from "@/lib/services/order-approval-service";
 import { projectSheet } from "@/lib/services/sheet-projection-service";
-import { recomputeOrderSystemHolds } from "@/lib/recompute";
+import { recomputeBillPaid, recomputeBillStatuses, recomputeOrderSystemHolds } from "@/lib/recompute";
 import { customerProducts } from "@/lib/services/product-service";
 import { varianceReport } from "@/lib/services/price-list-service";
 import { runJob } from "@/lib/jobs";
@@ -546,5 +548,72 @@ describe("a TeleCRM TO, from the call to the order number", () => {
     assert.match(row.journey.status, /^Approved/, "the TO Accounts approved is approved");
     assert.ok(!(await editIntake(admin.id, made.id, {}, [{ skuId, qtyCans: 2, ratePaise: 30000, discountBp: null }])).ok, "an order with its order number is not changed");
     await live(false);
+  });
+});
+
+/** Money against a bill, written straight onto the ledger tables: who reported it is not the subject here. */
+async function moneyAgainst(bill: typeof bills.$inferSelect, amount: number, status: "reported" | "confirmed") {
+  const receiptId = id("rcp");
+  await db.insert(paymentReceipts).values({ id: receiptId, customerId: bill.customerId, amount, receivedAt: "2026-09-14", mode: "Bank transfer", status, source: "accounts", idempotencyKey: receiptId });
+  await db.insert(payments).values({ id: id("pay"), receiptId, billId: bill.id, customerId: bill.customerId, amount, paidAt: "2026-09-14", mode: "Bank transfer" });
+  await recomputeBillPaid(bill.customerId);
+  await recomputeBillStatuses();
+  return receiptId;
+}
+const erpBill = async (orderNo: number) => (await db.select().from(bills).where(eq(bills.externalRef, `ERPBILL-${orderNo}`)))[0];
+
+describe("a bill money has been reported against", () => {
+  before(async () => {
+    await live(true);
+    /* A party of its own, so these bills are in nobody else's figures. */
+    await db.insert(customers).values({ id: "cus_h5", name: "H5 Paint House", city: "Pune", phone: "9876500055", kind: "customer" });
+    await db.insert(erpCustomerProfiles).values({ customerId: "cus_h5" });
+  });
+
+  test("taking the order out of dispatch keeps the bill and the reported lines, and re-verifying brings back the same bill", async () => {
+    const o = await take("H5 Paint House", 23);
+    await send(o, "MMI/26-27/623", "2026-09-13");
+    const bill = await erpBill(o.orderNo);
+    assert.ok(bill);
+    const receiptId = await moneyAgainst(bill, 1000_00, "reported");
+    assert.equal(Number((await erpBill(o.orderNo)).paidAmount), 0, "reported money weighs nothing yet");
+
+    /* What "Mark not verified" leaves behind: the line is no longer verified. */
+    await db.execute(sql`update erp_order_details set verification = null where order_id = ${o.id}`);
+    await syncBookOrders([o.orderNo]);
+
+    const kept = await erpBill(o.orderNo);
+    assert.ok(kept, "a bill with a reported payment against it is not deleted");
+    assert.equal(kept.id, bill.id);
+    const lines = await db.select().from(payments).where(eq(payments.receiptId, receiptId));
+    assert.equal(lines.length, 1, "and the reported line still points at it");
+    assert.equal(lines[0].billId, bill.id);
+
+    await db.execute(sql`update erp_order_details set verification = 'Verified' where order_id = ${o.id}`);
+    await syncBookOrders([o.orderNo]);
+    assert.equal((await erpBill(o.orderNo)).id, bill.id, "re-verifying is the same bill the receipt names");
+  });
+
+  test("an unverified bill nobody reported money against still goes", async () => {
+    const o = await take("H5 Paint House", 24);
+    await send(o, "MMI/26-27/624", "2026-09-13");
+    assert.ok(await erpBill(o.orderNo));
+    await db.execute(sql`update erp_order_details set verification = null where order_id = ${o.id}`);
+    await syncBookOrders([o.orderNo]);
+    assert.equal(await erpBill(o.orderNo), undefined);
+  });
+
+  test("a paid bill whose amount rises is part-paid again", async () => {
+    const o = await take("H5 Paint House", 29);
+    await send(o, "MMI/26-27/629", "2026-09-13");
+    const bill = await erpBill(o.orderNo);
+    await moneyAgainst(bill, Number(bill.amount), "confirmed");
+    assert.equal((await erpBill(o.orderNo)).status, "paid");
+
+    await db.update(erpOrders).set({ qtyCans: 31 }).where(eq(erpOrders.id, o.id));
+    await syncBookOrders([o.orderNo]);
+    const grown = await erpBill(o.orderNo);
+    assert.ok(Number(grown.amount) > Number(bill.amount), "the bill follows the line");
+    assert.equal(grown.status, "partially_paid", "and its status follows the amount");
   });
 });

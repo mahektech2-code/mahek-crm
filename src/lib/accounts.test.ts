@@ -14,7 +14,7 @@
 import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
@@ -256,6 +256,41 @@ describe("Order approvals", () => {
     assert.equal(await pendingOrderCount(), 1);
   });
 
+  test("two people approving one order at once decide it once", async () => {
+    const customer = await makeCustomer();
+    const order = await pendingOrder(customer.id);
+
+    /*
+     * The race made to happen rather than hoped for: somebody else holds the
+     * order's row while three decisions read it as pending and queue behind
+     * the lock. Only the guard on the write can stop the second and third.
+     */
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let locked!: () => void;
+    const isLocked = new Promise<void>((r) => (locked = r));
+    const holder = db.transaction(async (tx) => {
+      await tx.execute(sql`select id from orders where id = ${order.id} for update`);
+      locked();
+      await held;
+    });
+    await isLocked;
+    const deciding = Promise.all([approveOrder(order.id), approveOrder(order.id), declineOrder(order.id, "Over the limit")]);
+    await new Promise((r) => setTimeout(r, 500));
+    release();
+    await holder;
+    const results = await deciding;
+
+    assert.equal(results.filter((r) => r.ok).length, 1, "exactly one decision stands");
+    const decisions = await db
+      .select()
+      .from(auditLog)
+      .where(and(eq(auditLog.entityId, order.id), inArray(auditLog.action, ["order.approve", "order.decline"])));
+    assert.equal(decisions.length, 1);
+    const [row] = await db.select().from(orders).where(eq(orders.id, order.id));
+    assert.equal(row.status, decisions[0].action === "order.approve" ? "confirmed" : "declined", "and it is the one on the order");
+  });
+
   test("approving moves it out of the queue and writes an audit row", async () => {
     const customer = await makeCustomer();
     const order = await pendingOrder(customer.id);
@@ -457,7 +492,7 @@ describe("Payments to confirm", () => {
     assert.equal(c.outstanding, 0);
   });
 
-  test("rejecting keeps the row, gives the balance back and stays on the statement", async () => {
+  test("rejecting keeps the row, leaves the balance owed and stays on the statement", async () => {
     const customer = await makeCustomer();
     const bill = await makeBill(customer.id, 10_000_00);
 
@@ -474,12 +509,12 @@ describe("Payments to confirm", () => {
 
     setTestUser(deepa);
     const [waiting] = await pendingReceipts();
-    await confirmReceipt(waiting.receiptId);
 
     const rejected = await rejectReceipt(waiting.receiptId, "No cash was handed over.");
     assert.equal(rejected.ok, true, rejected.ok ? "" : rejected.error);
 
-    // The money comes back off the bill.
+    // Nothing came off the bill, and nothing is waiting any more.
+    assert.equal((await pendingReceipts()).length, 0);
     const [b] = await db.select().from(bills).where(eq(bills.id, bill.id));
     assert.equal(b.paidAmount, 0);
     const [c] = await db.select().from(customers).where(eq(customers.id, customer.id));
@@ -491,6 +526,91 @@ describe("Payments to confirm", () => {
     assert.ok(dead, "a rejected receipt must stay on the statement");
     assert.equal(dead.credit, 0, "it credits nothing");
     assert.match(dead.detail, /No cash was handed over/);
+  });
+
+  test("a confirmed receipt cannot be rejected — it is reversed instead", async () => {
+    const customer = await makeCustomer();
+    const bill = await makeBill(customer.id, 10_000_00);
+
+    setTestUser(priya);
+    await recordReceipt({
+      customerId: customer.id,
+      amount: 10_000_00,
+      receivedAt: TODAY,
+      mode: "Cash",
+      allocation: "auto",
+      source: "collections_call",
+      idempotencyKey: randomUUID(),
+    });
+    setTestUser(deepa);
+    const [waiting] = await pendingReceipts();
+    assert.ok((await confirmReceipt(waiting.receiptId)).ok);
+
+    const refused = await rejectReceipt(waiting.receiptId, "No cash was handed over.");
+    assert.equal(refused.ok, false);
+    assert.equal(refused.ok === false && refused.code, "conflict");
+    assert.match(refused.ok === false ? refused.error : "", /Reverse it/);
+
+    const [r] = await db.select().from(paymentReceipts).where(eq(paymentReceipts.id, waiting.receiptId));
+    assert.equal(r.status, "confirmed", "the statement does not say it never arrived");
+    const [b] = await db.select().from(bills).where(eq(bills.id, bill.id));
+    assert.equal(b.paidAmount, 10_000_00, "and the money still counts");
+  });
+
+  test("two receipts confirmed at once against one bill cannot both settle it", async () => {
+    const customer = await makeCustomer();
+    const bill = await makeBill(customer.id, 10_000_00);
+
+    setTestUser(priya);
+    for (let i = 0; i < 2; i++) {
+      const r = await recordReceipt({
+        customerId: customer.id,
+        amount: 10_000_00,
+        receivedAt: TODAY,
+        mode: "Bank transfer",
+        allocation: "auto",
+        source: "collections_call",
+        idempotencyKey: randomUUID(),
+      });
+      assert.ok(r.ok);
+    }
+    setTestUser(deepa);
+    const waiting = await pendingReceipts();
+    assert.equal(waiting.length, 2);
+
+    const results = await Promise.all(waiting.map((w) => confirmReceipt(w.receiptId)));
+    assert.equal(results.filter((r) => r.ok).length, 1, "exactly one confirmation applies");
+    const loser = results.find((r) => !r.ok);
+    assert.match(loser && !loser.ok ? loser.error : "", /settled since/);
+
+    const [b] = await db.select().from(bills).where(eq(bills.id, bill.id));
+    assert.equal(b.paidAmount, 10_000_00, "the bill is paid once, not twice");
+  });
+
+  test("the same receipt confirmed twice at once is confirmed once", async () => {
+    const customer = await makeCustomer();
+    await makeBill(customer.id, 10_000_00);
+
+    setTestUser(priya);
+    await recordReceipt({
+      customerId: customer.id,
+      amount: 4_000_00,
+      receivedAt: TODAY,
+      mode: "Bank transfer",
+      allocation: "auto",
+      source: "collections_call",
+      idempotencyKey: randomUUID(),
+    });
+    setTestUser(deepa);
+    const [waiting] = await pendingReceipts();
+
+    const results = await Promise.all([confirmReceipt(waiting.receiptId), confirmReceipt(waiting.receiptId)]);
+    assert.equal(results.filter((r) => r.ok).length, 1);
+    const audits = await db
+      .select()
+      .from(auditLog)
+      .where(and(eq(auditLog.entityId, waiting.receiptId), eq(auditLog.action, "payment.confirm")));
+    assert.equal(audits.length, 1, "one decision, one audit row");
   });
 
   test("a stale allocation is refused rather than silently moved", async () => {

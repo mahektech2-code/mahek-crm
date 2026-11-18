@@ -92,7 +92,7 @@ export function poPdfInput(p: PoView): PoPdfInput {
     paymentTerms: p.po.paymentTerms,
     freightPaise: p.po.freightPaise,
     remarks: p.po.remarks,
-    /* Each line as ordered, then its live correction lines at their own rates (0356): the PDF says what the PO now is. */
+    /* Each line as ordered, then its live correction lines at their own rates (0357): the PDF says what the PO now is. */
     lines: p.lines.flatMap((l, li) => [
       { item: l.item, quantity: l.quantity, unit: l.unit, ratePaise: l.ratePaise, gstBp: l.gstBp },
       ...l.corrections

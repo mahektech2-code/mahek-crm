@@ -606,7 +606,7 @@ export async function prospectiveDistributors(
   const [rows, counts] = await Promise.all([
     db.execute<ProspectiveDistributorRow>(sql`
       select c.id as "customerId", c.name, c.company_name as "companyName",
-             c.city, c.mobile,
+             c.city, c.phone as mobile,
              c.lead_stage::text as stage,
              c.owner_id as "salesmanId", u.name as "salesmanName",
              c.lead_manager_id as "leadManagerId", m.name as "leadManagerName",

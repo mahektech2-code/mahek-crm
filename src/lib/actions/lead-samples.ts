@@ -565,7 +565,25 @@ export async function decideSample(
     const now = new Date();
     const state: SampleState = approve ? "approved" : "rejected";
 
-    await db.transaction(async (tx) => {
+    const moved = await db.transaction(async (tx) => {
+      /* THE STATE IS CLAIMED FIRST, and only from the state it was read in.
+         `loadForTransition` read it outside this transaction, so two clicks
+         (or an approve and a refuse at once) both passed it and both wrote —
+         the second decision over the first, a second timeline row and a
+         second audit row. The loser now writes nothing. */
+      const claimed = await tx
+        .update(mbosSamples)
+        .set({
+          state,
+          approvedAt: approve ? now : null,
+          approvedById: approve ? ctx.user.id : null,
+          updatedAt: now,
+          updatedById: ctx.user.id,
+        })
+        .where(and(eq(mbosSamples.id, sampleId), eq(mbosSamples.state, loaded.sample.state)))
+        .returning({ id: mbosSamples.id });
+      if (!claimed.length) return false;
+
       /* The pending row of the highest step, which for a sample is always step
          0 — but reading it rather than assuming it is what keeps this correct
          the day somebody gives samples a second step. */
@@ -618,17 +636,6 @@ export async function decideSample(
         });
       }
 
-      await tx
-        .update(mbosSamples)
-        .set({
-          state,
-          approvedAt: approve ? now : null,
-          approvedById: approve ? ctx.user.id : null,
-          updatedAt: now,
-          updatedById: ctx.user.id,
-        })
-        .where(eq(mbosSamples.id, sampleId));
-
       await writeTimelineEvent(tx, {
         customerId: loaded.customer.id,
         eventType: MBOS_EVENT.sampleDecided,
@@ -659,7 +666,9 @@ export async function decideSample(
         entityId: sampleId,
         afterState: { state, note: note ?? null } as never,
       });
+      return true;
     });
+    if (!moved) return err("This sample was decided a moment ago — open it again.", "conflict");
 
     refresh();
     return ok(null, approve ? "Approved. It can go out now." : "Refused, and the reason is on the record.");
@@ -715,8 +724,11 @@ export async function dispatchSample(
     const day = await today();
     const config = await nurtureConfig();
 
-    await db.transaction(async (tx) => {
-      await tx
+    const moved = await db.transaction(async (tx) => {
+      /* Guarded on the state it was read in, as `decideSample` is: a
+         double-clicked dispatch used to write twice and raise the nurture
+         tasks twice. */
+      const claimed = await tx
         .update(mbosSamples)
         .set({
           state: "dispatched",
@@ -728,7 +740,9 @@ export async function dispatchSample(
           updatedAt: now,
           updatedById: ctx.user.id,
         })
-        .where(eq(mbosSamples.id, sampleId));
+        .where(and(eq(mbosSamples.id, sampleId), eq(mbosSamples.state, loaded.sample.state)))
+        .returning({ id: mbosSamples.id });
+      if (!claimed.length) return false;
 
       await writeTimelineEvent(tx, {
         customerId: loaded.customer.id,
@@ -749,7 +763,9 @@ export async function dispatchSample(
         config,
         salesmanId: loaded.sample.salesmanId,
       });
+      return true;
     });
+    if (!moved) return err("This sample was marked as sent a moment ago.", "conflict");
 
     refresh();
     return ok(null, "Marked as sent.");

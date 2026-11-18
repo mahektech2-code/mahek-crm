@@ -192,6 +192,9 @@ export function billedValueSql(customerId: string, from: string, to: string) {
 
 /** `billedValueSql` for one month key, "2026-10". */
 export function billedInMonthSql(customerId: string, key: string) {
+  /* The key is written into the SQL as a literal, and it can arrive from a
+     URL (?period=), so it is held to its shape here rather than trusted. */
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(key)) throw new Error(`Not a month: ${JSON.stringify(key)}`);
   const [y, m] = key.split("-").map(Number);
   const next = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
   return billedValueSql(customerId, `'${key}-01'::date`, `'${next}-01'::date`);

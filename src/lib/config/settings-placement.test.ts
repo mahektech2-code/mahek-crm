@@ -5,7 +5,8 @@ import { SETTINGS } from "./registry";
 import { PAGE_TABS, RETIRED_SETTINGS, placeSetting } from "./settings-placement";
 import { SETTINGS_PAGES } from "./settings-pages";
 import { schemaForPage, settingAddress } from "./settings-schemas";
-import { schemaFields } from "./schema-contract";
+import { schemaFields, toConsole } from "./schema-contract";
+import { validateSetting } from "./registry";
 
 /* ---------------------------------------------------------------------------
  * EVERY SETTING HAS ONE PAGE, AND IT IS A REAL ONE.
@@ -71,4 +72,20 @@ test("a page's owners are real apps", () => {
   for (const p of SETTINGS_PAGES) {
     for (const o of p.owners) assert.ok(ids.has(o), `${p.id} names ${o}`);
   }
+});
+
+test("a structured setting in the long-text box shows its JSON and saves back to the same value", () => {
+  const stored = { annual: 18, carry: [1, 2] };
+  const shown = toConsole(stored, "longtext");
+  assert.equal(typeof shown, "string");
+  assert.notEqual(String(shown), "[object Object]");
+  assert.deepEqual(JSON.parse(String(shown)), stored);
+  // Plain long text is untouched.
+  assert.equal(toConsole("a sentence", "longtext"), "a sentence");
+  // A real one, Why a Suspect becomes a Prospect, round-trips through the box.
+  const def = SETTINGS.find((d) => d.key === "leads.prospectReasons");
+  assert.ok(def);
+  const saved = validateSetting(def.key, toConsole(def.default, "longtext"));
+  assert.ok(saved.ok);
+  assert.deepEqual(saved.ok && saved.value, def.default);
 });

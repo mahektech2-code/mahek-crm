@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { err, fromThrown, type Result } from "@/lib/result";
 import { ErpNotPermitted, requireErpWrite } from "@/lib/erp/access";
-import { deletePlanLine, openPlanFor, recordPlanPrint, savePlanLine } from "@/lib/erp/production-plan";
+import { deletePlanLine, openPlanFor, printPicks, savePlanLine, type PlanPick } from "@/lib/erp/production-plan";
 import type { LineInput } from "@/lib/erp/engines/production-plan";
 
 /* ---------------------------------------------------------------------------
@@ -51,10 +51,11 @@ export async function erpPlanDeleteLine(lineId: string): Promise<Result<undefine
   }
 }
 
-export async function erpPlanPrint(planId: string): Promise<Result<{ printNo: number }>> {
+/** The ticked rows become the plan's lines, and the plan is printed. */
+export async function erpPlanPrintPicks(planId: string, picks: PlanPick[]): Promise<Result<{ printNo: number }>> {
   try {
     const ctx = await requireErpWrite("underProcess");
-    const res = await recordPlanPrint(ctx, planId);
+    const res = await printPicks(ctx, planId, Array.isArray(picks) ? picks.slice(0, 2000) : []);
     touched();
     return res;
   } catch (e) {

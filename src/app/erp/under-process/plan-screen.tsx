@@ -3,20 +3,20 @@
 import { NavLink } from "@/components/shell/nav-link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { Badge, Button, Callout, Card, CardHeader, cx, EmptyState, Field, Input, SectionLabel, Select, Td, Th, Tr } from "@/components/ui/primitives";
+import { Button, Callout, Card, CardHeader, Checkbox, checkboxClass, cx, EmptyState, Field, Input, Select, Td, Th, Tr } from "@/components/ui/primitives";
 import { ComboBox } from "@/components/ui/combo-box";
-import { RowMenu } from "@/components/ui/overlays";
-import { clock, stamp } from "@/lib/format";
+import { cleanDecimal, cleanWhole, clock, stamp } from "@/lib/format";
 import { addDays } from "@/lib/business-date";
 import { fdLong, nf } from "@/lib/erp/ui";
 import { erpPlanHref, erpPlanPrintHref } from "@/lib/erp/trace-links";
-import { erpLink } from "@/lib/erp/registry";
 import { QtyField } from "../_ui/units";
-import { categorySpec, PLAN_CATEGORIES, type LineState, type PlanCategory } from "@/lib/erp/engines/production-plan";
-import type { PlanItem, PlanLineView, PlanSummary, PlanView } from "@/lib/erp/production-plan";
-import { erpPlanDeleteLine, erpPlanOpen, erpPlanPrint, erpPlanSaveLine } from "@/lib/actions/erp-production-plan";
-import { Page, PageLinks } from "../_ui/page-head";
-import { linkClass, toggleClass } from "../_ui/look";
+import { categorySpec, PLAN_CATEGORIES, type PlanCategory } from "@/lib/erp/engines/production-plan";
+import { facetValues, type BoardFacet } from "@/lib/erp/engines/plan-board";
+import type { PlanBoardRow, PlanItem, PlanLineView, PlanSummary, PlanView } from "@/lib/erp/production-plan";
+import { BoardHeader, BoardTable, Pill } from "../_ui/board";
+import { erpPlanOpen, erpPlanPrintPicks, erpPlanSaveLine } from "@/lib/actions/erp-production-plan";
+import { PageLinks } from "../_ui/page-head";
+import { labelClass, linkClass, popoverClass, toggleClass } from "../_ui/look";
 import { DialogBody, DialogFooter, DialogHeader, DialogTitle, ErpDialog } from "../_ui/dialog";
 import { useErpUi } from "../_ui/erp-ui";
 
@@ -31,15 +31,17 @@ const planName = (n: number) => `PLAN-${n}`;
 
 const NOT_PRINTED = "Not printed yet — open the plan and print it there.";
 
-const STATE: Record<LineState, { label: string; tone: "success" | "warn" | "danger" }> = {
-  given: { label: "Given", tone: "success" },
-  new: { label: "New", tone: "warn" },
-  edited: { label: "Edited", tone: "warn" },
-  removed: { label: "Removed", tone: "danger" },
+const UNIT_SHORT: Record<string, string> = {
+  Litre: "L",
+  Kg: "kg",
+  Cans: "cans",
+  Boxes: "boxes",
 };
-
-const UNIT_SHORT: Record<string, string> = { Litre: "L", Kg: "kg", Cans: "cans", Boxes: "boxes" };
-const STOCK_UNIT: Record<PlanCategory, string> = { sfg: "L", loose: "cans", packing: "boxes" };
+const STOCK_UNIT: Record<PlanCategory, string> = {
+  sfg: "L",
+  loose: "cans",
+  packing: "boxes",
+};
 
 /* ================================================================== list */
 
@@ -59,7 +61,12 @@ export function PlanList({
   readOnly: boolean;
   missing: boolean;
   /** The order lines whose status is Under Process now — they come into the plan by themselves. */
-  underProcess: { lines: number; orders: number; products: number; godown: string | null };
+  underProcess: {
+    lines: number;
+    orders: number;
+    products: number;
+    godown: string | null;
+  };
 }) {
   const [creating, setCreating] = useState(false);
   return (
@@ -68,8 +75,7 @@ export function PlanList({
       {underProcess.lines ? (
         <Callout tone="info">
           <span>
-            {underProcess.lines} order {underProcess.lines === 1 ? "line is" : "lines are"} Under Process on Orders → Production ({underProcess.orders}{" "}
-            {underProcess.orders === 1 ? "order" : "orders"}
+            {underProcess.lines} order {underProcess.lines === 1 ? "line is" : "lines are"} Under Process on Orders → Production ({underProcess.orders} {underProcess.orders === 1 ? "order" : "orders"}
             {underProcess.godown ? ` at ${underProcess.godown}` : ""}).{" "}
             {todays
               ? `They are in today's plan as ${underProcess.products} ${underProcess.products === 1 ? "line" : "lines"}, one per product.`
@@ -96,7 +102,10 @@ export function PlanList({
               <span className="text-sm font-semibold text-ink">{planName(todays.planNo)}</span>
               <span className="text-meta text-muted">
                 {todays.lines} {todays.lines === 1 ? "line" : "lines"} ·{" "}
-                {todays.prints ? `printed ${todays.prints === 1 ? "once" : `${todays.prints} times`}, last at ${todays.lastPrintedAt ? clock(new Date(todays.lastPrintedAt)) : "—"}` : "not printed yet"} · updated {clock(new Date(todays.updatedAt))}
+                {todays.prints
+                  ? `printed ${todays.prints === 1 ? "once" : `${todays.prints} times`}, last at ${todays.lastPrintedAt ? clock(new Date(todays.lastPrintedAt)) : "—"}`
+                  : "not printed yet"}{" "}
+                · updated {clock(new Date(todays.updatedAt))}
               </span>
             </div>
             <div className="flex gap-2">
@@ -153,8 +162,12 @@ export function PlanList({
                     <Td>{fdLong(p.planDate)}</Td>
                     <Td>{p.createdBy ?? "—"}</Td>
                     <Td>{stamp(p.updatedAt)}</Td>
-                    <Td align="right" className="tabular-nums">{p.lines}</Td>
-                    <Td align="right" className="tabular-nums">{p.prints}</Td>
+                    <Td align="right" className="tabular-nums">
+                      {p.lines}
+                    </Td>
+                    <Td align="right" className="tabular-nums">
+                      {p.prints}
+                    </Td>
                     <Td align="right">
                       <span className="inline-flex gap-3">
                         <NavLink href={erpPlanHref(p.id)} className={linkClass()}>
@@ -231,241 +244,340 @@ function CreateDialog({ today, start: startDate, onClose }: { today: string; sta
 
 type Editing = { category: PlanCategory; line: PlanLineView | null } | null;
 
-export function PlanEditor({ plan, items, today, readOnly, past }: { plan: PlanView; items: PlanItem[]; today: string; readOnly: boolean; past: boolean }) {
+type Facet = BoardFacet;
+
+const FACETS: { key: Facet; label: string }[] = [
+  { key: "kind", label: "Product" },
+  { key: "confirmed", label: "Confirmed" },
+  { key: "waiting", label: "Waiting" },
+  { key: "stock", label: "In stock" },
+  { key: "verdict", label: "If all approved" },
+  { key: "unit", label: "Unit" },
+];
+
+type RowEdit = { ticked: boolean; qty: string; unit: string };
+
+export function PlanEditor({ plan, board, items, readOnly, past }: { plan: PlanView; board: PlanBoardRow[]; items: PlanItem[]; readOnly: boolean; past: boolean }) {
   const router = useRouter();
   const ui = useErpUi();
-  const [editing, setEditing] = useState<Editing>(null);
+  const [adding, setAdding] = useState(false);
+  const [edits, setEdits] = useState<Record<string, RowEdit>>(() => Object.fromEntries(board.map((r) => [r.key, { ticked: r.ticked, qty: String(r.qty), unit: r.unit }])));
+  const [query, setQuery] = useState("");
+  const [filters, setFilters] = useState<Partial<Record<Facet, string[]>>>({});
+  const [openFacet, setOpenFacet] = useState<{ facet: Facet; x: number; y: number } | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const [printing, start] = useTransition();
   const lastPrint = plan.prints[plan.prints.length - 1] ?? null;
-  const live = plan.lines.filter((l) => l.state !== "removed");
-  const nextPrint = lastPrint ? (plan.changed ? lastPrint.printNo + 1 : lastPrint.printNo) : 1;
+
+  /* A row added since the page was drawn (Add a line, then a refresh) starts as the server says. */
+  const edit = (r: PlanBoardRow): RowEdit => edits[r.key] ?? { ticked: r.ticked, qty: String(r.qty), unit: r.unit };
+  const setEdit = (key: string, patch: Partial<RowEdit>) =>
+    setEdits((all) => {
+      const r = board.find((b) => b.key === key)!;
+      return { ...all, [key]: { ...(all[key] ?? { ticked: r.ticked, qty: String(r.qty), unit: r.unit }), ...patch } };
+    });
+
+  const facetsOf = (r: PlanBoardRow) => facetValues(r, edit(r).unit);
+  const options = (facet: Facet) => {
+    const counts = new Map<string, number>();
+    for (const r of board) for (const v of facetsOf(r)[facet]) counts.set(v, (counts.get(v) ?? 0) + 1);
+    return [...counts].sort((a, b) => a[0].localeCompare(b[0]));
+  };
+  const active = (facet: Facet) => {
+    const sel = filters[facet];
+    return !!sel && sel.length > 0 && sel.length < options(facet).length;
+  };
+  const q = query.trim().toLowerCase();
+  const visible = board.filter((r) => {
+    if (q && !`${r.name} ${r.code ?? ""}`.toLowerCase().includes(q)) return false;
+    const f = facetsOf(r);
+    return FACETS.every(({ key }) => !active(key) || f[key].some((v) => filters[key]!.includes(v)));
+  });
+  const ticked = board.filter((r) => edit(r).ticked);
+  const allVisibleTicked = visible.length > 0 && visible.every((r) => edit(r).ticked);
 
   const print = () =>
     start(async () => {
-      const res = await erpPlanPrint(plan.id);
-      if (!res.ok) return ui.toast(res.error, "error");
+      setErrors({});
+      const res = await erpPlanPrintPicks(
+        plan.id,
+        ticked.map((r) => ({ key: r.key, quantity: edit(r).qty, unit: edit(r).unit })),
+      );
+      if (!res.ok) {
+        setErrors(Object.fromEntries((res.fieldErrors ?? []).map((f) => [f.field, f.message])));
+        return ui.toast(res.error, "error");
+      }
       router.push(erpPlanPrintHref(plan.id, res.data.printNo));
     });
 
-  const remove = (l: PlanLineView) =>
-    ui.confirm(`Delete ${l.productName}${l.size ? " " + l.size : ""} · ${nf(l.quantity)} ${l.unit} from ${planName(plan.planNo)}?${l.state === "given" || l.state === "edited" ? " The floor already has it, so the next print lists it as removed." : ""}`, async () => {
-      const res = await erpPlanDeleteLine(l.id);
-      ui.toast(res.ok ? (res.message ?? "Line deleted") : res.error, res.ok ? "info" : "error");
-      router.refresh();
-    });
+  const sections: { label: string; rows: PlanBoardRow[] }[] = [
+    { label: "Loose cans and packing", rows: visible.filter((r) => r.category !== "sfg") },
+    { label: "Bases (SFG)", rows: visible.filter((r) => r.category === "sfg") },
+  ].filter((s) => s.rows.length);
+
+  const funnel = (facet: Facet) => (
+    <button
+      type="button"
+      aria-label={`Filter ${FACETS.find((f) => f.key === facet)!.label}`}
+      onClick={(e) => {
+        const b = e.currentTarget.getBoundingClientRect();
+        setOpenFacet(openFacet?.facet === facet ? null : { facet, x: b.left, y: b.bottom + 4 });
+      }}
+      className={cx("ml-1 inline-flex cursor-pointer align-middle", active(facet) ? "text-brand" : "text-faint hover:text-body")}
+    >
+      <svg width="11" height="11" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 5h18l-7 8v6l-4 2v-8z" fill={active(facet) ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2.4" />
+      </svg>
+    </button>
+  );
+
+  const numberCell = (r: PlanBoardRow, n: number | null) => (n == null ? "—" : n === 0 ? "—" : `${nf(n)}${r.measure === "L" ? " L" : ""}`);
 
   return (
-    <Page
-      title={`${planName(plan.planNo)} · Daily production plan`}
-      actions={
-        <>
-          <PageLinks>
-            <NavLink href={erpPlanHref()} className={linkClass()}>
-              ← All plans
-            </NavLink>
-          </PageLinks>
-          {lastPrint && (past || !plan.changed) ? (
-            /* Nothing new to hand the floor: this opens the sheet already printed, it records no print. */
-            <NavLink href={erpPlanPrintHref(plan.id, lastPrint.printNo)} className={buttonLink(past ? "secondary" : "primary")}>
-              Open Print {lastPrint.printNo}
-            </NavLink>
-          ) : past ? null : (
-            <Button
-              variant="primary"
-              onClick={print}
-              disabled={printing || readOnly || !live.length}
-              title={!live.length ? "Add at least one line before printing." : readOnly ? "You are previewing the ERP as somebody else." : undefined}
-            >
-              {printing ? "Preparing…" : `Print plan (Print ${nextPrint})`}
-            </Button>
+    <div className="px-6 pt-6 pb-10">
+      <BoardHeader
+        title={planTitle(plan.planDate, plan.godown)}
+        sub={past ? planName(plan.planNo) : undefined}
+        actions={
+          <>
+            <PageLinks>
+              <NavLink href={erpPlanHref()} className={linkClass()}>
+                ← All plans
+              </NavLink>
+            </PageLinks>
+            {past ? (
+              lastPrint ? (
+                <NavLink href={erpPlanPrintHref(plan.id, lastPrint.printNo)} className={buttonLink()}>
+                  Open Print {lastPrint.printNo}
+                </NavLink>
+              ) : null
+            ) : (
+              <>
+                {readOnly ? null : <Button onClick={() => setAdding(true)}>Add a line</Button>}
+                <Button variant="primary" onClick={print} disabled={printing || readOnly || !ticked.length} title={readOnly ? "You are previewing the ERP as somebody else." : !ticked.length ? "Tick at least one row." : undefined}>
+                  {printing ? "Preparing…" : `Print plan (${ticked.length})`}
+                </Button>
+              </>
+            )}
+          </>
+        }
+      />
+
+      {past ? null : (
+        <div className="mb-3 flex flex-wrap items-center gap-2.5">
+          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search product" aria-label="Search product" className="h-8 w-60" />
+          {readOnly ? null : (
+            <button type="button" className={linkClass("brand", "text-sm")} onClick={() => setEdits(() => Object.fromEntries(board.map((r) => [r.key, { ...edit(r), ticked: (r.confirmed ?? 0) > 0 || r.key.startsWith("line:") }])))}>
+              Select confirmed
+            </button>
           )}
-        </>
-      }
-    >
-      <div className="mb-4 flex flex-wrap gap-x-8 gap-y-3 rounded-card border border-line bg-surface px-5 py-3.5">
-        <Meta label="Plan number" value={planName(plan.planNo)} />
-        <Meta label="Plan date" value={fdLong(plan.planDate)} />
-        <Meta label="Created by" value={plan.createdBy ?? "—"} />
-        <Meta label="Last updated" value={`${stamp(plan.updatedAt)}${plan.updatedBy ? ` · ${plan.updatedBy}` : ""}`} />
-        <Meta label="Godown" value={plan.godown ?? "No godown"} />
-        <Meta label="Prints" value={lastPrint ? `${plan.prints.length} · last ${stamp(lastPrint.printedAt)}` : "Not printed yet"} />
-      </div>
+          {FACETS.filter((f) => active(f.key)).map((f) => (
+            <span key={f.key} className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 py-0.5 text-xs text-body">
+              {f.label}: {filters[f.key]!.length} of {options(f.key).length}
+              <button type="button" aria-label={`Clear ${f.label}`} className="cursor-pointer text-muted hover:text-ink" onClick={() => setFilters((all) => ({ ...all, [f.key]: [] }))}>
+                ×
+              </button>
+            </span>
+          ))}
+          {FACETS.some((f) => active(f.key)) ? (
+            <button type="button" className={linkClass("brand", "text-xs")} onClick={() => setFilters({})}>
+              Clear
+            </button>
+          ) : null}
+        </div>
+      )}
 
-      {past ? (
-        <Callout tone="neutral">
-          This is the plan for {fdLong(plan.planDate)}, a day that has passed. It is the record of that day: its lines no longer follow the orders, and it
-          cannot be changed or printed again.
-        </Callout>
-      ) : plan.planDate !== today ? (
-        <Callout tone="neutral">This is the plan for {fdLong(plan.planDate)}, not today.</Callout>
-      ) : null}
-      {!past && lastPrint && plan.changed ? (
-        <Callout tone="warn">
-          {plan.changed} {plan.changed === 1 ? "line has" : "lines have"} changed since Print {lastPrint.printNo} at {stamp(lastPrint.printedAt)}. Print again to hand the floor the new sheet — the changes are underlined on it.
-        </Callout>
-      ) : null}
-
-      {!past && plan.lines.some((l) => l.source === "order" && l.state !== "removed") ? (
-        <Callout tone="info">
-          <span>
-            Lines marked <b>From orders</b>{" "}are the order lines Under Process on Orders → Production, added by themselves. They change when an order&apos;s status
-            changes, and leave the plan when it is Ready.{" "}
-            <NavLink href={erpLink("readyOrders")} className={linkClass()}>
-              Open Production
-            </NavLink>
-          </span>
-        </Callout>
-      ) : null}
-
-      <div className="mb-3 flex flex-wrap gap-4 text-meta text-muted">
-        <Key className="bg-success" label="Given — on the last sheet the floor has" />
-        <Key className="bg-warn" label={past ? "New or edited — never printed" : "New or edited — not printed yet"} />
-        <Key className="bg-danger" label={past ? "Removed — after the last print" : "Removed — the next print tells the floor"} />
-        {past ? null : <span>Every change is saved as you make it.</span>}
-      </div>
-
-      <div className="grid gap-4">
-        {PLAN_CATEGORIES.map((c) => {
-          const rows = plan.lines.filter((l) => l.category === c.key);
-          return (
-            <Card key={c.key} className="overflow-hidden">
-              <CardHeader
-                title={c.label}
-                hint={(() => { const n = rows.filter((r) => r.state !== "removed").length; return `${n} ${n === 1 ? "line" : "lines"}`; })()}
-                action={
-                  readOnly ? null : (
-                    <Button size="sm" onClick={() => setEditing({ category: c.key, line: null })}>
-                      ＋ Add line
-                    </Button>
-                  )
-                }
-              />
-              {rows.length ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse">
-                    <thead>
-                      <tr>
-                        <Th className="w-[34%]">Product</Th>
-                        {c.sizeLabel ? <Th>{c.sizeLabel}</Th> : null}
-                        <Th align="right">{c.key === "loose" ? "Cans" : "Quantity"}</Th>
-                        <Th>Unit</Th>
-                        {past ? null : <Th align="right">Available now</Th>}
-                        <Th>Remarks</Th>
-                        <Th>Status</Th>
-                        {readOnly ? null : <Th align="right">Change</Th>}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {rows.map((l) => (
-                        <Tr
-                          key={l.id}
-                          className={cx((l.state === "new" || l.state === "edited") && "bg-warn-soft", l.state === "removed" && "text-faint line-through")}
-                        >
-                          <Td
-                            className={cx(
-                              "font-medium whitespace-normal",
-                              l.state === "removed" ? "text-faint" : "text-ink",
-                              l.state === "given" && "shadow-[inset_3px_0_0_var(--color-success)]",
-                              (l.state === "new" || l.state === "edited") && "shadow-[inset_3px_0_0_var(--color-warn)]",
-                              l.state === "removed" && "shadow-[inset_3px_0_0_var(--color-danger)]",
-                            )}
-                          >
-                            <span className="flex flex-wrap items-center gap-1.5">
-                              {l.productName}
-                              {l.source === "order" ? <Badge tone="brand">From orders</Badge> : null}
-                            </span>
-                          </Td>
-                          {c.sizeLabel ? <Td>{l.size ?? "—"}</Td> : null}
-                          <Td align="right" className="font-semibold tabular-nums">
-                            {l.was != null ? <span className="mr-1.5 font-normal text-faint line-through">{nf(l.was)}</span> : null}
-                            {nf(l.quantity)}
-                          </Td>
-                          <Td>{l.unit}</Td>
-                          {past ? null : (
-                            <Td align="right" className={cx("tabular-nums", l.available === 0 ? "text-danger" : "text-muted")}>
-                              {l.available == null ? "—" : `${nf(l.available)} ${STOCK_UNIT[c.key]}`}
-                            </Td>
-                          )}
-                          <Td className="whitespace-normal text-body">{l.remarks ?? ""}</Td>
-                          <Td>
-                            <Badge tone={STATE[l.state].tone}>{STATE[l.state].label}</Badge>
-                          </Td>
-                          {readOnly ? null : (
-                          <Td align="right">
-                            {l.state === "removed" ? null : l.source === "order" ? (
-                              <NavLink href={erpLink("readyOrders")} className={linkClass("brand", "text-meta")} title="This line follows the orders. Change it on Orders → Production.">
-                                Change on Orders
-                              </NavLink>
-                            ) : (
-                              <RowMenu
-                                items={[
-                                  { label: "Edit", onSelect: () => setEditing({ category: c.key, line: l }) },
-                                  { label: "Delete", destructive: true, onSelect: () => remove(l) },
-                                ]}
-                              />
-                            )}
-                          </Td>
-                          )}
-                        </Tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <div className="px-5 py-4 text-meta text-muted">Nothing planned.</div>
+      {board.length ? (
+        <BoardTable>
+          <thead>
+            <tr>
+              {past ? null : (
+                <Th className="w-10">
+                  <input
+                    type="checkbox"
+                    className={checkboxClass}
+                    aria-label="Tick every row shown"
+                    checked={allVisibleTicked}
+                    disabled={readOnly}
+                    onChange={() => setEdits((all) => ({ ...all, ...Object.fromEntries(visible.map((r) => [r.key, { ...edit(r), ticked: !allVisibleTicked }])) }))}
+                  />
+                </Th>
               )}
-            </Card>
-          );
-        })}
-      </div>
+              <Th className="w-[28%]">Product{past ? null : funnel("kind")}</Th>
+              <Th align="right">Confirmed{past ? null : funnel("confirmed")}</Th>
+              <Th className="w-[18%]">Waiting{past ? null : funnel("waiting")}</Th>
+              <Th align="right">In stock{past ? null : funnel("stock")}</Th>
+              <Th>If all approved{past ? null : funnel("verdict")}</Th>
+              <Th align="right">Make today</Th>
+              <Th>Unit{past ? null : funnel("unit")}</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {sections.flatMap((s) => [
+              <Tr key={`s-${s.label}`}>
+                <Td colSpan={past ? 7 : 8} className={cx(labelClass, "bg-canvas py-1.5")}>
+                  {s.label}
+                </Td>
+              </Tr>,
+              ...s.rows.map((r) => {
+                const e = edit(r);
+                const whole = e.unit === "Cans" || e.unit === "Boxes";
+                return (
+                  <Tr key={r.key} className={cx(e.ticked ? "bg-brand-soft" : "text-muted")}>
+                    {past ? null : (
+                      <Td>
+                        <input type="checkbox" className={checkboxClass} aria-label={r.name} checked={e.ticked} disabled={readOnly} onChange={() => setEdit(r.key, { ticked: !e.ticked })} />
+                      </Td>
+                    )}
+                    <Td className="whitespace-normal">
+                      <span className={cx("font-semibold", e.ticked ? "text-ink" : "text-body")}>{r.name}</span>
+                      {r.size && r.category !== "sfg" && !r.name.includes(r.size) ? <span className="text-meta text-muted"> {r.size}</span> : null}
+                      {r.packing ? <span className="text-meta text-muted"> · {r.packing}</span> : null}
+                    </Td>
+                    <Td align="right" className="tabular-nums">
+                      {numberCell(r, r.confirmed)}
+                    </Td>
+                    <Td className="whitespace-normal">
+                      <span className="flex flex-wrap gap-1">
+                        {r.mrp > 0 ? <Pill tone="warn">MRP check {nf(r.mrp)}</Pill> : null}
+                        {r.accounts > 0 ? <Pill tone="muted">{r.measure === "L" ? `Expected ${nf(r.accounts)} L` : `Accounts ${nf(r.accounts)}`}</Pill> : null}
+                        {r.mrp + r.accounts === 0 ? "—" : null}
+                      </span>
+                    </Td>
+                    <Td align="right" className="tabular-nums">
+                      {r.stock == null ? "—" : `${nf(r.stock)}${r.measure === "L" ? " L" : ""}`}
+                    </Td>
+                    <Td>{r.verdict ? <span className={cx("font-semibold", r.verdict.tone === "short" ? "text-danger" : "text-success")}>{r.verdict.text}</span> : "—"}</Td>
+                    <Td align="right">
+                      {past ? (
+                        <span className="font-semibold tabular-nums">{nf(r.qty)}</span>
+                      ) : (
+                        <Input
+                          value={e.qty}
+                          inputMode={whole ? "numeric" : "decimal"}
+                          aria-label={`Make today · ${r.name}`}
+                          disabled={readOnly}
+                          invalid={!!errors[r.key]}
+                          title={errors[r.key]}
+                          onChange={(ev) => setEdit(r.key, { qty: whole ? cleanWhole(ev.target.value) : cleanDecimal(ev.target.value), ticked: true })}
+                          className="h-8 w-20 text-right"
+                        />
+                      )}
+                    </Td>
+                    <Td>
+                      {!past && r.units.length > 1 ? (
+                        <Select value={e.unit} disabled={readOnly} aria-label={`Unit · ${r.name}`} onChange={(ev) => setEdit(r.key, { unit: ev.target.value })} className="h-8">
+                          {r.units.map((u) => (
+                            <option key={u} value={u}>
+                              {u}
+                            </option>
+                          ))}
+                        </Select>
+                      ) : (
+                        e.unit
+                      )}
+                    </Td>
+                  </Tr>
+                );
+              }),
+            ])}
+            {!sections.length ? (
+              <Tr>
+                <Td colSpan={8} className="py-6 text-center text-muted">
+                  Nothing matches.
+                </Td>
+              </Tr>
+            ) : null}
+          </tbody>
+        </BoardTable>
+      ) : (
+        <Card>
+          <EmptyState title={past ? "Nothing was printed on this day." : "Nothing to plan yet."} />
+        </Card>
+      )}
 
-      {editing ? (
-        <LineDialog
-          key={editing.line?.id ?? `new-${editing.category}`}
-          plan={plan}
-          items={items}
-          start={editing}
-          onClose={() => setEditing(null)}
-          onSaved={() => router.refresh()}
+      {openFacet ? (
+        <FacetPopover
+          key={openFacet.facet}
+          label={FACETS.find((f) => f.key === openFacet.facet)!.label}
+          options={options(openFacet.facet)}
+          selected={filters[openFacet.facet]?.length ? filters[openFacet.facet]! : options(openFacet.facet).map(([v]) => v)}
+          x={openFacet.x}
+          y={openFacet.y}
+          onClose={() => setOpenFacet(null)}
+          onApply={(sel) => {
+            setFilters((all) => ({ ...all, [openFacet.facet]: sel }));
+            setOpenFacet(null);
+          }}
         />
       ) : null}
-    </Page>
-  );
-}
 
-function Meta({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="grid gap-0.5">
-      <SectionLabel>{label}</SectionLabel>
-      <span className="text-sm font-medium text-ink">{value}</span>
+      {adding ? <LineDialog plan={plan} items={items} start={{ category: "loose", line: null }} onClose={() => setAdding(false)} onSaved={() => router.refresh()} /> : null}
     </div>
   );
 }
 
-function Key({ className, label }: { className: string; label: string }) {
+/** One column's filter: its values with how many rows carry each, staged until Apply. */
+function FacetPopover({
+  label,
+  options,
+  selected,
+  x,
+  y,
+  onClose,
+  onApply,
+}: {
+  label: string;
+  options: [string, number][];
+  selected: string[];
+  x: number;
+  y: number;
+  onClose: () => void;
+  onApply: (sel: string[]) => void;
+}) {
+  const [sel, setSel] = useState<string[]>(selected);
   return (
-    <span className="inline-flex items-center gap-1.5">
-      <span className={cx("inline-block h-2.5 w-2.5 rounded-[2px]", className)} />
-      {label}
-    </span>
+    <>
+      <div className="fixed inset-0 z-40" onClick={onClose} aria-hidden="true" />
+      <div role="dialog" aria-label={`Filter ${label}`} className={cx(popoverClass, "fixed z-50 flex w-56 flex-col gap-2 p-3")} style={{ left: x, top: y }}>
+        {options.map(([v, n]) => (
+          <Checkbox
+            key={v}
+            label={
+              <span className="flex flex-1 justify-between">
+                {v}
+                <span className="text-muted tabular-nums">{n}</span>
+              </span>
+            }
+            checked={sel.includes(v)}
+            onChange={() => setSel((s) => (s.includes(v) ? s.filter((x) => x !== v) : [...s, v]))}
+          />
+        ))}
+                <div className="mt-1 flex justify-between">
+          <Button size="sm" onClick={() => onApply([])}>
+            Clear
+          </Button>
+          <Button size="sm" variant="primary" onClick={() => onApply(sel)} disabled={!sel.length}>
+            Apply
+          </Button>
+        </div>
+      </div>
+    </>
   );
+}
+
+const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "Plan · Wed 18 Nov · Bhiwandi". */
+function planTitle(date: string, godown: string | null): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  return ["Plan", `${WEEKDAY_SHORT[d.getUTCDay()]} ${d.getUTCDate()} ${MONTH_SHORT[d.getUTCMonth()]}`, godown].filter(Boolean).join(" · ");
 }
 
 /* ---------------------------------------------------- add / edit a line */
 
-function LineDialog({
-  plan,
-  items,
-  start: begin,
-  onClose,
-  onSaved,
-}: {
-  plan: PlanView;
-  items: PlanItem[];
-  start: NonNullable<Editing>;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
+function LineDialog({ plan, items, start: begin, onClose, onSaved }: { plan: PlanView; items: PlanItem[]; start: NonNullable<Editing>; onClose: () => void; onSaved: () => void }) {
   const ui = useErpUi();
   const editingLine = begin.line;
   const [category, setCategory] = useState<PlanCategory>(begin.category);
@@ -499,7 +611,10 @@ function LineDialog({
 
   const save = (again: boolean) =>
     run(async () => {
-      if (!itemId) return setErrors({ itemId: query.trim() ? `"${query.trim()}" is not on the ${spec.label.toLowerCase()} list.` : "Pick a product." });
+      if (!itemId)
+        return setErrors({
+          itemId: query.trim() ? `"${query.trim()}" is not on the ${spec.label.toLowerCase()} list.` : "Pick a product.",
+        });
       const res = await erpPlanSaveLine(plan.id, { category, itemId, quantity, unit, remarks }, editingLine?.id);
       if (!res.ok) {
         setErrors(Object.fromEntries((res.fieldErrors ?? [{ field: "quantity", message: res.error }]).map((f) => [f.field, f.message])));
@@ -526,7 +641,13 @@ function LineDialog({
           <Field label="Work category" required group>
             <div className="flex flex-wrap gap-2">
               {PLAN_CATEGORIES.map((c) => (
-                <button key={c.key} type="button" disabled={!!editingLine && c.key !== category} className={toggleClass(c.key === category, "disabled:cursor-not-allowed disabled:opacity-50")} onClick={() => pickCategory(c.key)}>
+                <button
+                  key={c.key}
+                  type="button"
+                  disabled={!!editingLine && c.key !== category}
+                  className={toggleClass(c.key === category, "disabled:cursor-not-allowed disabled:opacity-50")}
+                  onClick={() => pickCategory(c.key)}
+                >
                   {c.label}
                 </button>
               ))}
@@ -576,7 +697,9 @@ function LineDialog({
           </Field>
           {already.length ? (
             <Callout tone="info" className="mb-0">
-              Already on this plan: {already.map((l) => `${nf(l.quantity)} ${UNIT_SHORT[l.unit] ?? l.unit}${l.source === "order" ? " from orders" : ""}${l.state === "given" ? " (given)" : ""}`).join(", ")}. {editingLine ? "" : "This adds a separate line, so the floor sees it as new."}
+              Already on this plan:{" "}
+              {already.map((l) => `${nf(l.quantity)} ${UNIT_SHORT[l.unit] ?? l.unit}${l.source === "order" ? " from orders" : ""}${l.state === "given" ? " (given)" : ""}`).join(", ")}.{" "}
+              {editingLine ? "" : "This adds a separate line, so the floor sees it as new."}
             </Callout>
           ) : null}
         </div>

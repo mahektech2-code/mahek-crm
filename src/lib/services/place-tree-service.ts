@@ -36,6 +36,12 @@ import { TERRITORY_REGION_SQL, qualify } from "@/lib/territory-sql";
  * same columns in `place-service.ts`. The resolution sits beside them.
  * ------------------------------------------------------------------------- */
 
+/* Spelled out to the folder so the build can see exactly which file this is.
+   The trace follows a static path into the server bundle and takes this one
+   CSV with it; an override (`options.file`, the tests' fixtures) is a runtime
+   path the build cannot know, and read past the trace — see importPlaceTree.
+   Folded into one expression they made the build give up and trace the whole
+   project, next.config.ts included, into every server bundle. */
 const DATA_FILE = path.join(process.cwd(), "data", "places", "customer-places.csv");
 
 const newId = () => `pl_${randomUUID().slice(0, 12)}`;
@@ -70,7 +76,9 @@ export type PlaceTreeImport = {
 export async function importPlaceTree(
   options: { dryRun?: boolean; file?: string } = {},
 ): Promise<PlaceTreeImport> {
-  const rows = parseCsv(readFileSync(options.file ?? DATA_FILE, "utf8"));
+  const rows = parseCsv(
+    options.file ? readFileSync(/*turbopackIgnore: true*/ options.file, "utf8") : readFileSync(DATA_FILE, "utf8"),
+  );
 
   /* ---- the tree the file describes ---- */
   const roots = new Map<string, TreeNode>();

@@ -501,6 +501,8 @@ const sfgBatches: ScreenModule = {
     },
   },
   actions: {
+    /* Evidence, none required — not the floor's per-test Pass / Fail
+       (`readQcTests`). Deliberate since #793; see factory/qc.ts. */
     async qcApprove(ctx, id, values) {
       const ev = await qcEvidenceFrom(values);
       if (!ev.ok) return ev;
@@ -1017,7 +1019,13 @@ async function saveFill(ctx: ErpContext, h: Record<string, string>): Promise<Res
     if (!lot || lot.formulationId !== f.id) return refuse(fieldErr("sfgLot", "Pick a lot of this SFG with stock at this godown"));
     const qcWhy = qcRefusal(await sfgQcOf(sfgLot, tx), sfgLot);
     if (qcWhy) return refuse(fieldErr("sfgLot", qcWhy));
-    const levelAvail = await rmLevelAvailable();
+    /* The packing item is locked as well as the SFG lot: two fills drawing
+       the same empty cans (two offline phones syncing at once, or the web
+       form beside one) would otherwise both read the same stock and both
+       pass. A drum is counted company-wide, so its lock is too. Read inside
+       the transaction, after the lock, so the stock is what is left now. */
+    if (canUse && packingType !== "Naket") await lockLot(tx, "packing", canUse.id, packingType === "Drum" ? "all" : godownId);
+    const levelAvail = await rmLevelAvailable(canUse && packingType !== "Naket" ? await rmLots(tx) : undefined);
     const refusal = fillRefusal({
       useLitres: size * cans,
       sfgAvailable: lot.stock,

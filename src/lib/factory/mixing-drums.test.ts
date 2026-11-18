@@ -53,3 +53,16 @@ test("the materials page also asks whether the machine stopped", () => {
   d.down = null;
   assert.equal(stepCheck(db, t, d, "materials"), "Did the machine stop? Choose Yes or No");
 });
+
+test("a formulation with no recipe rows expects nothing, and the difference is never Infinity% (S5)", async () => {
+  const { mixDeviation } = await import("./rules");
+  const none = { ...db, sfg: { nc: { short: "NC", batch: 0, tol: 5, recipe: [] } } } as unknown as FactoryData;
+  const mix = { proc: "mixing", item: "nc" } as Task;
+  const made = mixDeviation(none, mix, { ...draft([]), batches: 1, out: 40 });
+  assert.ok(Number.isFinite(made.dev), `dev is a number: ${made.dev}`);
+  assert.deepEqual(made, { exp: 0, dev: 0, over: true }, "made against nothing expected goes to the supervisor");
+  assert.deepEqual(mixDeviation(none, mix, { ...draft([]), batches: 1 }), { exp: 0, dev: 0, over: false }, "nothing made yet is nothing to flag");
+  /* An ordinary batch is unchanged. */
+  const some = { ...db, sfg: { nc: { short: "NC", batch: 100, tol: 5, recipe: [] } } } as unknown as FactoryData;
+  assert.deepEqual(mixDeviation(some, mix, { ...draft([]), batches: 1, out: 110 }), { exp: 100, dev: 10, over: true });
+});

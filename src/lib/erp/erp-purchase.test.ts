@@ -1253,7 +1253,7 @@ describe("a selection, by its shape", () => {
   });
 });
 
-describe("the goods receipt corrects the PO (0356)", () => {
+describe("the goods receipt corrects the PO (0357)", () => {
   const grn = (ctx: Awaited<ReturnType<typeof as>>, po: string, line: Record<string, string>) =>
     mod("inward").forms!.new(ctx, { date: TODAY, po, godown: "Bhiwandi", transportMode: NONE }, [line]);
   const corrections = (poId: string) => db.select().from(erpPoCorrections).where(eq(erpPoCorrections.poId, poId)).orderBy(asc(erpPoCorrections.createdAt));

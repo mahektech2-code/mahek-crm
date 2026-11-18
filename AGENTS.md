@@ -2347,7 +2347,7 @@ requirements' status inside the receipt's own transaction.
 reversal).** It used to refuse anything past the PO plus a tolerance, and a
 shortfall waited for somebody to close the PO short. Weights and counts at the
 gate never match the PO, so whatever arrives is received and the person making
-the GRN corrects the PO there: a row in `erp_po_corrections` (0356) under the
+the GRN corrects the PO there: a row in `erp_po_corrections` (0357) under the
 PO line, signed — `extra` (+, unless they chose "Leave the PO as it is") or
 `short` (−, only where they said nothing more is coming) — at the LINE'S OWN
 rate and GST, copied. The line itself is never edited. A line now EXPECTS its
@@ -2406,6 +2406,22 @@ later; a past plan is the record of its day. A product whose orders all leave
 Under Process is marked deleted, so a sheet that carried it says Removed. They
 cannot be edited or deleted on the plan: the order is where they change. SFG is
 not derived; the Production Head types it.
+
+**AND THE PLAN IS ONE PAGE: TICK ROWS, PRINT (Nov 2026).** The plan screen
+is one table (`engines/plan-board.ts`, `buildBoard`, pure), built on every open
+from the order demand, the expected work and the lines already on the plan:
+a row per product and per base, with Confirmed, Waiting (MRP check / Accounts,
+or Expected litres for a base, read by `planExpected` and
+`engines/expected-plan.ts`), In stock, If all approved, an editable Make today
+and its Unit, filtered per column (`facetValues`). Confirmed rows start
+ticked; waiting rows start unticked and, ticked, print as an ordinary line.
+Nothing is written until Print plan: `printPicks` writes each ticked row as a
+line (update, revive by `source_key`, or insert), soft-deletes every other
+live line, then `recordPlanPrint`. A row printing more than its confirmed need
+on something still waiting is stored `for_expected` (`beyondConfirmed`); on
+paper it is ordinary. The A5 sheet is unchanged and new prints carry no
+expected box (old prints keep theirs). Typed lines (Add a line) are their own
+ticked rows.
 
 **A recipe is expected, never a gate.** `erp_recipes` holds what one batch of an
 SFG product takes. "Start a batch" opens the SFG form with the recipe's lines, and so does picking the product on a blank New SFG batch (`linesFrom` on the form: lines nobody has touched are replaced at once, typed-into ones only after a confirm),

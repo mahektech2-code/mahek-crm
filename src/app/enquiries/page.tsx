@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { listUserModules } from "@/lib/access";
+import { listUserModules, requireAppForPage } from "@/lib/access";
 import {
   listEnquiries,
   assignableUsers,
@@ -33,6 +33,10 @@ export default async function EnquiriesPage({
    * check runs here. `listUserModules` answers whole for somebody with no
    * module rows, which is the rule that lets a terminal grant open the app.
    */
+  /* The grant first — `listUserModules` answers whole for somebody who does
+     not hold the app at all, so without it the layout's redirect was raced by
+     `listEnquiries` throwing its refusal into the log. */
+  await requireAppForPage(user.id, "enquiries");
   const modules = await listUserModules(user.id, "enquiries");
   const keys = new Set(modules.map((m) => m.key));
   if (!keys.has("enquiries.overview") && !keys.has("enquiries.list")) redirect("/apps");

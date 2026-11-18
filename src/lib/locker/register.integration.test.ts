@@ -194,3 +194,21 @@ describe("The audit", () => {
     assert.equal((await db.select().from(lockerAudit)).length, 1);
   });
 });
+
+describe("An access reviewer", () => {
+  test("can take Locker access away, and cannot give any — not even to themselves", async () => {
+    const { setLockerModules } = await import("./ops-core");
+    const reviewer = await makeUser("Rina Reviewer", ["locker.dashboard", "locker.review"]);
+
+    const self = await setLockerModules(reviewer, reviewer.id, ["locker.dashboard", "locker.review", "locker.access", "locker.credentials"], "mine now");
+    assert.equal(self.ok, false, "a reviewer handing themselves Admin › Access is refused");
+    const held = await db.select({ module: appModuleAccess.module }).from(appModuleAccess).where(eq(appModuleAccess.userId, reviewer.id));
+    assert.deepEqual(held.map((h) => h.module).sort(), ["locker.dashboard", "locker.review"]);
+
+    const grant = await setLockerModules(reviewer, fleet.id, ["locker.dashboard", "locker.myassets", "locker.renewals", "locker.cat.vehicles", "locker.audit"], "more");
+    assert.equal(grant.ok, false, "nor can they widen anybody else");
+
+    const removal = await setLockerModules(reviewer, fleet.id, ["locker.dashboard", "locker.myassets", "locker.renewals"], "Access review 2026-Q4");
+    assert.equal(removal.ok, true, JSON.stringify(removal));
+  });
+});

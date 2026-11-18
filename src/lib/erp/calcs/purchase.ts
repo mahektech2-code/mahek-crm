@@ -128,7 +128,7 @@ registerCalc("inward.net", ({ l }) => {
 });
 
 /*
- * WHAT THIS LINE DOES TO THE PO (0356). The quantity arriving — the scale's net
+ * WHAT THIS LINE DOES TO THE PO (0357). The quantity arriving — the scale's net
  * for a kg chemical, else what was typed — against what the PO line still
  * expects. Nothing here refuses: "more" draws the extra's choice, "less" asks
  * whether more is coming. The server works the same figures out again on save.

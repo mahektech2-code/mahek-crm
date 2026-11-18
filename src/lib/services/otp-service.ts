@@ -456,6 +456,20 @@ export async function verifyOtp(userId: string, purpose: OtpPurpose, code: strin
     // MiniMoth's own word for why, where it is more than "wrong digits".
     if (!checked.valid && checked.code !== "INVALID_OTP") wrongAs = checked.code;
   } else {
+    /* A code we generated: the try is CLAIMED before the digits are compared,
+       in one guarded update. Read-then-increment let parallel guesses all
+       pass the attempts check above. A right code is consumed below, so the
+       try it used is never needed back. */
+    const [claimed] = await db
+      .update(authOtps)
+      .set({ attempts: sql`${authOtps.attempts} + 1` })
+      .where(and(eq(authOtps.id, row.id), sql`${authOtps.attempts} < ${maxAttempts}`))
+      .returning({ attempts: authOtps.attempts });
+    if (!claimed) {
+      await noteAttempt("too_many");
+      return { ok: false, error: "Too many wrong tries for that OTP. Ask for a new one." };
+    }
+    row.attempts = claimed.attempts - 1;
     const a = Buffer.from(hashOf(row.id, typed));
     const b = Buffer.from(row.codeHash);
     match = a.length === b.length && timingSafeEqual(a, b);
@@ -464,7 +478,8 @@ export async function verifyOtp(userId: string, purpose: OtpPurpose, code: strin
     await db
       .update(authOtps)
       .set({
-        attempts: sql`${authOtps.attempts} + 1`,
+        // A MiniMoth code is counted here; a local one was claimed above.
+        ...(row.codeHash.startsWith(MINIMOTH_PREFIX) ? { attempts: sql`${authOtps.attempts} + 1` } : {}),
         lastAttemptAt: new Date(),
         lastAttemptResult: wrongAs,
       })

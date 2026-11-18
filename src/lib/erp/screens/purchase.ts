@@ -463,7 +463,7 @@ async function inwardForm(ctx: ErpContext, init?: Record<string, string>, opts: 
       /* A kg chemical's net is the scale's answer, never typed; anything measured or counted is typed. */
       { k: "net", l: "Weight without drum", t: "derived", calc: "inward.net", when: { k: "item", map: "qtyBy", has: "scale" } },
       { k: "qty", l: "Quantity received", t: "num", req: true, min: 0.001, qtyUnit: { by: ["item"], map: unitOf }, when: { k: "item", map: "qtyBy", has: "typed" }, fillBy: { by: ["po", "poLine"], map: rx.qtyOf }, hint: "Starts at what is pending on the PO — type what actually arrived." },
-      /* Whatever arrived is received; a difference corrects the PO with a line under this one (0356). */
+      /* Whatever arrived is received; a difference corrects the PO with a line under this one (0357). */
       { k: "diff", l: "Against the PO", t: "derived", calc: "inward.diff", when: { calc: "inward.gap" } },
       { k: "extra", l: "The extra", t: "select", opts: [...EXTRA_OPTS], def: EXTRA_OPTS[0], untagged: true, when: { calc: "inward.isMore" } },
       { k: "short", l: "Is more coming?", t: "select", opts: [...SHORT_OPTS], def: SHORT_OPTS[0], untagged: true, when: { calc: "inward.isLess" } },
@@ -828,7 +828,7 @@ const inward: ScreenModule = {
           if (qty == null || qty <= 0) return fieldErr(`l${i}.qty`, qty != null && qty < 0 ? "Quantity cannot be below 0." : "Quantity received is required");
         }
         /*
-         * NEVER REFUSED FOR ITS QUANTITY (0356). Whatever arrived is received;
+         * NEVER REFUSED FOR ITS QUANTITY (0357). Whatever arrived is received;
          * a difference from what the line still expects corrects the PO with a
          * line under it — the extra unless the gate said to leave the PO, the
          * shortfall only where the gate said nothing more is coming.
@@ -984,7 +984,7 @@ const inward: ScreenModule = {
         quantity = num(h.qty);
         if (quantity == null || quantity <= 0) return fieldErr("qty", quantity != null && quantity < 0 ? "Quantity cannot be below 0." : "Quantity received is required");
       }
-      /* A corrected quantity is never refused for being more or less than the PO (0356); the PO's status follows it. */
+      /* A corrected quantity is never refused for being more or less than the PO (0357); the PO's status follows it. */
       const next: InwardChange = {
         receivedDate,
         godownId,
@@ -2295,7 +2295,7 @@ async function savePurchase(ctx: ErpContext, h: Record<string, string>, id?: str
   if (id) {
     const [before] = await db.select().from(erpPurchases).where(eq(erpPurchases.id, id));
     if (!before) return err("That purchase no longer exists.", "not_found");
-    /* A lot entered by hand IS the receipt against its PO line; like the GRN, it is never refused for its quantity (0356). */
+    /* A lot entered by hand IS the receipt against its PO line; like the GRN, it is never refused for its quantity (0357). */
     await db.transaction(async (tx) => {
       await tx.update(erpPurchases).set({ ...common, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpPurchases.id, id));
       await refreshCache(tx, id);

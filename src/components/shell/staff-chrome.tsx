@@ -1,6 +1,7 @@
 "use client";
 
 import { usePathname } from "next/navigation";
+import { bellAsksOn } from "@/lib/notification-feed";
 import { isPublicPath } from "@/lib/public-links";
 import { NotificationCenter } from "./notification-center";
 import { VersionGuard } from "./version-guard";
@@ -16,8 +17,9 @@ export function StaffChrome() {
   if (isPublicPath(pathname)) return null;
   return (
     <>
-      {/* The live bell: polls, pops and chimes in every app. */}
-      <NotificationCenter />
+      {/* The live bell: polls, pops and chimes in every app — and is not
+          mounted on the sign-in pages, where there is nobody to ask for. */}
+      {bellAsksOn(pathname) ? <NotificationCenter /> : null}
       {/* A tab older than the server: reload it before a save is refused. */}
       <VersionGuard />
     </>

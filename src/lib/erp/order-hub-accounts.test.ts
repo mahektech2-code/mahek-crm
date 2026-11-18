@@ -38,6 +38,8 @@ import { screenModule } from "@/lib/erp/screens";
 import { testPhone } from "@/lib/test-phone";
 import { approveIntake, checkForDuplicate, createIntake, declineIntake, DuplicateFoundError, holdIntake, releaseIntake, sameOrdersFor, sendBackIntake } from "./order-hub";
 import { approveTo, accountsTos, declineTo, holdTo } from "@/lib/services/to-approval-service";
+import { openPlanFor, planBoard, planExpected, planPrint, printPicks, savePlanLine } from "./production-plan";
+import { printMarks } from "./engines/production-plan";
 
 const tag = randomUUID().slice(0, 6);
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
@@ -260,5 +262,77 @@ describe("the Production Head edits until Bill it", () => {
     assert.equal(live.length, 2);
     assert.equal(live.find((l) => l.skuId === skuA)?.qtyCans, 4);
     assert.ok(live.every((l) => l.accountsCheck === "Approved"), "nothing is approved again");
+  });
+});
+
+describe("Under Process plans the expected orders", () => {
+  test("a TO waits for Accounts, moves to the MRP check on approval, and a held or declined one adds nothing", async () => {
+    const fId = id("form");
+    const fgId = id("fg");
+    const bId = id("brand");
+    const sku = id("sku");
+    await db.insert(productFormulations).values({ id: fId, name: `UPX base ${tag}`, slug: `upx-${tag}` });
+    await db.insert(productBrands).values({ id: bId, name: `UPX ${tag}`, slug: `upx-b-${tag}`, formulationId: fId });
+    await db.insert(finishedGoods).values({ id: fgId, name: `UPX Thinner 20 L ${tag}`, slug: `upx-fg-${tag}`, brandId: bId, formulationId: fId, millilitres: 20000 });
+    await db.insert(products).values({ id: sku, name: `UPX Thinner 20 L ${tag} (Loose)`, finishedGoodId: fgId, brandId: bId, formulationId: fId, millilitresPerCan: 20000, cansPerBox: 1 });
+    await db.insert(erpProductPacking).values({ productId: sku, emptyBoxesRequired: 0 });
+    const key = `loose:${fgId}`;
+    const rowOf = async () => (await planExpected("erpg_bhiwandi")).products.find((p) => p.key === key);
+
+    const a = await createIntake(taker.id, intake([{ skuId: sku, qtyCans: 20 }], { date: "2026-11-11" }));
+    const b = await createIntake(taker.id, intake([{ skuId: sku, qtyCans: 10 }], { date: "2026-11-12" }));
+    const c = await createIntake(taker.id, intake([{ skuId: sku, qtyCans: 50 }], { date: "2026-11-13" }));
+    let row = await rowOf();
+    assert.deepEqual([row?.confirmed, row?.mrp, row?.accounts], [0, 0, 80]);
+    assert.equal(row?.verdict.text, "Short 80 cans · 1,600 L");
+
+    assert.ok((await holdIntake(ledger.id, c.id, "Over credit limit", "")).ok);
+    let e = await planExpected("erpg_bhiwandi");
+    const held = e.entries.find((x) => x.key === `t:${c.toNo}`);
+    assert.ok(held?.held && !held.counted, "a held TO is listed and not counted");
+    assert.equal(held?.check.lines[0].text, "Not counted while on hold");
+    assert.equal(e.products.find((p) => p.key === key)?.accounts, 30);
+
+    const r = await approveIntake(ledger.id, a.id, null);
+    assert.ok(r.ok);
+    row = await rowOf();
+    assert.deepEqual([row?.mrp, row?.accounts], [20, 10], "approved, it moves to the MRP check by itself");
+    assert.ok((await declineIntake(ledger.id, b.id, "Customer cancelled")).ok);
+    row = await rowOf();
+    assert.equal(row?.accounts, 0, "a declined TO drops off");
+    e = await planExpected("erpg_bhiwandi");
+    const base = e.bases.find((x) => x.formulationId === fId);
+    assert.equal(base?.expectedLitres, 400);
+    assert.deepEqual(base?.expectedFor, [`Order ${r.ok ? r.data.orderNo : 0}`]);
+
+    /* One page: tick what the floor makes and print. A waiting row ticked prints as an ordinary line, marked not approved yet. */
+    setTestUser(head);
+    const ctx = await erpContext();
+    const plan = await openPlanFor(ctx, "2099-01-05");
+    assert.ok(plan.ok);
+    await db.execute(sql`update erp_production_plans set godown_id = 'erpg_bhiwandi' where id = ${plan.data.id}`);
+    const typed = await savePlanLine(ctx, plan.data.id, { category: "sfg", itemId: fId, quantity: "400", unit: "Litre" });
+    assert.ok(typed.ok, JSON.stringify(typed));
+    let board = await planBoard(plan.data.id);
+    const can = board.find((r) => r.key === key);
+    assert.ok(can && !can.ticked && can.mrp === 20, "a row still waiting starts unticked");
+    const baseRow = board.find((r) => r.key === `sfg:${fId}`);
+    assert.ok(baseRow && baseRow.lineId === (typed.ok ? typed.data.id : ""), "the typed base line is the base's row");
+    assert.ok(!(await printPicks(ctx, plan.data.id, [{ key, quantity: "0", unit: "Cans" }])).ok, "a quantity must be more than zero");
+    const printed = await printPicks(ctx, plan.data.id, [
+      { key, quantity: "20", unit: "Cans" },
+      { key: `sfg:${fId}`, quantity: "400", unit: "Litre" },
+    ]);
+    assert.ok(printed.ok, JSON.stringify(printed));
+    const sheet = await planPrint(plan.data.id, printed.ok ? printed.data.printNo : 0);
+    assert.deepEqual(sheet?.current.lines.map((l) => `${l.productName} ${l.quantity} ${l.unit}${l.forExpected ? " *" : ""}`).sort(), [`UPX Thinner 20 L ${tag} 20 Cans *`, `UPX base ${tag} 400 Litre *`].sort());
+    board = await planBoard(plan.data.id);
+    assert.ok(board.find((r) => r.key === key)?.ticked, "what was printed stays ticked");
+    const again = await printPicks(ctx, plan.data.id, [{ key, quantity: "20", unit: "Cans" }]);
+    assert.ok(again.ok);
+    const second = await planPrint(plan.data.id, again.ok ? again.data.printNo : 0);
+    assert.deepEqual(second?.current.lines.map((l) => l.productName), [`UPX Thinner 20 L ${tag}`]);
+    assert.deepEqual(printMarks(second!.current.lines, second!.previous!.lines).removed.map((l) => l.productName), [`UPX base ${tag}`], "an untick is listed as removed on the reprint");
+    setTestUser(null);
   });
 });

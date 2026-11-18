@@ -34,6 +34,14 @@ import { publicRouting } from "@/lib/public-links";
 export const APP_HEADER = "x-mahek-app";
 /** The native Factory app's session, sent where a browser would send a cookie. */
 export const FACTORY_SESSION_HEADER = "x-factory-session";
+/**
+ * Set on a browser's `/api/` request that names no app — no same-host
+ * Referer. `hatInForce` then reads the NARROWEST level the person holds rather
+ * than `users.role`, the widest: leaving the Referer off (`referrerPolicy:
+ * "no-referrer"`) used to be a way back to the widening `appForApi` closes.
+ * Only this function writes it.
+ */
+export const UNNAMED_API_HEADER = "x-mahek-unnamed-api";
 /** The page path, for the workday lock in `requireUser`. Only this function writes it. */
 export const PATH_HEADER = "x-mahek-path";
 const SESSION_COOKIE_NAME = "mahekone_session";
@@ -132,6 +140,19 @@ export function proxy(request: NextRequest) {
    */
   headers.delete(APP_HEADER);
   if (app) headers.set(APP_HEADER, app);
+
+  /* A signed-in BROWSER call to a shared API route that named no app. Only a
+     cookie session counts: the handset and the scripts carry a bearer token
+     and have always been read at the account's own level. */
+  headers.delete(UNNAMED_API_HEADER);
+  if (
+    !app &&
+    request.nextUrl.pathname.startsWith("/api/") &&
+    !request.headers.get("authorization") &&
+    (request.headers.get("cookie") ?? "").includes(SESSION_COOKIE_NAME + "=")
+  ) {
+    headers.set(UNNAMED_API_HEADER, "1");
+  }
 
   /* Stripped for the same reason: it narrows scope, and it arrives from the
      internet. Only this function may write it. */
