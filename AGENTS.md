@@ -347,6 +347,25 @@ Everything else this file used to hold now lives in `docs/agents/`, moved word f
 | `docs/agents/studio.md` | src/lib/studio |
 | `docs/agents/locker.md` | src/lib/locker |
 
+## Branch names
+
+Every piece of work goes on a branch named for what it does, as
+`<area>/<what-it-does>` in lowercase kebab-case, three to five words:
+`erp/plan-remark-rows`, `crm/call-log-quiet-window`, `mbos/punch-out-retry`,
+`docs/split-agents-md`, `fix/outstanding-rounding`. The area is the app or
+folder it touches (`crm`, `erp`, `mbos`, `hrms`, `hire`, `accounts`, `admin`,
+`docs`); `fix/` is for a bug that spans apps.
+
+A cloud session starts on an auto-generated branch (`claude/<random-words>`),
+named before the task was known. That name is not to be kept: this rule is
+standing permission to work on a meaningful branch instead. As soon as the task
+is clear, and before the first commit, create the meaningful branch from the
+session's branch (`git checkout -b erp/...`) and commit and push there. If
+commits already landed on the random branch, branch from it and push the new
+name; the random branch is left as it is, not renamed or deleted. If the push to
+the new name is refused, push to the session's branch and say so. One branch per
+task, so a second, unrelated task in the same session gets its own name.
+
 ## Testing
 
 `npm run test` runs the engine tests: pure, fast, no database. They pin the
