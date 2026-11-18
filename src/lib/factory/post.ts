@@ -526,7 +526,9 @@ async function finish(fc: FactoryCtx, sub: Submission, live: FactoryData, t: Tas
     if (over) {
       const sf = live.sfg[t.item!];
       await review("tolerance", "Mixing output outside the limit",
-        `${r.label?.code} made ${nf(d.out)} L against ${nf(exp)} L expected (${dev >= 0 ? "+" : ""}${dev.toFixed(1)}%). The limit is ±${sf.tol}%.`,
+        exp > 0
+          ? `${r.label?.code} made ${nf(d.out)} L against ${nf(exp)} L expected (${dev >= 0 ? "+" : ""}${dev.toFixed(1)}%). The limit is ±${sf.tol}%.`
+          : `${r.label?.code} made ${nf(d.out)} L, and its recipe expects nothing — the formulation has no recipe lines to measure it against.`,
         "Today " + at + " · " + names([d.team.owner, d.team.op, ...d.team.helpers]));
     }
     if (d.ownRecipe) {

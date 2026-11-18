@@ -340,6 +340,11 @@ export function firstBlockedStep(db: FactoryData, t: Task, d: Draft): { step: st
 export function mixDeviation(db: FactoryData, t: Task, d: Draft): { exp: number; dev: number; over: boolean } {
   const sf = db.sfg[t.item!];
   const exp = (d.batches ?? 1) * (d.ownRecipe ? batchLitres(recipeLines(db, t, d)) : sf.batch);
+  /* A formulation with no recipe rows (or a batch size of 0) expects nothing,
+     and dividing by it showed "+Infinity%". There is no percentage to give:
+     the difference reads 0, and anything made against nothing expected is
+     outside the limit, so the supervisor is asked to look. */
+  if (!(exp > 0)) return { exp: 0, dev: 0, over: !!d.out };
   const dev = d.out ? ((d.out - exp) / exp) * 100 : 0;
   return { exp, dev, over: !!d.out && Math.abs(dev) > sf.tol };
 }
