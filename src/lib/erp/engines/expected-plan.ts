@@ -1,5 +1,5 @@
 import type { MrpAnswer } from "./mrp";
-import type { UnderProcessLine } from "./production-plan";
+import { sizeName, type PlanCategory, type UnderProcessLine } from "./production-plan";
 
 /* ---------------------------------------------------------------------------
  * EXPECTED ORDERS ON THE DAY'S PLAN — pure. Production plans at ten and
@@ -46,7 +46,12 @@ export type ProductOrder = { stage: ExpectedStage; ref: string; party: string; c
 
 export type ProductRow = {
   key: string;
+  category: Exclude<PlanCategory, "sfg">;
+  /** The finished good (loose) or SKU (packing) a plan line names; null for a loose SKU with no finished good. */
+  itemId: string | null;
   name: string;
+  size: string | null;
+  code: string | null;
   /** "loose" or "6 cans/box". */
   packing: string;
   cansPerBox: number;
@@ -85,7 +90,7 @@ export const sourceRef = (s: { orderNo: number | null; toNo: number | null }) =>
 export const counted = (s: ExpectedSource) => !s.held && !s.noGodown;
 
 export function expectedPlan(confirmed: DemandLine[], sources: ExpectedSource[], stockIn: PlanStock): ExpectedPlan {
-  type Acc = Omit<ProductRow, "stock" | "verdict"> & { fg: string; litresPerCan: number; formulationId: string | null; formulationName: string | null; expectedRefs: Map<string, string> };
+  type Acc = Omit<ProductRow, "stock" | "verdict" | "category"> & { fg: string; litresPerCan: number; formulationId: string | null; formulationName: string | null; expectedRefs: Map<string, string> };
   const by = new Map<string, Acc>();
   const add = (l: DemandLine, stage: ExpectedStage, ref: string, party: string, since: string | null, sinceKey: string) => {
     if (!(l.qtyCans > 0)) return;
@@ -97,7 +102,10 @@ export function expectedPlan(confirmed: DemandLine[], sources: ExpectedSource[],
       a = {
         key,
         fg: l.finishedGoodId ?? l.skuId,
+        itemId: loose ? (l.finishedGoodId ?? null) : l.skuId,
         name: loose ? (l.finishedGoodName ?? l.skuName) : l.skuName,
+        size: sizeName(l.millilitres),
+        code: loose ? (l.looseCode ?? l.skuCode) : l.skuCode,
         packing: loose ? "loose" : `${cpb} cans/box`,
         cansPerBox: cpb,
         confirmed: 0,
@@ -149,7 +157,11 @@ export function expectedPlan(confirmed: DemandLine[], sources: ExpectedSource[],
     const order = { confirmed: 0, mrp: 1, accounts: 2 };
     products.push({
       key: a.key,
+      category: a.key.startsWith("loose:") ? "loose" : "packing",
+      itemId: a.itemId,
       name: a.name,
+      size: a.size,
+      code: a.code,
       packing: a.packing,
       cansPerBox: a.cansPerBox,
       confirmed: a.confirmed,

@@ -38,7 +38,8 @@ import { screenModule } from "@/lib/erp/screens";
 import { testPhone } from "@/lib/test-phone";
 import { approveIntake, checkForDuplicate, createIntake, declineIntake, DuplicateFoundError, holdIntake, releaseIntake, sameOrdersFor, sendBackIntake } from "./order-hub";
 import { approveTo, accountsTos, declineTo, holdTo } from "@/lib/services/to-approval-service";
-import { openPlanFor, planExpected, planPrint, planView, recordPlanPrint, savePlanLine } from "./production-plan";
+import { openPlanFor, planBoard, planExpected, planPrint, printPicks, savePlanLine } from "./production-plan";
+import { printMarks } from "./engines/production-plan";
 
 const tag = randomUUID().slice(0, 6);
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
@@ -304,21 +305,34 @@ describe("Under Process plans the expected orders", () => {
     assert.equal(base?.expectedLitres, 400);
     assert.deepEqual(base?.expectedFor, [`Order ${r.ok ? r.data.orderNo : 0}`]);
 
-    /* The base is started ahead as a typed SFG line marked for expected orders, and the print keeps the expected box. */
+    /* One page: tick what the floor makes and print. A waiting row ticked prints as an ordinary line, marked not approved yet. */
     setTestUser(head);
     const ctx = await erpContext();
     const plan = await openPlanFor(ctx, "2099-01-05");
     assert.ok(plan.ok);
     await db.execute(sql`update erp_production_plans set godown_id = 'erpg_bhiwandi' where id = ${plan.data.id}`);
-    const line = await savePlanLine(ctx, plan.data.id, { category: "sfg", itemId: fId, quantity: "400", unit: "Litre", remarks: "For TO", forExpected: true });
-    assert.ok(line.ok, JSON.stringify(line));
-    const view = await planView(plan.data.id);
-    assert.ok(view?.lines.find((l) => l.id === (line.ok ? line.data.id : ""))?.forExpected);
-    const printed = await recordPlanPrint(ctx, plan.data.id);
+    const typed = await savePlanLine(ctx, plan.data.id, { category: "sfg", itemId: fId, quantity: "400", unit: "Litre" });
+    assert.ok(typed.ok, JSON.stringify(typed));
+    let board = await planBoard(plan.data.id);
+    const can = board.find((r) => r.key === key);
+    assert.ok(can && !can.ticked && can.mrp === 20, "a row still waiting starts unticked");
+    const baseRow = board.find((r) => r.key === `sfg:${fId}`);
+    assert.ok(baseRow && baseRow.lineId === (typed.ok ? typed.data.id : ""), "the typed base line is the base's row");
+    assert.ok(!(await printPicks(ctx, plan.data.id, [{ key, quantity: "0", unit: "Cans" }])).ok, "a quantity must be more than zero");
+    const printed = await printPicks(ctx, plan.data.id, [
+      { key, quantity: "20", unit: "Cans" },
+      { key: `sfg:${fId}`, quantity: "400", unit: "Litre" },
+    ]);
     assert.ok(printed.ok, JSON.stringify(printed));
     const sheet = await planPrint(plan.data.id, printed.ok ? printed.data.printNo : 0);
-    const box = sheet?.current.expected?.find((x) => x.productName === `UPX Thinner 20 L ${tag}`);
-    assert.deepEqual(box && [box.quantity, box.unit, box.mrp, box.accounts], [20, "Cans", 20, 0]);
+    assert.deepEqual(sheet?.current.lines.map((l) => `${l.productName} ${l.quantity} ${l.unit}${l.forExpected ? " *" : ""}`).sort(), [`UPX Thinner 20 L ${tag} 20 Cans *`, `UPX base ${tag} 400 Litre *`].sort());
+    board = await planBoard(plan.data.id);
+    assert.ok(board.find((r) => r.key === key)?.ticked, "what was printed stays ticked");
+    const again = await printPicks(ctx, plan.data.id, [{ key, quantity: "20", unit: "Cans" }]);
+    assert.ok(again.ok);
+    const second = await planPrint(plan.data.id, again.ok ? again.data.printNo : 0);
+    assert.deepEqual(second?.current.lines.map((l) => l.productName), [`UPX Thinner 20 L ${tag}`]);
+    assert.deepEqual(printMarks(second!.current.lines, second!.previous!.lines).removed.map((l) => l.productName), [`UPX base ${tag}`], "an untick is listed as removed on the reprint");
     setTestUser(null);
   });
 });

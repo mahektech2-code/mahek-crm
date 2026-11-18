@@ -454,6 +454,7 @@ const DESCRIBE: Record<string, Describer> = {
   "erp.plan.lineEdit": () => ["changed a line on a daily production plan"],
   "erp.plan.lineDelete": () => ["took a line off a daily production plan"],
   "erp.plan.print": () => ["printed a daily production plan"],
+  "erp.plan.picks": () => ["chose the lines of a daily production plan"],
   /* ---- stock checks */
   "erp.floorCheck.record": () => ["recorded a stock check"],
   "erp.stock.adjust": () => ["adjusted stock by hand"],

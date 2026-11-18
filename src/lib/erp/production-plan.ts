@@ -11,6 +11,7 @@ import { calendarDate } from "@/lib/business-date";
 import { expectedPlan, sourceRef, stockCheckWords, counted, type DemandLine, type ExpectedPlan, type ExpectedSource } from "./engines/expected-plan";
 import { mrpCheck } from "./engines/mrp";
 import { mrpStockAt } from "./mrp-stock";
+import { beyondConfirmed, buildBoard, type BoardLine, type BoardRow } from "./engines/plan-board";
 import { ACCOUNTS_HOLD_REASONS, PRODUCTION_HOLD_REASONS } from "./engines/order-hub";
 import { nowMs } from "@/lib/format";
 
@@ -292,10 +293,8 @@ export async function deletePlanLine(ctx: ErpContext, lineId: string): Promise<R
 export async function recordPlanPrint(ctx: ErpContext, planId: string): Promise<Result<{ printNo: number }>> {
   const [plan] = await db.select({ planDate: erpProductionPlans.planDate, godownId: erpProductionPlans.godownId }).from(erpProductionPlans).where(eq(erpProductionPlans.id, planId));
   if (!plan) return err("That plan no longer exists.", "not_found");
-  const planRow = plan;
   if (isPastPlan(plan.planDate)) return err(PAST_PLAN);
-  /* The sheet carries the orders as they stand at the moment it is printed. */
-  await syncPlanFromOrders(planId);
+  /* The lines are what was ticked (`printPicks`): nothing is brought in here. */
   const lines = await db
     .select()
     .from(erpProductionPlanLines)
@@ -304,10 +303,9 @@ export async function recordPlanPrint(ctx: ErpContext, planId: string): Promise<
   if (!lines.length) return err("Add at least one line before printing.");
   const [last] = await db.select().from(erpProductionPlanPrints).where(eq(erpProductionPlanPrints.planId, planId)).orderBy(desc(erpProductionPlanPrints.printNo)).limit(1);
   const snapshot = lines.map(snap);
-  const expected = expectedBox(await planExpected(planRow.godownId));
-  if (last && JSON.stringify(last.lines) === JSON.stringify(snapshot) && JSON.stringify(last.expected ?? []) === JSON.stringify(expected)) return ok({ printNo: last.printNo });
+  if (last && JSON.stringify(last.lines) === JSON.stringify(snapshot)) return ok({ printNo: last.printNo });
   const printNo = (last?.printNo ?? 0) + 1;
-  await db.insert(erpProductionPlanPrints).values({ id: erpId("eplnp"), planId, printNo, printedById: ctx.user.id, lines: snapshot, expected });
+  await db.insert(erpProductionPlanPrints).values({ id: erpId("eplnp"), planId, printNo, printedById: ctx.user.id, lines: snapshot });
   await erpAudit(ctx, "erp.plan.print", "erp_production_plan", planId, null, { printNo, lines: snapshot.length });
   return ok({ printNo });
 }
@@ -577,13 +575,105 @@ export async function planExpected(godownId: string | null): Promise<PlanExpecte
   return { ...plan, entries };
 }
 
-/** The printed "Expected · not approved yet" box: each product still waiting, in boxes where it is whole boxes. */
-export function expectedBox(e: ExpectedPlan): PlanSnapshotExpected[] {
-  return e.products
-    .filter((p) => p.mrp + p.accounts > 0)
-    .map((p) => {
-      const boxes = p.cansPerBox > 1 && p.mrp % p.cansPerBox === 0 && p.accounts % p.cansPerBox === 0;
-      const d = boxes ? p.cansPerBox : 1;
-      return { productName: p.name, quantity: (p.mrp + p.accounts) / d, unit: boxes ? "Boxes" : "Cans", mrp: p.mrp / d, accounts: p.accounts / d };
-    });
+/* ---------------------------------------------------------------------------
+ * ONE PAGE: TICK AND PRINT. The board is every product the orders ask for,
+ * every base they need and every typed line, read live; the plan's lines are
+ * what was ticked at the last print. `printPicks` makes the lines exactly the
+ * ticked rows and records the print in one go, so the sheet and the plan never
+ * disagree. Nothing is added on its own any more: an order that arrives after
+ * a print shows on the page, ticked if it is confirmed, until the next print.
+ * ------------------------------------------------------------------------- */
+
+export type PlanBoardRow = BoardRow & { orderRefs: string | null; remarks: string | null };
+
+export async function planBoard(planId: string): Promise<PlanBoardRow[]> {
+  const [plan] = await db.select().from(erpProductionPlans).where(eq(erpProductionPlans.id, planId));
+  if (!plan) return [];
+  const lines = await db
+    .select()
+    .from(erpProductionPlanLines)
+    .where(and(eq(erpProductionPlanLines.planId, planId), isNull(erpProductionPlanLines.deletedAt)))
+    .orderBy(asc(erpProductionPlanLines.sort), asc(erpProductionPlanLines.createdAt));
+  const boardLines: BoardLine[] = lines.map((l) => ({ id: l.id, category: l.category, itemId: l.itemId, source: l.source, sourceKey: l.sourceKey, productName: l.productName, size: l.size, quantity: l.quantity, unit: l.unit, remarks: l.remarks }));
+  /* A past day's plan is what was printed: its lines and nothing live. */
+  const past = isPastPlan(plan.planDate);
+  const [expected, demand] = past
+    ? [{ products: [], bases: [], counts: { confirmedOrders: 0, mrpOrders: 0, accountsTos: 0, oldestAccounts: null }, shortProducts: [] } as ExpectedPlan, []]
+    : await Promise.all([planExpected(plan.godownId), underProcessLines(plan.godownId).then(orderDemand)]);
+  const byKey = new Map(demand.map((d) => [d.key, d]));
+  const remarksOf = new Map(lines.map((l) => [l.id, l.remarks]));
+  return buildBoard(expected, boardLines).map((r) => ({
+    ...r,
+    orderRefs: byKey.get(r.key)?.orderRefs ?? null,
+    remarks: (r.lineId ? remarksOf.get(r.lineId) : null) ?? byKey.get(r.key)?.remarks ?? null,
+  }));
+}
+
+export type PlanPick = { key: string; quantity: string; unit: string };
+
+export async function printPicks(ctx: ErpContext, planId: string, picks: PlanPick[]): Promise<Result<{ printNo: number }>> {
+  const [plan] = await db.select().from(erpProductionPlans).where(eq(erpProductionPlans.id, planId));
+  if (!plan) return err("That plan no longer exists.", "not_found");
+  if (isPastPlan(plan.planDate)) return err(PAST_PLAN);
+  if (!picks.length) return err("Tick at least one row to print.");
+  const rows = new Map((await planBoard(planId)).map((r) => [r.key, r]));
+  const problems: { field: string; message: string }[] = [];
+  const chosen: { row: PlanBoardRow; quantity: number; unit: string }[] = [];
+  for (const p of picks) {
+    const row = rows.get(p.key);
+    if (!row) {
+      problems.push({ field: p.key, message: "This row is no longer on the plan. Reload the page." });
+      continue;
+    }
+    const q = Number(String(p.quantity).trim());
+    const whole = p.unit === "Cans" || p.unit === "Boxes";
+    if (!row.units.includes(p.unit)) problems.push({ field: p.key, message: "Pick a unit." });
+    else if (!Number.isFinite(q) || q <= 0) problems.push({ field: p.key, message: `${row.name}: the quantity must be more than zero.` });
+    else if (whole && !Number.isInteger(q)) problems.push({ field: p.key, message: `${row.name}: cans and boxes are whole numbers.` });
+    else chosen.push({ row, quantity: q, unit: p.unit });
+  }
+  if (problems.length) return err(problems[0].message, "validation", problems);
+  const now = new Date();
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`erp:plan:${planId}`}))`);
+    const all = await tx.select().from(erpProductionPlanLines).where(eq(erpProductionPlanLines.planId, planId));
+    const keep = new Set<string>();
+    let [{ n: sort }] = (await tx.execute(sql`select coalesce(max(sort), 0)::int as n from erp_production_plan_lines where plan_id = ${planId}`)) as unknown as { n: number }[];
+    for (const { row, quantity, unit } of chosen) {
+      const forExpected = beyondConfirmed(row, quantity, unit);
+      const typed = row.key.startsWith("line:");
+      const values = typed
+        ? { quantity, unit, updatedById: ctx.user.id, updatedAt: now }
+        : {
+            category: row.category,
+            itemId: row.itemId,
+            productName: row.name,
+            productCode: row.code,
+            size: row.category === "sfg" ? null : row.size,
+            quantity,
+            unit,
+            remarks: row.remarks,
+            orderRefs: row.orderRefs,
+            forExpected,
+            updatedById: ctx.user.id,
+            updatedAt: now,
+          };
+      const existing = row.lineId ?? all.find((l) => l.source === "order" && l.sourceKey === row.key)?.id ?? null;
+      if (existing) {
+        await tx.update(erpProductionPlanLines).set({ ...values, deletedAt: null, deletedById: null }).where(eq(erpProductionPlanLines.id, existing));
+        keep.add(existing);
+      } else {
+        const id = erpId("eplnl");
+        await tx.insert(erpProductionPlanLines).values({ id, planId, source: "order", sourceKey: row.key, sort: ++sort, createdById: ctx.user.id, ...(values as typeof values & { category: string; productName: string }) });
+        keep.add(id);
+      }
+    }
+    for (const l of all) {
+      if (l.deletedAt || keep.has(l.id)) continue;
+      await tx.update(erpProductionPlanLines).set({ deletedAt: now, deletedById: ctx.user.id }).where(eq(erpProductionPlanLines.id, l.id));
+    }
+    await tx.update(erpProductionPlans).set({ updatedById: ctx.user.id, updatedAt: now }).where(eq(erpProductionPlans.id, planId));
+  });
+  await erpAudit(ctx, "erp.plan.picks", "erp_production_plan", planId, null, { picks: chosen.map((c) => `${c.row.name} ${c.quantity} ${c.unit}`) });
+  return recordPlanPrint(ctx, planId);
 }

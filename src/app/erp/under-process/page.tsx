@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { erpContext } from "@/lib/erp/access";
 import { erpScreen } from "@/lib/erp/registry";
-import { listPlans, planCatalogue, planExpected, planView, syncPlanFromOrders, underProcessLines } from "@/lib/erp/production-plan";
+import { listPlans, planBoard, planCatalogue, planView, underProcessLines } from "@/lib/erp/production-plan";
 import { orderDemand } from "@/lib/erp/engines/production-plan";
 import { calendarDate } from "@/lib/business-date";
 import { nowMs } from "@/lib/format";
@@ -27,15 +27,12 @@ export default async function UnderProcess({ searchParams }: { searchParams: Pro
   const readOnly = ctx.viewingAs != null;
 
   if (planId) {
-    /* The orders under process come in by themselves; a preview writes nothing. */
-    if (!readOnly) await syncPlanFromOrders(planId);
-    const [plan, items] = await Promise.all([planView(planId), planCatalogue()]);
+    /* One page: what the orders ask for, read live, ticked against what the plan already holds. */
+    const [plan, board, items] = await Promise.all([planView(planId), planBoard(planId), planCatalogue()]);
     /* A past day's plan is the record of that day: shown, never changed or printed again. */
     if (plan) {
       const past = plan.planDate < today;
-      /* What is not approved yet is read live; a past day has nothing still to come. */
-      const expected = past ? null : await planExpected(plan.godownId);
-      return <PlanEditor plan={plan} items={items} today={today} now={nowMs()} expected={expected} readOnly={readOnly || past} past={past} />;
+      return <PlanEditor plan={plan} board={board} items={items} readOnly={readOnly || past} past={past} />;
     }
   }
 

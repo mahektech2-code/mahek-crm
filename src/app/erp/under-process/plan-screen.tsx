@@ -3,24 +3,20 @@
 import { NavLink } from "@/components/shell/nav-link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { Badge, Button, Callout, Card, CardHeader, cx, EmptyState, Field, Input, Select, Td, Th, Tr } from "@/components/ui/primitives";
+import { Button, Callout, Card, CardHeader, Checkbox, checkboxClass, cx, EmptyState, Field, Input, Select, Td, Th, Tr } from "@/components/ui/primitives";
 import { ComboBox } from "@/components/ui/combo-box";
-import { RowMenu } from "@/components/ui/overlays";
-import { clock, stamp } from "@/lib/format";
+import { cleanDecimal, cleanWhole, clock, stamp } from "@/lib/format";
 import { addDays } from "@/lib/business-date";
 import { fdLong, nf } from "@/lib/erp/ui";
 import { erpPlanHref, erpPlanPrintHref } from "@/lib/erp/trace-links";
-import { erpLink } from "@/lib/erp/registry";
 import { QtyField } from "../_ui/units";
-import { categorySpec, PLAN_CATEGORIES, type LineState, type PlanCategory } from "@/lib/erp/engines/production-plan";
-import type { ExpectedEntry, PlanExpected, PlanItem, PlanLineView, PlanSummary, PlanView } from "@/lib/erp/production-plan";
-import type { BaseRow, ProductRow } from "@/lib/erp/engines/expected-plan";
-import { CardGrid } from "@/components/ui/card-grid";
-import { cleanDecimal } from "@/lib/format";
-import { BoardHeader, BoardTable, BoardTabs, Pill } from "../_ui/board";
-import { erpPlanDeleteLine, erpPlanOpen, erpPlanPrint, erpPlanSaveLine } from "@/lib/actions/erp-production-plan";
+import { categorySpec, PLAN_CATEGORIES, type PlanCategory } from "@/lib/erp/engines/production-plan";
+import { facetValues, type BoardFacet } from "@/lib/erp/engines/plan-board";
+import type { PlanBoardRow, PlanItem, PlanLineView, PlanSummary, PlanView } from "@/lib/erp/production-plan";
+import { BoardHeader, BoardTable, Pill } from "../_ui/board";
+import { erpPlanOpen, erpPlanPrintPicks, erpPlanSaveLine } from "@/lib/actions/erp-production-plan";
 import { PageLinks } from "../_ui/page-head";
-import { linkClass, toggleClass } from "../_ui/look";
+import { labelClass, linkClass, popoverClass, toggleClass } from "../_ui/look";
 import { DialogBody, DialogFooter, DialogHeader, DialogTitle, ErpDialog } from "../_ui/dialog";
 import { useErpUi } from "../_ui/erp-ui";
 
@@ -34,13 +30,6 @@ import { useErpUi } from "../_ui/erp-ui";
 const planName = (n: number) => `PLAN-${n}`;
 
 const NOT_PRINTED = "Not printed yet — open the plan and print it there.";
-
-const STATE: Record<LineState, { label: string; tone: "success" | "warn" | "danger" }> = {
-  given: { label: "Given", tone: "success" },
-  new: { label: "New", tone: "warn" },
-  edited: { label: "Edited", tone: "warn" },
-  removed: { label: "Removed", tone: "danger" },
-};
 
 const UNIT_SHORT: Record<string, string> = {
   Litre: "L",
@@ -255,70 +244,100 @@ function CreateDialog({ today, start: startDate, onClose }: { today: string; sta
 
 type Editing = { category: PlanCategory; line: PlanLineView | null } | null;
 
-export function PlanEditor({
-  plan,
-  items,
-  today,
-  now,
-  expected,
-  readOnly,
-  past,
-}: {
-  plan: PlanView;
-  items: PlanItem[];
-  today: string;
-  now: number;
-  /** What is not approved yet; null on a past day, which has nothing still to come. */
-  expected: PlanExpected | null;
-  readOnly: boolean;
-  past: boolean;
-}) {
+type Facet = BoardFacet;
+
+const FACETS: { key: Facet; label: string }[] = [
+  { key: "kind", label: "Product" },
+  { key: "confirmed", label: "Confirmed" },
+  { key: "waiting", label: "Waiting" },
+  { key: "stock", label: "In stock" },
+  { key: "verdict", label: "If all approved" },
+  { key: "unit", label: "Unit" },
+];
+
+type RowEdit = { ticked: boolean; qty: string; unit: string };
+
+export function PlanEditor({ plan, board, items, readOnly, past }: { plan: PlanView; board: PlanBoardRow[]; items: PlanItem[]; readOnly: boolean; past: boolean }) {
   const router = useRouter();
   const ui = useErpUi();
-  const [editing, setEditing] = useState<Editing>(null);
-  const [tab, setTab] = useState<PlanTab>("product");
-  const [ahead, setAhead] = useState<BaseRow | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [edits, setEdits] = useState<Record<string, RowEdit>>(() => Object.fromEntries(board.map((r) => [r.key, { ticked: r.ticked, qty: String(r.qty), unit: r.unit }])));
+  const [query, setQuery] = useState("");
+  const [filters, setFilters] = useState<Partial<Record<Facet, string[]>>>({});
+  const [openFacet, setOpenFacet] = useState<{ facet: Facet; x: number; y: number } | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const [printing, start] = useTransition();
   const lastPrint = plan.prints[plan.prints.length - 1] ?? null;
-  const live = plan.lines.filter((l) => l.state !== "removed");
-  const nextPrint = lastPrint ? (plan.changed ? lastPrint.printNo + 1 : lastPrint.printNo) : 1;
+
+  /* A row added since the page was drawn (Add a line, then a refresh) starts as the server says. */
+  const edit = (r: PlanBoardRow): RowEdit => edits[r.key] ?? { ticked: r.ticked, qty: String(r.qty), unit: r.unit };
+  const setEdit = (key: string, patch: Partial<RowEdit>) =>
+    setEdits((all) => {
+      const r = board.find((b) => b.key === key)!;
+      return { ...all, [key]: { ...(all[key] ?? { ticked: r.ticked, qty: String(r.qty), unit: r.unit }), ...patch } };
+    });
+
+  const facetsOf = (r: PlanBoardRow) => facetValues(r, edit(r).unit);
+  const options = (facet: Facet) => {
+    const counts = new Map<string, number>();
+    for (const r of board) for (const v of facetsOf(r)[facet]) counts.set(v, (counts.get(v) ?? 0) + 1);
+    return [...counts].sort((a, b) => a[0].localeCompare(b[0]));
+  };
+  const active = (facet: Facet) => {
+    const sel = filters[facet];
+    return !!sel && sel.length > 0 && sel.length < options(facet).length;
+  };
+  const q = query.trim().toLowerCase();
+  const visible = board.filter((r) => {
+    if (q && !`${r.name} ${r.code ?? ""}`.toLowerCase().includes(q)) return false;
+    const f = facetsOf(r);
+    return FACETS.every(({ key }) => !active(key) || f[key].some((v) => filters[key]!.includes(v)));
+  });
+  const ticked = board.filter((r) => edit(r).ticked);
+  const allVisibleTicked = visible.length > 0 && visible.every((r) => edit(r).ticked);
 
   const print = () =>
     start(async () => {
-      const res = await erpPlanPrint(plan.id);
-      if (!res.ok) return ui.toast(res.error, "error");
+      setErrors({});
+      const res = await erpPlanPrintPicks(
+        plan.id,
+        ticked.map((r) => ({ key: r.key, quantity: edit(r).qty, unit: edit(r).unit })),
+      );
+      if (!res.ok) {
+        setErrors(Object.fromEntries((res.fieldErrors ?? []).map((f) => [f.field, f.message])));
+        return ui.toast(res.error, "error");
+      }
       router.push(erpPlanPrintHref(plan.id, res.data.printNo));
     });
 
-  const remove = (l: PlanLineView) =>
-    ui.confirm(
-      `Delete ${l.productName}${l.size ? " " + l.size : ""} · ${nf(l.quantity)} ${l.unit} from ${planName(plan.planNo)}?${l.state === "given" || l.state === "edited" ? " The floor already has it, so the next print lists it as removed." : ""}`,
-      async () => {
-        const res = await erpPlanDeleteLine(l.id);
-        ui.toast(res.ok ? (res.message ?? "Line deleted") : res.error, res.ok ? "info" : "error");
-        router.refresh();
-      },
-    );
+  const sections: { label: string; rows: PlanBoardRow[] }[] = [
+    { label: "Loose cans and packing", rows: visible.filter((r) => r.category !== "sfg") },
+    { label: "Bases (SFG)", rows: visible.filter((r) => r.category === "sfg") },
+  ].filter((s) => s.rows.length);
 
-  const c = expected?.counts;
-  const waitingWords = !c
-    ? null
-    : c.accountsTos && !c.mrpOrders
-      ? "Accounts not in yet"
-      : c.accountsTos
-        ? `${c.accountsTos} ${c.accountsTos === 1 ? "TO" : "TOs"} still with Accounts`
-        : c.mrpOrders
-          ? "Accounts done"
-          : null;
-  const sub = [past ? planName(plan.planNo) : clock(new Date(now)), waitingWords].filter(Boolean).join(" · ");
-  const sfgPlanned = (formulationId: string) => live.filter((l) => l.category === "sfg" && l.itemId === formulationId && l.unit === "Litre").reduce((n, l) => n + l.quantity, 0);
-  const shortBases = new Map((expected?.bases ?? []).filter((b) => b.expectedLitres > 0).map((b) => [b.formulationId, b]));
+  const funnel = (facet: Facet) => (
+    <button
+      type="button"
+      aria-label={`Filter ${FACETS.find((f) => f.key === facet)!.label}`}
+      onClick={(e) => {
+        const b = e.currentTarget.getBoundingClientRect();
+        setOpenFacet(openFacet?.facet === facet ? null : { facet, x: b.left, y: b.bottom + 4 });
+      }}
+      className={cx("ml-1 inline-flex cursor-pointer align-middle", active(facet) ? "text-brand" : "text-faint hover:text-body")}
+    >
+      <svg width="11" height="11" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 5h18l-7 8v6l-4 2v-8z" fill={active(facet) ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2.4" />
+      </svg>
+    </button>
+  );
+
+  const numberCell = (r: PlanBoardRow, n: number | null) => (n == null ? "—" : n === 0 ? "—" : `${nf(n)}${r.measure === "L" ? " L" : ""}`);
 
   return (
     <div className="px-6 pt-6 pb-10">
       <BoardHeader
         title={planTitle(plan.planDate, plan.godown)}
-        sub={sub}
+        sub={past ? planName(plan.planNo) : undefined}
         actions={
           <>
             <PageLinks>
@@ -326,171 +345,226 @@ export function PlanEditor({
                 ← All plans
               </NavLink>
             </PageLinks>
-            {readOnly ? null : (
-              <Button
-                onClick={() =>
-                  setEditing({
-                    category: tab === "bases" ? "sfg" : "loose",
-                    line: null,
-                  })
-                }
-              >
-                Add a line
-              </Button>
-            )}
-            {lastPrint && (past || !plan.changed) ? (
-              /* Nothing new to hand the floor: this opens the sheet already printed, it records no print. */
-              <NavLink href={erpPlanPrintHref(plan.id, lastPrint.printNo)} className={buttonLink(past ? "secondary" : "primary")}>
-                Open Print {lastPrint.printNo}
-              </NavLink>
-            ) : past ? null : (
-              <Button
-                variant="primary"
-                onClick={print}
-                disabled={printing || readOnly || !live.length}
-                title={!live.length ? "Add at least one line before printing." : readOnly ? "You are previewing the ERP as somebody else." : `Print ${nextPrint}`}
-              >
-                {printing ? "Preparing…" : "Print plan"}
-              </Button>
+            {past ? (
+              lastPrint ? (
+                <NavLink href={erpPlanPrintHref(plan.id, lastPrint.printNo)} className={buttonLink()}>
+                  Open Print {lastPrint.printNo}
+                </NavLink>
+              ) : null
+            ) : (
+              <>
+                {readOnly ? null : <Button onClick={() => setAdding(true)}>Add a line</Button>}
+                <Button variant="primary" onClick={print} disabled={printing || readOnly || !ticked.length} title={readOnly ? "You are previewing the ERP as somebody else." : !ticked.length ? "Tick at least one row." : undefined}>
+                  {printing ? "Preparing…" : `Print plan (${ticked.length})`}
+                </Button>
+              </>
             )}
           </>
         }
       />
-      {past ? (
-        <Callout tone="neutral">
-          This is the plan for {fdLong(plan.planDate)}, a day that has passed. It is the record of that day: its lines no longer follow the orders, and it cannot be changed or printed again.
-        </Callout>
-      ) : plan.planDate !== today ? (
-        <Callout tone="neutral">This is the plan for {fdLong(plan.planDate)}, not today.</Callout>
-      ) : null}
-      {!past && lastPrint && plan.changed ? (
-        <Callout tone="warn">
-          {plan.changed} {plan.changed === 1 ? "line has" : "lines have"} changed since Print {lastPrint.printNo} at {stamp(lastPrint.printedAt)}. Print again to hand the floor the new sheet — the
-          changes are underlined on it.
-        </Callout>
-      ) : null}
 
-      {expected && c ? (
-        <CardGrid min={200} gap="gap-2.5" className="mb-4">
-          <PlanFigure label="Confirmed" value={plural(c.confirmedOrders, "order")} sub="cleared at MRP check" />
-          <PlanFigure label="Waiting for MRP check" value={plural(c.mrpOrders, "order")} sub="approved, your check" />
-          <PlanFigure
-            label="Waiting for Accounts"
-            value={`${c.accountsTos} ${c.accountsTos === 1 ? "TO" : "TOs"}`}
-            sub={c.oldestAccounts ? `oldest ${waitShort(c.oldestAccounts, now)}` : "none waiting"}
-          />
-          <PlanFigure
-            label="Short if all approved"
-            value={plural(expected.shortProducts.length, "product")}
-            danger={expected.shortProducts.length > 0}
-            sub={expected.shortProducts.length ? namesLine(expected.shortProducts) : "enough of everything"}
-          />
-        </CardGrid>
-      ) : null}
-
-      <BoardTabs<PlanTab>
-        value={tab}
-        onChange={setTab}
-        tabs={[
-          { key: "product", label: "By product" },
-          {
-            key: "expected",
-            label: expected ? `Expected orders (${expected.entries.length})` : "Expected orders",
-          },
-          { key: "bases", label: "Bases (SFG)" },
-        ]}
-      />
-
-      {tab === "product" ? (
-        <div className="grid gap-4">
-          {expected && expected.products.length ? <ProductTable rows={expected.products} now={now} /> : null}
-          {expected && expected.products.length ? (
-            <div className="flex flex-wrap items-start gap-4 text-meta text-muted">
-              <p className="m-0 max-w-[520px]">
-                <b className="text-ink">Confirmed</b> is what the floor fills and packs. <b className="text-ink">Waiting</b> lines are expected: shown and counted so the day can be planned, never
-                filled until Accounts approve and the MRP check clears them.
-              </p>
-              <p className="m-0 max-w-[420px]">When Accounts approve a TO, its line moves up by itself. A declined or cancelled TO drops off.</p>
-            </div>
-          ) : null}
-          {(["loose", "packing"] as const).map((k) => (
-            <CategoryCard
-              key={k}
-              category={k}
-              plan={plan}
-              readOnly={readOnly}
-              past={past}
-              onAdd={() => setEditing({ category: k, line: null })}
-              onEdit={(l) => setEditing({ category: k, line: l })}
-              onDelete={remove}
-            />
-          ))}
-        </div>
-      ) : tab === "expected" ? (
-        <div className="grid gap-3">
-          {expected ? (
-            <>
-              <p className="m-0 text-sm text-muted">
-                Orders not yet confirmed. The stock check is for planning only: nothing here is cleared or filled until Accounts approve and the MRP check clears it.
-              </p>
-              {expected.entries.length ? (
-                <ExpectedTable entries={expected.entries} now={now} bases={readOnly ? new Map() : shortBases} onAhead={setAhead} />
-              ) : (
-                <Card>
-                  <EmptyState title="Nothing waiting." body="Every order for this godown is confirmed. New TOs show here the moment they are taken." />
-                </Card>
-              )}
-              <div className="flex max-w-[640px] flex-col gap-2 text-meta text-muted">
-                <p className="m-0">Only the base (SFG) can be started ahead. It is added to the plan as a manual SFG line, marked &quot;for expected orders&quot;.</p>
-                <p className="m-0 flex flex-wrap items-center gap-2">
-                  Filling and packing stay locked for an expected order:{" "}
-                  <Button size="sm" disabled title="Only after Accounts approve and the MRP check clears it">
-                    Fill cans
-                  </Button>
-                </p>
-              </div>
-            </>
-          ) : (
-            <Card>
-              <EmptyState title="A past day has nothing still to come." />
-            </Card>
+      {past ? null : (
+        <div className="mb-3 flex flex-wrap items-center gap-2.5">
+          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search product" aria-label="Search product" className="h-8 w-60" />
+          {readOnly ? null : (
+            <button type="button" className={linkClass("brand", "text-sm")} onClick={() => setEdits(() => Object.fromEntries(board.map((r) => [r.key, { ...edit(r), ticked: (r.confirmed ?? 0) > 0 || r.key.startsWith("line:") }])))}>
+              Select confirmed
+            </button>
           )}
-        </div>
-      ) : (
-        <div className="grid gap-4">
-          {expected && expected.bases.length ? <BaseTable rows={expected.bases} readOnly={readOnly} onAhead={setAhead} /> : null}
-          <CategoryCard
-            category="sfg"
-            plan={plan}
-            readOnly={readOnly}
-            past={past}
-            onAdd={() => setEditing({ category: "sfg", line: null })}
-            onEdit={(l) => setEditing({ category: "sfg", line: l })}
-            onDelete={remove}
-          />
+          {FACETS.filter((f) => active(f.key)).map((f) => (
+            <span key={f.key} className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 py-0.5 text-xs text-body">
+              {f.label}: {filters[f.key]!.length} of {options(f.key).length}
+              <button type="button" aria-label={`Clear ${f.label}`} className="cursor-pointer text-muted hover:text-ink" onClick={() => setFilters((all) => ({ ...all, [f.key]: [] }))}>
+                ×
+              </button>
+            </span>
+          ))}
+          {FACETS.some((f) => active(f.key)) ? (
+            <button type="button" className={linkClass("brand", "text-xs")} onClick={() => setFilters({})}>
+              Clear
+            </button>
+          ) : null}
         </div>
       )}
 
-      {editing ? <LineDialog key={editing.line?.id ?? `new-${editing.category}`} plan={plan} items={items} start={editing} onClose={() => setEditing(null)} onSaved={() => router.refresh()} /> : null}
-      {ahead ? (
-        <BaseAheadDialog
-          key={ahead.formulationId}
-          plan={plan}
-          base={ahead}
-          planned={sfgPlanned(ahead.formulationId)}
-          onClose={() => setAhead(null)}
-          onSaved={() => {
-            setAhead(null);
-            setTab("bases");
-            router.refresh();
+      {board.length ? (
+        <BoardTable>
+          <thead>
+            <tr>
+              {past ? null : (
+                <Th className="w-10">
+                  <input
+                    type="checkbox"
+                    className={checkboxClass}
+                    aria-label="Tick every row shown"
+                    checked={allVisibleTicked}
+                    disabled={readOnly}
+                    onChange={() => setEdits((all) => ({ ...all, ...Object.fromEntries(visible.map((r) => [r.key, { ...edit(r), ticked: !allVisibleTicked }])) }))}
+                  />
+                </Th>
+              )}
+              <Th className="w-[28%]">Product{past ? null : funnel("kind")}</Th>
+              <Th align="right">Confirmed{past ? null : funnel("confirmed")}</Th>
+              <Th className="w-[18%]">Waiting{past ? null : funnel("waiting")}</Th>
+              <Th align="right">In stock{past ? null : funnel("stock")}</Th>
+              <Th>If all approved{past ? null : funnel("verdict")}</Th>
+              <Th align="right">Make today</Th>
+              <Th>Unit{past ? null : funnel("unit")}</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {sections.flatMap((s) => [
+              <Tr key={`s-${s.label}`}>
+                <Td colSpan={past ? 7 : 8} className={cx(labelClass, "bg-canvas py-1.5")}>
+                  {s.label}
+                </Td>
+              </Tr>,
+              ...s.rows.map((r) => {
+                const e = edit(r);
+                const whole = e.unit === "Cans" || e.unit === "Boxes";
+                return (
+                  <Tr key={r.key} className={cx(e.ticked ? "bg-brand-soft" : "text-muted")}>
+                    {past ? null : (
+                      <Td>
+                        <input type="checkbox" className={checkboxClass} aria-label={r.name} checked={e.ticked} disabled={readOnly} onChange={() => setEdit(r.key, { ticked: !e.ticked })} />
+                      </Td>
+                    )}
+                    <Td className="whitespace-normal">
+                      <span className={cx("font-semibold", e.ticked ? "text-ink" : "text-body")}>{r.name}</span>
+                      {r.size && r.category !== "sfg" && !r.name.includes(r.size) ? <span className="text-meta text-muted"> {r.size}</span> : null}
+                      {r.packing ? <span className="text-meta text-muted"> · {r.packing}</span> : null}
+                    </Td>
+                    <Td align="right" className="tabular-nums">
+                      {numberCell(r, r.confirmed)}
+                    </Td>
+                    <Td className="whitespace-normal">
+                      <span className="flex flex-wrap gap-1">
+                        {r.mrp > 0 ? <Pill tone="warn">MRP check {nf(r.mrp)}</Pill> : null}
+                        {r.accounts > 0 ? <Pill tone="muted">{r.measure === "L" ? `Expected ${nf(r.accounts)} L` : `Accounts ${nf(r.accounts)}`}</Pill> : null}
+                        {r.mrp + r.accounts === 0 ? "—" : null}
+                      </span>
+                    </Td>
+                    <Td align="right" className="tabular-nums">
+                      {r.stock == null ? "—" : `${nf(r.stock)}${r.measure === "L" ? " L" : ""}`}
+                    </Td>
+                    <Td>{r.verdict ? <span className={cx("font-semibold", r.verdict.tone === "short" ? "text-danger" : "text-success")}>{r.verdict.text}</span> : "—"}</Td>
+                    <Td align="right">
+                      {past ? (
+                        <span className="font-semibold tabular-nums">{nf(r.qty)}</span>
+                      ) : (
+                        <Input
+                          value={e.qty}
+                          inputMode={whole ? "numeric" : "decimal"}
+                          aria-label={`Make today · ${r.name}`}
+                          disabled={readOnly}
+                          invalid={!!errors[r.key]}
+                          title={errors[r.key]}
+                          onChange={(ev) => setEdit(r.key, { qty: whole ? cleanWhole(ev.target.value) : cleanDecimal(ev.target.value), ticked: true })}
+                          className="h-8 w-20 text-right"
+                        />
+                      )}
+                    </Td>
+                    <Td>
+                      {!past && r.units.length > 1 ? (
+                        <Select value={e.unit} disabled={readOnly} aria-label={`Unit · ${r.name}`} onChange={(ev) => setEdit(r.key, { unit: ev.target.value })} className="h-8">
+                          {r.units.map((u) => (
+                            <option key={u} value={u}>
+                              {u}
+                            </option>
+                          ))}
+                        </Select>
+                      ) : (
+                        e.unit
+                      )}
+                    </Td>
+                  </Tr>
+                );
+              }),
+            ])}
+            {!sections.length ? (
+              <Tr>
+                <Td colSpan={8} className="py-6 text-center text-muted">
+                  Nothing matches.
+                </Td>
+              </Tr>
+            ) : null}
+          </tbody>
+        </BoardTable>
+      ) : (
+        <Card>
+          <EmptyState title={past ? "Nothing was printed on this day." : "Nothing to plan yet."} />
+        </Card>
+      )}
+
+      {openFacet ? (
+        <FacetPopover
+          key={openFacet.facet}
+          label={FACETS.find((f) => f.key === openFacet.facet)!.label}
+          options={options(openFacet.facet)}
+          selected={filters[openFacet.facet]?.length ? filters[openFacet.facet]! : options(openFacet.facet).map(([v]) => v)}
+          x={openFacet.x}
+          y={openFacet.y}
+          onClose={() => setOpenFacet(null)}
+          onApply={(sel) => {
+            setFilters((all) => ({ ...all, [openFacet.facet]: sel }));
+            setOpenFacet(null);
           }}
         />
       ) : null}
+
+      {adding ? <LineDialog plan={plan} items={items} start={{ category: "loose", line: null }} onClose={() => setAdding(false)} onSaved={() => router.refresh()} /> : null}
     </div>
   );
 }
 
-type PlanTab = "product" | "expected" | "bases";
+/** One column's filter: its values with how many rows carry each, staged until Apply. */
+function FacetPopover({
+  label,
+  options,
+  selected,
+  x,
+  y,
+  onClose,
+  onApply,
+}: {
+  label: string;
+  options: [string, number][];
+  selected: string[];
+  x: number;
+  y: number;
+  onClose: () => void;
+  onApply: (sel: string[]) => void;
+}) {
+  const [sel, setSel] = useState<string[]>(selected);
+  return (
+    <>
+      <div className="fixed inset-0 z-40" onClick={onClose} aria-hidden="true" />
+      <div role="dialog" aria-label={`Filter ${label}`} className={cx(popoverClass, "fixed z-50 flex w-56 flex-col gap-2 p-3")} style={{ left: x, top: y }}>
+        {options.map(([v, n]) => (
+          <Checkbox
+            key={v}
+            label={
+              <span className="flex flex-1 justify-between">
+                {v}
+                <span className="text-muted tabular-nums">{n}</span>
+              </span>
+            }
+            checked={sel.includes(v)}
+            onChange={() => setSel((s) => (s.includes(v) ? s.filter((x) => x !== v) : [...s, v]))}
+          />
+        ))}
+                <div className="mt-1 flex justify-between">
+          <Button size="sm" onClick={() => onApply([])}>
+            Clear
+          </Button>
+          <Button size="sm" variant="primary" onClick={() => onApply(sel)} disabled={!sel.length}>
+            Apply
+          </Button>
+        </div>
+      </div>
+    </>
+  );
+}
 
 const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -499,426 +573,6 @@ const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Se
 function planTitle(date: string, godown: string | null): string {
   const d = new Date(`${date}T00:00:00Z`);
   return ["Plan", `${WEEKDAY_SHORT[d.getUTCDay()]} ${d.getUTCDate()} ${MONTH_SHORT[d.getUTCMonth()]}`, godown].filter(Boolean).join(" · ");
-}
-
-const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
-
-/** "18 h", "40 min", "1 d" — how long something has waited, short. */
-function waitShort(fromIso: string, now: number): string {
-  const min = Math.max(0, Math.round((now - new Date(fromIso).getTime()) / 60000));
-  if (min < 60) return `${min} min`;
-  const h = Math.floor(min / 60);
-  return h < 24 ? `${h} h` : `${Math.floor(h / 24)} d`;
-}
-
-/** Waited past half a day reads red. */
-const waitedLong = (fromIso: string, now: number) => now - new Date(fromIso).getTime() > 12 * 3600000;
-
-function namesLine(names: string[]): string {
-  return names.length <= 2 ? names.join(", ") : `${names.slice(0, 2).join(", ")} and ${names.length - 2} more`;
-}
-
-function PlanFigure({ label, value, sub, danger }: { label: string; value: string; sub: string; danger?: boolean }) {
-  return (
-    <div className="rounded-card border border-line bg-surface px-3.5 py-3">
-      <div className="text-meta text-muted">{label}</div>
-      <div className={cx("text-xl leading-7 font-semibold tabular-nums", danger ? "text-danger" : "text-ink")}>{value}</div>
-      <div className="truncate text-meta text-muted" title={sub}>
-        {sub}
-      </div>
-    </div>
-  );
-}
-
-const STAGE_PILL: Record<"confirmed" | "mrp" | "accounts", { tone: "success" | "warn" | "muted"; label: string }> = {
-  confirmed: { tone: "success", label: "Confirmed" },
-  mrp: { tone: "warn", label: "Waiting for MRP check" },
-  accounts: { tone: "muted", label: "Waiting for Accounts" },
-};
-
-const dash = (n: number) => (n ? nf(n) : "—");
-
-function ProductTable({ rows, now }: { rows: ProductRow[]; now: number }) {
-  const [open, setOpen] = useState<Set<string>>(
-    () =>
-      new Set(
-        rows
-          .filter((r) => r.verdict.tone === "short" && r.mrp + r.accounts > 0)
-          .slice(0, 1)
-          .map((r) => r.key),
-      ),
-  );
-  const flip = (k: string) =>
-    setOpen((s) => {
-      const n = new Set(s);
-      if (n.has(k)) n.delete(k);
-      else n.add(k);
-      return n;
-    });
-  return (
-    <BoardTable>
-      <thead>
-        <tr>
-          <Th className="w-[30%]">Product</Th>
-          <Th align="right">Confirmed</Th>
-          <Th align="right">+ MRP check</Th>
-          <Th align="right">+ Accounts</Th>
-          <Th align="right">In stock</Th>
-          <Th className="w-[22%]">If all approved</Th>
-          <Th className="w-[130px]">
-            <span className="sr-only">Open</span>
-          </Th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.flatMap((r) => {
-          const shown = open.has(r.key);
-          const out = [
-            <Tr key={r.key}>
-              <Td className="whitespace-normal">
-                <span className="font-semibold text-ink">{r.name}</span> <span className="text-meta text-muted">{r.packing}</span>
-              </Td>
-              <Td align="right" className="tabular-nums">
-                {r.confirmed ? `${nf(r.confirmed)} cans` : "—"}
-              </Td>
-              <Td align="right" className="tabular-nums">
-                {dash(r.mrp)}
-              </Td>
-              <Td align="right" className="tabular-nums">
-                {dash(r.accounts)}
-              </Td>
-              <Td align="right" className="tabular-nums">
-                {nf(r.stock)}
-              </Td>
-              <Td className="whitespace-normal">
-                <span className={cx("font-semibold", r.verdict.tone === "short" ? "text-danger" : "text-success")}>{r.verdict.text}</span>
-                {r.verdict.note ? <span className="text-meta text-muted"> {r.verdict.note}</span> : null}
-              </Td>
-              <Td>
-                <Button size="sm" onClick={() => flip(r.key)} aria-expanded={shown}>
-                  {shown ? "Hide orders" : "Show orders"}
-                </Button>
-              </Td>
-            </Tr>,
-          ];
-          if (shown)
-            for (const stage of ["confirmed", "mrp", "accounts"] as const) {
-              const os = r.orders.filter((o) => o.stage === stage);
-              if (!os.length) continue;
-              out.push(
-                <Tr key={`${r.key}:${stage}`}>
-                  <Td colSpan={7} className="pl-7 text-meta whitespace-normal text-muted">
-                    <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                      {os.map((o) => (
-                        <span key={o.ref} className="inline-flex items-center gap-1.5">
-                          <Pill tone={STAGE_PILL[stage].tone}>{STAGE_PILL[stage].label}</Pill>
-                          {o.ref} · {o.party} · {nf(o.cans)} cans
-                          {o.since ? (stage === "mrp" ? ` · approved ${clock(new Date(o.since))}` : ` · waiting ${waitShort(o.since, now)}`) : ""}
-                        </span>
-                      ))}
-                    </span>
-                  </Td>
-                </Tr>,
-              );
-            }
-          return out;
-        })}
-      </tbody>
-    </BoardTable>
-  );
-}
-
-function ExpectedTable({ entries, now, bases, onAhead }: { entries: ExpectedEntry[]; now: number; bases: Map<string, BaseRow>; onAhead: (b: BaseRow) => void }) {
-  return (
-    <BoardTable>
-      <thead>
-        <tr>
-          <Th className="w-[13%]">TO / order</Th>
-          <Th className="w-[18%]">Where it is</Th>
-          <Th className="w-[15%]">Party</Th>
-          <Th className="w-[19%]">Goods</Th>
-          <Th>Stock check</Th>
-          <Th className="w-[13%]">Waiting</Th>
-        </tr>
-      </thead>
-      <tbody>
-        {entries.map((e) => {
-          const ahead = e.check.tone === "short" ? e.baseIds.map((id) => bases.get(id)).find(Boolean) : undefined;
-          return (
-            <Tr key={e.key} className={cx(e.held && "opacity-70")}>
-              <Td className="whitespace-normal">
-                <b className="text-ink">{e.ref}</b>
-                {e.fromTo ? <div className="text-meta text-muted">from {e.fromTo}</div> : null}
-              </Td>
-              <Td className="whitespace-normal">
-                {e.stage === "mrp" ? (
-                  <>
-                    <Pill tone={e.held ? "danger" : "warn"}>{e.held ? "On hold at MRP check" : "Waiting for MRP check"}</Pill>
-                    <div className="mt-0.5 text-meta text-muted">{e.held ? (e.holdReason ?? "") : `approved ${clock(new Date(e.since))}${e.by ? ` · ${e.by}` : ""}`}</div>
-                  </>
-                ) : (
-                  <>
-                    <Pill tone={e.held ? "danger" : "muted"}>{e.held ? "On hold with Accounts" : e.sentBack ? "Sent back to the taker" : "Waiting for Accounts"}</Pill>
-                    {e.held && e.holdReason ? <div className="mt-0.5 text-meta text-muted">{e.holdReason}</div> : null}
-                    {e.noGodown ? <div className="mt-0.5 text-meta text-muted">No godown yet</div> : null}
-                  </>
-                )}
-              </Td>
-              <Td className="whitespace-normal">{e.party}</Td>
-              <Td className="whitespace-normal">
-                {e.goods.map((g) => (
-                  <div key={g}>{g}</div>
-                ))}
-              </Td>
-              <Td className="whitespace-normal">
-                {e.check.lines.map((l) => (
-                  <div key={l.text} className={cx(l.tone === "short" ? "font-semibold text-danger" : l.tone === "ok" ? "font-semibold text-success" : "text-faint")}>
-                    {l.text}
-                  </div>
-                ))}
-                {ahead ? (
-                  <button type="button" className={linkClass("brand", "text-meta")} onClick={() => onAhead(ahead)}>
-                    Make the base ahead
-                  </button>
-                ) : null}
-              </Td>
-              <Td className="whitespace-normal">
-                <span className={cx(!e.held && waitedLong(e.since, now) && "font-semibold text-danger")}>{waitShort(e.since, now)}</span>
-                {e.stage === "mrp" && !e.held ? (
-                  <NavLink href={erpLink("mrpCheck")} className={cx(linkClass("brand", "text-meta"), "block")}>
-                    Open MRP check
-                  </NavLink>
-                ) : null}
-              </Td>
-            </Tr>
-          );
-        })}
-      </tbody>
-    </BoardTable>
-  );
-}
-
-function BaseTable({ rows, readOnly, onAhead }: { rows: BaseRow[]; readOnly: boolean; onAhead: (b: BaseRow) => void }) {
-  return (
-    <BoardTable>
-      <thead>
-        <tr>
-          <Th className="w-[24%]">Base</Th>
-          <Th align="right">For confirmed</Th>
-          <Th align="right">For expected</Th>
-          <Th align="right">Approved in tank</Th>
-          <Th className="w-[22%]">If all approved</Th>
-          <Th className="w-[170px]">
-            <span className="sr-only">Make ahead</span>
-          </Th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((b) => (
-          <Tr key={b.formulationId}>
-            <Td className="font-semibold whitespace-normal text-ink">{b.name}</Td>
-            <Td align="right" className="tabular-nums">
-              {b.confirmedLitres ? `${nf(b.confirmedLitres)} L` : "—"}
-            </Td>
-            <Td align="right" className="tabular-nums">
-              {b.expectedLitres ? `${nf(b.expectedLitres)} L` : "—"}
-            </Td>
-            <Td align="right" className="tabular-nums">
-              {nf(b.inTank)} L
-            </Td>
-            <Td>
-              <span className={cx("font-semibold", b.shortLitres > 0 ? "text-danger" : "text-success")}>{b.shortLitres > 0 ? `Short ${nf(b.shortLitres)} L` : "Enough"}</span>
-            </Td>
-            <Td>
-              {!readOnly && b.expectedLitres > 0 ? (
-                <Button size="sm" onClick={() => onAhead(b)}>
-                  Make the base ahead
-                </Button>
-              ) : null}
-            </Td>
-          </Tr>
-        ))}
-      </tbody>
-    </BoardTable>
-  );
-}
-
-function refsLine(refs: string[]): string {
-  if (!refs.length) return "expected orders";
-  if (refs.length === 1) return refs[0];
-  if (refs.length <= 3) return `${refs.slice(0, -1).join(", ")} and ${refs[refs.length - 1]}`;
-  return `${refs.slice(0, 2).join(", ")} and ${refs.length - 2} more`;
-}
-
-function BaseAheadDialog({ plan, base, planned, onClose, onSaved }: { plan: PlanView; base: BaseRow; planned: number; onClose: () => void; onSaved: () => void }) {
-  const ui = useErpUi();
-  const suggest = Math.max(0, Math.ceil(base.confirmedLitres + base.expectedLitres - base.inTank - planned));
-  const [litres, setLitres] = useState(suggest ? String(suggest) : "");
-  const [error, setError] = useState<string | null>(null);
-  const [pending, run] = useTransition();
-  const save = () =>
-    run(async () => {
-      const remarks = base.expectedFor.join(", ");
-      const res = await erpPlanSaveLine(plan.id, {
-        category: "sfg",
-        itemId: base.formulationId,
-        quantity: litres,
-        unit: "Litre",
-        remarks: remarks.length > 300 ? `${remarks.slice(0, 299)}…` : remarks,
-        forExpected: true,
-      });
-      if (!res.ok) return setError(res.fieldErrors?.[0]?.message ?? res.error);
-      ui.toast(res.message ?? "Added");
-      onSaved();
-    });
-  return (
-    <ErpDialog onClose={onClose} size="sm" tall={false} label={`Make the base ahead · ${base.name}`}>
-      <DialogHeader onClose={onClose}>
-        <DialogTitle>Make the base ahead · {base.name}</DialogTitle>
-        <p className="m-0 mt-1 text-meta text-muted">For {refsLine(base.expectedFor)}, not approved yet. A base is used by other orders if a TO is declined.</p>
-      </DialogHeader>
-      <DialogBody>
-        <div className="grid gap-1.5">
-          <Row label="Needed by expected orders" value={`${nf(base.expectedLitres)} L`} />
-          {base.confirmedLitres ? <Row label="Needed by confirmed orders" value={`${nf(base.confirmedLitres)} L`} /> : null}
-          <Row label="Approved base in tank" value={`${nf(base.inTank)} L`} />
-          {planned ? <Row label="Already on this plan" value={`${nf(planned)} L`} /> : null}
-          <Field label="Litres to make today" required error={error} className="mt-2">
-            <Input inputMode="decimal" value={litres} onChange={(e) => setLitres(cleanDecimal(e.target.value))} placeholder="0" />
-          </Field>
-        </div>
-      </DialogBody>
-      <DialogFooter>
-        <Button onClick={onClose}>Cancel</Button>
-        <Button variant="primary" onClick={save} disabled={pending || !litres}>
-          {pending ? "Adding…" : "Add base line to plan"}
-        </Button>
-      </DialogFooter>
-    </ErpDialog>
-  );
-}
-
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex justify-between gap-3 text-sm">
-      <span className="text-body">{label}</span>
-      <b className="text-ink tabular-nums">{value}</b>
-    </div>
-  );
-}
-
-/** One work category's lines: the sections the plan always had, now placed under its tab. */
-function CategoryCard({
-  category,
-  plan,
-  readOnly,
-  past,
-  onAdd,
-  onEdit,
-  onDelete,
-}: {
-  category: PlanCategory;
-  plan: PlanView;
-  readOnly: boolean;
-  past: boolean;
-  onAdd: () => void;
-  onEdit: (l: PlanLineView) => void;
-  onDelete: (l: PlanLineView) => void;
-}) {
-  const c = categorySpec(category)!;
-  const rows = plan.lines.filter((l) => l.category === c.key);
-  const n = rows.filter((r) => r.state !== "removed").length;
-  return (
-    <Card className="overflow-hidden">
-      <CardHeader
-        title={c.label}
-        hint={`${n} ${n === 1 ? "line" : "lines"}`}
-        action={
-          readOnly ? null : (
-            <Button size="sm" onClick={onAdd}>
-              ＋ Add line
-            </Button>
-          )
-        }
-      />
-      {rows.length ? (
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse">
-            <thead>
-              <tr>
-                <Th className="w-[34%]">Product</Th>
-                {c.sizeLabel ? <Th>{c.sizeLabel}</Th> : null}
-                <Th align="right">{c.key === "loose" ? "Cans" : "Quantity"}</Th>
-                <Th>Unit</Th>
-                {past ? null : <Th align="right">Available now</Th>}
-                <Th>Remarks</Th>
-                <Th>Status</Th>
-                {readOnly ? null : <Th align="right">Change</Th>}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((l) => (
-                <Tr key={l.id} className={cx((l.state === "new" || l.state === "edited") && "bg-warn-soft", l.state === "removed" && "text-faint line-through")}>
-                  <Td
-                    className={cx(
-                      "font-medium whitespace-normal",
-                      l.state === "removed" ? "text-faint" : "text-ink",
-                      l.state === "given" && "shadow-[inset_3px_0_0_var(--color-success)]",
-                      (l.state === "new" || l.state === "edited") && "shadow-[inset_3px_0_0_var(--color-warn)]",
-                      l.state === "removed" && "shadow-[inset_3px_0_0_var(--color-danger)]",
-                    )}
-                  >
-                    <span className="flex flex-wrap items-center gap-1.5">
-                      {l.productName}
-                      {l.source === "order" ? <Badge tone="brand">From orders</Badge> : null}
-                      {l.forExpected ? <Badge tone="warn">For expected orders</Badge> : null}
-                    </span>
-                  </Td>
-                  {c.sizeLabel ? <Td>{l.size ?? "—"}</Td> : null}
-                  <Td align="right" className="font-semibold tabular-nums">
-                    {l.was != null ? <span className="mr-1.5 font-normal text-faint line-through">{nf(l.was)}</span> : null}
-                    {nf(l.quantity)}
-                  </Td>
-                  <Td>{l.unit}</Td>
-                  {past ? null : (
-                    <Td align="right" className={cx("tabular-nums", l.available === 0 ? "text-danger" : "text-muted")}>
-                      {l.available == null ? "—" : `${nf(l.available)} ${STOCK_UNIT[c.key]}`}
-                    </Td>
-                  )}
-                  <Td className="whitespace-normal text-body">{l.remarks ?? ""}</Td>
-                  <Td>
-                    <Badge tone={STATE[l.state].tone}>{STATE[l.state].label}</Badge>
-                  </Td>
-                  {readOnly ? null : (
-                    <Td align="right">
-                      {l.state === "removed" ? null : l.source === "order" ? (
-                        <NavLink href={erpLink("readyOrders")} className={linkClass("brand", "text-meta")} title="This line follows the orders. Change it on Orders → Production.">
-                          Change on Orders
-                        </NavLink>
-                      ) : (
-                        <RowMenu
-                          items={[
-                            { label: "Edit", onSelect: () => onEdit(l) },
-                            {
-                              label: "Delete",
-                              destructive: true,
-                              onSelect: () => onDelete(l),
-                            },
-                          ]}
-                        />
-                      )}
-                    </Td>
-                  )}
-                </Tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div className="px-5 py-4 text-meta text-muted">Nothing planned.</div>
-      )}
-    </Card>
-  );
 }
 
 /* ---------------------------------------------------- add / edit a line */

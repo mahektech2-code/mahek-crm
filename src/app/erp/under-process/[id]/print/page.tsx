@@ -109,7 +109,7 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
                 ...mine.map((r) => {
                   const U = ({ children }: { children: React.ReactNode }) => (r.mark ? <u>{children}</u> : <>{children}</>);
                   /* Remarks carry only what was written on the order (or typed on the line) — blank otherwise. The old quantity of an edited line sits under its new one instead. */
-                  const remark = r.category === "sfg" && r.forExpected ? `For expected orders${r.remarks ? ` · ${r.remarks}` : ""}` : r.remarks;
+                  const remark = r.remarks;
                   return (
                     <tr key={r.id} className={r.mark ? "pp-chg" : undefined}>
                       <Td className="pp-n">{r.sr}</Td>
