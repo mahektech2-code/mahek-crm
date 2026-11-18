@@ -127,6 +127,40 @@ registerCalc("inward.net", ({ l }) => {
   return "Weight with drum − drums × empty drum weight";
 });
 
+/*
+ * WHAT THIS LINE DOES TO THE PO (0356). The quantity arriving — the scale's net
+ * for a kg chemical, else what was typed — against what the PO line still
+ * expects. Nothing here refuses: "more" draws the extra's choice, "less" asks
+ * whether more is coming. The server works the same figures out again on save.
+ */
+function arriving(l: Record<string, string>): number | null {
+  const net = netWeight(n(l.weight), n(l.drums), n(l.emptyDrum));
+  if (net != null && net > 0) return net;
+  const q = n(l.qty);
+  return q != null && !Number.isNaN(q) && q > 0 ? q : null;
+}
+function inwardGap({ h, l, data }: { h: Record<string, string>; l: Record<string, string>; data: Record<string, unknown> }) {
+  const po = l.po || h.po;
+  if (!po || !l.poLine) return null;
+  const pending = map(data, "pendingQtyOf")[`${po}|${l.poLine}`] as number | undefined;
+  const qty = arriving(l);
+  if (pending == null || qty == null) return null;
+  const gap = Math.round((qty - pending) * 1000) / 1000;
+  return { gap, po: po.split(" · ")[0], rate: String(map(data, "rateOf")[`${po}|${l.poLine}`] ?? ""), unit: String(map(data, "unitOf")[l.item] ?? "") };
+}
+registerCalc("inward.gap", (x) => (inwardGap(x)?.gap ? "yes" : ""));
+registerCalc("inward.isMore", (x) => ((inwardGap(x)?.gap ?? 0) > 0 ? "yes" : ""));
+registerCalc("inward.isLess", (x) => ((inwardGap(x)?.gap ?? 0) < 0 ? "yes" : ""));
+registerCalc("inward.diff", (x) => {
+  const g = inwardGap(x);
+  if (!g?.gap) return "";
+  const qty = `${fmt(Math.abs(g.gap), 3)}${g.unit ? ` ${g.unit}` : ""}`;
+  const rate = g.rate ? `, at ${g.rate}` : ", at the PO line's rate";
+  return g.gap > 0
+    ? `${qty} more than ${g.po} still expects. Added to the PO as a correction line${rate}, unless you choose to leave the PO as it is.`
+    : `${qty} less than ${g.po} still expects. If nothing more is coming, a correction line takes it off the PO${rate}.`;
+});
+
 registerCalc("inward.testing", ({ l, data }) => {
   if (!l.item) return "";
   const tests = (map(data, "testsOf")[l.item] ?? []) as string[];

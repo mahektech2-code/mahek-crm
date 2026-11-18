@@ -23,7 +23,8 @@ export type PoPdfInput = {
   paymentTerms: string;
   freightPaise: number;
   remarks: string | null;
-  lines: { item: string; quantity: number; unit: string; ratePaise: number; gstBp: number }[];
+  /** `label` names a correction line ("1a"); a plain line is numbered in order. */
+  lines: { item: string; quantity: number; unit: string; ratePaise: number; gstBp: number; label?: string }[];
   approvedBy: string | null;
   approvedOn: string | null;
 };
@@ -135,8 +136,10 @@ export async function renderPoPdf(po: PoPdfInput): Promise<Uint8Array> {
     y -= 13;
   };
   head();
-  po.lines.forEach((l, i) => {
+  let n = 0;
+  po.lines.forEach((l) => {
     const fig = poLineFigures(l);
+    const no = l.label ?? String(++n);
     const name = wrap(s(l.item), f.regular, 9.5, cols[1].w - 6, 2);
     const h = 13 * name.length + 5;
     if (y - h < M + 120) {
@@ -144,7 +147,7 @@ export async function renderPoPdf(po: PoPdfInput): Promise<Uint8Array> {
       y = H - M;
       head();
     }
-    text(String(i + 1), cols[0].x, y);
+    text(no, cols[0].x, y);
     name.forEach((n, k) => text(n, cols[1].x, y - k * 13, { bold: k === 0 }));
     text(`${l.quantity.toLocaleString("en-IN")} ${l.unit}`, cols[2].x + cols[2].w, y, { right: true });
     text(rs(l.ratePaise), cols[3].x + cols[3].w, y, { right: true });

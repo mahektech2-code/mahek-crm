@@ -10,6 +10,7 @@ import { db } from "@/db";
 import {
   erpGodowns,
   erpInward,
+  erpPoCorrections,
   erpPoLines,
   erpPrCosts,
   erpPurchaseOrders,
@@ -39,7 +40,7 @@ import {
   type ScreenModule,
 } from "../server";
 import type { ActionSpec, ColSpec, FieldSpec, FormSpec, PromptSpec } from "../ui";
-import { fd, inr, nf } from "../ui";
+import { fd, inr, inrRate, nf } from "../ui";
 import {
   TRANSPORT_MODES,
   lotNumber,
@@ -57,13 +58,13 @@ import { lotLandings, rmLots, type LotLanding } from "../stock";
 import { foldRmLots, lotRowId } from "../engines/stock-fold";
 import { bindErpFiles } from "../attachments";
 import { type Col, godownField, godownIdByName, godownOptions, has, today, type Tx } from "./common";
-import { RECEIVABLE_PO, normalisePoNo, poLabel, poName, receivableQuantity } from "../engines/purchase-flow";
+import { EXTRA_OPTS, RECEIVABLE_PO, SHORT_OPTS, correctionFor, normalisePoNo, poLabel, poName, receiptGap } from "../engines/purchase-flow";
 import { OWNERSHIP_LABEL, ownershipByLabel } from "../engines/drums";
 
 /** The GRN line's drum ownership: the supplier's usual answer unless the line says otherwise. */
 const DRUM_OWNER_OPTS = ["As the supplier's master says", OWNERSHIP_LABEL.mahek, OWNERSHIP_LABEL.returnable];
 import { sortPoLines, type GrnItem, type GrnPoLine } from "../engines/grn-pick";
-import { poOption, purchaseOrderViews, receivedByLine, refreshPurchaseOrder, type PoView } from "./purchase-flow";
+import { poOption, purchaseOrderViews, refreshPurchaseOrder, type PoView } from "./purchase-flow";
 import { REGISTER_DEFAULT } from "../period";
 import { roundedTotal } from "@/lib/bill-round";
 
@@ -304,24 +305,36 @@ function readPrCosts(
   };
 }
 
+/** How long a PO received in full still takes a late truck at the gate. */
+const LATE_TRUCK_DAYS = 30;
+
 /**
  * What can be received, as the forms pick it: every PO that is approved and
- * not yet fully received, by label, with its lines. The server reads the same
- * labels back, so a PO that stopped being receivable while the form was open
- * is refused rather than guessed at.
+ * not yet fully received, by label, with its lines — and, so a late truck is
+ * never turned away, a PO received in full in the last month, whose goods then
+ * arrive as an extra on it. The server reads the same labels back, so a PO
+ * that stopped being receivable while the form was open is refused rather
+ * than guessed at.
  */
-async function receivable(tolerancePercent: number) {
-  const pos = await purchaseOrderViews({ status: RECEIVABLE_PO });
+async function receivable(money = false) {
+  const [open, late] = await Promise.all([
+    purchaseOrderViews({ status: RECEIVABLE_PO }),
+    purchaseOrderViews({ status: ["Received"], updatedSince: new Date(Date.now() - LATE_TRUCK_DAYS * 86_400_000) }),
+  ]);
+  const pos = [...open, ...late];
   const byLabel = new Map<string, PoView>(pos.map((p) => [poOption(p), p]));
   const linesBy: Record<string, string[]> = {};
   const typeOf: Record<string, string> = {};
   const itemOf: Record<string, string> = {};
   const pendingOf: Record<string, string> = {};
+  const pendingQtyOf: Record<string, number> = {};
+  const rateOf: Record<string, string> = {};
   const qtyOf: Record<string, string> = {};
   const supplierOf: Record<string, string> = {};
   const godownOf: Record<string, string> = {};
   /* The same open lines, by the item they bring: the receipt is searched by what arrived. */
   const openByItem = new Map<string, GrnPoLine[]>();
+  const doneByItem = new Map<string, GrnPoLine[]>();
   for (const [label, p] of byLabel) {
     godownOf[label] = p.godown;
     supplierOf[label] = `${p.supplier} · deliver to ${p.godown} by ${fd(p.po.deliveryDate)}`;
@@ -330,16 +343,17 @@ async function receivable(tolerancePercent: number) {
       const key = `${label}|${l.label}`;
       typeOf[key] = l.itemType;
       itemOf[key] = l.item;
-      const left = Math.max(0, l.quantity - l.received);
+      const left = Math.max(0, Math.round((l.expected - l.received) * 1000) / 1000);
+      pendingQtyOf[key] = Math.round((l.expected - l.received) * 1000) / 1000;
+      rateOf[key] = money ? `${inrRate(l.ratePaise)} per ${l.unit === "Pcs" ? "piece" : l.unit.toLowerCase()}` : "";
       qtyOf[key] = left > 0 ? String(left) : "";
-      if (left > 0) {
-        const open = openByItem.get(l.item) ?? [];
-        open.push({ po: label, poLine: l.label, poNumber: poName(p.po), supplier: p.supplier, godown: p.godown, due: p.po.deliveryDate ?? null, ordered: l.quantity, received: l.received, pending: left, unit: l.unit });
-        openByItem.set(l.item, open);
-      }
-      pendingOf[key] = `Ordered ${nf(l.quantity)} ${l.unit} · received ${nf(l.received)} · pending ${nf(left)} ${l.unit}${
-        tolerancePercent ? ` · up to ${nf(receivableQuantity(l.quantity, l.received, tolerancePercent))} more may be taken` : ""
-      }`;
+      const entry = { po: label, poLine: l.label, poNumber: poName(p.po), supplier: p.supplier, godown: p.godown, due: p.po.deliveryDate ?? null, ordered: l.expected, received: l.received, pending: left, unit: l.unit };
+      if (left > 0) (openByItem.get(l.item) ?? openByItem.set(l.item, []).get(l.item)!).push(entry);
+      else (doneByItem.get(l.item) ?? doneByItem.set(l.item, []).get(l.item)!).push(entry);
+      const corrected = l.expected !== l.quantity ? ` (ordered ${nf(l.quantity)}, corrected to ${nf(l.expected)})` : "";
+      pendingOf[key] = left > 0
+        ? `Ordered ${nf(l.expected)} ${l.unit}${corrected} · received ${nf(l.received)} · pending ${nf(left)} ${l.unit}`
+        : `Received in full: ${nf(l.received)} of ${nf(l.expected)} ${l.unit}${corrected}. Anything more is added to the PO as an extra.`;
     }
   }
   /* A PO named by its label as the form picks it, or by its bare number as somebody typed it. */
@@ -352,13 +366,15 @@ async function receivable(tolerancePercent: number) {
     return pos.find((p) => normalisePoNo(poName(p.po)) === n);
   };
   for (const [k, v] of openByItem) openByItem.set(k, sortPoLines(v));
-  return { pos, byLabel, find, linesBy, typeOf, itemOf, pendingOf, qtyOf, supplierOf, godownOf, openByItem };
+  /* A line received in full is offered after every open one, for a late truck, and never ahead of them. */
+  for (const [k, v] of doneByItem) openByItem.set(k, [...(openByItem.get(k) ?? []), ...sortPoLines(v)]);
+  return { pos, byLabel, find, linesBy, typeOf, itemOf, pendingOf, pendingQtyOf, rateOf, qtyOf, supplierOf, godownOf, openByItem };
 }
 
 async function inwardForm(ctx: ErpContext, init?: Record<string, string>, opts: { poId?: string; fixed?: boolean } = {}): Promise<FormSpec> {
   const [gds, config, types] = await Promise.all([godownOptions(ctx, { lost: false }), getConfig(), refValues("materialType")]);
   const all = await db.select().from(erpRawMaterials);
-  const rx = await receivable(config["erp.purchase.receiptTolerancePercent"]);
+  const rx = await receivable(ctx.powers.has("viewPurchaseMoney"));
   const unitOf: Record<string, string> = {};
   const unitIs: Record<string, string[]> = {};
   /* "scale": a kg chemical, netted off the scale; "typed": measured or counted. */
@@ -374,7 +390,7 @@ async function inwardForm(ctx: ErpContext, init?: Record<string, string>, opts: 
   const poInit = fixedPo ? poOption(fixedPo) : (init?.po ?? "");
   const initLines = fixedPo
     ? fixedPo.lines
-        .filter((l) => l.received < l.quantity)
+        .filter((l) => l.received < l.expected)
         .map((l) => {
           const key = `${poInit}|${l.label}`;
           return { poLine: l.label, type: rx.typeOf[key], item: rx.itemOf[key], qty: qtyBy[l.item]?.[0] === "typed" ? rx.qtyOf[key] : "" };
@@ -410,6 +426,8 @@ async function inwardForm(ctx: ErpContext, init?: Record<string, string>, opts: 
       ratePerKmPaise: config["erp.purchase.ownVehicleRatePerKmPaise"],
       supplierOf: rx.supplierOf,
       pendingOf: rx.pendingOf,
+      pendingQtyOf: rx.pendingQtyOf,
+      rateOf: rx.rateOf,
       ...(itemFirst ? { grn } : {}),
     },
     header: [
@@ -445,6 +463,10 @@ async function inwardForm(ctx: ErpContext, init?: Record<string, string>, opts: 
       /* A kg chemical's net is the scale's answer, never typed; anything measured or counted is typed. */
       { k: "net", l: "Weight without drum", t: "derived", calc: "inward.net", when: { k: "item", map: "qtyBy", has: "scale" } },
       { k: "qty", l: "Quantity received", t: "num", req: true, min: 0.001, qtyUnit: { by: ["item"], map: unitOf }, when: { k: "item", map: "qtyBy", has: "typed" }, fillBy: { by: ["po", "poLine"], map: rx.qtyOf }, hint: "Starts at what is pending on the PO — type what actually arrived." },
+      /* Whatever arrived is received; a difference corrects the PO with a line under this one (0356). */
+      { k: "diff", l: "Against the PO", t: "derived", calc: "inward.diff", when: { calc: "inward.gap" } },
+      { k: "extra", l: "The extra", t: "select", opts: [...EXTRA_OPTS], def: EXTRA_OPTS[0], untagged: true, when: { calc: "inward.isMore" } },
+      { k: "short", l: "Is more coming?", t: "select", opts: [...SHORT_OPTS], def: SHORT_OPTS[0], untagged: true, when: { calc: "inward.isLess" } },
       { k: "unit", l: "Unit", t: "derived", calc: "inward.unit" },
       { k: "testing", l: "Testing required", t: "derived", calc: "inward.testing" },
       { k: "remark", l: "Remark", t: "area", mic: true },
@@ -755,9 +777,8 @@ const inward: ScreenModule = {
   forms: {
     async new(ctx, h, lines) {
       const config = await getConfig();
-      const tolerance = config["erp.purchase.receiptTolerancePercent"];
       /* NO PURCHASE WITHOUT A PO: the receipt names an approved PO, and every line one of its items. */
-      const rx = await receivable(tolerance);
+      const rx = await receivable();
       /*
        * A receipt started from the item names its PO on each line, and may
        * carry several POs of ONE vendor (one truck, one delivery). The PO form
@@ -773,7 +794,15 @@ const inward: ScreenModule = {
       if (!lines.length) return err("Add at least one item.");
       const all = await db.select().from(erpRawMaterials);
       const taking = new Map<string, number>();
-      const parsed: { l: Record<string, string>; m: (typeof all)[number]; qty: number; line: PoView["lines"][number]; po: PoView }[] = [];
+      const corrSoFar = new Map<string, number>();
+      const parsed: {
+        l: Record<string, string>;
+        m: (typeof all)[number];
+        qty: number;
+        line: PoView["lines"][number];
+        po: PoView;
+        correction: { kind: "extra" | "short"; quantity: number } | null;
+      }[] = [];
       for (let i = 0; i < lines.length; i++) {
         const l = lines[i];
         const poText = (lineFirst ? text(l.po) : null) ?? headerPo;
@@ -798,15 +827,23 @@ const inward: ScreenModule = {
           qty = num(l.qty);
           if (qty == null || qty <= 0) return fieldErr(`l${i}.qty`, qty != null && qty < 0 ? "Quantity cannot be below 0." : "Quantity received is required");
         }
+        /*
+         * NEVER REFUSED FOR ITS QUANTITY (0356). Whatever arrived is received;
+         * a difference from what the line still expects corrects the PO with a
+         * line under it — the extra unless the gate said to leave the PO, the
+         * shortfall only where the gate said nothing more is coming.
+         */
         const already = taking.get(line.id) ?? 0;
-        const room = receivableQuantity(line.quantity, line.received + already, tolerance);
-        if (qty > room)
-          return fieldErr(
-            `l${i}.${scale ? "weight" : "qty"}`,
-            `More than the PO allows: ${nf(line.quantity)} ${line.unit} ordered, ${nf(line.received + already)} received, ${nf(room)} more may be taken. Raise a requirement for the extra.`,
-          );
+        const movedSoFar = corrSoFar.get(line.id) ?? 0;
+        const gap = receiptGap(line.expected + movedSoFar, line.received + already, qty);
+        const correction = correctionFor(gap, {
+          addExtra: text(l.extra) !== EXTRA_OPTS[1],
+          nothingMoreComing: text(l.short) === SHORT_OPTS[1],
+        });
+        /* What this line took, and how it moved the PO line, count towards the next line on the same PO line. */
         taking.set(line.id, already + qty);
-        parsed.push({ l, m, qty, line, po });
+        corrSoFar.set(line.id, movedSoFar + (correction?.quantity ?? 0));
+        parsed.push({ l, m, qty, line, po, correction });
       }
       /* "Add more" on a PR keeps its number; a new inward draws the next one. */
       const fixed = int(h.prFixed);
@@ -824,6 +861,7 @@ const inward: ScreenModule = {
        * failing the whole delivery.
        */
       const sent = { testing: 0, register: 0, stuck: [] as string[] };
+      const corrected: string[] = [];
       const po = parsed[0].po;
       const poIds = [...new Set(parsed.map((x) => x.po.po.id))];
       const poNames = [...new Set(parsed.map((x) => poName(x.po.po)))];
@@ -839,7 +877,7 @@ const inward: ScreenModule = {
               .values({ prNumber: pr, ...costRow.data, createdById: ctx.user.id, updatedById: ctx.user.id })
               .onConflictDoUpdate({ target: erpPrCosts.prNumber, set: { ...costRow.data, updatedAt: new Date(), updatedById: ctx.user.id } });
         }
-        for (const { l, m, qty, line, po } of parsed) {
+        for (const { l, m, qty, line, po, correction } of parsed) {
           const inwardId = erpId("pin");
           const testing = m.testingList.length > 0;
           const receivedDate = text(h.date) ?? today();
@@ -867,6 +905,26 @@ const inward: ScreenModule = {
             createdById: ctx.user.id,
             updatedById: ctx.user.id,
           });
+          if (correction) {
+            /* Under the line it corrects, at that line's own rate and GST; the line itself is never edited. */
+            await tx.insert(erpPoCorrections).values({
+              id: erpId("poc"),
+              poId: po.po.id,
+              poLineId: line.id,
+              kind: correction.kind,
+              quantity: correction.quantity,
+              ratePaise: line.ratePaise,
+              gstBp: line.gstBp,
+              inwardId,
+              prNumber: pr,
+              createdById: ctx.user.id,
+            });
+            await tx
+              .update(erpPurchaseOrders)
+              .set({ revision: sql`${erpPurchaseOrders.revision} + 1`, updatedAt: new Date(), updatedById: ctx.user.id })
+              .where(eq(erpPurchaseOrders.id, po.po.id));
+            corrected.push(`${poName(po.po)} ${correction.quantity > 0 ? "+" : "−"}${nf(Math.abs(correction.quantity))} ${line.unit} ${m.name}`);
+          }
           if (testing) {
             sent.testing++;
             continue;
@@ -893,10 +951,11 @@ const inward: ScreenModule = {
         }
         for (const id of poIds) await refreshPurchaseOrder(tx, id);
       });
-      await erpAudit(ctx, "erp.inward.create", "erp_inward", String(pr), null, { lines: parsed.length, po: poNames.join(", "), supplier: po.supplier, ...sent });
+      await erpAudit(ctx, "erp.inward.create", "erp_inward", String(pr), null, { lines: parsed.length, po: poNames.join(", "), supplier: po.supplier, ...sent, corrected });
       const where = [sent.testing ? `${sent.testing} to testing` : "", sent.register ? `${sent.register} in the register` : ""].filter(Boolean).join(", ");
       return okVoid(
         `PR ${pr} · ${parsed.length} line${parsed.length > 1 ? "s" : ""} received against ${poNames.join(", ")}${where ? ` · ${where}` : ""}` +
+          (corrected.length ? ` · PO corrected: ${corrected.join("; ")}` : "") +
           (sent.stuck.length ? ` · ${sent.stuck.join(", ")} not in the register: that lot number is taken — change the PR number and send it` : ""),
       );
     },
@@ -925,13 +984,7 @@ const inward: ScreenModule = {
         quantity = num(h.qty);
         if (quantity == null || quantity <= 0) return fieldErr("qty", quantity != null && quantity < 0 ? "Quantity cannot be below 0." : "Quantity received is required");
       }
-      /* Taking more than the PO allows is refused here exactly as it is on the way in. A cut, or no change, never is. */
-      if (r.poLineId && quantity > r.quantity) {
-        const [line] = await db.select().from(erpPoLines).where(eq(erpPoLines.id, r.poLineId));
-        const others = ((await receivedByLine()).get(r.poLineId) ?? 0) - r.quantity;
-        const room = line ? receivableQuantity(line.quantity, others, (await getConfig())["erp.purchase.receiptTolerancePercent"]) : Infinity;
-        if (quantity > room) return fieldErr(scale ? "weight" : "qty", `More than the PO allows: ${nf(line!.quantity)} ${line!.unit} ordered, ${nf(others)} received on other lines, ${nf(room)} may be taken here.`);
-      }
+      /* A corrected quantity is never refused for being more or less than the PO (0356); the PO's status follows it. */
       const next: InwardChange = {
         receivedDate,
         godownId,
@@ -1550,13 +1603,9 @@ async function registerRows(where: SQL): Promise<RegRow[]> {
 }
 
 async function purchaseForm(ctx: ErpContext, id?: string): Promise<FormSpec | null> {
-  const [gds, sups, config] = await Promise.all([
-    godownOptions(ctx, { lost: false }),
-    db.select().from(erpSuppliers).orderBy(asc(erpSuppliers.name)),
-    getConfig(),
-  ]);
+  const [gds, sups] = await Promise.all([godownOptions(ctx, { lost: false }), db.select().from(erpSuppliers).orderBy(asc(erpSuppliers.name))]);
   const mats = await db.select().from(erpRawMaterials).orderBy(asc(erpRawMaterials.name));
-  const rx = await receivable(config["erp.purchase.receiptTolerancePercent"]);
+  const rx = await receivable(ctx.powers.has("viewPurchaseMoney"));
   const money = ctx.powers.has("viewPurchaseMoney");
   const partyCode: Record<string, string> = {};
   sups.forEach((s) => (partyCode[s.name] = s.partyCode ?? ""));
@@ -2246,13 +2295,7 @@ async function savePurchase(ctx: ErpContext, h: Record<string, string>, id?: str
   if (id) {
     const [before] = await db.select().from(erpPurchases).where(eq(erpPurchases.id, id));
     if (!before) return err("That purchase no longer exists.", "not_found");
-    /* A lot entered by hand IS the receipt against its PO line, so its quantity is held to the PO too. */
-    if (before.source === "manual" && before.poLineId && qty !== before.quantity) {
-      const [line] = await db.select().from(erpPoLines).where(eq(erpPoLines.id, before.poLineId));
-      const others = ((await receivedByLine()).get(before.poLineId) ?? 0) - before.quantity;
-      const room = line ? receivableQuantity(line.quantity, others, (await getConfig())["erp.purchase.receiptTolerancePercent"]) : Infinity;
-      if (qty > room) return fieldErr("qty", `More than the PO allows: ${nf(line!.quantity)} ${line!.unit} ordered, ${nf(others)} received on other lots`);
-    }
+    /* A lot entered by hand IS the receipt against its PO line; like the GRN, it is never refused for its quantity (0356). */
     await db.transaction(async (tx) => {
       await tx.update(erpPurchases).set({ ...common, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpPurchases.id, id));
       await refreshCache(tx, id);
@@ -2266,14 +2309,11 @@ async function savePurchase(ctx: ErpContext, h: Record<string, string>, id?: str
   const typedPr = int(h.pr);
   if (typedPr != null && typedPr < 1) return fieldErr("pr", "A PR number is 1 or more — leave it blank to draw the next one");
   /* NO PURCHASE WITHOUT A PO: the party and the item are the PO line's, never typed. */
-  const tolerance = (await getConfig())["erp.purchase.receiptTolerancePercent"];
-  const rx = await receivable(tolerance);
+  const rx = await receivable();
   const po = rx.find(text(h.po));
   if (!po) return fieldErr("po", "Pick the approved purchase order this lot was bought on");
   const line = po.lines.find((l) => l.label === text(h.poLine));
   if (!line) return fieldErr("poLine", "Pick an item on this PO");
-  const room = receivableQuantity(line.quantity, line.received, tolerance);
-  if (qty > room) return fieldErr("qty", `More than the PO allows: ${nf(line.quantity)} ${line.unit} ordered, ${nf(line.received)} received, ${nf(room)} more may be taken`);
   const terms = poTerms(po.po.poNumber, po.po.id, line);
   /* Without the money power the rate is the PO's. With it, the form opens on the PO's rate and what is
      there on save is the answer — the bill's rate typed over it, or a blank somebody left on purpose. */

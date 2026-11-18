@@ -12491,6 +12491,12 @@ export const erpPurchaseOrders = pgTable(
      * is shared and kept, so every message about it carries the same link.
      */
     shareToken: text("share_token"),
+    /**
+     * How many times the PO has been CORRECTED since it was made: a correction
+     * line added at the gate, cancelled, or re-rated. 0 is the PO as raised.
+     * Printed as "Rev n" beside the number, which itself never changes (0356).
+     */
+    revision: integer("revision").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id").references(() => users.id),
@@ -12541,6 +12547,58 @@ export const erpPoLines = pgTable(
     index("erp_po_lines_requisition_idx").on(t.requisitionId),
     check("erp_po_lines_amounts_check", sql`${t.quantity} > 0 and ${t.ratePaise} >= 0 and ${t.gstBp} >= 0`),
     check("erp_po_lines_unit_check", sql`${t.unit} in ('Kg', 'Litre', 'Pcs')`),
+  ],
+);
+
+/**
+ * A CORRECTION LINE on a PO (0356): what the gate found when goods arrived,
+ * written under the PO line it corrects so the line itself always reads as it
+ * was ordered. `quantity` is signed — +150 is an extra received, −200 a
+ * shortfall nothing more will make up — at the line's own rate and GST,
+ * copied when it is made, so a later change to the line cannot reprice it.
+ * Only an ERP administrator re-rates one (`original_rate_paise` keeps what it
+ * was). A wrong one is CANCELLED with a reason, never deleted: it stays on the
+ * PO struck through. What a line now expects is its quantity plus its live
+ * corrections; nothing stores that sum.
+ */
+export const erpPoCorrections = pgTable(
+  "erp_po_corrections",
+  {
+    id: text("id").primaryKey(),
+    poId: text("po_id")
+      .notNull()
+      .references(() => erpPurchaseOrders.id, { onDelete: "cascade" }),
+    poLineId: text("po_line_id")
+      .notNull()
+      .references(() => erpPoLines.id, { onDelete: "cascade" }),
+    /** extra | short. */
+    kind: text("kind").notNull(),
+    quantity: numeric("quantity", { precision: 14, scale: 3, mode: "number" }).notNull(),
+    ratePaise: bigint("rate_paise", { mode: "number" }).notNull(),
+    gstBp: integer("gst_bp").notNull(),
+    /** The goods receipt line it was made on. Plain text, so a receipt edited away leaves the record readable. */
+    inwardId: text("inward_id"),
+    prNumber: integer("pr_number"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    cancelledById: text("cancelled_by_id").references(() => users.id),
+    cancelReason: text("cancel_reason"),
+    originalRatePaise: bigint("original_rate_paise", { mode: "number" }),
+    rateChangedAt: timestamp("rate_changed_at", { withTimezone: true }),
+    rateChangedById: text("rate_changed_by_id").references(() => users.id),
+    rateChangeReason: text("rate_change_reason"),
+  },
+  (t) => [
+    index("erp_po_corrections_line_idx").on(t.poLineId),
+    index("erp_po_corrections_po_idx").on(t.poId),
+    check("erp_po_corrections_kind_check", sql`${t.kind} in ('extra', 'short')`),
+    check(
+      "erp_po_corrections_sign_check",
+      sql`(${t.kind} = 'extra' and ${t.quantity} > 0) or (${t.kind} = 'short' and ${t.quantity} < 0)`,
+    ),
+    check("erp_po_corrections_rate_check", sql`${t.ratePaise} >= 0 and ${t.gstBp} >= 0`),
+    check("erp_po_corrections_cancel_check", sql`(${t.cancelledAt} is null) = (${t.cancelReason} is null)`),
   ],
 );
 

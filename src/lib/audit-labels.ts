@@ -1258,6 +1258,8 @@ export const VERBS: Record<string, string> = {
   costs: "recorded the transport and inward cost of",
   cancel: "cancelled",
   closeShort: "closed short",
+  correctionCancel: "cancelled a PO correction line",
+  correctionRate: "changed the rate on a PO correction line",
   sendBack: "sent back",
   select: "selected",
   decideMethod: "decided how to buy",

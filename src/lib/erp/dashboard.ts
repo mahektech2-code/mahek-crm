@@ -9,7 +9,7 @@ import { ALERT_LABEL, type AlertKind } from "./engines/alerts";
 import { unbilledPaidLines } from "./freight-bills";
 import { erpLink } from "./registry";
 import { today } from "./screens/common";
-import { purchaseOrderViews, requirementWork } from "./screens/purchase-flow";
+import { pricedLines, purchaseOrderViews, requirementWork } from "./screens/purchase-flow";
 import { poTotals } from "./engines/purchase-flow";
 import { requestStatus } from "./screens/complaints";
 import { returnsSummary } from "./returns";
@@ -187,7 +187,7 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
     const overdue = pos.filter((p) => ["Approved", "Sent", "Partly received"].includes(p.po.status) && p.po.deliveryDate < day).map((p) => p.po.id);
     if (overdue.length) purchase.push({ l: "PO deliveries overdue", v: nf(overdue.length), tone: "danger", href: tileHref("purchaseOrders", overdue, "Delivery overdue") });
     if (pw("viewPurchaseMoney")) {
-      const value = pos.filter((p) => p.po.status !== "Pending approval").reduce((a, p) => a + poTotals(p.lines, p.po.freightPaise).totalPaise, 0);
+      const value = pos.filter((p) => p.po.status !== "Pending approval").reduce((a, p) => a + poTotals(pricedLines(p), p.po.freightPaise).totalPaise, 0);
       purchase.push({ l: "Open PO value", v: rupees(value), sub: "approved, not yet fully received", href: tileHref("purchaseOrders", waiting, "Awaiting delivery") });
     }
   }

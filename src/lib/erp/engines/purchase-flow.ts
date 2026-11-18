@@ -226,48 +226,84 @@ export function poTotals(lines: PoLineIn[], freightPaise: number) {
   return { amountPaise: amount, gstPaise: gst, freightPaise: freightPaise || 0, roundOffPaise, totalPaise };
 }
 
-/* -------------------------------------------- what arrived against a line */
+/* ------------------------------------------ what arrived, and the corrections */
 
 /**
- * A RECEIPT NEVER STOPS ON QUANTITY (Nov 2026, PROPOSED — these rules are not wired to the GRN yet). Goods are weighed
- * and counted at the gate and never match the PO exactly; that is the trade,
- * and Mahek is content with it. The GRN used to refuse anything past the PO
- * plus a tolerance and leave a shortfall waiting for ever. Now whatever arrived
- * is received, and these three rules say what it means:
+ * THE GOODS RECEIPT CORRECTS THE PO (Nov 2026, a reversal). Goods are weighed
+ * and counted at the gate and never match the PO exactly; that is the trade.
+ * The GRN used to refuse anything past the PO plus a tolerance and leave a
+ * shortfall waiting until somebody closed the PO short. Now whatever arrived is
+ * received, and the person making the GRN corrects the PO on the spot with a
+ * CORRECTION LINE under the line it corrects — never by editing the line:
  *
- *   - a line within `differencePercent` of what was ordered, either way, is
- *     COMPLETE — the PO and its requirement read Received with nobody closing
- *     anything short;
- *   - a line the gate marked "this is the full delivery" is complete whatever
- *     arrived;
- *   - a complete line beyond the difference is still complete, and is FLAGGED
- *     so the purchase desk sees it. A line still short and not marked is
- *     simply still coming, and is not flagged.
+ *   - more than the line still expects: the extra, +qty, at the line's rate;
+ *   - less, and nothing more is coming: the shortfall, −qty, at the line's rate;
+ *   - less, and more is coming: no correction; the line stays open.
+ *
+ * What a line EXPECTS is its quantity plus its live corrections, and it is
+ * complete once that has arrived. The flagged difference compares the end
+ * result with the ORIGINAL quantity, so a correction beyond the configured
+ * percent is pointed out to the purchase desk. Nothing here refuses anything.
  */
-export type ReceiptLine = { ordered: number; received: number; deliveryComplete?: boolean };
+export type CorrectionKind = "extra" | "short";
 
-/** Whether nothing more is waited for on this line. */
-export function lineDone(l: ReceiptLine, differencePercent: number): boolean {
-  if (l.deliveryComplete) return true;
-  if (!(l.ordered > 0)) return l.received > 0;
-  const floor = l.ordered * (1 - Math.max(0, differencePercent) / 100);
-  return l.received + 1e-9 >= floor;
+/** What the GRN asks about an extra: add it to the PO (the default), or leave the PO alone. */
+export const EXTRA_OPTS = ["Add the extra to the PO at the same rate", "Leave the PO as it is"] as const;
+/** What the GRN asks about a shortfall: the default changes nothing. */
+export const SHORT_OPTS = ["More is coming: leave the PO as it is", "That is everything: take the rest off the PO"] as const;
+
+/** What a line now expects: its own quantity plus every live correction under it. */
+export function expectedQuantity(ordered: number, corrections: { quantity: number; cancelled?: boolean }[]): number {
+  const sum = corrections.filter((c) => !c.cancelled).reduce((a, c) => a + c.quantity, 0);
+  return Math.round((ordered + sum) * 1000) / 1000;
 }
 
-/** How far what arrived differs from what was ordered, in percent of the order: +12 is 12% more, −8 is 8% less. One decimal. */
-export function receiptDifferencePercent(ordered: number, received: number): number {
-  if (!(ordered > 0)) return 0;
-  return Math.round(((received - ordered) / ordered) * 1000) / 10;
+/** Where a receipt leaves a line: nothing to correct, an extra, or a shortfall that may or may not be made up. */
+export function receiptGap(expected: number, receivedBefore: number, arriving: number): { kind: "exact" | "more" | "less"; quantity: number } {
+  const pending = Math.round((expected - receivedBefore) * 1000) / 1000;
+  const gap = Math.round((arriving - pending) * 1000) / 1000;
+  if (gap > 0) return { kind: "more", quantity: gap };
+  if (gap < 0) return { kind: "less", quantity: -gap };
+  return { kind: "exact", quantity: 0 };
 }
 
 /**
- * The difference in words where it is worth a person's attention — a COMPLETE
- * line received beyond the accepted difference — and null otherwise.
+ * The correction a receipt makes, or null. An extra is added unless the gate
+ * said to leave the PO alone; a shortfall only where the gate said nothing
+ * more is coming.
  */
-export function receiptDifferenceNote(l: ReceiptLine, differencePercent: number): string | null {
-  if (!l.received || !lineDone(l, differencePercent)) return null;
-  const d = receiptDifferencePercent(l.ordered, l.received);
-  if (Math.abs(d) <= Math.max(0, differencePercent)) return null;
+export function correctionFor(
+  gap: ReturnType<typeof receiptGap>,
+  choice: { addExtra: boolean; nothingMoreComing: boolean },
+): { kind: CorrectionKind; quantity: number } | null {
+  if (gap.kind === "more" && choice.addExtra) return { kind: "extra", quantity: gap.quantity };
+  if (gap.kind === "less" && choice.nothingMoreComing) return { kind: "short", quantity: -gap.quantity };
+  return null;
+}
+
+export type ReceiptLine = { ordered: number; received: number };
+
+/** Whether nothing more is waited for on this line: what it now expects has arrived (or more). */
+export function lineDone(l: ReceiptLine): boolean {
+  return l.received + 1e-9 >= l.ordered;
+}
+
+/** How far a figure differs from what was ordered, in percent of the order: +12 is 12% more, −8 is 8% less. One decimal. */
+export function receiptDifferencePercent(ordered: number, actual: number): number {
+  if (!(ordered > 0)) return 0;
+  return Math.round(((actual - ordered) / ordered) * 1000) / 10;
+}
+
+/**
+ * The flag a PO line earns, in words, or null: where the line ENDS — what it
+ * now expects once corrected, or what arrived where that is more — differs
+ * from its ORIGINAL quantity by more than `flagPercent`.
+ */
+export function quantityDifferenceNote(original: number, expected: number, received: number, flagPercent: number): string | null {
+  const end = Math.max(expected, received);
+  if (!(original > 0) || end === original) return null;
+  const d = receiptDifferencePercent(original, end);
+  if (Math.abs(d) <= Math.max(0, flagPercent)) return null;
   return d > 0 ? `${d}% more than ordered` : `${-d}% less than ordered`;
 }
 
@@ -276,19 +312,14 @@ export function receiptDifferenceNote(l: ReceiptLine, differencePercent: number)
  * receiving states move: an unapproved, closed, cancelled or rejected PO is
  * left as it is, and Approved stays Approved until something arrives (it was
  * received without having been marked sent, which still counts as sent).
+ * `ordered` is what each line now EXPECTS, corrections included.
  */
-export function poStatusAfterReceipt(status: string, lines: ReceiptLine[], differencePercent = 0): string {
+export function poStatusAfterReceipt(status: string, lines: ReceiptLine[]): string {
   if (!["Approved", "Sent", "Partly received", "Received"].includes(status)) return status;
   const any = lines.some((l) => l.received > 0);
-  if (!any && !lines.some((l) => l.deliveryComplete)) return status === "Approved" ? "Approved" : "Sent";
-  const all = lines.every((l) => lineDone(l, differencePercent));
+  if (!any) return status === "Approved" ? "Approved" : "Sent";
+  const all = lines.every((l) => lineDone(l));
   return all ? "Received" : "Partly received";
-}
-
-/** The most that may still be received on a line: what is pending, plus the tolerance on what was ordered. Still read by the GRN until the quantity rule above is switched on. */
-export function receivableQuantity(ordered: number, received: number, tolerancePercent: number): number {
-  const ceiling = ordered * (1 + Math.max(0, tolerancePercent) / 100);
-  return Math.max(0, Math.round((ceiling - received) * 1000) / 1000);
 }
 
 /** The purchase unit of an item: what a requirement, a quotation, a PO and the register all count it in. */

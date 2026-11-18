@@ -9,6 +9,7 @@
  *
  * PURE and client-safe.
  * ------------------------------------------------------------------------- */
+import { runCalc } from "./calc";
 
 import { roundedTotal } from "@/lib/bill-round";
 import { groupIndian, rupeesFromPaise } from "@/lib/format";
@@ -81,7 +82,14 @@ export type When =
   | { k: string; notEmpty: true }
   | { k: string; includes: string }
   /** The value of `k`, looked up in the form's `data[map]`, is a list containing `has`. */
-  | { k: string; map: string; has: string };
+  | { k: string; map: string; has: string }
+  /**
+   * A named calculator (`registerCalc`) answers something — for a rule that
+   * turns on figures rather than one value, like the GRN asking "is more
+   * coming?" only when less than the PO arrived. It is handed the form's
+   * values as both the header and the line.
+   */
+  | { calc: string };
 
 export type FieldSpec = {
   k: string;
@@ -739,6 +747,7 @@ export const FLAG: Record<string, [string, Tone]> = {
   rateOffPo: ["Rate differs from PO", "warn"],
   awaitingApproval: ["Awaiting approval", "warn"],
   deliveryLate: ["Delivery overdue", "danger"],
+  qtyDiffers: ["Quantity differs from PO", "warn"],
   qcPending: ["Waiting for SFG QC", "warn"],
   qcRejected: ["Failed SFG QC", "danger"],
   toScan: ["Boxes still to scan", "warn"],
@@ -928,6 +937,7 @@ export function whenHolds(
   data: Record<string, unknown> = {},
 ): boolean {
   if (!when) return true;
+  if ("calc" in when) return runCalc(when.calc, { h: values, l: values, lines: [], i: 0, data }) !== "";
   const v = values[when.k] ?? "";
   if ("map" in when) {
     const m = (data[when.map] ?? {}) as Record<string, string[]>;
