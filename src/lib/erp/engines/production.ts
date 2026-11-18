@@ -89,7 +89,12 @@ export function fillFigures(p: {
 export function fillRefusal(p: { useLitres: number; sfgAvailable: number; cans: number; packingAvailable: number | null; packingType: string }): string | null {
   if (!(p.cans > 0)) return "Cans must be above 0.";
   if (!(p.sfgAvailable > 0) || p.useLitres > p.sfgAvailable + 1e-9) return "There is not enough SFG in this lot.";
-  if (p.packingType !== "Naket" && (p.packingAvailable == null || p.packingAvailable <= 0)) return "No packing of this kind is available here.";
+  if (p.packingType !== "Naket") {
+    if (p.packingAvailable == null || p.packingAvailable <= 0) return "No packing of this kind is available here.";
+    /* One empty can (or drum) a can filled: having some is not having enough,
+       and a fill past the stock drove the can item below zero. */
+    if (p.cans > p.packingAvailable + 1e-9) return `Only ${Math.floor(p.packingAvailable + 1e-9)} of this packing ${p.packingAvailable === 1 ? "is" : "are"} available here; ${p.cans} needed.`;
+  }
   return null;
 }
 
