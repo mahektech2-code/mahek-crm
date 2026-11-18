@@ -2709,6 +2709,21 @@ describe("the no-answer ladder", () => {
     assert.equal(r.entries[0].reasons[0].kind, "unreachable");
   });
 
+  test("an unreachable customer marked do not contact, or skipped today, is held like anybody else", () => {
+    const spent = {
+      lastOrderDate: addDays(TODAY, -40),
+      cycleDays: 22,
+      noAnswerCount: 5,
+      lastNoAnswerAt: `${addDays(TODAY, -9)}T04:30:00Z`,
+    };
+    const dnc = buildQueue([candidate({ ...spent, doNotContact: true })], TODAY, C, at(`${TODAY}T06:00:00Z`));
+    assert.equal(dnc.entries.length, 0);
+    assert.equal(dnc.suppressed[0]?.reason, "Marked do not contact");
+    const skipped = buildQueue([candidate({ ...spent, skippedTodayReason: "Shop shut" })], TODAY, C, at(`${TODAY}T06:00:00Z`));
+    assert.equal(skipped.entries.length, 0);
+    assert.match(skipped.suppressed[0]?.reason ?? "", /Skipped today/);
+  });
+
   test("nobody answering does not move the purchase cycle", () => {
     // The predicted date comes from order history and nothing else. A run of
     // unanswered calls says something about the phone, not about the cycle.
