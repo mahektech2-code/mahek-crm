@@ -78,6 +78,13 @@ test("a change to the invoice's figures is named; nothing else is", () => {
   assert.deepEqual(invoiceChanges(before, { ...before, invoiceNo: "MMI/2" }), ["invoice no. MMI/1 → MMI/2"]);
 });
 
+test("the freight charged to the customer is on the bill, so changing it sends the invoice back (S3)", () => {
+  const before: InvoiceSnapshot = { invoiceNo: "MMI/1", invoiceDate: "2026-10-26", lines: [{ id: "a", skuId: "s", qtyCans: 10, ratePaise: 100, discountBp: null, gstBp: 1800, transportCostPaise: 0 }] };
+  assert.deepEqual(invoiceChanges(before, { ...before, lines: [{ ...before.lines[0], transportCostPaise: 50000 }] }), ["the freight charged"]);
+  /* No freight and nothing recorded are the same thing — a snapshot taken before the field existed is not a change. */
+  assert.deepEqual(invoiceChanges(before, { ...before, lines: [{ ...before.lines[0], transportCostPaise: undefined }] }), []);
+});
+
 test("a likely duplicate is the same party, day and goods", () => {
   const existing = [{ orderNo: 10, billingId: "c1", date: "2026-10-26", lines: [{ skuId: "a", qtyCans: 12 }, { skuId: "b", qtyCans: 4 }] }];
   assert.equal(likelyDuplicate({ billingId: "c1", date: "2026-10-26", lines: [{ skuId: "b", qtyCans: 4 }, { skuId: "a", qtyCans: 12 }] }, existing), 10);

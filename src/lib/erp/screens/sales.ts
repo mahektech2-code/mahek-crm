@@ -563,7 +563,7 @@ function invoiceSnapshot(order: OrderLine[]): InvoiceSnapshot {
   return {
     invoiceNo: first?.o.tallyBillNo ?? null,
     invoiceDate: first?.o.invoiceDate ?? null,
-    lines: billed.map((l) => ({ id: l.o.id, skuId: l.o.skuId, qtyCans: l.o.qtyCans, ratePaise: l.o.ratePaise, discountBp: l.o.discountBp, gstBp: l.gstBp })),
+    lines: billed.map((l) => ({ id: l.o.id, skuId: l.o.skuId, qtyCans: l.o.qtyCans, ratePaise: l.o.ratePaise, discountBp: l.o.discountBp, gstBp: l.gstBp, transportCostPaise: l.o.transportCostPaise })),
   };
 }
 
