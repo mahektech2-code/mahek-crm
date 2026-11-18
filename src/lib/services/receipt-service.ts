@@ -945,6 +945,33 @@ export async function confirmReceipt(
   receiptId: string,
   allocation?: ConfirmAllocation,
 ): Promise<Result<{ receiptId: string; cleared: boolean }>> {
+  return confirmReceiptWith(receiptId, allocation, null);
+}
+
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/** Thrown inside a transaction to roll it back and hand a refusal out. */
+class Refused extends Error {
+  constructor(public readonly result: Result<never>) {
+    super(result.ok ? "refused" : result.error);
+  }
+}
+
+/**
+ * What accounts saw on the bank statement, written over what was taken down a
+ * phone — inside the same transaction as the confirmation, so a confirmation
+ * that is refused leaves the receipt exactly as it was.
+ */
+type BankCorrection = {
+  patch: { reference?: string; receivedAt?: string; mode?: string };
+  before: { status: string; reference: string | null; receivedAt: string };
+};
+
+async function confirmReceiptWith(
+  receiptId: string,
+  allocation: ConfirmAllocation | undefined,
+  correction: BankCorrection | null,
+): Promise<Result<{ receiptId: string; cleared: boolean }>> {
   const ctx = await requireCapability("payment.confirm");
   const config = await getConfig();
 
@@ -990,39 +1017,114 @@ export async function confirmReceipt(
     }
   }
 
-  await db.transaction(async (tx) => {
-    await tx
-      .update(paymentReceipts)
-      .set({
-        status: "confirmed",
-        confirmedById: ctx.user.id,
-        confirmedAt: new Date(),
-        updatedById: ctx.user.id,
-        updatedAt: new Date(),
-      })
-      .where(eq(paymentReceipts.id, receiptId));
-    await tx.insert(auditLog).values({
-      id: id("aud"),
-      actorId: ctx.user.id,
-      // Which hat allowed it — see `audit_log.actor_role`.
-      actorRole: ctx.authorisedBy,
-        actorApp: ctx.authorisedIn,
-      action: "payment.confirm",
-      entityType: "payment_receipt",
-      entityId: receiptId,
-      // The status it actually came from. `reported` was hardcoded here, which
-      // would now record a hold of nine days as though nobody had touched it.
-      beforeState: {
-        status: receipt.status,
-        holdReason: receipt.holdReason,
-      } as never,
-      afterState: {
-        status: "confirmed",
-        amount: receipt.amount,
-        reallocated: Boolean(allocation),
-      } as never,
+  try {
+    await db.transaction(async (tx) => {
+      /*
+       * TWO CONFIRMS AT ONCE CANNOT BOTH APPLY.
+       *
+       * The status check above and the stale check are reads, and two people (or
+       * one double-click) could both pass them: the same receipt confirmed twice,
+       * or two receipts against one bill each finding room that only one of them
+       * has. So the bills this receipt names are locked, the room on them is
+       * asked again from CONFIRMED lines as well as `paid_amount` (which is
+       * rebuilt only after the commit), and the status only moves from an
+       * undecided one.
+       */
+      await tx.execute(sql`
+        select b.id from bills b
+         where b.id in (select p.bill_id from payments p where p.receipt_id = ${receiptId} and p.bill_id is not null)
+         order by b.id
+           for update`);
+      const stale = await staleLinesIn(tx, receiptId);
+      if (stale.length) {
+        throw new Refused(
+          err(
+            `${stale.join(", ")} ${stale.length === 1 ? "has" : "have"} been settled since this was reported. Change what it settles, or reject it and record the payment again.`,
+            "conflict",
+          ),
+        );
+      }
+
+      if (correction) {
+        const p = correction.patch;
+        if (p.reference !== undefined || p.receivedAt !== undefined || p.mode !== undefined) {
+          await tx
+            .update(paymentReceipts)
+            .set({ ...p, updatedById: ctx.user.id, updatedAt: new Date() })
+            .where(eq(paymentReceipts.id, receiptId));
+          /* And on its lines: slow payers, cash flow, the late-payment figure and
+             "payments confirmed" all read `payments.paid_at`, not the receipt. */
+          await tx
+            .update(payments)
+            .set({
+              ...(p.receivedAt !== undefined ? { paidAt: p.receivedAt } : {}),
+              ...(p.mode !== undefined ? { mode: p.mode } : {}),
+              ...(p.reference !== undefined ? { reference: p.reference } : {}),
+              updatedById: ctx.user.id,
+              updatedAt: new Date(),
+            })
+            .where(eq(payments.receiptId, receiptId));
+        }
+        await tx.insert(auditLog).values({
+          id: id("aud"),
+          actorId: ctx.user.id,
+          // Which hat allowed it — see `audit_log.actor_role`.
+          actorRole: ctx.authorisedBy,
+          actorApp: ctx.authorisedIn,
+          action: "payment.matchedToBankEntry",
+          entityType: "payment_receipt",
+          entityId: receiptId,
+          beforeState: correction.before as never,
+          // The second receipt that WAS NOT written is the fact worth recording:
+          // without this line, the account shows one payment and nothing says a
+          // person decided it was one payment rather than two.
+          afterState: {
+            reference: p.reference ?? correction.before.reference,
+            receivedAt: p.receivedAt ?? correction.before.receivedAt,
+            mode: p.mode ?? null,
+            duplicateAvoided: true,
+          } as never,
+        });
+      }
+
+      const moved = await tx
+        .update(paymentReceipts)
+        .set({
+          status: "confirmed",
+          confirmedById: ctx.user.id,
+          confirmedAt: new Date(),
+          updatedById: ctx.user.id,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(paymentReceipts.id, receiptId), inArray(paymentReceipts.status, ["reported", "held"])))
+        .returning({ id: paymentReceipts.id });
+      if (!moved.length) throw new Refused(err("Somebody has already decided this one.", "conflict"));
+      await tx.insert(auditLog).values({
+        id: id("aud"),
+        actorId: ctx.user.id,
+        // Which hat allowed it — see `audit_log.actor_role`.
+        actorRole: ctx.authorisedBy,
+          actorApp: ctx.authorisedIn,
+        action: "payment.confirm",
+        entityType: "payment_receipt",
+        entityId: receiptId,
+        // The status it actually came from. `reported` was hardcoded here, which
+        // would now record a hold of nine days as though nobody had touched it.
+        beforeState: {
+          status: receipt.status,
+          holdReason: receipt.holdReason,
+        } as never,
+        afterState: {
+          status: "confirmed",
+          amount: receipt.amount,
+          reallocated: Boolean(allocation),
+        } as never,
+      });
     });
-  });
+  } catch (e) {
+    if (e instanceof Refused) return e.result;
+    throw e;
+  }
 
   await applyToLedger(receipt.customerId);
   await closePaymentPromises(receipt.customerId, receiptId, ctx.user.id);
@@ -1063,9 +1165,23 @@ export async function rejectReceipt(
   if (receipt.status === "rejected") {
     return ok({ receiptId }, "Already rejected");
   }
+  /*
+   * ONLY MONEY NOBODY HAS CONFIRMED CAN BE REJECTED. Rejecting says "this
+   * never arrived", on the statement the customer reads; money that was
+   * confirmed did arrive, and taking it back is a reversal — which has its own
+   * word, its own impact check, and gives a credit note back to its complaint.
+   */
+  if (receipt.status === "confirmed" || receipt.status === "reversed") {
+    return err(
+      receipt.status === "confirmed"
+        ? "That payment has already been confirmed. Reverse it instead if the money did not stay."
+        : "That payment has already been reversed — it no longer counts.",
+      "conflict",
+    );
+  }
 
-  await db.transaction(async (tx) => {
-    await tx
+  const rejected = await db.transaction(async (tx) => {
+    const moved = await tx
       .update(paymentReceipts)
       .set({
         status: "rejected",
@@ -1073,7 +1189,9 @@ export async function rejectReceipt(
         updatedById: ctx.user.id,
         updatedAt: new Date(),
       })
-      .where(eq(paymentReceipts.id, receiptId));
+      .where(and(eq(paymentReceipts.id, receiptId), inArray(paymentReceipts.status, ["reported", "held"])))
+      .returning({ id: paymentReceipts.id });
+    if (!moved.length) return false;
     await tx.insert(auditLog).values({
       id: id("aud"),
       actorId: ctx.user.id,
@@ -1093,10 +1211,13 @@ export async function rejectReceipt(
         amount: Number(receipt.amount),
       } as never,
     });
+    return true;
   });
+  // Somebody else decided it between the read and the write.
+  if (!rejected) return err("Somebody has already decided this one.", "conflict");
 
-  // A receipt that had been confirmed and is now rejected has to give the money
-  // back to the bills it settled, which is exactly what a rebuild does.
+  // Nothing confirmed moves, but the collections state is rebuilt by the same
+  // pass: the customer is back on the worklist once the claim is gone.
   await applyToLedger(receipt.customerId);
 
   return ok({ receiptId }, `${rupees(Number(receipt.amount))} rejected`);
@@ -1293,6 +1414,27 @@ async function reallocate(
   });
 
   return okVoid();
+}
+
+/**
+ * The same question as `staleLines`, asked inside the confirming transaction
+ * once the bills are locked, and asked of CONFIRMED lines as well as of
+ * `paid_amount`: a confirmation that committed a moment ago has not rebuilt
+ * that cache yet, and reading it alone would let a second one through.
+ */
+async function staleLinesIn(tx: Tx, receiptId: string): Promise<string[]> {
+  const rows = (await tx.execute(sql`
+    select b.bill_no as "billNo", p.amount::bigint as amount,
+           (b.amount - greatest(b.paid_amount, coalesce((
+              select sum(o.amount) from payments o
+                join payment_receipts r on r.id = o.receipt_id
+               where o.bill_id = b.id and r.status = 'confirmed' and o.receipt_id <> ${receiptId}
+           ), 0)))::bigint as balance
+      from payments p
+      join bills b on b.id = p.bill_id
+     where p.receipt_id = ${receiptId}`)) as unknown as { billNo: string; amount: string | number; balance: string | number }[];
+  /* db.execute hands bigints back as text. */
+  return rows.filter((r) => Number(r.amount) > Number(r.balance)).map((r) => r.billNo);
 }
 
 /** Bills a pending receipt names that no longer have room for its line. */
@@ -1522,7 +1664,7 @@ export async function confirmAsMatch(input: {
   mode?: string;
   allocation?: ConfirmAllocation;
 }): Promise<Result<{ receiptId: string; cleared: boolean }>> {
-  const ctx = await requireCapability("payment.confirm");
+  await requireCapability("payment.confirm");
 
   const [receipt] = await db
     .select()
@@ -1553,44 +1695,44 @@ export async function confirmAsMatch(input: {
    * not wipe one the telecaller managed to get. The AMOUNT is deliberately not
    * touched — a different amount is a different payment, and this path exists
    * only for the case where the two are the same money.
+   *
+   * Held to the rules `recordReceipt` holds a new receipt to — a listed mode,
+   * a day that has happened — and written INSIDE the confirmation, onto the
+   * receipt and its lines together, so a confirmation that is refused leaves
+   * nothing edited behind it.
    */
-  const patch: Record<string, unknown> = { updatedById: ctx.user.id, updatedAt: new Date() };
+  const patch: BankCorrection["patch"] = {};
   if (input.reference?.trim()) patch.reference = input.reference.trim();
-  if (input.receivedAt) patch.receivedAt = input.receivedAt;
-  if (input.mode) patch.mode = input.mode;
-
-  if (Object.keys(patch).length > 2) {
-    await db
-      .update(paymentReceipts)
-      .set(patch)
-      .where(eq(paymentReceipts.id, input.receiptId));
+  if (input.receivedAt) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(input.receivedAt)) {
+      return err("Enter the date the money arrived.", "validation", [
+        { field: "receivedAt", message: "Pick the date on the bank statement." },
+      ]);
+    }
+    if (input.receivedAt > (await today())) {
+      return err("Money cannot have arrived in the future.", "validation", [
+        { field: "receivedAt", message: "Pick today or a day already past." },
+      ]);
+    }
+    patch.receivedAt = input.receivedAt;
+  }
+  if (input.mode) {
+    if (!(await getConfig())["payments.modes"].includes(input.mode)) {
+      return err("That is not a payment mode we record.", "validation", [
+        { field: "mode", message: "Pick one of the offered modes." },
+      ]);
+    }
+    patch.mode = input.mode;
   }
 
-  await db.insert(auditLog).values({
-    id: id("aud"),
-    actorId: ctx.user.id,
-      // Which hat allowed it — see `audit_log.actor_role`.
-      actorRole: ctx.authorisedBy,
-        actorApp: ctx.authorisedIn,
-    action: "payment.matchedToBankEntry",
-    entityType: "payment_receipt",
-    entityId: input.receiptId,
-    beforeState: {
+  return confirmReceiptWith(input.receiptId, input.allocation, {
+    patch,
+    before: {
       status: receipt.status,
       reference: receipt.reference,
       receivedAt: receipt.receivedAt,
-    } as never,
-    // The second receipt that WAS NOT written is the fact worth recording:
-    // without this line, the account shows one payment and nothing says a
-    // person decided it was one payment rather than two.
-    afterState: {
-      reference: patch.reference ?? receipt.reference,
-      receivedAt: patch.receivedAt ?? receipt.receivedAt,
-      duplicateAvoided: true,
-    } as never,
+    },
   });
-
-  return confirmReceipt(input.receiptId, input.allocation);
 }
 
 /* ------------------------------------------------------------------ search */

@@ -76,6 +76,18 @@ test("efficiency formula is exactly (visits × hours ÷ 8) × 10, and v3 caps it
   assert.equal(scoreCalc(uncapped, { visits: 9, hours: 9 }).points, 101.3);
 });
 
+test("a formula dividing by an input of 0 scores nothing, never NaN or the cap (S6)", () => {
+  const rule = question("l3", "q8").calc! as Extract<CalcRule, { kind: "formula" }>;
+  const ratio: CalcRule = { ...rule, expression: "visits / hours", cap: 10 };
+  const inf = scoreCalc(ratio, { visits: 9, hours: 0 });
+  assert.equal(inf.points, null, "9 / 0 is not capped to 10");
+  assert.equal(inf.raw, null);
+  assert.match(inf.why, /divides by zero/);
+  const nan = scoreCalc({ ...ratio, cap: null }, { visits: 0, hours: 0 });
+  assert.equal(nan.points, null, "0 / 0 is no score, not NaN");
+  assert.equal(scoreCalc(ratio, { visits: 9, hours: 3 }).points, 3);
+});
+
 test("D7: achievement between 60% and 90% scales 4 → 10 instead of scoring nothing", () => {
   const rule = question("l3", "q6").calc!;
   assert.equal(scoreCalc(rule, { pct: 59 }).points, 0);

@@ -255,8 +255,12 @@ describe("a lot label at the desk (stock packed before box ids)", () => {
     assert.ok((await mod("orders").actions!.ready(a, o.id, {})).ok);
 
     const c = await as(clerk);
-    const first = await scanOntoOrder(c, Number(o.no), "fp5bh");
-    assert.ok(first.ok && first.data.verdict.ok && first.data.verdict.allocation === "allocate" && first.data.verdict.qty === 2, JSON.stringify(first));
+    /* Scanned twice at once: the shortfall is allocated once, and the other scan matches it. */
+    const pair = await Promise.all([scanOntoOrder(c, Number(o.no), "fp5bh"), scanOntoOrder(c, Number(o.no), "FP5BH")]);
+    const first = pair.find((r) => r.ok && r.data.verdict.ok && r.data.verdict.allocation === "allocate") ?? pair[0];
+    assert.ok(first.ok && first.data.verdict.ok && first.data.verdict.allocation === "allocate" && first.data.verdict.qty === 2, JSON.stringify(pair));
+    const twin = pair.find((r) => r !== first)!;
+    assert.ok(twin.ok && twin.data.verdict.ok && twin.data.verdict.allocation === "matched", JSON.stringify(twin));
     const alloc = (await db.execute(sql`select lot_code as lot, quantity::float8 as q from erp_batch_codes where order_id = ${o.id}`)) as unknown as { lot: string; q: number }[];
     assert.deepEqual(alloc.map((x) => [x.lot, Number(x.q)]), [["FP5BH", 2]]);
     const again = await scanOntoOrder(c, Number(o.no), "FP5BH");
@@ -427,5 +431,27 @@ describe("confirming dispatch from the desk", () => {
     assert.match(msg(await erpDispatchVerify(no, { date: TODAY })), /marked order \d+ not verified/);
     await db.execute(sql`update erp_order_details set verification = 'Verified' where order_id = ${o.id}`);
     assert.match(msg(await erpDispatchVerify(no, { date: TODAY })), /has already been dispatched/);
+  });
+});
+
+describe("two scans onto one line at once", () => {
+  test("two loaders scanning two cans onto a one-can line: one lands, the other is refused", async () => {
+    /* Each scan read the line as 0 of 1 before the other wrote, so both went
+       on and the line ended at 2 of 1. They now queue on the order. */
+    const a = await as(admin);
+    assert.ok((await placeOrder(a, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "ABC Paints" }, [{ sku: LOOSE1, qty: "1", rate: "100" }])).ok);
+    const [o] = (await db.execute(sql`select o.id, o.order_no as no from erp_orders o join products p on p.id = o.sku_id where p.name = ${LOOSE1} order by o.order_no desc limit 1`)) as unknown as { id: string; no: number }[];
+    assert.ok((await mod("orders").actions!.ready(a, o.id, {})).ok);
+    const board = await dispatchBoard(Number(o.no));
+    assert.ok(board);
+    const offered = await pickableBoxes(board);
+    assert.ok(offered.length >= 2, "two loose cans to race with");
+    const c = await as(clerk);
+    const both = await Promise.all([scanOntoOrder(c, Number(o.no), offered[0].id), scanOntoOrder(c, Number(o.no), offered[1].id)]);
+    assert.equal(both.filter((r) => r.ok && r.data.verdict.ok).length, 1, JSON.stringify(both));
+    const [on] = (await db.execute(sql`select count(*)::int as n from erp_units where order_id = ${o.id} and status = 'scanned'`)) as unknown as { n: number }[];
+    assert.equal(Number(on.n), 1, "the line holds what it ordered, not one more");
+    const [alloc] = (await db.execute(sql`select coalesce(sum(quantity), 0)::float8 as q from erp_batch_codes where order_id = ${o.id}`)) as unknown as { q: number }[];
+    assert.equal(Number(alloc.q), 1, "and allocates it once");
   });
 });

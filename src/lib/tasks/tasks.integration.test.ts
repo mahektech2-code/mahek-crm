@@ -164,6 +164,20 @@ describe("Transferring a task", () => {
     assert.equal(tr.status, "accepted");
   });
 
+  test("an offer is accepted once: a second accept (or a withdraw) racing it is refused and leaves it accepted", async () => {
+    setTestUser(priya);
+    const made = await createTask({ title: "Visit Shree Paints", app: "tasks", dueDate: today(), priority: "normal", proofRequired: false, assigneeIds: [] });
+    assert.ok(made.ok);
+    const tid = made.data.ids[0];
+    assert.ok((await transferTask(tid, { toId: rakesh.id, reason: "On your route" })).ok);
+    setTestUser(rakesh);
+    const both = await Promise.all([decideTransfer(tid, { accept: true }), decideTransfer(tid, { accept: true })]);
+    assert.equal(both.filter((r) => r.ok).length, 1, "exactly one accept lands");
+    assert.equal((await task(tid)).assigneeId, rakesh.id);
+    const [tr] = await db.select().from(taskTransfers).where(eq(taskTransfers.taskId, tid));
+    assert.equal(tr.status, "accepted", "the losing accept does not overwrite the winner");
+  });
+
   test("rejecting says why, and the task stays where it was", async () => {
     setTestUser(priya);
     const made = await createTask({ title: "Chase Colour Camp", app: "tasks", dueDate: today(), priority: "high", proofRequired: false, assigneeIds: [] });

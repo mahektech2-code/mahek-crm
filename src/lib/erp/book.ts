@@ -3,10 +3,10 @@ import { randomUUID } from "node:crypto";
 import { and, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { DEAD_SKIP_REASON, deadLeadIds, recordDeadSkips, type DeadSkip } from "@/lib/services/lead-dead-service";
 import { db } from "@/db";
-import { bills, customers, erpOrderHolds, erpOrders, orders, type OrderLine as BookLine } from "@/db/schema";
+import { bills, customers, erpOrderHolds, erpOrders, orders, payments, type OrderLine as BookLine } from "@/db/schema";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
-import { recomputeBuyingCycle, recomputeFollowUpState, recomputeOutstanding } from "@/lib/recompute";
+import { recomputeBillStatuses, recomputeBuyingCycle, recomputeFollowUpState, recomputeOutstanding } from "@/lib/recompute";
 import { convertIfNowQualified } from "@/lib/services/lead-conversion-service";
 import { billFigures, orderType } from "./engines/sales";
 import { roundedTotal } from "@/lib/bill-round";
@@ -175,6 +175,21 @@ class DeadLeadSkip extends Error {
   }
 }
 
+/**
+ * Whether any payment line points at this bill, whatever its receipt's status.
+ *
+ * `bills.paid_amount` counts CONFIRMED money only, so asking it alone let a
+ * bill with a reported (or held) payment against it be deleted — and
+ * `payments.bill_id` cascades, so the reported lines went with it and the
+ * receipt, once confirmed, reduced nothing. A bill somebody has reported money
+ * against stays in the book, as a paid one always has; when the order is
+ * verified again it is the same bill (`ERPBILL-<order no>`) that comes back.
+ */
+async function billHasPaymentLines(billId: string): Promise<boolean> {
+  const [line] = await db.select({ id: payments.id }).from(payments).where(eq(payments.billId, billId)).limit(1);
+  return !!line;
+}
+
 async function syncOne(orderNo: number, lines: LineRow[], dead: Set<string>): Promise<string[]> {
   const ref = bookOrderRef(orderNo);
   /* An order billed to a permanently Dead lead is not written to the book: the
@@ -191,10 +206,11 @@ async function syncOne(orderNo: number, lines: LineRow[], dead: Set<string>): Pr
     .where(eq(bills.externalRef, bookBillRef(orderNo)));
 
   /* Every line gone: the order is kept as cancelled — it was on somebody's
-     list — and an unpaid bill goes with the lines that made it. */
+     list — and a bill no money was ever reported against goes with the lines
+     that made it. */
   if (!lines.length) {
     if (existing && existing.status !== "cancelled") await db.update(orders).set({ status: "cancelled", cancelledAt: new Date(), updatedAt: new Date() }).where(eq(orders.id, existing.id));
-    if (bill && !Number(bill.paid)) await db.delete(bills).where(eq(bills.id, bill.id));
+    if (bill && !Number(bill.paid) && !(await billHasPaymentLines(bill.id))) await db.delete(bills).where(eq(bills.id, bill.id));
     return [existing?.customerId, bill?.customerId].filter((x): x is string => !!x);
   }
 
@@ -253,7 +269,7 @@ async function syncOne(orderNo: number, lines: LineRow[], dead: Set<string>): Pr
         paymentPosition: "stated",
         externalRef: bookBillRef(orderNo),
       });
-  } else if (bill && !Number(bill.paid)) {
+  } else if (bill && !Number(bill.paid) && !(await billHasPaymentLines(bill.id))) {
     await db.delete(bills).where(eq(bills.id, bill.id));
   }
 
@@ -311,6 +327,11 @@ export async function syncBookOrders(orderNos: number[]): Promise<void> {
     }
   }
   await recordDeadSkips("erp.book", skips);
+  /* A bill's amount may have moved under money already confirmed against it:
+     a paid bill whose order grew is part-paid now, and one that shrank below
+     what was paid is paid. Status follows the amounts, so it is rebuilt here
+     rather than left saying what the old amount meant. */
+  if (touched.size) await recomputeBillStatuses();
   for (const c of touched) {
     await recomputeBuyingCycle(c);
     await recomputeOutstanding(c);

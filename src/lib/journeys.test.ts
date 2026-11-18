@@ -124,6 +124,7 @@ import {
   pendingReceipts,
   recordReceipt,
   rejectReceipt,
+  reverseReceipt,
 } from "@/lib/services/receipt-service";
 import { globalSearch ,
   listAmFilterOptions,
@@ -1156,6 +1157,16 @@ describe("Journey 4 - the EOD gate", () => {
       .where(eq(reminders.id, created.data.id));
     assert.equal(row.status, "dismissed");
     assert.equal(row.dismissReason, "Cheque already banked");
+
+    /* A dismissed reminder is not then "completed" over the top of its reason. */
+    setTestUser(manager);
+    const reclosed = await completeReminder(created.data.id, "Ticked later by mistake");
+    setTestUser(priya);
+    assert.equal(reclosed.ok, false, "only a pending reminder can be completed");
+    const [still] = await db.select().from(reminders).where(eq(reminders.id, created.data.id));
+    assert.equal(still.status, "dismissed");
+    assert.equal(still.dismissReason, "Cheque already banked");
+    assert.equal(still.closureNote, row.closureNote, "and its closure is not overwritten");
 
     // Three statuses and no more — "cancelled" is not one of them.
     const all = await listReminders();
@@ -5358,7 +5369,7 @@ describe("Logging a collections call - one outcome, one transaction", () => {
     assert.equal(await stateOf(customer.id), undefined);
   });
 
-  test("a rejected payment gives the money back and returns the customer", async () => {
+  test("a reversed payment gives the money back and returns the customer", async () => {
     const customer = await onTheWorklist(30);
 
     await logPaymentFollowUp({
@@ -5377,8 +5388,11 @@ describe("Logging a collections call - one outcome, one transaction", () => {
       .where(eq(paymentReceipts.customerId, customer.id));
 
     setTestUser(deepa);
+    /* Confirmed money did arrive: it is reversed, never rejected as "never arrived". */
     const rejected = await rejectReceipt(receipt.id, "Not in the statement");
-    assert.equal(rejected.ok, true, rejected.ok ? "" : rejected.error);
+    assert.equal(rejected.ok, false, "a confirmed receipt cannot be rejected");
+    const reversed = await reverseReceipt(receipt.id, "Not in the statement");
+    assert.equal(reversed.ok, true, reversed.ok ? "" : reversed.error);
     setTestUser(priya);
 
     const [bill] = await db.select().from(bills).where(eq(bills.customerId, customer.id));
@@ -8824,6 +8838,69 @@ describe("the same money, entered from the bank statement", () => {
 
     const [settled] = await db.select().from(bills).where(eq(bills.id, bill.id));
     assert.equal(settled.paidAmount, 50_000_00, "the bill was not settled once");
+  });
+
+  test("the bank's date and mode reach the payment lines, not only the receipt", async () => {
+    const customer = await makeCustomer(priya.id);
+    await db.insert(bills).values({ id: id("bil"), customerId: customer.id, billNo: "MMI/DUP-2", billDate: addDays(TODAY, -30), amount: 50_000_00 });
+    await recomputeOutstanding(customer.id);
+    const receiptId = await claim(customer.id, { amount: 50_000_00 });
+
+    setTestUser(deepa);
+    const merged = await confirmAsMatchAction({ receiptId, confirmAmount: 50_000_00, receivedAt: addDays(TODAY, -2), mode: "UPI" });
+    setTestUser(priya);
+    assert.equal(merged.ok, true, merged.ok ? "" : merged.error);
+
+    const lines = await db.select().from(payments).where(eq(payments.receiptId, receiptId));
+    assert.ok(lines.length >= 1);
+    for (const l of lines) {
+      assert.equal(l.paidAt, addDays(TODAY, -2), "slow payers and cash flow read paid_at");
+      assert.equal(l.mode, "UPI");
+    }
+  });
+
+  test("a future date or an unlisted mode is refused, and nothing is edited", async () => {
+    const customer = await makeCustomer(priya.id);
+    const receiptId = await claim(customer.id, { amount: 50_000_00 });
+
+    setTestUser(deepa);
+    const future = await confirmAsMatchAction({ receiptId, confirmAmount: 50_000_00, receivedAt: addDays(TODAY, 1) });
+    const barter = await confirmAsMatchAction({ receiptId, confirmAmount: 50_000_00, mode: "Barter" });
+    setTestUser(priya);
+    assert.equal(future.ok, false, "money cannot have arrived tomorrow");
+    assert.equal(barter.ok, false, "a mode nobody records is refused");
+
+    const [row] = await db.select().from(paymentReceipts).where(eq(paymentReceipts.id, receiptId));
+    assert.equal(row.status, "reported");
+    assert.equal(row.receivedAt, TODAY);
+    assert.equal(row.mode, "Bank transfer");
+  });
+
+  test("a confirmation that is refused leaves the receipt exactly as it was", async () => {
+    const customer = await makeCustomer(priya.id);
+    const [bill] = await db
+      .insert(bills)
+      .values({ id: id("bil"), customerId: customer.id, billNo: "MMI/DUP-3", billDate: addDays(TODAY, -30), amount: 50_000_00 })
+      .returning();
+    await recomputeOutstanding(customer.id);
+    const receiptId = await claim(customer.id, { amount: 50_000_00 });
+    // Something else settles the bill in the meantime.
+    await db.update(bills).set({ paidAmount: 50_000_00 }).where(eq(bills.id, bill.id));
+
+    setTestUser(deepa);
+    const merged = await confirmAsMatchAction({ receiptId, confirmAmount: 50_000_00, reference: "UTR-NEW-1", receivedAt: addDays(TODAY, -1) });
+    setTestUser(priya);
+    assert.equal(merged.ok, false, "the stale line refuses the confirmation");
+
+    const [row] = await db.select().from(paymentReceipts).where(eq(paymentReceipts.id, receiptId));
+    assert.equal(row.status, "reported");
+    assert.equal(row.reference, null, "the bank's reference was not left on an unconfirmed receipt");
+    assert.equal(row.receivedAt, TODAY);
+    const noted = await db
+      .select()
+      .from(auditLog)
+      .where(and(eq(auditLog.entityId, receiptId), eq(auditLog.action, "payment.matchedToBankEntry")));
+    assert.equal(noted.length, 0, "and no duplicate-avoided row says it was merged");
   });
 
   test("the typed amount is checked on the SERVER, not only in the dialog", async () => {

@@ -155,6 +155,11 @@ export type ResponseInput = { response: "accepted" | "declined" | "negotiating";
 export async function recordResponse(ctx: HireContext, applicationId: string, input: ResponseInput): Promise<Result> {
   const b = await getApplication(ctx, applicationId);
   if (!b) return err("That candidate is not on your list.", "not_found");
+  /* The same gate saving and issuing pass: an answer recorded on a rejected
+     or withdrawn application used to overwrite its status, its reason and its
+     closedAt — reopening, in effect, something somebody had closed. */
+  const closed = offerStageOpen(b);
+  if (closed) return err(closed, "rule_violation");
   const o = await currentOffer(applicationId);
   if (!o || o.status !== "issued") return err("There is no issued offer waiting for an answer.", "rule_violation");
   if (input.response !== "accepted" && input.note.trim().length < 10) return { ok: false, error: "Say what the candidate said — at least a sentence.", code: "validation", fieldErrors: [{ field: "note", message: "Required" }] };

@@ -85,6 +85,23 @@ test("a split goes stale when a line's litres, freight or dispatch change", () =
   );
 });
 
+test("a share stored at two decimals is not stale against its own three-decimal litres (M10)", () => {
+  /* A 375 ml can: the split stores what splitBill returns, 0.38. */
+  const split = splitBill(1000, [{ orderId: "a", litres: 0.375 }, { orderId: "b", litres: 1.125 }]);
+  assert.ok(split.ok);
+  const stored = split.rows.map((r) => ({ orderId: r.id, litres: r.litres }));
+  assert.deepEqual(stored.map((r) => r.litres), [0.38, 1.13]);
+  const now = new Map([
+    ["a", { orderId: "a", litres: 0.375, freightTerm: "Paid", gone: false }],
+    ["b", { orderId: "b", litres: 1.125, freightTerm: "Paid", gone: false }],
+  ]);
+  assert.deepEqual(staleShares(stored, now), []);
+  assert.equal(markPaidRefusal("pending", staleShares(stored, now).length), null);
+  /* A real correction still shows. */
+  now.set("a", { orderId: "a", litres: 0.5, freightTerm: "Paid", gone: false });
+  assert.deepEqual(staleShares(stored, now).map((x) => x.why), ["litres"]);
+});
+
 test("a paid bill cannot be edited; a stale one cannot be paid; only a manager undoes a payment", () => {
   assert.equal(editRefusal("pending"), null);
   assert.match(editRefusal("paid") ?? "", /Undo the payment/);

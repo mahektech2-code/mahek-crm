@@ -153,13 +153,23 @@ export function invoiceShareRefusal(invoiceNo: string, billingId: string, invoic
 
 /* ---------------------------------------------- what the checker approved */
 
-export type InvoiceLine = { id: string; qtyCans: number; ratePaise: number | null; discountBp: number | null; gstBp: number | null; skuId: string };
+export type InvoiceLine = {
+  id: string;
+  qtyCans: number;
+  ratePaise: number | null;
+  discountBp: number | null;
+  gstBp: number | null;
+  skuId: string;
+  /** The freight charged to the customer on this line — it is added to the bill, so the checker saw it. */
+  transportCostPaise?: number | null;
+};
 export type InvoiceSnapshot = { invoiceNo: string | null; invoiceDate: string | null; lines: InvoiceLine[] };
 
 /**
  * WHAT CHANGED SINCE THE INVOICE WAS CHECKED, in words — empty where nothing
  * did. Any change to the invoice's figures after approval sends it back to the
- * checker (step 6); a change to a remark or a transporter does not, because
+ * checker (step 6) — the freight charged to the customer included, because
+ * it is on the bill; a change to a remark or a transporter does not, because
  * the checker never looked at those.
  */
 export function invoiceChanges(before: InvoiceSnapshot, after: InvoiceSnapshot): string[] {
@@ -179,6 +189,7 @@ export function invoiceChanges(before: InvoiceSnapshot, after: InvoiceSnapshot):
     if ((b.ratePaise ?? null) !== (a.ratePaise ?? null)) out.push("a rate");
     if ((b.discountBp ?? null) !== (a.discountBp ?? null)) out.push("a discount");
     if ((b.gstBp ?? null) !== (a.gstBp ?? null)) out.push("GST");
+    if ((b.transportCostPaise ?? 0) !== (a.transportCostPaise ?? 0)) out.push("the freight charged");
   }
   for (const id of was.keys()) if (!now.has(id)) out.push("a line was removed");
   return [...new Set(out)];

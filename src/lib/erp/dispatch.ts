@@ -464,6 +464,20 @@ async function lotFor(ex: Ex, code: string): Promise<ScanLot | null> {
 }
 
 /**
+ * ONE SCAN AT A TIME PER ORDER. Every scan judges the line by what it already
+ * holds — 9 of 10 scanned, the shortfall still to allocate — so two loaders
+ * scanning two boxes onto one line both read 9 and the line ended at 11 of 10,
+ * and a lot label scanned twice allocated the shortfall twice. The unit's row
+ * lock only stops one BOX going on twice. Taken before anything is read, and
+ * released at commit; the next scan then reads what this one wrote. An
+ * advisory lock, not a row lock on erp_orders, so a scan never queues behind
+ * an order edit or the other way round.
+ */
+async function lockOrderForScan(tx: Tx, orderNo: number): Promise<void> {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`erp:dispatch-scan:${orderNo}`}))`);
+}
+
+/**
  * A LOT LABEL AT THE DESK — `lotScanVerdict` says why it exists. A match
  * writes nothing but the scan row; an allocation writes the batch code under
  * the lot's lock, exactly as "Allocate a lot by hand" would.
@@ -472,6 +486,7 @@ async function scanLotOntoOrder(ctx: ErpContext, orderNo: number, code: string):
   let answer: ScanAnswer | null = null;
   let logged: { result: string; message: string; order: string | null } | null = null;
   const res = await inTx(async (tx) => {
+    await lockOrderForScan(tx, orderNo);
     const lines = await scanLines(tx, orderNo);
     if (!lines.length) return refuse(err(`There is no order ${orderNo}.`, "not_found"));
     const lot = await lotFor(tx, code);
@@ -524,6 +539,9 @@ export async function scanOntoOrder(
   let answer: ScanAnswer | null = null;
   let logged: { result: string; message: string; unit: string | null; order: string | null } | null = null;
   const res = await inTx(async (tx) => {
+    /* The order first, then the box — the same order as the lot scan, so the
+       two never wait on each other the wrong way round. */
+    await lockOrderForScan(tx, orderNo);
     const unit = await unitFor(tx, code, true);
     const all = await scanLines(tx, orderNo);
     if (!all.length) return refuse(err(`There is no order ${orderNo}.`, "not_found"));

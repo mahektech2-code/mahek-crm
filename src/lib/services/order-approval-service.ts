@@ -1,7 +1,7 @@
 import "server-only";
 import { awaitingAccountsSql } from "@/lib/order-status";
 import { randomUUID } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLog, customers, orders, users } from "@/db/schema";
 import { requireCapability } from "../access-control";
@@ -262,8 +262,10 @@ export async function approveOrder(orderId: string): Promise<Result> {
     );
   }
 
-  await db.transaction(async (tx) => {
-    await tx
+  const decided = await db.transaction(async (tx) => {
+    /* Only from pending: two people deciding the same order at once must not
+       both write, and the second must not overwrite the first's answer. */
+    const moved = await tx
       .update(orders)
       .set({
         status: "confirmed",
@@ -271,7 +273,9 @@ export async function approveOrder(orderId: string): Promise<Result> {
         approvedAt: new Date(),
         updatedAt: new Date(),
       })
-      .where(eq(orders.id, orderId));
+      .where(and(eq(orders.id, orderId), eq(orders.status, "pending_approval")))
+      .returning({ id: orders.id });
+    if (!moved.length) return false;
 
     await tx.insert(auditLog).values({
       id: id("aud"),
@@ -289,7 +293,9 @@ export async function approveOrder(orderId: string): Promise<Result> {
         amount: Number(order.totalAmount),
       } as never,
     });
+    return true;
   });
+  if (!decided) return err("Somebody else decided that order a moment ago.", "conflict");
 
   // It is a purchase now, so the cycle, the average and the history all change.
   await recomputeBuyingCycle(order.customerId);
@@ -356,8 +362,10 @@ export async function declineOrder(
     );
   }
 
-  await db.transaction(async (tx) => {
-    await tx
+  const decided = await db.transaction(async (tx) => {
+    /* Only from pending: two people deciding the same order at once must not
+       both write, and the second must not overwrite the first's answer. */
+    const moved = await tx
       .update(orders)
       .set({
         status: "declined",
@@ -366,7 +374,9 @@ export async function declineOrder(
         declineReason: reason.trim(),
         updatedAt: new Date(),
       })
-      .where(eq(orders.id, orderId));
+      .where(and(eq(orders.id, orderId), eq(orders.status, "pending_approval")))
+      .returning({ id: orders.id });
+    if (!moved.length) return false;
 
     await tx.insert(auditLog).values({
       id: id("aud"),
@@ -383,7 +393,9 @@ export async function declineOrder(
         amount: Number(order.totalAmount),
       } as never,
     });
+    return true;
   });
+  if (!decided) return err("Somebody else decided that order a moment ago.", "conflict");
 
   // The declined order stops counting as placed, so the customer returns to
   // the calling list on their own cycle rather than staying quiet on the
