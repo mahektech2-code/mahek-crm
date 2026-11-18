@@ -178,6 +178,8 @@ beforeEach(async () => {
   requester = await makeUser("Rina Requester", "associate", { employeeId: reqEmp.id });
   otherManager = await makeUser("Olga Other", "manager");
   admin = await makeUser("Ada Admin", "admin");
+  // The Lost and Dead lists are read through the Sales Dashboard's manager scope, which needs the grant.
+  await db.insert(appAccess).values({ id: id("aca"), userId: admin.id, app: "sales", role: "admin" });
   await db.insert(employeeReporting).values({ id: id("rep"), employeeId: reqEmp.id, managerId: mgrEmp.id });
   setTestUser(requester);
 });
