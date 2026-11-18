@@ -517,13 +517,13 @@ describe("D — the desk is granted, not inherited", () => {
     assert.equal(mod?.offByDefault, true);
     assert.equal(modulesForApp("sales").some((m) => m.key.endsWith("calling-desk")), false);
     // The desk, the CRM's own Sales Manager seat (crm.sales-manager) and the
-    // Lost list (crm.lead-lost) are the three — named, not just counted, so a
-    // fourth addition here fails loud rather than quietly passing a bumped
-    // number.
+    // Lost list (crm.lead-lost) and the Dead list (crm.lead-dead) are the four —
+    // named, not just counted, so a fifth addition here fails loud rather than
+    // quietly passing a bumped number.
     assert.deepEqual(
       modulesForApp("crm").filter((m) => m.offByDefault).map((m) => m.key).sort(),
-      ["crm.lead-calling-desk", "crm.lead-lost", "crm.sales-manager"],
-      "the flag is for exactly these three modules",
+      ["crm.lead-calling-desk", "crm.lead-dead", "crm.lead-lost", "crm.sales-manager"],
+      "the flag is for exactly these four modules",
     );
   });
 

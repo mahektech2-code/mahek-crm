@@ -71,6 +71,8 @@ import { ratesForCustomer } from "../services/price-list-service";
 import { judgeFieldOrderPrices, pricedFromList, type OfficeRate } from "../engines/order-price-authority";
 import { canAny, grantingHat, hatsFor } from "../access-control";
 import { handsetSampleRefusal } from "../sales-gate";
+import { deadFactsFor } from "../services/lead-dead-service";
+import { DEAD_REFUSAL } from "../lead-dead";
 import {
   applyLeadStageMove,
   evaluateLeadStageMove,
@@ -821,6 +823,23 @@ async function handleItem(
   principal: MbosPrincipal,
   item: SyncItem,
 ): Promise<Handled> {
+  /* THE SECOND NET FOR A DEAD LEAD, before any handler runs. Every id this item
+     names as its customer is asked about, because the handlers that do not go
+     through `scopedCustomer` would otherwise reach the database and be refused
+     there with an error the handset reads as "try again". */
+  const named = [
+    item.payload?.customerId,
+    item.payload?.leadId,
+    item.entityType === "lead" || item.entityType === "customer" ? item.entityId : null,
+  ].filter((v): v is string => typeof v === "string" && v.length > 0);
+  if (named.length) {
+    const dead = await deadFactsFor(named);
+    const hit = named.find((id) => dead.get(id)?.deadAt);
+    if (hit) {
+      return { kind: "rejected", value: reject("not_permitted", DEAD_REFUSAL) };
+    }
+  }
+
   const handled = await dispatchItem(principal, item);
   if (handled.kind === "accepted") {
     await recordActivityLocation(principal, item).catch(() => {});
@@ -1024,6 +1043,7 @@ export async function scopedCustomer(
       gpsLng: customers.gpsLng,
       updatedAt: customers.updatedAt,
       deletedAt: customers.deletedAt,
+      deadAt: customers.leadDeadAt,
     })
     .from(customers)
     .where(eq(customers.id, customerId))
@@ -1049,6 +1069,19 @@ export async function scopedCustomer(
         "validation",
         "That customer is not on MahekOne. Raise them as a lead and convert it, rather than ordering against a record that does not exist.",
       ),
+    };
+  }
+
+  /* A PERMANENTLY DEAD LEAD TAKES NO NEW WORK FROM A HANDSET — no visit, order,
+     payment, sample, complaint, task or edit. This is the one door sixteen
+     handlers walk through, so it is refused here once; `handleItem` asks the
+     same question for the item types that never come this way, and the
+     database refuses the rest. A refusal and not a retry: nothing about it
+     will change by sending it again. */
+  if (customer.deadAt) {
+    return {
+      ok: false,
+      value: reject("not_permitted", `${customer.name} — ${DEAD_REFUSAL}`),
     };
   }
 

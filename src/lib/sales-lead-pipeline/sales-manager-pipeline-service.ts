@@ -1,3 +1,4 @@
+import { deadFactsOf } from "../services/lead-dead-service";
 import "server-only";
 import { notConverted } from "@/lib/lead-action-window";
 import { capCutOffLiveLeads } from "@/lib/sales-lead-pipeline/desk";
@@ -1082,14 +1083,18 @@ export async function pipelineLead(
     qualificationApproverRefusalById(user, id),
   ]);
 
+  /* A permanently Dead lead is read-only: nothing on its record is offered as
+     work, a verdict or a reversal. The server and the database refuse every one
+     of them regardless; this only stops the screen offering them. */
+  const isDead = Boolean((await deadFactsOf(id)).deadAt);
   const caps: Caps = {
-    canWork,
-    canVerify,
-    canApproveSample,
-    canCaptureOrder,
-    canDistributorTerms,
-    canApproveDistributor,
-    canReopen: canReopenLost,
+    canWork: canWork && !isDead,
+    canVerify: canVerify && !isDead,
+    canApproveSample: canApproveSample && !isDead,
+    canCaptureOrder: canCaptureOrder && !isDead,
+    canDistributorTerms: canDistributorTerms && !isDead,
+    canApproveDistributor: canApproveDistributor && !isDead,
+    canReopen: canReopenLost && !isDead,
     gstRefusal,
     reviewRefusal,
   };

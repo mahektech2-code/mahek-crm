@@ -69,6 +69,10 @@ export type LostLeadRow = {
   /** Who moved it to `lost`. Null where the closing transition names nobody. */
   lostByName: string | null;
   lastActivityDate: string | null;
+  /** When the lead was made permanently Dead, or null. Dead leads stay in this list. */
+  deadAt: string | null;
+  /** A request to mark it Dead is waiting on its manager. */
+  deadRequestPending: boolean;
 };
 
 export type LostLeadFilters = {
@@ -227,7 +231,10 @@ export async function lostLeadsPage(
            c.lead_stage_since::text as "lostDate",
            lt.from_stage::text as "fromStage",
            la.name as "lostByName",
-           c.lead_last_activity_date::text as "lastActivityDate"
+           c.lead_last_activity_date::text as "lastActivityDate",
+           c.lead_dead_at::text as "deadAt",
+           exists (select 1 from lead_dead_requests dr
+                    where dr.customer_id = c.id and dr.state = 'pending') as "deadRequestPending"
     ${LOST_LEAD_JOINS}
     ${scoped}
     ${narrowed}

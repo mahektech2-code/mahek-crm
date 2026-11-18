@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { canOpenModule } from "@/lib/access";
 import { requireUser } from "@/lib/auth";
 import { LeadRecordScreen } from "@/components/sales-lead-pipeline/lead-record-screen";
+import { DeadRecordBar } from "@/components/leads/dead/dead-record-bar";
 import { LeadModals } from "@/components/sales-lead-pipeline/modals";
 import { LeadPipelineProvider } from "@/components/sales-lead-pipeline/provider";
 import { today } from "@/lib/recompute";
@@ -53,6 +54,7 @@ export default async function Page({
 
   return (
     <LeadPipelineProvider lead={found.lead} refs={refs} today={day}>
+      <DeadRecordBar leadId={id} />
       <LeadRecordScreen
         initialTab={cursor ? "timeline" : single(sp.tab)}
         timeline={{

@@ -12,6 +12,7 @@
 
 import { COMPLAINT_CATEGORIES } from "../constants";
 import { STAGE_SKIP_REASONS } from "../lead-stage-skip";
+import { DEAD_REASONS } from "../lead-dead";
 import {
   LOST_REASONS,
   HOLD_REASONS,
@@ -4075,6 +4076,15 @@ export const SETTINGS = [
     default: REOPEN_REASONS.map((r) => ({ ...r })),
   },
   {
+    key: "leads.deadReasons",
+    type: "structured",
+    category: "mbos-leads",
+    label: "Why a lost lead was marked dead",
+    description:
+      "Marking a Lost lead Dead is permanent once the requester's reporting manager approves it, so the reason is a code - 'how many did we write off for no response' is a question somebody can ask of a code and not of a sentence. Picking 'Other' makes the note mandatory.",
+    default: DEAD_REASONS.map((r) => ({ ...r })),
+  },
+  {
     key: "leads.verificationFailureReasons",
     type: "structured",
     category: "mbos-leads",
@@ -7484,6 +7494,7 @@ export type Config = {
   "leads.verificationFailureReasons": { code: string; label: string }[];
   "leads.holdReasons": { code: string; label: string }[];
   "leads.reopenReasons": { code: string; label: string }[];
+  "leads.deadReasons": { code: string; label: string }[];
   "leads.sampleCancelReasons": { code: string; label: string }[];
   "leads.stageSkipReasons": { code: string; label: string }[];
   "leads.overrideReasons": { code: string; label: string }[];

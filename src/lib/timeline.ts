@@ -227,6 +227,14 @@ export const MBOS_EVENT = {
   leadStageSkipped: "lead_stage_skipped",
 
   /**
+   * A Lost lead's Dead request, and its outcome. NOT a stage move — Dead is a
+   * permanent marker on a Lost lead, so it never writes `leadStage`. The
+   * request's stage goes in the source id (`<id>:requested`, `<id>:approved`,
+   * `<id>:rejected`) so the three never collapse onto one natural key.
+   */
+  leadDead: "lead_dead",
+
+  /**
    * §5.3 — the sales manager's verdict on a qualification checklist.
    *
    * Its own kind rather than a second use of `validation`, which is the §8

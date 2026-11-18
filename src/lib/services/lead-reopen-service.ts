@@ -3,8 +3,9 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
-import { auditLog, customers, leadStageTransitions, notifications, users } from "@/db/schema";
+import { auditLog, customers, leadDeadRequests, leadStageTransitions, notifications, users } from "@/db/schema";
 import { liftLeadTombstones } from "./lead-tombstone";
+import { DEAD_PENDING_REFUSAL, DEAD_REFUSAL } from "../lead-dead";
 import { getConfig } from "../config/store";
 import { REASON_CODE_NEEDING_REMARKS, stageLabel, type LeadSalesType, type LeadStage } from "../lead-labels";
 import { reopenNote, reopenTarget } from "../engines/lead-reopen";
@@ -191,12 +192,24 @@ export async function reopenLostLead(
           archived: customers.leadArchived,
           leadManagerId: customers.leadManagerId,
           ownerId: customers.ownerId,
+          deadAt: customers.leadDeadAt,
         })
         .from(customers)
         .where(eq(customers.id, input.customerId))
         .for("update");
 
       if (!row) throw new ReopenRefusal(err("That lead is not on MahekOne.", "not_found"));
+      /* DEAD IS FOR EVER, and a Dead request in flight freezes the loss until
+         its manager has answered. Asked under the same lock as everything
+         below, so a request approved a moment ago cannot be raced past; the
+         database refuses both cases as well (migration 0189). */
+      if (row.deadAt) throw new ReopenRefusal(err(DEAD_REFUSAL, "rule_violation"));
+      const [pendingDead] = await tx
+        .select({ id: leadDeadRequests.id })
+        .from(leadDeadRequests)
+        .where(and(eq(leadDeadRequests.customerId, input.customerId), eq(leadDeadRequests.state, "pending")))
+        .limit(1);
+      if (pendingDead) throw new ReopenRefusal(err(DEAD_PENDING_REFUSAL, "rule_violation"));
       /* THE IDEMPOTENCE GUARD. Asked AFTER the lock is taken, so the second of
          two simultaneous requests sees the first one's answer. */
       if (row.stage !== "lost") {

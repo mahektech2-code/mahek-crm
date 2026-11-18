@@ -493,6 +493,28 @@ export const APP_MODULES: AppModule[] = [
     note:
       "Every lead closed lost, whatever rung it was lost from, with the reason and who decided it. Off by default — grant it to whoever reviews what the funnel loses.",
   },
+  /*
+   * DEAD LEADS — the permanent end of a Lost lead, approved by the requester's
+   * reporting manager. Off by default for the same reason Lost is: the full
+   * list is for whoever reviews what the funnel writes off.
+   *
+   * The route's layout ALSO lets in anybody who is party to a Dead request —
+   * the person who asked and the manager it was routed to — because the
+   * approver is chosen by the Org Chart and not by this grant, and a manager
+   * who cannot open the page their request notification links to has been
+   * asked to decide something they cannot reach. Those people see only their
+   * own requests; this grant is what shows the whole Dead list.
+   */
+  {
+    key: "crm.lead-dead",
+    app: "crm",
+    label: "Dead Leads",
+    group: "Lead Management",
+    href: "/crm/leads/dead",
+    offByDefault: true,
+    note:
+      "Lost leads a reporting manager has approved as permanently Dead, read-only for ever. Off by default — grant it to whoever reviews what the funnel writes off. Anybody who asks for a lead to be marked Dead, or is asked to decide one, can still open their own requests here.",
+  },
   crm("targets", "Monthly Targets", "Targets & reporting", "Whose numbers are whose. Usually a manager's screen."),
   /*
    * A person's OWN score, and not a manager's screen.

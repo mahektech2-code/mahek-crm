@@ -3,6 +3,7 @@ import { personDirectory } from "@/lib/services/person-identity-service";
 import { personKey } from "@/lib/engines/person-directory";
 import { eq, sql } from "drizzle-orm";
 import { APP_TIMEZONE } from "@/lib/business-date";
+import { DEAD_SKIP_REASON, deadLeadIds, recordDeadSkips, type DeadSkip } from "./lead-dead-service";
 import { db } from "@/db";
 import { randomUUID } from "node:crypto";
 import { customers, sheetPartyRows, syncConflicts } from "@/db/schema";
@@ -41,6 +42,8 @@ export type PartyProjectionReport = {
   matched: number;
   unmatchedParties: number;
   unmatchedCustomers: string[];
+  /** Matched a permanently Dead lead and were left exactly as they are. */
+  skippedDeadLeads: string[];
   phonesFilled: number;
   whatsappFilled: number;
   salesRepLinked: number;
@@ -220,6 +223,7 @@ export async function projectParties(
     matched: 0,
     unmatchedParties: 0,
     unmatchedCustomers: [],
+    skippedDeadLeads: [],
     phonesFilled: 0,
     whatsappFilled: 0,
     salesRepLinked: 0,
@@ -441,6 +445,19 @@ export async function projectParties(
         updatedAt: new Date(),
       } });
   }
+
+  /* A PERMANENTLY DEAD LEAD IS LEFT ALONE. One refused update would fail its
+     whole flight and leave the rest half applied, so it is taken out first and
+     named in the report (`skippedDeadLeads`) and in the audit log. */
+  const deadSet = await deadLeadIds();
+  const deadSkips: DeadSkip[] = [];
+  for (let i = updates.length - 1; i >= 0; i -= 1) {
+    if (!deadSet.has(updates[i].id)) continue;
+    deadSkips.push({ customerId: updates[i].id, what: DEAD_SKIP_REASON });
+    report.skippedDeadLeads.push(updates[i].id);
+    updates.splice(i, 1);
+  }
+  if (!options.dryRun) await recordDeadSkips("sheet.parties", deadSkips);
 
   // Written in flights rather than one at a time: 555 sequential round trips
   // to a hosted database is most of a minute for work that takes seconds.

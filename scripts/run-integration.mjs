@@ -296,6 +296,13 @@ const files = [
   // A lead still at the old new/contacted stage moves to Suspect once it has a
   // funnel sales type; every other off-ladder move is still refused.
   "src/lib/lead-move-to-suspect.test.ts",
+  // Dead Leads: a Lost lead made permanently dead by its Org Chart manager and
+  // read-only for ever — eligibility, approver routing (missing / inactive
+  // manager refused, never re-routed), duplicates, who may decide, rejection
+  // leaving the lead alone, and the database + server + handset locks.
+  "src/lib/lead-dead.test.ts",
+  // …and the imports that could meet one: skipped, said so, and the rest carries on.
+  "src/lib/lead-dead-imports.test.ts",
   // The Telecaller-owned Qualification workflow, Prospect to Sample/Trial.
   "src/lib/telecaller-qualification.test.ts",
   // Intake: what they want, in words or from the catalogue — and never the Calling Desk Product answer.

@@ -26,6 +26,7 @@ import type { RoutineCallConfig } from "@/lib/engines/queue";
 import { today } from "@/lib/recompute";
 import { recomputeAttendanceVerdicts } from "@/lib/services/attendance-verdict-service";
 import { recomputeSalesPerformance } from "@/lib/services/performance-service";
+import { isLeadDead } from "@/lib/services/lead-dead-service";
 import { notifyUsers } from "./notify";
 import { tombstoneLeadFor } from "./services/lead-tombstone";
 import { collectPushReceipts, prunePushFailures } from "./mbos/push";
@@ -153,6 +154,8 @@ export async function ageLeads(): Promise<Counted> {
       and(
         eq(customers.kind, "lead"),
         isNull(customers.deletedAt),
+        /* A permanently Dead lead is read-only and is never swept. */
+        isNull(customers.leadDeadAt),
         isNotNull(customers.leadStage),
         eq(customers.leadArchived, false),
         lt(customers.leadLastActivityDate, sql`${TODAY} - ${archiveDays}::int`),
@@ -655,6 +658,10 @@ export async function raiseNurtureTasks(
   },
 ): Promise<number> {
   if (!input.events.length) return 0;
+
+  /* NO NURTURE TASKS ARE RAISED FOR A DEAD LEAD — it takes no new work, and the
+     database would refuse the insert. */
+  if (await isLeadDead(input.customerId)) return 0;
 
   const candidates = tasksDueFor(input.events, input.today, input.config);
   if (!candidates.length) return 0;
@@ -1161,6 +1168,7 @@ export async function chaseSampleReviews(): Promise<Counted> {
       ladder,
     );
     if (!due) continue;
+    if (await isLeadDead(s.customerId)) continue;
 
     const owners = await nurtureOwners(db, s.customerId);
     const assignee = owners.lead_manager ?? owners.salesman;
@@ -1242,6 +1250,7 @@ export async function flagSamplesPastDelivery(): Promise<Counted> {
   let flagged = 0;
   for (const s of late) {
     const sourceId = `sample_late:${s.id}`;
+    if (await isLeadDead(s.customerId)) continue;
     const owners = await nurtureOwners(db, s.customerId);
     const assignee = owners.lead_manager ?? s.salesmanId;
     if (!assignee) continue;

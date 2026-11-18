@@ -100,6 +100,7 @@ export default async function Page({
       ownerOptions={owners}
       tiles={tiles}
       reopen={reopen}
+      canMarkDead={canWork}
     />
   );
 }

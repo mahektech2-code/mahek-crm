@@ -1,3 +1,5 @@
+import { DeadRecordBar } from "@/components/leads/dead/dead-record-bar";
+import { deadFactsOf } from "@/lib/services/lead-dead-service";
 import { notFound } from "next/navigation";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import { requireUser } from "@/lib/auth";
@@ -34,12 +36,16 @@ export async function Body({
   const lead = await deskLeadRecord(id, day);
   if (!lead) notFound();
 
-  const canWork = await canLead(user, "lead.work");
+  /* A Dead lead is read-only, so nothing on the record is offered as work. */
+  const dead = Boolean((await deadFactsOf(id)).deadAt);
+  const canWork = (await canLead(user, "lead.work")) && !dead;
   /* Handing a lead out is the manager's judgement, `lead.verify`; the list is only drawn for somebody who may. */
   const canAssign = await canLead(user, "lead.verify");
   const assignees = canAssign ? await ownerChoices() : [];
 
   return (
+    <>
+    <DeadRecordBar leadId={id} />
     <RecordScreen
       lead={lead}
       canWork={canWork}
@@ -58,5 +64,6 @@ export async function Body({
       canAssign={canAssign}
       assignees={assignees}
     />
+    </>
   );
 }

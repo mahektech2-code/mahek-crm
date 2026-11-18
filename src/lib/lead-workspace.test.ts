@@ -66,8 +66,12 @@ import { pipelineLinks } from "./sales-lead-pipeline/workspace";
  * of All Leads could not be withheld from anybody who can open that screen.
  * There is no Sales Dashboard counterpart yet — the field funnel is walked
  * through MBOS, and a lost lead there is read off the same rows.
+ *
+ * `crm.lead-dead` is a FIFTH, for the same reason: Dead is a permanent subset of
+ * Lost, so its list is asked of the whole book, and it has no Sales Dashboard
+ * counterpart either.
  */
-const CRM_ONLY_LEAD_MODULES = ["lead-calling-desk", "sales-manager", "lead-lost"];
+const CRM_ONLY_LEAD_MODULES = ["lead-calling-desk", "sales-manager", "lead-lost", "lead-dead"];
 const SALES_ONLY_LEAD_MODULES = ["lead-pipeline"];
 const isSharedLeadModule = (workspace: string, key: string) => {
   const slug = key.slice(workspace.length + 1);
@@ -162,8 +166,8 @@ describe("the Lead Management nav and the module registry agree", () => {
     );
   });
 
-  it("the CRM-only exceptions are exactly the calling desk, Sales Manager and Lost: their own modules, off by default, drawn in the CRM sidebar", () => {
-    assert.deepEqual(CRM_ONLY_LEAD_MODULES, ["lead-calling-desk", "sales-manager", "lead-lost"]);
+  it("the CRM-only exceptions are exactly the calling desk, Sales Manager, Lost and Dead Leads: their own modules, off by default, drawn in the CRM sidebar", () => {
+    assert.deepEqual(CRM_ONLY_LEAD_MODULES, ["lead-calling-desk", "sales-manager", "lead-lost", "lead-dead"]);
     for (const slug of CRM_ONLY_LEAD_MODULES) {
       const mod = APP_MODULES.find((m) => m.key === `crm.${slug}`);
       assert.ok(mod, `crm.${slug} is not a module`);

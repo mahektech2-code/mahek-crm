@@ -66,6 +66,8 @@ import {
 import { setLeadPriority } from "@/lib/actions/lead-priority";
 import { OwnerOptions, UNASSIGNED, firstChoosable, ownerIdFor, type OwnerPerson } from "@/components/leads/owner-options";
 import type { LeadRow } from "@/lib/services/sales-service";
+import { MarkDeadDialog } from "@/components/leads/dead/mark-dead-dialog";
+import { deadRequestEligibility } from "@/lib/lead-dead";
 import {
   ALL_LEAD_STAGES,
   REASON_CODE_NEEDING_REMARKS,
@@ -175,6 +177,7 @@ export function LeadsScreen({
   canReassignSalesman,
   canReassign,
   canTrash,
+  canMarkDead,
   viewer,
   places,
   lostReasons,
@@ -287,6 +290,8 @@ export function LeadsScreen({
   canReassignSalesman: boolean;
   /** `lead.verify` and the Calling desk — the same two questions `assignDeskLead` asks. */
   canReassign: boolean;
+  /** Holds `lead.work`, which is all asking for Dead needs. The action asks again. */
+  canMarkDead: boolean;
   /**
    * §7 — WHOSE JOB THIS READER IS DOING, resolved once on the server and
    * applied here per row.
@@ -417,6 +422,25 @@ export function LeadsScreen({
   const [acting, setActing] = React.useState<Acting | null>(null);
   const [activity, setActivity] = React.useState<{ kind: "call" | "visit" | "history"; lead: LeadRow } | null>(null);
   const workable = React.useMemo(() => new Set(workableIds), [workableIds]);
+  const [markingDead, setMarkingDead] = React.useState<LeadRow | null>(null);
+
+  /* "Mark as Dead" is drawn on EVERY lead and disabled, with the reason, on
+     one that is not Lost — a control that vanishes teaches nobody why. The
+     server refuses a request for anything but a Lost lead as well. */
+  const deadItem = (l: LeadRow) => {
+    const e = deadRequestEligibility({ stage: l.stage, deadAt: l.deadAt, pending: l.deadRequestPending });
+    return {
+      label: "Mark as Dead",
+      danger: true,
+      run: () => setMarkingDead(l),
+      disabled: !canMarkDead || !e.offer,
+      title: !canMarkDead
+        ? "Asking for a lead to be marked Dead needs the lead.work access, which yours does not carry."
+        : e.offer
+          ? undefined
+          : e.reason,
+    };
+  };
   const [bulk, setBulk] = React.useState<Bulk | null>(null);
   const [picked, setPicked] = React.useState<Set<string>>(new Set());
   const [salesmanId, setSalesmanId] = React.useState("");
@@ -932,6 +956,15 @@ export function LeadsScreen({
                             as on the record's bar and the board. */}
                         {displayStageLabel(l.stage as LeadStage)}
                       </Pill>
+                      {l.deadAt ? (
+                        <span className="ml-1.5" title="Permanently Dead — read-only.">
+                          <Pill tone="danger">Dead</Pill>
+                        </span>
+                      ) : l.deadRequestPending ? (
+                        <span className="ml-1.5" title="A request to mark this lead Dead is waiting on its manager.">
+                          <Pill tone="warn">Dead request pending</Pill>
+                        </span>
+                      ) : null}
                       <span
                         className="mt-0.5 block truncate text-[12px] text-muted"
                         title={salesTypeSentence(l.salesType)}
@@ -976,11 +1009,20 @@ export function LeadsScreen({
                       onClick={(e: React.MouseEvent) => e.stopPropagation()}
                     >
                       {showArchived ? (
-                        <RowMenu items={[{ label: "Restore it", run: () => begin(l, "restore") }]} />
+                        <RowMenu
+                          items={
+                            l.deadAt
+                              ? [{ label: "Permanently Dead — read-only", disabled: true, title: "Nothing can be done to a Dead lead." }]
+                              : [{ label: "Restore it", run: () => begin(l, "restore") }, deadItem(l)]
+                          }
+                        />
                       ) : (
                         <RowMenu
                           items={[
                             { label: "Open the record", href: leadHref(workspace, `leads/${l.id}`) },
+                            ...(l.deadAt
+                              ? [{ label: "Permanently Dead — read-only", disabled: true, title: "Nothing can be done to a Dead lead." }]
+                              : [
                             {
                               label: "Log a call",
                               run: () => setActivity({ kind: "call", lead: l }),
@@ -1035,6 +1077,8 @@ export function LeadsScreen({
                                 ? "Off every screen until an administrator restores it from the Admin Console's Deleted leads."
                                 : "Deleting a lead is a manager's. Yours is not one of the hats that carries it.",
                             },
+                            deadItem(l),
+                              ]),
                           ]}
                         />
                       )}
@@ -1363,6 +1407,10 @@ export function LeadsScreen({
             return result;
           }}
         />
+      ) : null}
+
+      {markingDead ? (
+        <MarkDeadDialog key={markingDead.id} lead={markingDead} onClose={() => setMarkingDead(null)} />
       ) : null}
 
       <ReasonModal

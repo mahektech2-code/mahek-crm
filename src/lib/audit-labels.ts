@@ -785,6 +785,11 @@ const DESCRIBE: Record<string, Describer> = {
     changes: false,
   }),
   "lead.stage.promote": (c) => ({ says: ["won the lead", c.subject(), "— it is now a customer"], note: overriddenNote(c), changes: false }),
+  "lead.dead.request": (c) => ({ says: ["asked for the lost lead", c.subject(), "to be marked permanently Dead"], changes: false }),
+  "lead.dead.withdraw": (c) => ({ says: ["withdrew the request to mark the lost lead", c.subject(), "Dead"], changes: false }),
+  "lead.dead.approve": (c) => ({ says: ["approved the lost lead", c.subject(), "as permanently Dead — it is now read-only"], changes: false }),
+  "lead.dead.reject": (c) => ({ says: ["rejected the request to mark the lost lead", c.subject(), "Dead — it stays Lost"], changes: false }),
+  "lead.import.skipped_dead": (c) => ({ says: ["an import skipped", String(c.a.count ?? "some"), "record(s) belonging to permanently Dead leads and left them unchanged"], changes: false }),
   "lead.stage.reopen": (c) => ({ says: ["reopened the lead", c.subject(), "(it had been", `${words(str(c.b.stage) ?? "closed")})`], changes: false }),
   "lead.stage.relabel": (c) => ({
     says: ["relabelled the lead", c.subject(), "from", strong(words(str(c.b.stage) ?? "?")), "to", strong(words(str(c.a.stage) ?? "?")), "so it can be converted"],
