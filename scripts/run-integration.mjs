@@ -71,6 +71,8 @@ const files = [
   "src/lib/lead-scope.test.ts",
   // Editing a field order before approval, and asking to change it after.
   "src/lib/order-change.test.ts",
+  // A field payment's remainder is on account once, not twice.
+  "src/lib/mbos-payment-on-account.test.ts",
   // The ERP: access, powers, working location and the masters.
   "src/lib/erp/erp-foundation.test.ts",
   "src/lib/erp/erp-designations.test.ts",

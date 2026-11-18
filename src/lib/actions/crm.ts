@@ -115,7 +115,7 @@ import {
 import { err, fromThrown, ok, okVoid, type Result } from "@/lib/result";
 import { confirmImpact } from "@/lib/impact/registry";
 import type { ImpactConfirmation } from "@/lib/impact/types";
-import { initialsOf } from "@/lib/format";
+import { initialsOf, parseRupees as parseRupeesStrict } from "@/lib/format";
 import { notifyUsers } from "../notify";
 import { gstinChangeClear, reviewVoidPatch } from "../lead-review-void";
 import { leadRow } from "../services/lead-service";
@@ -180,12 +180,11 @@ export async function setScope(scope: "mine" | "team") {
 
 /* -------------------------------------------------------------- the call */
 
+/** A positive typed amount in paise, read by format.ts's one parser. */
 function parseRupees(input?: string): number | null {
   if (!input?.trim()) return null;
-  const cleaned = input.replace(/[^0-9.]/g, "");
-  if (!cleaned) return null;
-  const value = Number(cleaned);
-  return Number.isFinite(value) && value > 0 ? Math.round(value * 100) : null;
+  const paise = parseRupeesStrict(input);
+  return paise != null && paise > 0 ? paise : null;
 }
 
 export type SaveInteractionActionInput = {

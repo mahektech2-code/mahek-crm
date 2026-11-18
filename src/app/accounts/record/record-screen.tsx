@@ -455,8 +455,11 @@ function PaymentForm({
               <input
                 autoFocus
                 value={amountText}
-                onChange={(e) => setAmountText(e.target.value.replace(/[^0-9,]/g, ""))}
-                placeholder="50,000"
+                inputMode="decimal"
+                // cleanDecimal keeps the point: stripping it here turned
+                // "5000.50" into ₹5,00,050.
+                onChange={(e) => setAmountText(cleanDecimal(e.target.value))}
+                placeholder="50000"
                 aria-label="Amount received in rupees"
                 className="w-full flex-1 border-none bg-transparent text-[15px] tabular-nums outline-none"
               />

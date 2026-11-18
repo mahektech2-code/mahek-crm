@@ -85,10 +85,19 @@ export function groupIndian(n: number): string {
   return rest.replace(/\B(?=(\d{2})+(?!\d))/g, ",") + "," + last3;
 }
 
-/** Parse "2,00,000" / "₹2 00 000" / "200000" into paise. */
+/**
+ * Parse "2,00,000" / "₹2 00 000" / "Rs. 2,000" / "2,000/-" / "200000" into
+ * paise. Anything else is null rather than a guess: stripping every
+ * non-digit read "-500" as +₹500 and "Rs. 2,000" (the point of "Rs.") as
+ * ₹0.20.
+ */
 export function parseRupees(input: string): number | null {
-  const cleaned = input.replace(/[^0-9.]/g, "");
-  if (!cleaned) return null;
+  const cleaned = input
+    .trim()
+    .replace(/^(?:rs\.?|inr|₹)\s*/i, "")
+    .replace(/\s*\/-$/, "")
+    .replace(/[,\s₹]/g, "");
+  if (!cleaned || !/^(\d+\.?\d*|\.\d+)$/.test(cleaned)) return null;
   const value = Number(cleaned);
   if (!Number.isFinite(value) || value < 0) return null;
   return Math.round(value * 100);

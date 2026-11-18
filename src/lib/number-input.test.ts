@@ -48,6 +48,12 @@ test("parseDecimal reads what a person types, and nothing else", () => {
 
 test("rupees round-trip through paise without losing the paise", () => {
   assert.equal(parseRupees("30.5"), 3050);
+  // A sign or a "Rs." point is not part of the figure.
+  assert.equal(parseRupees("-500"), null);
+  assert.equal(parseRupees("Rs. 2,000"), 200000);
+  assert.equal(parseRupees("₹2 00 000"), 20000000);
+  assert.equal(parseRupees("2,000/-"), 200000);
+  assert.equal(parseRupees("5000 rupees"), null);
   assert.equal(parseRupees("10.17"), 1017);
   assert.equal(rupeesFromPaise(1017), "10.17");
   assert.equal(rupeesFromPaise(3050), "30.50");
