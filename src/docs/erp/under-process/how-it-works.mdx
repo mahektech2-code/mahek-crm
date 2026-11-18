@@ -19,3 +19,11 @@
 The plan reads the same lines Orders → Production lists as Under Process (status Under Process, entry not Done), leaving out empty drums. They are added up per product: a loose SKU as loose cans of its finished good, a boxed SKU as packing in boxes, or in cans where the orders do not make whole boxes, because a rounded box is a figure nobody ordered.
 
 They are brought in step whenever a plan dated today or later is opened, created or printed, so the sheet always carries the orders as they stood at the moment it was printed. A past day's plan is never touched, by the sync or by anybody: the server refuses to add, edit, delete or print on it, and the screen draws it read-only without current stock. A product whose orders all leave Under Process is marked deleted, which the next print lists as removed. Only orders at the plan's godown come in, where the plan names one.
+
+## Expected orders
+
+Expected work is read every time the plan opens, never stored as plan lines. It is two lists at the plan's godown: order lines Accounts approved whose MRP check is Pending (or on hold), and TOs that are open, sent back or on hold with Accounts (a TO naming no godown is listed too). A hold, and a TO with no godown, are listed and not counted.
+
+Each product's figures are in cans: confirmed, plus the MRP check, plus Accounts, against loose filled cans (a loose product) or packed boxes times cans per box (a boxed one). The base needed is the cans still to fill beyond that stock, times litres per can, split confirmed first. The stock check on each order is the MRP check's own answer for it, for planning only.
+
+A base made ahead is an ordinary SFG line with `for_expected` set. Each print stores the expected box it carried, so an earlier print reopens as it was handed out.

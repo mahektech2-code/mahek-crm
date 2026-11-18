@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { erpContext } from "@/lib/erp/access";
 import { erpScreen } from "@/lib/erp/registry";
-import { listPlans, planCatalogue, planView, syncPlanFromOrders, underProcessLines } from "@/lib/erp/production-plan";
+import { listPlans, planCatalogue, planExpected, planView, syncPlanFromOrders, underProcessLines } from "@/lib/erp/production-plan";
 import { orderDemand } from "@/lib/erp/engines/production-plan";
 import { calendarDate } from "@/lib/business-date";
 import { nowMs } from "@/lib/format";
@@ -31,7 +31,12 @@ export default async function UnderProcess({ searchParams }: { searchParams: Pro
     if (!readOnly) await syncPlanFromOrders(planId);
     const [plan, items] = await Promise.all([planView(planId), planCatalogue()]);
     /* A past day's plan is the record of that day: shown, never changed or printed again. */
-    if (plan) return <PlanEditor plan={plan} items={items} today={today} readOnly={readOnly || plan.planDate < today} past={plan.planDate < today} />;
+    if (plan) {
+      const past = plan.planDate < today;
+      /* What is not approved yet is read live; a past day has nothing still to come. */
+      const expected = past ? null : await planExpected(plan.godownId);
+      return <PlanEditor plan={plan} items={items} today={today} now={nowMs()} expected={expected} readOnly={readOnly || past} past={past} />;
+    }
   }
 
   const date = typeof sp.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sp.date) ? sp.date : null;

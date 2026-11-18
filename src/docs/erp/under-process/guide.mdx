@@ -72,3 +72,34 @@ Every order line whose Production status is **Under Process** on Orders → Prod
 - These lines cannot be edited or deleted on the plan. Change the order, and the plan follows.
 
 SFG manufacturing is still typed by the Production Head: how much liquid the day needs is a judgement, not a sum.
+
+## Planning before Accounts approve
+
+The floor starts at ten and Accounts approve at twelve, so the plan also shows what is **expected**: orders Accounts approved that wait for your MRP check, and TOs still waiting for Accounts. Expected work is shown and counted so the day can be planned. It is never filled or packed until Accounts approve and the MRP check clears it.
+
+<Wireframe url="/erp/under-process?plan=…" nav={["Order Hub", "MRP check", "Orders", "Under Process", "Dispatch desk"]} active="Under Process">
+  <WfBar>
+    <WfTitle sub="10:05 · Accounts not in yet">Plan · Wed 18 Nov · Godown A</WfTitle>
+    <WfSpacer />
+    <WfButton>Add a line</WfButton>
+    <WfButton primary>Print plan</WfButton>
+  </WfBar>
+  <WfBar>
+    <WfCard title="Confirmed">3 orders</WfCard>
+    <WfCard title="Waiting for MRP check">2 orders</WfCard>
+    <WfCard title="Waiting for Accounts">5 TOs</WfCard>
+    <WfCard title="Short if all approved" tone="warn">2 products</WfCard>
+  </WfBar>
+  <WfTabs items={["By product", "Expected orders (7)", "Bases (SFG)"]} active="By product" />
+  <WfTable columns={["Product", "Confirmed", "+ MRP check", "+ Accounts", "In stock", "If all approved"]} rows={[["Product A 20 L", "18 cans", "40", "30", "52", "Short 36 cans · 720 L"], ["Product B 5 L", "24 cans", "36", "12", "96", "Enough · 24 spare"]]} />
+</Wireframe>
+
+- **By product**: per product, the confirmed cans, what waits for the MRP check, what waits for Accounts, what is in stock, and whether it is enough if everything is approved. **Show orders** lists the orders and TOs behind each figure.
+- **Expected orders**: every order and TO not confirmed yet, where it is, and a stock check for planning. A TO **on hold** is greyed and not counted. A TO with no godown says **Pick a godown to check**.
+- **Bases (SFG)**: the base each product needs, for confirmed and for expected orders, against the approved base in the tank.
+
+**Make the base ahead** (on Bases, or under a short stock check) adds an SFG line to the plan marked **For expected orders**, with the litres still needed filled in. Only the base can be started ahead; filling and packing stay locked.
+
+When Accounts approve a TO it moves to the MRP check column by itself. When you clear it at the MRP check it becomes a firm plan line, marked New, and the next print underlines it. A declined or cancelled TO drops off. A base already made stays in the tank for the next order.
+
+The printed sheet adds a dashed box, **Expected · not approved yet · do not fill or pack**, listing each expected product and what it waits for (MRP check, Accounts). A base made ahead prints with **For expected orders** under Remarks.
