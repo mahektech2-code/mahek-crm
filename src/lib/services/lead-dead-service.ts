@@ -692,7 +692,7 @@ export async function recordDeadSkips(source: string, skips: DeadSkip[]): Promis
   await db.insert(auditLog).values({
     id: newId("aud"),
     actorId: null,
-    action: "import.skipped_dead_lead",
+    action: "lead.import.skipped_dead",
     entityType: "import",
     entityId: source,
     beforeState: null as never,

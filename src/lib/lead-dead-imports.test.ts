@@ -111,7 +111,7 @@ async function stageLine(f: { orderNumber: string; party: string; area: string; 
 }
 
 const skipAudits = (source: string) =>
-  db.select().from(auditLog).where(sql`${auditLog.action} = 'import.skipped_dead_lead' and ${auditLog.entityId} = ${source}`);
+  db.select().from(auditLog).where(sql`${auditLog.action} = 'lead.import.skipped_dead' and ${auditLog.entityId} = ${source}`);
 
 before(async () => {
   assert.match(process.env.DATABASE_URL ?? "", /mahekone_test/, "Integration tests must run against mahekone_test.");

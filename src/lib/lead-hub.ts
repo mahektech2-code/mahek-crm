@@ -80,6 +80,7 @@ export const HUB_DESKS: readonly HubDesk[] = [
       { path: "leads", label: "List", module: "crm.leads", exact: true },
       { path: "leads/board", label: "Board", module: "crm.leads" },
       { path: "leads/lost", label: "Lost", module: "crm.lead-lost" },
+      { path: "leads/dead", label: "Dead Leads", module: "crm.lead-dead" },
     ],
   },
   {
