@@ -424,7 +424,7 @@ export const DOC_APPS: DocApp[] = [
         title: "Oversight, Sales Manager desk and Lost",
         summary: "What a manager watches, the Sales Manager's pipeline, and leads lost with their reasons.",
         group: "Lead Management",
-        modules: ["crm.lead-oversight", "crm.sales-manager", "crm.lead-lost", "crm.lead-funnel"],
+        modules: ["crm.lead-oversight", "crm.sales-manager", "crm.lead-lost", "crm.lead-dead", "crm.lead-funnel"],
         screen: "/crm/leads/oversight",
         written: ALL,
       },

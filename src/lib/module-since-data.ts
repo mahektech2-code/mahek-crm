@@ -53,6 +53,7 @@ export const MODULE_SINCE: Readonly<Record<string, string>> = {
   "crm.lead-oversight": "2026-09-18",
   "crm.sales-manager": "2026-09-28",
   "crm.lead-lost": "2026-09-30",
+  "crm.lead-dead": "2026-11-18",
   "crm.targets": "2026-09-01",
   "crm.performance": "2026-09-01",
   "crm.eod": "2026-09-01",
