@@ -135,7 +135,8 @@ export function sizeName(millilitres: number | null | undefined): string | null 
 /* ---------------------------------------------------------------------------
  * WHAT THE ORDERS ASK FOR. Every order line whose status is "Under Process"
  * (Orders → Production) comes into the day's plan by itself, one plan line per
- * product: a loose SKU (one can a box) as loose-can preparation of its
+ * product — and one more for each order whose line carries a remark, so the
+ * floor sees which cans the remark is for: a loose SKU (one can a box) as loose-can preparation of its
  * finished good, in cans; a boxed SKU as packing, in boxes — or in cans where
  * the orders do not add up to whole boxes, because a rounded box is a figure
  * nobody ordered. SFG is not derived: how much liquid a day needs is the
@@ -168,8 +169,14 @@ export type OrderDemand = {
   quantity: number;
   unit: string;
   orderRefs: string;
-  /** The customers' own remarks on the orders behind this line, each once — what the floor reads under Remarks. */
+  /** The customer's own remark on the order behind this line — what the floor reads under Remarks. Null on the plain row. */
   remarks: string | null;
+  /** The cans behind the line, whatever unit it is shown in. */
+  cans: number;
+  /** The product this line is for, `category:item` — the plain row's own key, shared by its remarked rows. */
+  productKey: string;
+  /** The order a remarked row belongs to; null on the plain row, which adds up every order without a remark. */
+  orderNo: number | null;
 };
 
 /** A plan line's remarks stay under the 300 characters a typed line is held to. */
@@ -179,19 +186,24 @@ function clipRemarks(s: string): string | null {
 }
 
 export function orderDemand(lines: UnderProcessLine[]): OrderDemand[] {
-  type Acc = { d: Omit<OrderDemand, "quantity" | "unit" | "orderRefs" | "remarks">; cans: number; cpb: number; orders: Set<number>; remarks: Map<string, string> };
+  type Acc = { d: Omit<OrderDemand, "quantity" | "unit" | "orderRefs" | "remarks" | "cans">; cans: number; cpb: number; orders: Set<number>; remarks: Map<string, string> };
   const by = new Map<string, Acc>();
   for (const l of lines) {
     if (!(l.qtyCans > 0)) continue;
     const loose = (l.cansPerBox || 1) <= 1;
     const category: PlanCategory = loose ? "loose" : "packing";
     const itemId = loose ? (l.finishedGoodId ?? l.skuId) : l.skuId;
-    const key = `${category}:${itemId}`;
+    const productKey = `${category}:${itemId}`;
+    /* An order line with a remark is its own row: the floor has to know which cans the remark is for. */
+    const r = (l.remark ?? "").replace(/\s+/g, " ").trim();
+    const key = r ? `${productKey}:o${l.orderNo}` : productKey;
     let a = by.get(key);
     if (!a) {
       a = {
         d: {
           key,
+          productKey,
+          orderNo: r ? l.orderNo : null,
           category,
           itemId: loose && !l.finishedGoodId ? null : itemId,
           productName: loose ? (l.finishedGoodName ?? l.skuName) : l.skuName,
@@ -207,7 +219,6 @@ export function orderDemand(lines: UnderProcessLine[]): OrderDemand[] {
     }
     a.cans += l.qtyCans;
     a.orders.add(l.orderNo);
-    const r = (l.remark ?? "").replace(/\s+/g, " ").trim();
     if (r && !a.remarks.has(r.toLowerCase())) a.remarks.set(r.toLowerCase(), r);
   }
   const order = new Map(PLAN_CATEGORIES.map((c, i) => [c.key as string, i]));
@@ -217,11 +228,12 @@ export function orderDemand(lines: UnderProcessLine[]): OrderDemand[] {
       const inBoxes = d.category === "packing" && Number.isInteger(boxes);
       return {
         ...d,
+        cans,
         quantity: d.category === "packing" && inBoxes ? boxes : cans,
         unit: d.category === "loose" ? "Cans" : inBoxes ? "Boxes" : "Cans",
         orderRefs: [...orders].sort((x, y) => x - y).join(", "),
         remarks: clipRemarks([...remarks.values()].join(" · ")),
       };
     })
-    .sort((a, b) => (order.get(a.category)! - order.get(b.category)!) || a.productName.localeCompare(b.productName));
+    .sort((a, b) => (order.get(a.category)! - order.get(b.category)!) || a.productName.localeCompare(b.productName) || a.productKey.localeCompare(b.productKey) || (a.orderNo ?? -1) - (b.orderNo ?? -1));
 }

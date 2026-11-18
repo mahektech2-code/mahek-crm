@@ -601,12 +601,17 @@ export async function planBoard(planId: string): Promise<PlanBoardRow[]> {
     ? [{ products: [], bases: [], counts: { confirmedOrders: 0, mrpOrders: 0, accountsTos: 0, oldestAccounts: null }, shortProducts: [] } as ExpectedPlan, []]
     : await Promise.all([planExpected(plan.godownId), underProcessLines(plan.godownId).then(orderDemand)]);
   const byKey = new Map(demand.map((d) => [d.key, d]));
-  const remarksOf = new Map(lines.map((l) => [l.id, l.remarks]));
-  return buildBoard(expected, boardLines).map((r) => ({
-    ...r,
-    orderRefs: byKey.get(r.key)?.orderRefs ?? null,
-    remarks: (r.lineId ? remarksOf.get(r.lineId) : null) ?? byKey.get(r.key)?.remarks ?? null,
-  }));
+  const lineById = new Map(lines.map((l) => [l.id, l]));
+  return buildBoard(expected, boardLines, demand).map((r) => {
+    const l = r.lineId ? lineById.get(r.lineId) : undefined;
+    const d = byKey.get(r.key);
+    return {
+      ...r,
+      orderRefs: d?.orderRefs ?? null,
+      /* A row the orders make says what its orders say NOW — a line printed before the remarked orders had rows of their own carried all of them. What somebody typed is kept. */
+      remarks: d ? (d.remarks ?? (l && l.source !== "order" ? l.remarks : null)) : (l?.remarks ?? null),
+    };
+  });
 }
 
 export type PlanPick = { key: string; quantity: string; unit: string };

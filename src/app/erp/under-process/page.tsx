@@ -43,7 +43,8 @@ export default async function UnderProcess({ searchParams }: { searchParams: Pro
   const godownId = todaysPlan ? todaysPlan.godownId : (ctx.workingGodown?.id ?? null);
   const godown = todaysPlan ? todaysPlan.godown : (ctx.workingGodown?.name ?? null);
   const waiting = await underProcessLines(godownId);
-  const products = orderDemand(waiting).length;
+  /* Products, not rows: an order with a remark is a row of its own but the same product. */
+  const products = new Set(orderDemand(waiting).map((d) => d.productKey)).size;
   return (
     <Page title={SCREEN.label}>
       <PlanList

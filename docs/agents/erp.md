@@ -639,6 +639,18 @@ Under Process is marked deleted, so a sheet that carried it says Removed. They
 cannot be edited or deleted on the plan: the order is where they change. SFG is
 not derived; the Production Head types it.
 
+**A REMARKED ORDER IS ITS OWN ROW (Nov 2026).** The floor could not tell
+which cans a remark was for when every order's remark was joined onto the
+product's one line. `orderDemand` now keys an order line with a remark
+`category:item:o<orderNo>` (`productKey` names the product, `orderNo` the
+order), and `buildBoard` takes that demand: the product's row is the confirmed
+cans LESS the remarked ones, each remarked order is a ticked row after it, and
+stock and verdict stay on the product's row (on the first remarked row when
+every order has a remark, and no empty product row is drawn). A remarked row
+matches only its own `source_key` line, never a typed line for the product.
+`planBoard` reads an order row's remarks from the live orders, not from the
+stored line — a line printed before the split carried every order's remark.
+
 **AND THE PLAN IS ONE PAGE: TICK ROWS, PRINT (Nov 2026).** The plan screen
 is one table (`engines/plan-board.ts`, `buildBoard`, pure), built on every open
 from the order demand, the expected work and the lines already on the plan:

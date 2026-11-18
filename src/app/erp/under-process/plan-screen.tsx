@@ -433,6 +433,12 @@ export function PlanEditor({ plan, board, items, readOnly, past }: { plan: PlanV
                       <span className={cx("font-semibold", e.ticked ? "text-ink" : "text-body")}>{r.name}</span>
                       {r.size && r.category !== "sfg" && !r.name.includes(r.size) ? <span className="text-meta text-muted"> {r.size}</span> : null}
                       {r.packing ? <span className="text-meta text-muted"> · {r.packing}</span> : null}
+                      {r.remarks ? (
+                        <div className="text-meta text-body">
+                          {r.orderRefs && r.key.includes(":o") ? `Order ${r.orderRefs} · ` : null}
+                          {r.remarks}
+                        </div>
+                      ) : null}
                     </Td>
                     <Td align="right" className="tabular-nums">
                       {numberCell(r, r.confirmed)}

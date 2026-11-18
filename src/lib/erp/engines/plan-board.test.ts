@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { beyondConfirmed, buildBoard, facetValues, type BoardLine } from "./plan-board";
 import type { ExpectedPlan, ProductRow } from "./expected-plan";
+import type { OrderDemand } from "./production-plan";
 
 const product = (over: Partial<ProductRow>): ProductRow => ({
   key: "loose:fg1",
@@ -74,4 +75,49 @@ test("beyond confirmed is what prints as not approved yet", () => {
 test("each column filter reads one value set per row", () => {
   const [r] = buildBoard(plan([product({ confirmed: 0, mrp: 4, accounts: 2, stock: 0 })]), []);
   assert.deepEqual(facetValues(r, "Cans"), { kind: ["Loose cans"], confirmed: ["None confirmed"], waiting: ["MRP check", "Accounts"], stock: ["None in stock"], verdict: ["Enough"], unit: ["Cans"] });
+});
+
+const remarked = (orderNo: number, cans: number, over: Partial<OrderDemand> = {}): OrderDemand => ({
+  key: `packing:s1:o${orderNo}`,
+  productKey: "packing:s1",
+  orderNo,
+  category: "packing",
+  itemId: "s1",
+  productName: "M5x4 1 L",
+  productCode: null,
+  size: "1 L",
+  quantity: cans / 32,
+  unit: "Boxes",
+  orderRefs: String(orderNo),
+  remarks: "Customer sticker",
+  cans,
+  ...over,
+});
+
+test("an order with a remark is a row of its own under its product, ticked; stock stays on the product's row", () => {
+  const p = product({ key: "packing:s1", category: "packing", itemId: "s1", name: "M5x4 1 L", packing: "32 cans/box", cansPerBox: 32, confirmed: 128, stock: 40, verdict: { tone: "short", text: "", note: null } });
+  const rows = buildBoard(plan([p]), [], [remarked(103, 32)]);
+  assert.deepEqual(
+    rows.map((r) => [r.key, r.confirmed, r.qty, r.unit, r.ticked, r.stock, r.verdict?.text ?? null]),
+    [
+      ["packing:s1", 96, 3, "Boxes", true, 40, "Short 88"],
+      ["packing:s1:o103", 32, 1, "Boxes", true, null, null],
+    ],
+  );
+  /* A remarked row prints its own line, never one somebody typed for the product. */
+  const typed = line({ id: "t1", source: "manual", sourceKey: null, category: "packing", itemId: "s1", quantity: 2, unit: "Boxes" });
+  const withTyped = buildBoard(plan([p]), [typed, line({ id: "o1", sourceKey: "packing:s1:o103", category: "packing", itemId: "s1", quantity: 1, unit: "Boxes" })], [remarked(103, 32)]);
+  assert.deepEqual(withTyped.map((r) => [r.key, r.lineId]), [["packing:s1", "t1"], ["packing:s1:o103", "o1"]]);
+});
+
+test("a product whose every order has a remark has no empty row; the first remarked row reads the stock", () => {
+  const p = product({ key: "packing:s1", category: "packing", itemId: "s1", name: "M5x4 1 L", cansPerBox: 32, confirmed: 48, stock: 10 });
+  const rows = buildBoard(plan([p]), [], [remarked(103, 32), remarked(104, 16, { remarks: "Blue" })]);
+  assert.deepEqual(
+    rows.map((r) => [r.key, r.qty, r.unit, r.stock]),
+    [
+      ["packing:s1:o103", 1, "Boxes", 10],
+      ["packing:s1:o104", 16, "Cans", null],
+    ],
+  );
 });
