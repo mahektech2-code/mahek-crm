@@ -501,6 +501,8 @@ const sfgBatches: ScreenModule = {
     },
   },
   actions: {
+    /* Evidence, none required — not the floor's per-test Pass / Fail
+       (`readQcTests`). Deliberate since #793; see factory/qc.ts. */
     async qcApprove(ctx, id, values) {
       const ev = await qcEvidenceFrom(values);
       if (!ev.ok) return ev;
