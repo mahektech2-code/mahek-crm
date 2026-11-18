@@ -13,7 +13,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appAccess, appModuleAccess, employeeReporting, employees, hrmsHolidays, mbosApprovals, mbosAttendanceDays, mbosHolidays, mbosLeaveRequests, hrmsAssetAssignments, hrmsAssetStock, hrmsAttendance, hrmsExpenses, hrmsHelp, hrmsLeaveRequests, hrmsNotifications, hrmsUserPowers, mbosDeletions, mbosDocuments, notifications, users } from "@/db/schema";
+import { appAccess, appModuleAccess, employeeReporting, employees, hrmsHolidays, mbosApprovals, mbosAttendanceDays, mbosHolidays, mbosLeaveRequests, hrmsAssetAssignments, hrmsAssetStock, hrmsAttendance, hrmsExpenses, hrmsHelp, hrmsLeaveCredits, hrmsLeaveRequests, hrmsNotifications, hrmsUserPowers, mbosDeletions, mbosDocuments, notifications, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { impactReport } from "@/lib/impact/registry";
 import { IMPACT_FIELD } from "@/lib/impact/types";
@@ -94,7 +94,7 @@ let hr: typeof users.$inferSelect;
 let narrowed: typeof users.$inferSelect;
 
 before(async () => {
-  await db.execute(sql`truncate users, employees, employee_reporting, hrms_attendance, hrms_help, hrms_expenses, hrms_leave_requests, hrms_user_powers, hrms_asset_stock, hrms_asset_assignments, hrms_notifications, hrms_holidays, mbos_documents, mbos_deletions, mbos_holidays, mbos_attendance_days, mbos_leave_requests, mbos_approvals, notifications, audit_log restart identity cascade`);
+  await db.execute(sql`truncate users, employees, employee_reporting, hrms_attendance, hrms_help, hrms_expenses, hrms_leave_requests, hrms_leave_credits, hrms_user_powers, hrms_asset_stock, hrms_asset_assignments, hrms_notifications, hrms_holidays, mbos_documents, mbos_deletions, mbos_holidays, mbos_attendance_days, mbos_leave_requests, mbos_approvals, notifications, audit_log restart identity cascade`);
   headEmp = await person("Ravi Head", { office: "Andheri", position: "Sales Head", type: "Sales" });
   teamEmp = await person("Tara Team", { office: "Pune", position: "Salesman", type: "Sales", reportsTo: "Sales Head" });
   officeEmp = await person("Omkar Office", { office: "Andheri", position: "Field Boy", type: "Field" });
@@ -278,6 +278,30 @@ describe("leave", () => {
     assert.equal(r.ok, true, JSON.stringify(r));
     const [row] = await db.select().from(hrmsLeaveRequests).where(eq(hrmsLeaveRequests.employeeId, strangerEmp.id));
     assert.equal(row.status, LEAVE_WAITING);
+  });
+});
+
+describe("leave approvals at once", () => {
+  test("two requests of one person approved at the same moment cannot both spend one paid day", async () => {
+    const bossEmp = await person("Bina Boss", { office: "Andheri", position: "Stores Manager", type: "Other" });
+    const repEmp = await person("Raju Report", { office: "Andheri", position: "Helper", type: "Other" });
+    await db.insert(employeeReporting).values({ id: id("er"), employeeId: repEmp.id, managerId: bossEmp.id });
+    const boss = await account("Bina Boss", bossEmp, "manager");
+    const t = today();
+    await db.insert(hrmsLeaveCredits).values({ id: id("hlc"), employeeId: repEmp.id, month: t.slice(0, 7), days: 1 });
+    const req = async () => {
+      const [r] = await db
+        .insert(hrmsLeaveRequests)
+        .values({ id: id("hlr"), reqNo: `LR-${Math.floor(Math.random() * 1e6)}`, employeeId: repEmp.id, appliedOn: t, type: "Leave", startDate: t, endDate: t, days: 1, status: LEAVE_WAITING })
+        .returning();
+      return r;
+    };
+    const [a, b] = [await req(), await req()];
+    const ctx = await as(boss);
+    const both = await Promise.all([mod("approvals").actions!.approve(ctx, a.id, { paid: "1" }), mod("approvals").actions!.approve(ctx, b.id, { paid: "1" })]);
+    assert.equal(both.filter((r) => r.ok).length, 1, JSON.stringify(both));
+    const paid = await db.select({ paid: hrmsLeaveRequests.paid }).from(hrmsLeaveRequests).where(and(eq(hrmsLeaveRequests.employeeId, repEmp.id), eq(hrmsLeaveRequests.status, "Approved")));
+    assert.equal(paid.reduce((n, r) => n + Number(r.paid), 0), 1, "one paid day credited, one spent");
   });
 });
 
