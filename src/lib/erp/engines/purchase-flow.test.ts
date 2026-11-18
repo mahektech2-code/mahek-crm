@@ -6,6 +6,8 @@ import {
   poTotals,
   purchaseUnit,
   receivableQuantity,
+  lineDone,
+  receiptDifferenceNote,
   requirementStage,
   type RequirementState,
 } from "./purchase-flow";
@@ -158,4 +160,16 @@ test("a PO number the Quotation manager made is the ERP's own number; a typed on
   assert.equal(seriesNumberOf(poLabel(1243)), 1243);
   assert.equal(seriesNumberOf(" po-77 "), 77);
   assert.equal(seriesNumberOf("MM/PO/2627/121"), null);
+});
+
+test("the receipt-quantity rules: ±difference completes a line, a marked full delivery completes it, beyond is flagged", () => {
+  assert.equal(lineDone({ ordered: 1000, received: 950 }, 10), true);
+  assert.equal(lineDone({ ordered: 1000, received: 899 }, 10), false);
+  assert.equal(lineDone({ ordered: 1000, received: 800, deliveryComplete: true }, 10), true);
+  assert.equal(receiptDifferenceNote({ ordered: 1000, received: 1150 }, 10), "15% more than ordered");
+  assert.equal(receiptDifferenceNote({ ordered: 1000, received: 1080 }, 10), null);
+  assert.equal(receiptDifferenceNote({ ordered: 1000, received: 800 }, 10), null);
+  assert.equal(receiptDifferenceNote({ ordered: 1000, received: 800, deliveryComplete: true }, 10), "20% less than ordered");
+  assert.equal(poStatusAfterReceipt("Sent", [{ ordered: 1000, received: 960 }], 10), "Received");
+  assert.equal(poStatusAfterReceipt("Sent", [{ ordered: 1000, received: 960 }]), "Partly received");
 });

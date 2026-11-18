@@ -80,7 +80,7 @@ export type RequirementState = {
   method: "direct" | "quotation" | null;
   supplierId: string | null;
   /** The live PO this requirement is on, with what was ordered and what has arrived. */
-  po: { status: string; ordered: number; received: number } | null;
+  po: { status: string; ordered: number; received: number; done?: boolean } | null;
   /** A requirement from before POs, already ordered or received the old way. */
   legacy: boolean;
 };
@@ -101,10 +101,11 @@ export function requirementStage(r: RequirementState): Stage {
   if (r.status === "Cancelled") return { stage: "Cancelled", step: -1, next: "Cancelled — nothing more happens.", readyForPo: false };
   if (r.po) {
     const { status, ordered, received } = r.po;
+    const lineDone = !!r.po.done;
     /* A PO raised the old way, still waiting on its approver. */
     if (status === "Pending approval") return { stage: "PO awaiting approval", step: STEP.po, next: "The approver approves the PO or sends it back.", readyForPo: false };
     if (status === "Closed") return { stage: received > 0 ? "Closed short" : "Closed", step: done, next: "The PO was closed; nothing more is expected.", readyForPo: false };
-    if (status === "Received" || (ordered > 0 && received >= ordered)) return { stage: "Received", step: done, next: "Received in full.", readyForPo: false };
+    if (status === "Received" || lineDone || (ordered > 0 && received >= ordered)) return { stage: "Received", step: done, next: "Received in full.", readyForPo: false };
     if (received > 0) return { stage: "Partly received", step: STEP.receipt, next: "Receive the rest against the PO, or close it short.", readyForPo: false };
     return { stage: "Waiting for goods", step: STEP.receipt, next: "Receive the goods against the PO number at the gate.", readyForPo: false };
   }
@@ -225,21 +226,66 @@ export function poTotals(lines: PoLineIn[], freightPaise: number) {
   return { amountPaise: amount, gstPaise: gst, freightPaise: freightPaise || 0, roundOffPaise, totalPaise };
 }
 
+/* -------------------------------------------- what arrived against a line */
+
+/**
+ * A RECEIPT NEVER STOPS ON QUANTITY (Nov 2026, PROPOSED — these rules are not wired to the GRN yet). Goods are weighed
+ * and counted at the gate and never match the PO exactly; that is the trade,
+ * and Mahek is content with it. The GRN used to refuse anything past the PO
+ * plus a tolerance and leave a shortfall waiting for ever. Now whatever arrived
+ * is received, and these three rules say what it means:
+ *
+ *   - a line within `differencePercent` of what was ordered, either way, is
+ *     COMPLETE — the PO and its requirement read Received with nobody closing
+ *     anything short;
+ *   - a line the gate marked "this is the full delivery" is complete whatever
+ *     arrived;
+ *   - a complete line beyond the difference is still complete, and is FLAGGED
+ *     so the purchase desk sees it. A line still short and not marked is
+ *     simply still coming, and is not flagged.
+ */
+export type ReceiptLine = { ordered: number; received: number; deliveryComplete?: boolean };
+
+/** Whether nothing more is waited for on this line. */
+export function lineDone(l: ReceiptLine, differencePercent: number): boolean {
+  if (l.deliveryComplete) return true;
+  if (!(l.ordered > 0)) return l.received > 0;
+  const floor = l.ordered * (1 - Math.max(0, differencePercent) / 100);
+  return l.received + 1e-9 >= floor;
+}
+
+/** How far what arrived differs from what was ordered, in percent of the order: +12 is 12% more, −8 is 8% less. One decimal. */
+export function receiptDifferencePercent(ordered: number, received: number): number {
+  if (!(ordered > 0)) return 0;
+  return Math.round(((received - ordered) / ordered) * 1000) / 10;
+}
+
+/**
+ * The difference in words where it is worth a person's attention — a COMPLETE
+ * line received beyond the accepted difference — and null otherwise.
+ */
+export function receiptDifferenceNote(l: ReceiptLine, differencePercent: number): string | null {
+  if (!l.received || !lineDone(l, differencePercent)) return null;
+  const d = receiptDifferencePercent(l.ordered, l.received);
+  if (Math.abs(d) <= Math.max(0, differencePercent)) return null;
+  return d > 0 ? `${d}% more than ordered` : `${-d}% less than ordered`;
+}
+
 /**
  * Where a PO stands once goods have been received against it. Only the
  * receiving states move: an unapproved, closed, cancelled or rejected PO is
  * left as it is, and Approved stays Approved until something arrives (it was
  * received without having been marked sent, which still counts as sent).
  */
-export function poStatusAfterReceipt(status: string, lines: { ordered: number; received: number }[]): string {
+export function poStatusAfterReceipt(status: string, lines: ReceiptLine[], differencePercent = 0): string {
   if (!["Approved", "Sent", "Partly received", "Received"].includes(status)) return status;
   const any = lines.some((l) => l.received > 0);
-  if (!any) return status === "Approved" ? "Approved" : "Sent";
-  const all = lines.every((l) => l.received >= l.ordered);
+  if (!any && !lines.some((l) => l.deliveryComplete)) return status === "Approved" ? "Approved" : "Sent";
+  const all = lines.every((l) => lineDone(l, differencePercent));
   return all ? "Received" : "Partly received";
 }
 
-/** The most that may still be received on a line: what is pending, plus the tolerance on what was ordered. */
+/** The most that may still be received on a line: what is pending, plus the tolerance on what was ordered. Still read by the GRN until the quantity rule above is switched on. */
 export function receivableQuantity(ordered: number, received: number, tolerancePercent: number): number {
   const ceiling = ordered * (1 + Math.max(0, tolerancePercent) / 100);
   return Math.max(0, Math.round((ceiling - received) * 1000) / 1000);
