@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { NextRequest } from "next/server";
-import { appFor, appForApi, APP_HEADER, CRM_SALES_MANAGER_WORKSPACE, proxy, WORKSPACE_HEADER, workspaceFor } from "@/proxy";
+import { appFor, appForApi, APP_HEADER, CRM_SALES_MANAGER_WORKSPACE, proxy, UNNAMED_API_HEADER, WORKSPACE_HEADER, workspaceFor } from "@/proxy";
 import { APP_IDS } from "@/lib/apps";
 
 /**
@@ -146,4 +146,25 @@ test("the proxy writes the referrer's app on an API request, and still strips a 
     }),
   );
   assert.equal(foreign.headers.get(`x-middleware-request-${APP_HEADER}`), null);
+});
+
+test("a signed-in browser API call with no referrer is marked to read the narrowest level, and a forged mark is stripped", () => {
+  const bare = proxy(
+    new NextRequest("http://localhost/api/search?q=x", {
+      headers: { cookie: "mahekone_session=abc", [UNNAMED_API_HEADER]: "0" },
+    }),
+  );
+  assert.equal(bare.headers.get(`x-middleware-request-${UNNAMED_API_HEADER}`), "1");
+
+  const named = proxy(
+    new NextRequest("http://localhost/api/search?q=x", {
+      headers: { cookie: "mahekone_session=abc", referer: "http://localhost/crm/call-log", [UNNAMED_API_HEADER]: "1" },
+    }),
+  );
+  assert.equal(named.headers.get(`x-middleware-request-${UNNAMED_API_HEADER}`), null);
+
+  const handset = proxy(
+    new NextRequest("http://localhost/api/mbos/sync", { headers: { authorization: "Bearer t" } }),
+  );
+  assert.equal(handset.headers.get(`x-middleware-request-${UNNAMED_API_HEADER}`), null);
 });

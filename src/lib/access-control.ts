@@ -5,7 +5,7 @@ import { headers } from "next/headers";
 import { and, eq, inArray, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { appAccess, appIdEnum, auditLog, users, type User } from "@/db/schema";
-import { APP_HEADER } from "@/proxy";
+import { APP_HEADER, UNNAMED_API_HEADER } from "@/proxy";
 import { inCrmSalesManagerWorkspace, leadInSalesManagersBook, teamOwnerIdsFor } from "@/lib/services/crm-sales-manager-scope";
 import { type AppId } from "@/lib/apps";
 import { requireUser } from "./auth";
@@ -91,7 +91,24 @@ export async function hatInForce(user: {
 
   const hats = (await hatsFor(user)).filter((h) => h.app !== null);
   if (!hats.length) return null;
-  return hats.every((h) => h.app === "accounts") ? hats[0] : null;
+  if (hats.every((h) => h.app === "accounts")) return hats[0];
+  /* A browser API call that left its Referer off: the narrowest level held,
+     in no app (so no app's company-wide view either). See UNNAMED_API_HEADER. */
+  if (await isUnnamedApiRequest()) {
+    const levels = hats.filter((h) => h.app !== "people").map((h) => h.role);
+    const narrowest: Role = levels.includes("associate") || !levels.length ? "associate" : levels.includes("manager") ? "manager" : "admin";
+    return { app: null, role: narrowest };
+  }
+  return null;
+}
+
+async function isUnnamedApiRequest(): Promise<boolean> {
+  try {
+    return (await headers()).get(UNNAMED_API_HEADER) === "1";
+  } catch {
+    /* No request — a job or a test. */
+    return false;
+  }
 }
 
 /* ---------------------------------------------------------------------------
