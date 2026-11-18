@@ -48,7 +48,9 @@ export default async function Page({
 
   const user = await requireUser();
   const scope = await getScope(user);
-  const activePeriod = one("period") ?? (await currentPeriod());
+  // A malformed ?period= falls back to this month rather than reaching SQL.
+  const typedPeriod = one("period");
+  const activePeriod = typedPeriod && /^\d{4}-(0[1-9]|1[0-2])$/.test(typedPeriod) ? typedPeriod : await currentPeriod();
 
   const canSet = await canFor(user, "target.set");
   const perPage = Number(one("per") ?? 25);

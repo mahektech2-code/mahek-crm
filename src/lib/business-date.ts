@@ -661,9 +661,20 @@ export function comparableRange(
   range: DateRange,
   period: ReportPeriod,
 ): DateRange {
+  /* A span of WHOLE months is compared with the whole earlier months, not the
+     same days-of-month: April (1–30) against
+     1–30 March left out the 31st, and February against 1–28 January. A
+     month-to-date keeps its day, which is the point of it. */
+  const wholeMonths =
+    range.from.endsWith("-01") && Number(range.to.slice(8, 10)) === daysInMonth(`${monthKey(range.to)}-01`);
+  const shiftEnd = (date: BusinessDate, months: number): BusinessDate => {
+    if (!wholeMonths) return shiftKeepingDay(date, months);
+    const key = addMonths(monthKey(date), months);
+    return `${key}-${String(daysInMonth(`${key}-01`)).padStart(2, "0")}`;
+  };
   const shiftMonths = (months: number): DateRange => ({
     from: shiftKeepingDay(range.from, months),
-    to: shiftKeepingDay(range.to, months),
+    to: shiftEnd(range.to, months),
   });
 
   switch (period) {

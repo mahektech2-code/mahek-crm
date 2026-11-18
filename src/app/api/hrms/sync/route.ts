@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { bearerMatches } from "@/lib/bearer";
 import { runJob } from "@/lib/jobs";
 
 /* ---------------------------------------------------------------------------
@@ -32,7 +33,7 @@ export async function GET(request: Request) {
       { status: 503 },
     );
   }
-  if (request.headers.get("authorization") !== `Bearer ${secret}`) {
+  if (!bearerMatches(request.headers.get("authorization"), secret)) {
     return NextResponse.json({ ok: false, error: "Not authorised." }, { status: 401 });
   }
 
