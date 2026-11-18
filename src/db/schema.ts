@@ -17579,6 +17579,8 @@ export const erpProductionPlanLines = pgTable(
     sourceKey: text("source_key"),
     /** For an order line: the order numbers behind it, "4023, 4027". */
     orderRefs: text("order_refs"),
+    /** A base (SFG) line started ahead for orders not approved yet. */
+    forExpected: boolean("for_expected").notNull().default(false),
     sort: integer("sort").notNull().default(0),
     createdById: text("created_by_id").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -17608,6 +17610,8 @@ export const erpProductionPlanPrints = pgTable(
     printedById: text("printed_by_id").references(() => users.id, { onDelete: "set null" }),
     printedAt: timestamp("printed_at", { withTimezone: true }).notNull().defaultNow(),
     lines: jsonb("lines").$type<PlanSnapshotLine[]>().notNull(),
+    /** The "Expected · not approved yet" box as printed; null on a print before it existed. */
+    expected: jsonb("expected").$type<PlanSnapshotExpected[]>(),
   },
   (t) => [uniqueIndex("erp_production_plan_prints_no_key").on(t.planId, t.printNo)],
 );
@@ -17623,7 +17627,11 @@ export type PlanSnapshotLine = {
   remarks: string | null;
   /** The order numbers behind a line the orders put there; absent on a typed one. */
   orderRefs?: string | null;
+  /** A base line made ahead for expected orders; absent on every other line. */
+  forExpected?: boolean;
 };
+
+export type PlanSnapshotExpected = { productName: string; quantity: number; unit: string; mrp: number; accounts: number };
 
 /* ---------------------------------------------------------------------------
  * TASKS — the central task app, and each app's "My tasks".

@@ -43,6 +43,8 @@ export type LineInput = {
   quantity: string;
   unit: string;
   remarks?: string;
+  /** A base line started ahead for expected orders (SFG only). */
+  forExpected?: boolean;
 };
 
 /** What is wrong with a line, field by field; empty means it may be saved. */
@@ -76,7 +78,8 @@ function same(a: Comparable, b: Comparable): boolean {
     (a.size ?? null) === (b.size ?? null) &&
     a.quantity === b.quantity &&
     a.unit === b.unit &&
-    (a.remarks ?? null) === (b.remarks ?? null)
+    (a.remarks ?? null) === (b.remarks ?? null) &&
+    !!a.forExpected === !!b.forExpected
   );
 }
 

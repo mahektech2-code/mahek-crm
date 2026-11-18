@@ -109,7 +109,7 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
                 ...mine.map((r) => {
                   const U = ({ children }: { children: React.ReactNode }) => (r.mark ? <u>{children}</u> : <>{children}</>);
                   /* Remarks carry only what was written on the order (or typed on the line) — blank otherwise. The old quantity of an edited line sits under its new one instead. */
-                  const remark = r.remarks;
+                  const remark = r.category === "sfg" && r.forExpected ? `For expected orders${r.remarks ? ` · ${r.remarks}` : ""}` : r.remarks;
                   return (
                     <tr key={r.id} className={r.mark ? "pp-chg" : undefined}>
                       <Td className="pp-n">{r.sr}</Td>
@@ -136,6 +136,38 @@ export default async function PlanPrint({ params, searchParams }: { params: Prom
         {removed.length ? (
           <div className="pp-removed">
             <b>Removed since Print {print.previous?.printNo}:</b> {removed.map((r) => `${r.productName} · ${nf(r.quantity)} ${r.unit}`).join("; ")}. Do not make these.
+          </div>
+        ) : null}
+
+        {print.current.expected?.length ? (
+          <div className="pp-expected">
+            <div className="pp-exp-h">Expected · not approved yet · do not fill or pack</div>
+            <p>Get ready (cans, boxes, base). These become firm lines only after Accounts approve and the MRP check clears them.</p>
+            <table className="pp-table">
+              <colgroup>
+                <col style={{ width: "50%" }} />
+                <col style={{ width: "18%" }} />
+                <col />
+              </colgroup>
+              <thead>
+                <tr>
+                  <Th>Product</Th>
+                  <Th className="pp-r">Qty</Th>
+                  <Th>Waiting for</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {print.current.expected.map((e) => (
+                  <tr key={e.productName}>
+                    <Td>{e.productName}</Td>
+                    <Td className="pp-qty">
+                      {nf(e.quantity)} {e.unit.toLowerCase()}
+                    </Td>
+                    <Td className="pp-rem">{[e.mrp ? `MRP check ${nf(e.mrp)}` : null, e.accounts ? `Accounts ${nf(e.accounts)}` : null].filter(Boolean).join(" · ")}</Td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         ) : null}
 
@@ -220,6 +252,9 @@ html body .pp-sheet .pp-table tr.pp-cat { break-after: avoid; }
 html body .pp-sheet .pp-table tr.pp-cat span { font-weight: 500; color: ${soft}; margin-left: 2mm; text-transform: none; letter-spacing: 0; }
 html body .pp-sheet .pp-table tr.pp-chg u { text-decoration-thickness: 1.5px; }
 .pp-removed { margin-top: 3mm; border: 1pt dashed ${rule}; padding: 1.6mm 2mm; font-size: 7.4pt; break-inside: avoid; }
+.pp-expected { margin-top: 3mm; border: 1.5pt dashed ${rule}; padding: 2mm 2.5mm; break-inside: avoid; }
+.pp-exp-h { font-weight: 700; font-size: 7.4pt; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 1mm; }
+.pp-expected p { margin: 0 0 1.5mm; font-size: 7.4pt; }
 .pp-ft { margin-top: auto; padding-top: 3mm; font-size: 6.6pt; color: ${soft}; }
 .pp-ft2 { font-size: 6pt; color: ${faint}; margin-top: 0.6mm; border-top: 1px solid ${hair}; padding-top: 1.5mm; }
 `;

@@ -2389,6 +2389,21 @@ Under Process is marked deleted, so a sheet that carried it says Removed. They
 cannot be edited or deleted on the plan: the order is where they change. SFG is
 not derived; the Production Head types it.
 
+**AND THE PLAN SHOWS WHAT IS STILL COMING, BECAUSE PRODUCTION STARTS BEFORE
+ACCOUNTS DO.** Beside the confirmed lines, the plan reads (every time it opens,
+never stored) the order lines Accounts approved that wait for the MRP check and
+the TOs that wait for Accounts at its godown (`expectedSources`), and
+`engines/expected-plan.ts` adds them up per product in cans — confirmed, + MRP
+check, + Accounts, in stock, short or enough if all are approved — and per base.
+A held TO, or one with no godown, is listed and not counted. The Expected orders
+tab's stock check is the MRP check's own answer (`mrpStockAt`, moved to
+`lib/erp/mrp-stock.ts` so both read one figure), for planning only. Expected
+work is never a plan line: only the base may be started ahead, as an SFG line
+with `for_expected` (`0356`); filling and packing wait for the MRP check, after
+which the order becomes a firm order line the next print underlines. Each print
+keeps the dashed "Expected · not approved yet · do not fill or pack" box it
+carried (`erp_production_plan_prints.expected`).
+
 **A recipe is expected, never a gate.** `erp_recipes` holds what one batch of an
 SFG product takes. "Start a batch" opens the SFG form with the recipe's lines, and so does picking the product on a blank New SFG batch (`linesFrom` on the form: lines nobody has touched are replaced at once, typed-into ones only after a confirm),
 and a batch line that used more than `erp.production.recipeTolerancePercent`
