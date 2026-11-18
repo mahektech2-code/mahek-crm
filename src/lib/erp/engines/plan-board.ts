@@ -1,5 +1,5 @@
 import type { ExpectedPlan } from "./expected-plan";
-import type { PlanCategory } from "./production-plan";
+import type { OrderDemand, PlanCategory } from "./production-plan";
 
 /* ---------------------------------------------------------------------------
  * UNDER PROCESS ON ONE PAGE — pure. Every product the orders ask for, every
@@ -9,6 +9,12 @@ import type { PlanCategory } from "./production-plan";
  * printed on the sheet the floor already knows. Confirmed work starts ticked;
  * anything still waiting for the MRP check or Accounts starts unticked and may
  * be ticked, and then it prints as an ordinary line.
+ *
+ * An order whose line carries a remark is a row of its own under its product
+ * (Nov 2026): the product's row adds up the orders without one, and each
+ * remarked order prints on its own line with its remark, so the floor knows
+ * which cans it is for. Stock is the product's, so it is read on the product's
+ * row only.
  * ------------------------------------------------------------------------- */
 
 export type BoardLine = {
@@ -61,11 +67,11 @@ function packUnit(cpb: number, ...cans: number[]): "Boxes" | "Cans" {
   return cpb > 1 && cans.every((c) => c % cpb === 0) ? "Boxes" : "Cans";
 }
 
-export function buildBoard(plan: ExpectedPlan, lines: BoardLine[]): BoardRow[] {
+export function buildBoard(plan: ExpectedPlan, lines: BoardLine[], demand: OrderDemand[] = []): BoardRow[] {
   const used = new Set<string>();
-  const lineFor = (key: string, category: string, itemId: string | null): BoardLine | null => {
+  const lineFor = (key: string, category: string, itemId: string | null, typedToo = true): BoardLine | null => {
     const byKey = lines.find((l) => !used.has(l.id) && l.source === "order" && l.sourceKey === key);
-    const hit = byKey ?? (itemId ? lines.find((l) => !used.has(l.id) && l.source !== "order" && l.category === category && l.itemId === itemId) : undefined);
+    const hit = byKey ?? (typedToo && itemId ? lines.find((l) => !used.has(l.id) && l.source !== "order" && l.category === category && l.itemId === itemId) : undefined);
     if (!hit) return null;
     used.add(hit.id);
     return hit;
@@ -75,30 +81,65 @@ export function buildBoard(plan: ExpectedPlan, lines: BoardLine[]): BoardRow[] {
   for (const p of plan.products) {
     const total = p.confirmed + p.mrp + p.accounts;
     const units = p.category === "packing" ? ["Boxes", "Cans"] : ["Cans"];
-    const unit = p.category === "packing" ? packUnit(p.cansPerBox, p.confirmed, total) : "Cans";
+    const remarked = demand.filter((d) => d.orderNo != null && d.productKey === p.key);
+    /* What the product's own row is for: every order without a remark. */
+    const confirmed = Math.max(0, p.confirmed - remarked.reduce((n, d) => n + d.cans, 0));
+    const own = confirmed + p.mrp + p.accounts;
+    const unit = p.category === "packing" ? packUnit(p.cansPerBox, confirmed, own) : "Cans";
     const per = unit === "Boxes" ? p.cansPerBox : 1;
     const line = lineFor(p.key, p.category, p.itemId);
-    rows.push({
-      key: p.key,
-      category: p.category,
-      itemId: p.itemId,
-      name: p.name,
-      size: p.size,
-      code: p.code,
-      packing: p.packing,
-      measure: "cans",
-      confirmed: p.confirmed,
-      mrp: p.mrp,
-      accounts: p.accounts,
-      stock: p.stock,
-      verdict: p.verdict.tone === "ok" ? { tone: "ok", text: "Enough" } : { tone: "short", text: `Short ${total - p.stock}` },
-      qty: line ? line.quantity : (p.confirmed > 0 ? p.confirmed : total) / per,
-      unit: line ? line.unit : unit,
-      units,
-      ticked: !!line || p.confirmed > 0,
-      lineId: line?.id ?? null,
-      cansPerBox: p.cansPerBox,
-      confirmedNeed: p.confirmed,
+    const verdict: BoardRow["verdict"] = p.verdict.tone === "ok" ? { tone: "ok", text: "Enough" } : { tone: "short", text: `Short ${total - p.stock}` };
+    /* Every order of it has a remark: the product's row has nothing left to make, so its stock goes on the first remarked row. */
+    const plain = own > 0 || !!line || !remarked.length;
+    if (plain)
+      rows.push({
+        key: p.key,
+        category: p.category,
+        itemId: p.itemId,
+        name: p.name,
+        size: p.size,
+        code: p.code,
+        packing: p.packing,
+        measure: "cans",
+        confirmed,
+        mrp: p.mrp,
+        accounts: p.accounts,
+        stock: p.stock,
+        verdict,
+        qty: line ? line.quantity : (confirmed > 0 ? confirmed : own) / per,
+        unit: line ? line.unit : unit,
+        units,
+        ticked: !!line || confirmed > 0,
+        lineId: line?.id ?? null,
+        cansPerBox: p.cansPerBox,
+        confirmedNeed: confirmed,
+      });
+    remarked.forEach((d, i) => {
+      const u = p.category === "packing" ? packUnit(p.cansPerBox, d.cans) : "Cans";
+      const l = lineFor(d.key, p.category, p.itemId, false);
+      const first = !plain && i === 0;
+      rows.push({
+        key: d.key,
+        category: p.category,
+        itemId: p.itemId,
+        name: p.name,
+        size: p.size,
+        code: p.code,
+        packing: p.packing,
+        measure: "cans",
+        confirmed: d.cans,
+        mrp: 0,
+        accounts: 0,
+        stock: first ? p.stock : null,
+        verdict: first ? verdict : null,
+        qty: l ? l.quantity : d.cans / (u === "Boxes" ? p.cansPerBox : 1),
+        unit: l ? l.unit : u,
+        units,
+        ticked: true,
+        lineId: l?.id ?? null,
+        cansPerBox: p.cansPerBox,
+        confirmedNeed: d.cans,
+      });
     });
   }
 

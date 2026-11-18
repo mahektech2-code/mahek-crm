@@ -16,7 +16,7 @@
 
 ## The orders come in by themselves
 
-The table is built every time the plan opens from the lines Orders → Production lists as Under Process (status Under Process, entry not Done, empty drums left out), plus the expected work below, plus the lines already on the plan. They are added up per product: a loose SKU as loose cans of its finished good, a boxed SKU as packing in boxes, or in cans where the orders do not make whole boxes, because a rounded box is a figure nobody ordered. Each base row is the litres still needed beyond the approved base in the tank.
+The table is built every time the plan opens from the lines Orders → Production lists as Under Process (status Under Process, entry not Done, empty drums left out), plus the expected work below, plus the lines already on the plan. They are added up per product: a loose SKU as loose cans of its finished good, a boxed SKU as packing in boxes, or in cans where the orders do not make whole boxes, because a rounded box is a figure nobody ordered. An order line that carries a remark is not added in: it is a row of its own under its product, with that order's cans and its remark, so the floor knows which cans the remark is for. The product's own row adds up the orders without a remark and is where its stock is read. Each base row is the litres still needed beyond the approved base in the tank.
 
 Nothing is written until Print plan, so the sheet carries the orders as they stood when it was printed. A past day's plan is never touched: the server refuses to change or print it, and the screen draws it read-only without current stock.
 

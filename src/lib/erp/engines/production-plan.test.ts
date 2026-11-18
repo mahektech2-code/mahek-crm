@@ -108,18 +108,25 @@ test("an order's loose line carries the code a typed loose line would", async ()
   assert.equal(c.productCode, "BOX");
 });
 
-test("an order line brings the customer's own remark, each said once", async () => {
+test("an order with a remark is its own row; the orders without one add up", async () => {
   const { orderDemand } = await import("./production-plan");
-  const base = { skuCode: null, millilitres: 20000, finishedGoodId: "fg20", finishedGoodName: "Nano Thinner 20 L", skuId: "l20", skuName: "NANO20 (Loose)", cansPerBox: 1, qtyCans: 2 };
-  const [a] = orderDemand([
-    { ...base, orderNo: 1, remark: "Deliver by Friday" },
-    { ...base, orderNo: 2, remark: "  deliver   by friday " },
-    { ...base, orderNo: 3, remark: "Blue cans only" },
-    { ...base, orderNo: 4, remark: null },
+  const base = { skuCode: null, millilitres: 1000, finishedGoodId: "fg1", finishedGoodName: "M5x4 Thinner 1 L", skuId: "b1", skuName: "M5x4 Thinner - 1 Liter (32 Can/Box)", cansPerBox: 32 };
+  const d = orderDemand([
+    { ...base, orderNo: 101, qtyCans: 64, remark: null },
+    { ...base, orderNo: 102, qtyCans: 32, remark: "  " },
+    { ...base, orderNo: 103, qtyCans: 32, remark: "Put the customer's  sticker on the box" },
+    { ...base, orderNo: 104, qtyCans: 16, remark: "Blue cans only" },
+    { ...base, orderNo: 104, qtyCans: 16, remark: "blue cans ONLY" },
   ]);
-  assert.equal(a.remarks, "Deliver by Friday · Blue cans only");
-  const [b] = orderDemand([{ ...base, orderNo: 5 }]);
-  assert.equal(b.remarks, null);
-  const [c] = orderDemand([{ ...base, orderNo: 6, remark: "x".repeat(400) }]);
+  assert.deepEqual(
+    d.map((x) => [x.key, x.quantity, x.unit, x.remarks, x.orderRefs, x.orderNo]),
+    [
+      ["packing:b1", 3, "Boxes", null, "101, 102", null],
+      ["packing:b1:o103", 1, "Boxes", "Put the customer's sticker on the box", "103", 103],
+      ["packing:b1:o104", 1, "Boxes", "Blue cans only", "104", 104],
+    ],
+  );
+  assert.ok(d.every((x) => x.productKey === "packing:b1"));
+  const [c] = orderDemand([{ ...base, orderNo: 6, qtyCans: 32, remark: "x".repeat(400) }]);
   assert.equal(c.remarks!.length, 300);
 });
