@@ -397,6 +397,14 @@ export async function createRemindersBulk(
   try {
     if (!customerIds.length)
       return err("Select at least one customer.", "validation");
+    /* Every customer is checked BEFORE the first is written. The loop below
+       stops at the first refusal, so ten selected with the sixth out of scope
+       used to create five, and the retry made those five twice. */
+    const ids = [...new Set(customerIds)];
+    const found = await db.select().from(customers).where(inArray(customers.id, ids));
+    if (found.length !== ids.length) return err("One of those customers no longer exists. Nothing was set.", "not_found");
+    for (const c of found) await assertCustomerInScope(c);
+    customerIds = ids;
     for (const customerId of customerIds) {
       const r = await createReminderService({ customerId, dueDate, note });
       // One bad customer must not leave a half-finished bulk behind silently.

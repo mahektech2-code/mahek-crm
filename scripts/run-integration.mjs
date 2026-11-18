@@ -73,6 +73,8 @@ const files = [
   "src/lib/order-change.test.ts",
   // A field payment's remainder is on account once, not twice.
   "src/lib/mbos-payment-on-account.test.ts",
+  // A reminder is due on a real day, not in the past, and only its people move it.
+  "src/lib/reminder-guards.test.ts",
   // The ERP: access, powers, working location and the masters.
   "src/lib/erp/erp-foundation.test.ts",
   "src/lib/erp/erp-designations.test.ts",

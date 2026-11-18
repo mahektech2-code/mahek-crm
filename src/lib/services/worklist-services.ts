@@ -319,9 +319,34 @@ export async function listReminders(
   return mapped.filter((r) => r.displayStatus === view);
 }
 
+/** A real calendar day written YYYY-MM-DD — what the date column and the queue compare. */
+function isIsoDay(v: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const d = new Date(`${v}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().startsWith(v);
+}
+
+/*
+ * Not before today, the floor saveInteraction already puts on the call form: a
+ * mistyped year made an overdue reminder, and an overdue reminder puts the
+ * customer in the strongest tier of the queue.
+ */
+async function dueDateRefusal(due: string): Promise<Result<never> | null> {
+  if (!isIsoDay(due)) {
+    return err("Pick a due date from the calendar.", "validation", [{ field: "dueDate", message: "Pick a due date from the calendar." }]);
+  }
+  if (due < (await today())) {
+    return err("A reminder cannot be due in the past.", "validation", [{ field: "dueDate", message: "A reminder cannot be due in the past." }]);
+  }
+  return null;
+}
+
 export const reminderSchema = z.object({
   customerId: z.string().min(1),
-  dueDate: z.string().min(1, "Pick a due date."),
+  dueDate: z
+    .string()
+    .min(1, "Pick a due date.")
+    .refine(isIsoDay, "Pick a due date from the calendar."),
   note: z.string().min(1, "Write what was promised - this is what you will read back later."),
   type: z
     .enum([
@@ -373,6 +398,8 @@ export async function createReminder(
   const input = parsed.data;
   const ctx = await resolveScope();
   const config = await getConfig();
+  const badDate = await dueDateRefusal(input.dueDate);
+  if (badDate) return badDate;
 
   const [customer] = await db
     .select()
@@ -619,6 +646,16 @@ export async function rescheduleReminder(
 
   const [existing] = await db.select().from(reminders).where(eq(reminders.id, reminderId));
   if (!existing) return err("That reminder no longer exists.", "not_found");
+  /* Anybody's own promise is theirs to move; anybody else's needs the
+     customer in their book. Nothing was checked, so any signed-in user could
+     move any reminder by id. */
+  if (existing.assignedUserId !== ctx.user.id && existing.createdByUserId !== ctx.user.id) {
+    const [customer] = await db.select().from(customers).where(eq(customers.id, existing.customerId));
+    if (!customer) return err("That customer no longer exists.", "not_found");
+    await assertCustomerInScope(customer);
+  }
+  const badDate = await dueDateRefusal(newDate);
+  if (badDate) return badDate;
 
   const due = config["reminders.rollForwardOnNonWorkingDays"]
     ? onOrAfterWorkingDay(newDate, {
