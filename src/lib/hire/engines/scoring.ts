@@ -168,6 +168,10 @@ export function scoreCalc(rule: CalcRule, inputs: Record<string, number>): Score
     } catch (e) {
       return { points: null, raw: null, why: e instanceof Error ? e.message : "The formula could not be read." };
     }
+    /* A formula dividing by an input of 0 gives NaN or Infinity, and either
+       one stored as points (or quietly capped to the maximum) is a score
+       nobody earned. No score, said why, rather than a number. */
+    if (!Number.isFinite(raw)) return { points: null, raw: null, why: `${rule.expression} has no value for these figures — it divides by zero.` };
     let pts = raw;
     let note = "";
     if (rule.cap != null && pts > rule.cap) {

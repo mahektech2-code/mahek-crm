@@ -317,6 +317,8 @@ const files = [
   // persisted, the distributor track, and authorisation — including the one
   // place read scope and write scope disagree, pinned rather than fixed.
   "src/lib/sales-manager-pipeline.test.ts",
+  // A "Login as …" link opens one session, however often it is submitted.
+  "src/lib/impersonation-token.test.ts",
   // The same screens mounted in the CRM: one scope (sales_manager_id) for what
   // is drawn and for what may be done to it, admin sees all, owner-only and
   // unassigned leads are nobody's, and no other screen's scope moved.

@@ -492,17 +492,34 @@ export async function decideTransfer(taskId: string, input: { accept: boolean; n
     return ok(undefined, `Rejected — it stays with ${first(tr.fromName)}`);
   }
 
-  const moved = await db
-    .update(tasks)
-    .set({ assigneeId: user.id, updatedAt: new Date() })
-    .where(and(eq(tasks.id, taskId), eq(tasks.assigneeId, tr.fromId), notInArray(tasks.status, ["done", "missed"])))
-    .returning({ id: tasks.id });
-  if (!moved.length) {
-    await db.update(taskTransfers).set({ status: "withdrawn", decidedAt: new Date(), decisionNote: "The task changed before it was accepted." }).where(eq(taskTransfers.id, tr.id));
+  /* The offer is claimed FIRST, and only while it is still pending: a
+     withdraw landing between reading the offer and accepting it used to be
+     overwritten by "accepted" and the task moved anyway — taken without the
+     consent the withdraw had just taken back. One transaction, so a task that
+     changed hands in the meantime leaves the offer withdrawn, not accepted. */
+  const outcome = await db.transaction(async (tx) => {
+    const claimed = await tx
+      .update(taskTransfers)
+      .set({ status: "accepted", decidedById: user.id, decidedAt: new Date(), decisionNote: input.note?.trim() || null })
+      .where(and(eq(taskTransfers.id, tr.id), eq(taskTransfers.status, "pending")))
+      .returning({ id: taskTransfers.id });
+    if (!claimed.length) return "gone" as const;
+    const moved = await tx
+      .update(tasks)
+      .set({ assigneeId: user.id, updatedAt: new Date() })
+      .where(and(eq(tasks.id, taskId), eq(tasks.assigneeId, tr.fromId), notInArray(tasks.status, ["done", "missed"])))
+      .returning({ id: tasks.id });
+    if (!moved.length) {
+      await tx.update(taskTransfers).set({ status: "withdrawn", decidedById: null, decisionNote: "The task changed before it was accepted." }).where(eq(taskTransfers.id, tr.id));
+      return "changed" as const;
+    }
+    return "moved" as const;
+  });
+  if (outcome === "gone") return err("That offer is not there any more.", "conflict");
+  if (outcome === "changed") {
     refresh();
     return err("The task changed before you accepted it — it is not yours.", "conflict");
   }
-  await db.update(taskTransfers).set({ status: "accepted", decidedById: user.id, decidedAt: new Date(), decisionNote: input.note?.trim() || null }).where(eq(taskTransfers.id, tr.id));
   await event(taskId, user.id, "transfer_accepted", `Accepted it from ${first(tr.fromName)}.`);
   await audit(user.id, "task.transfer.accepted", taskId, { from: tr.fromId });
   const tell: NotifyEntry[] = [{ userId: tr.requestedById, title: `${first(user.name)} accepted your task`, body: t.title, href: "/tasks/transfers" }];

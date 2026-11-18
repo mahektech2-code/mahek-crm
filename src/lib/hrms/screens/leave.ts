@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, gte, inArray, lte, ne } from "drizzle-orm";
+import { and, eq, gte, inArray, lte, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { employees, hrmsAttendance, hrmsHolidays, hrmsLeaveCredits, hrmsLeaveRequests, hrmsMonthlyRemarks, hrmsOvertime } from "@/db/schema";
 import { parseCsv } from "@/lib/csv";
@@ -519,7 +519,23 @@ type Approved = { r: Req; paid: number; unpaid: number };
  * many as the employee has left — reading the balances inside the caller's
  * transaction with the request locked (spec §7.3).
  */
+/**
+ * ONE DECISION AT A TIME PER EMPLOYEE. The request's row lock stops one
+ * request being approved twice, but two approvers deciding two DIFFERENT
+ * requests of one person each read the full paid balance and both spent it.
+ * The employee is locked for the rest of the transaction, so the second reads
+ * the balance the first left. Always taken before any request's row lock, and
+ * in a sorted order where there are several, so two decisions never wait on
+ * each other the wrong way round.
+ */
+async function lockLeaveOf(tx: Tx, employeeIds: string[]): Promise<void> {
+  for (const e of [...new Set(employeeIds)].sort()) await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`hrms:leave:${e}`}))`);
+}
+
 async function approveOne(ctx: HrmsContext, tx: Tx, id: string, paidWanted: number | "available"): Promise<Approved | { error: string; r?: Req }> {
+  const [who] = await tx.select({ employeeId: hrmsLeaveRequests.employeeId }).from(hrmsLeaveRequests).where(eq(hrmsLeaveRequests.id, id));
+  if (!who) return { error: "That request no longer exists." };
+  await lockLeaveOf(tx, [who.employeeId]);
   const [r] = await tx.select().from(hrmsLeaveRequests).where(eq(hrmsLeaveRequests.id, id)).for("update");
   if (!r) return { error: "That request no longer exists." };
   if (!decidesLeaveFor(ctx, r.employeeId)) return { error: "You decide leave for your own team only." };
@@ -630,6 +646,7 @@ const LEAVE_BULK: HrmsScreenModule["bulk"] = {
     const short: string[] = [];
     const decided: Approved[] = [];
     const res = await inTx(async (tx) => {
+      if (ids.length) await lockLeaveOf(tx, (await tx.select({ e: hrmsLeaveRequests.employeeId }).from(hrmsLeaveRequests).where(inArray(hrmsLeaveRequests.id, ids))).map((x) => x.e));
       for (const id of ids) {
         const out = await approveOne(ctx, tx, id, "available");
         if ("error" in out) {
