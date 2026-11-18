@@ -1015,6 +1015,22 @@ async function openLine(lineId: string): Promise<Result<LineView>> {
 
 const amountOf = (l: Pick<LineView, "debitPaise" | "creditPaise">) => l.debitPaise || l.creditPaise;
 
+/**
+ * The idempotency key a receipt written from this bank line carries.
+ *
+ * A retried save must find the receipt it already wrote, so the key is the
+ * line's. But once a match is UNDONE the line is open again, and whatever it
+ * is matched to next is a new decision: reusing `bankline:<id>` made
+ * `recordReceipt` hand back the old receipt as "Already recorded", whatever
+ * customer or bills the new one named. So each undo moves the key on — the
+ * count of voided matches is stable across retries and changes only on undo.
+ */
+async function bankLineKey(lineId: string): Promise<string> {
+  const [r] = await q<{ n: number }>(sql`select count(*)::int as n from erp_bank_matches where line_id = ${lineId} and voided_at is not null`);
+  const n = Number(r?.n ?? 0);
+  return n ? `bankline:${lineId}:${n}` : `bankline:${lineId}`;
+}
+
 async function receiptMode(description: string): Promise<string> {
   const modes = (await getConfig())["payments.modes"];
   const g = guessMode(description);
@@ -1070,7 +1086,7 @@ export async function acceptCandidate(lineId: string, c: Pick<Candidate, "kind" 
       allocation: "settle",
       selectedBillIds: [c.id],
       source: "accounts",
-      idempotencyKey: `bankline:${lineId}`,
+      idempotencyKey: await bankLineKey(lineId),
     });
     if (!rec.ok) return rec;
     const m = await insertMatch(lineId, { receiptId: rec.data.receiptId }, amount, via, d.ctx.user.id);
@@ -1271,7 +1287,7 @@ export async function markLine(lineId: string, x: MarkInput): Promise<Result<{ m
       selectedBillIds: x.billIds ?? [],
       custom: x.custom ?? {},
       source: "accounts",
-      idempotencyKey: `bankline:${lineId}`,
+      idempotencyKey: await bankLineKey(lineId),
     });
     if (!rec.ok) return rec;
     const m = await insertMatch(lineId, { receiptId: rec.data.receiptId }, amount, "hand", d.ctx.user.id);
@@ -1390,7 +1406,18 @@ export async function reverseForReturn(lineId: string, receiptId: string): Promi
   return okVoid("Receipt reversed · the customer owes it again");
 }
 
-/** Less arrived than was reported: the report is rejected and what the bank shows is recorded and confirmed. */
+/**
+ * Less arrived than was reported: what the bank shows is recorded and
+ * confirmed, and the report is rejected.
+ *
+ * In that order, and with the mode settled first. It used to reject and then
+ * record — so a report whose mode `recordReceipt` refuses (a collections call
+ * writes "Reported on a collections call", which is not a mode anybody banks)
+ * was rejected with nothing recorded in its place. Now nothing is rejected
+ * until the replacement stands, and if the rejection is then refused (somebody
+ * decided the report a moment ago) the replacement is reversed rather than
+ * left counting beside it.
+ */
 export async function confirmBankAmount(lineId: string, receiptId: string): Promise<Result> {
   const d = await desk("payment.confirm");
   if (d.refused) return d.refused;
@@ -1399,25 +1426,32 @@ export async function confirmBankAmount(lineId: string, receiptId: string): Prom
   const [r] = await db.select().from(paymentReceipts).where(eq(paymentReceipts.id, receiptId));
   if (!r || (r.status !== "reported" && r.status !== "held")) return err("That receipt is no longer waiting to be confirmed.", "conflict");
   const amount = amountOf(o.data);
-  const rej = await rejectReceipt(receiptId, `The bank shows ${inr(amount)}, not ${inr(Number(r.amount))} — recorded again for what arrived.`);
-  if (!rej.ok) return rej;
+  const config = await getConfig();
+  /* The report's own mode where it is one we record; otherwise what the bank line says it was. */
+  const mode = config["payments.modes"].includes(r.mode) ? r.mode : await receiptMode(o.data.description);
+  const dated = config["payments.datedModes"].includes(mode);
   const rec = await recordReceipt({
     customerId: r.customerId,
     amount,
     receivedAt: o.data.date,
-    mode: r.mode,
+    mode,
     reference: r.reference ?? o.data.reference ?? undefined,
-    instrumentDate: r.instrumentDate ?? undefined,
+    instrumentDate: dated ? (r.instrumentDate ?? o.data.date) : undefined,
     note: `What the bank shows for ${receiptId}. ${o.data.description}`,
     allocation: "auto",
     order: "oldest",
     source: "accounts",
-    idempotencyKey: `bankline:${lineId}`,
+    idempotencyKey: await bankLineKey(lineId),
   });
   if (!rec.ok) return rec;
+  const rej = await rejectReceipt(receiptId, `The bank shows ${inr(amount)}, not ${inr(Number(r.amount))} — recorded again for what arrived.`);
+  if (!rej.ok) {
+    await reverseReceipt(rec.data.receiptId, `Recorded for ${receiptId}, which was decided by somebody else at the same time.`);
+    return rej;
+  }
   const m = await insertMatch(lineId, { receiptId: rec.data.receiptId }, amount, "hand", d.ctx.user.id);
   if (!m.ok) return m;
-  await audit(d.ctx, "bank.short", lineId, { was: receiptId, now: rec.data.receiptId, amount });
+  await audit(d.ctx, "bank.short", lineId, { was: receiptId, now: rec.data.receiptId, amount, mode });
   await refreshSuggestions([o.data.accountId]);
   return okVoid(`${inr(amount)} confirmed · the rest is still owed`);
 }

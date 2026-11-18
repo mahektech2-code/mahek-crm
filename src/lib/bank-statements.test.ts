@@ -240,6 +240,45 @@ describe("what each line is", () => {
   });
 });
 
+describe("less arrived than was reported", () => {
+  let short: string;
+  let firstReceipt: string;
+  test("a collections-call report is rejected only once what the bank shows is recorded, under a mode we record", async () => {
+    setTestUser(manager);
+    await db.insert(bills).values({ id: "bil_bank_4", customerId: "cus_bank_rj", billNo: "MMI/26-27/1201", billDate: daysAgo(20), dueDate: daysAgo(-10), amount: 10_000_000 });
+    /* What a collections call writes: a mode that is not one anybody banks. */
+    await db.insert(paymentReceipts).values({ id: "rcp_bank_short", customerId: "cus_bank_rj", amount: 5_000_000, receivedAt: daysAgo(2), mode: "Reported on a collections call", status: "reported", source: "collections_call", idempotencyKey: "rcp_bank_short" });
+    const opening = bal;
+    const up = await uploaded([row(1, today(), "NEFT-SBIN0001234-RAJ ENTERPRISES-PART", "N2943300", 0, 30000)], opening);
+    assert.equal(msg(await S.importUpload(up)), "ok");
+    const l = await lineOf("NEFT-SBIN0001234-RAJ");
+    short = l.id;
+
+    const r = await S.confirmBankAmount(l.id, "rcp_bank_short");
+    assert.equal(msg(r), "ok");
+    const [was] = await db.select().from(paymentReceipts).where(eq(paymentReceipts.id, "rcp_bank_short"));
+    assert.equal(was.status, "rejected", "the report is rejected");
+    const now = await db.select().from(paymentReceipts).where(sql`${paymentReceipts.customerId} = 'cus_bank_rj' and ${paymentReceipts.status} = 'confirmed' and ${paymentReceipts.source} = 'accounts'`);
+    assert.equal(now.length, 1, "and what the bank shows is recorded in its place");
+    assert.equal(now[0].amount, 3_000_000);
+    assert.notEqual(now[0].mode, "Reported on a collections call");
+    firstReceipt = now[0].id;
+    const [b] = await db.select().from(bills).where(eq(bills.id, "bil_bank_4"));
+    assert.equal(b.paidAmount, 3_000_000);
+  });
+
+  test("after an undo, marking the line again is a new receipt, not the old one handed back", async () => {
+    setTestUser(manager);
+    assert.equal(msg(await S.undoMatch(short)), "ok");
+    const r = await S.markLine(short, { as: "customer_payment", customerId: "cus_bank_rj", mode: "Bank transfer", reference: "N2943300-B" });
+    assert.equal(msg(r), "ok");
+    const confirmed = await db.select().from(paymentReceipts).where(sql`${paymentReceipts.customerId} = 'cus_bank_rj' and ${paymentReceipts.status} = 'confirmed' and ${paymentReceipts.source} = 'accounts'`);
+    assert.equal(confirmed.length, 2, "a second receipt was written for the second decision");
+    const [m] = (await db.execute(sql`select receipt_id as "receiptId" from erp_bank_matches where line_id = ${short} and voided_at is null`)) as unknown as { receiptId: string }[];
+    assert.notEqual(m.receiptId, firstReceipt, "the line is matched to the new receipt");
+  });
+});
+
 describe("the PDF's days", () => {
   test("the sweep deletes a PDF past its days, keeps the upload and its lines, and the PDF answers no more", async () => {
     setTestUser(manager);
