@@ -1,4 +1,5 @@
 import "server-only";
+import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { listUserApps, listUserModules } from "@/lib/access";
 import { levelInApp } from "@/lib/access-control";
@@ -50,6 +51,23 @@ export async function founderAccess() {
   const allowed = (Object.keys(SECTION_MODULE) as SectionKey[]).filter((s) => keys.has(SECTION_MODULE[s]));
   const level = (await levelInApp(user, "founder")) ?? "associate";
   return { user, allowed, level };
+}
+
+/**
+ * THE SAME GATE, FOR A PAGE OR A LAYOUT.
+ *
+ * Next renders a page beside the layouts above it, not after them, so the
+ * Founder layout's redirect for somebody without the app does not stop
+ * `founderAccess` running in the page underneath — and its throw was printed
+ * as a stack trace for every refused visit, hundreds an hour, burying the
+ * errors that mean something. A render refuses the way the layout does: to
+ * the launcher. Nothing is widened — the person is sent away either way —
+ * and a server action keeps the throw, which `refusal()` turns into words.
+ */
+export async function founderPageAccess() {
+  const user = await requireUser();
+  if (!(await listUserApps(user.id)).includes("founder")) redirect("/apps");
+  return founderAccess();
 }
 
 export async function requireSection(section: SectionKey) {

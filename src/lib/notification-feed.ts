@@ -151,6 +151,16 @@ export function popsUpIn(app: string | null): boolean {
 }
 
 /**
+ * Whether the bell asks the server at all on this page. Not on the sign-in
+ * pages: nobody there has a session, so every ask was a 401 in the log — the
+ * first one the moment the page opened. Signing in navigates to a page
+ * outside `/login`, which mounts the bell afresh and it asks at once.
+ */
+export function bellAsksOn(pathname: string | null | undefined): boolean {
+  return !(pathname === "/login" || pathname?.startsWith("/login/"));
+}
+
+/**
  * Who is waiting to be answered, oldest first: whoever was already waiting, then
  * the reminders that came due, then what just arrived. Anything answered in
  * another tab or on another machine leaves, which the next answer says by being

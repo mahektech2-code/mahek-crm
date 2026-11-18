@@ -8,7 +8,7 @@ Journeys & visits is one route, `/sales/journeys`, with four tabs rendered serve
 | Page (server) | `src/app/sales/journeys/page.tsx` | Tabs `team`, `today`, `salesman` (`view=calendar|list|propose`), `visits`; the person modal (`?in=`) |
 | Tabs | `team-tab.tsx`, `today-tab.tsx`, `salesman-tab.tsx`, `visits-tab.tsx`, `visit-parts.tsx` | Rendering |
 | Planning UI | `src/app/sales/journeys/journeys-screen.tsx` | Propose, answer refusal, pick shops yourself |
-| Old route | `src/app/sales/visits/page.tsx` | Redirects to `?tab=visits` |
+| Old route | `next.config.ts` (redirects) | `/sales/visits` redirects to `?tab=visits` |
 | Reads | `src/lib/services/journey-service.ts` | `teamJourneySummary`, `journeyHistory`, `calendarFacts` |
 | Reads | `src/lib/services/sales-service.ts` | `journeyPlansFor`, `journeyPlansBetween`, `visitsList`, `visitsBetween`, `fieldBook` |
 | Office writes | `src/lib/actions/sales.ts` | `proposeJourneyDays`, `answerRefusal`, `saveJourneyPeriod`, `acceptVisit`, `decidePinCorrection`, `askAboutVisit` |

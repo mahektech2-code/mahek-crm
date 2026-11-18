@@ -175,6 +175,22 @@ const nextConfig: NextConfig = {
       { source: "/enquiries/list", destination: "/enquiries", permanent: true },
 
       /*
+       * OLD ADDRESSES THAT WERE PAGES WHOSE ONLY ACT WAS redirect(). They are
+       * here instead because each sat under a `loading.tsx`, so the page had
+       * already streamed a 200 before its redirect ran and the browser was
+       * sent on by Next's client router — which logged React error #310
+       * ("Rendered more hooks than during the previous render") from inside
+       * Next's own `Router` on every visit. Answered here, it is a plain 307
+       * before anything renders. Temporary, like the redirect() each replaced;
+       * the query string rides along, so a filter in an old link survives.
+       */
+      { source: "/crm/top-customers", destination: "/crm/targets?view=top", permanent: false },
+      { source: "/tasks/setup", destination: "/tasks/setup/routines", permanent: false },
+      { source: "/tasks/routines", destination: "/tasks/setup/routines", permanent: false },
+      { source: "/sales/visits", destination: "/sales/journeys?tab=visits", permanent: false },
+      { source: "/erp/print-invoices", destination: "/erp/orders?view=orderDetails", permanent: false },
+
+      /*
        * The Admin Console's old addresses — one page that read its screen out
        * of the path — and where each screen lives now. See the file itself.
        */

@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { founderAccess } from "@/lib/command-centre/access";
+import { founderPageAccess } from "@/lib/command-centre/access";
 import { shellChrome } from "@/lib/command-centre/shell";
 import { DeskFrame } from "./desk-shell";
 
@@ -10,7 +10,7 @@ import { DeskFrame } from "./desk-shell";
  * itself is the parent layout's; each desk checks its own module below.
  */
 export default async function FounderDesksLayout({ children }: { children: React.ReactNode }) {
-  const access = await founderAccess();
+  const access = await founderPageAccess();
   if (!access.allowed.length) redirect("/apps");
   const chrome = await shellChrome(access);
   return (

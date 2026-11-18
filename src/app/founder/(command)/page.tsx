@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { founderAccess } from "@/lib/command-centre/access";
+import { founderPageAccess } from "@/lib/command-centre/access";
 import { readPeriodState } from "@/lib/command-centre/period";
 import { providerFor } from "@/lib/command-centre/registry";
 import { companyPayload, SECTION_TITLE } from "@/lib/command-centre/company";
@@ -30,7 +30,7 @@ export default async function Page({
   searchParams: Promise<{ s?: string; p?: string; from?: string; to?: string; q?: string; open?: string }>;
 }) {
   const params = await searchParams;
-  const access = await founderAccess();
+  const access = await founderPageAccess();
   if (!access.allowed.length) redirect("/apps");
 
   const wanted: SectionKey = isSectionKey(params.s) ? params.s : "company";

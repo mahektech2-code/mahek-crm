@@ -1,4 +1,6 @@
 import { requireCapability } from "@/lib/access-control";
+import { requireAppForPage } from "@/lib/access";
+import { requireUser } from "@/lib/auth";
 import { getConfig } from "@/lib/config/store";
 import { listAssignableUsers } from "@/lib/queries";
 import { today } from "@/lib/recompute";
@@ -25,6 +27,8 @@ export default async function Page({
 }: {
   searchParams: Promise<{ period?: string }>;
 }) {
+  /* The layout's gate first, so a refused visit ends in its redirect rather than a thrown refusal. */
+  await requireAppForPage((await requireUser()).id, "sales");
   await requireCapability("target.set");
 
   const params = await searchParams;

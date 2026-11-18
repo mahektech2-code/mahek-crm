@@ -7,7 +7,7 @@ Monthly Targets is one **shared screen component** (`MonthlyTargetsScreen`) moun
 | Route guard | `src/app/crm/targets/layout.tsx` | `requireModule(user.id, "crm.targets")` |
 | Page (CRM) | `src/app/crm/targets/page.tsx` | Reads filters from the URL, `listTargetsPage`, `listAmFilterOptions`, `canFor(user, "target.set")`, `readTopCustomersTab` |
 | Page (Accounts) | `src/app/accounts/customer-targets/page.tsx` | The same component with `app="accounts"` and statement links |
-| Old address | `src/app/crm/top-customers/page.tsx` | Redirects to `/crm/targets?view=top` |
+| Old address | `next.config.ts` (redirects) | `/crm/top-customers` redirects to `/crm/targets?view=top` |
 | Screen | `src/components/customers/monthly-targets-screen.tsx` | Table, filters, badges, the allocate dialog, both tabs |
 | Top customers | `src/components/customers/top-customers-tab.tsx`, `top-customers-table.tsx` | Span and metric pickers, the table |
 | Service | `src/lib/services/worklist-services.ts` | `targetVisibilityClause`, `targetListClause`, `targetMonth`, `listTargets`, `listTargetsPage`, `targetTotals`, `setTarget`, `setTargetsBulk`, `customerTargetsCreditedTo` |

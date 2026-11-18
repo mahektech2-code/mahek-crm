@@ -1,3 +1,5 @@
+import { requireModule } from "@/lib/access";
+import { founderPageAccess } from "@/lib/command-centre/access";
 import { listContacts, type ContactFilter } from "@/lib/services/whatsapp-dnd-service";
 import { ContactsControl } from "./contacts-control";
 
@@ -14,6 +16,10 @@ export default async function Page({
 }: {
   searchParams: Promise<{ q?: string; f?: string; page?: string }>;
 }) {
+  /* The layouts' two gates, asked here before `listContacts` can throw its own
+     refusal: a page renders beside its layouts, not after them. */
+  const { user } = await founderPageAccess();
+  await requireModule(user.id, "founder.whatsapp");
   const sp = await searchParams;
   const filter: ContactFilter = sp.f === "dnd" || sp.f === "open" ? sp.f : "all";
   const data = await listContacts({ q: sp.q, filter, page: Number(sp.page) || 1 });

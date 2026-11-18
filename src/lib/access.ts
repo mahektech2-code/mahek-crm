@@ -177,6 +177,25 @@ export async function whatsappLevel(userId: string): Promise<"none" | "read" | "
   return read ? "read" : "none";
 }
 
+/**
+ * THE APP'S OWN GATE, ASKED AGAIN BY A PAGE — before the page asks anything
+ * that throws.
+ *
+ * Next renders a page beside its layouts, not after them, so the layout's
+ * redirect for somebody without the app does not stop the page underneath
+ * running. A page whose first act is a capability or service check that THROWS
+ * then printed a stack trace for every refused visit, while the visitor was
+ * correctly sent to the launcher by the layout anyway — hundreds of them, in
+ * front of the errors that mean something. Asking the grant here, with the
+ * layout's own answer (`/apps`), ends the render the same way the layout does.
+ * It only ever refuses more: everything the page checks after it still runs.
+ */
+export async function requireAppForPage(userId: string, app: AppId): Promise<void> {
+  if ((await listUserApps(userId)).includes(app)) return;
+  const { redirect } = await import("next/navigation");
+  redirect("/apps");
+}
+
 export async function canOpen(userId: string, app: AppId): Promise<boolean> {
   const rows = await db
     .select({ id: appAccess.id })
