@@ -12,12 +12,24 @@ import {
   unlinkOrder,
   findCustomersByPhone,
   enquiryForLeadConversion,
+  createManualEnquiry,
+  correctEnquiryDetails,
+  editEnquiryNote,
+  deleteEnquiryNote,
+  rescheduleEnquiryReminder,
+  cancelEnquiryReminder,
+  markEnquirySpam,
+  noteRefusal,
+  reminderRefusal,
+  enquiriesRefusal,
   type CustomerMatch,
   type EnquiryForLead,
+  type ManualEnquiryInput,
 } from "@/lib/services/enquiry-service";
+import type { CorrectableField } from "@/lib/enquiry-submission";
 import { requireUser } from "@/lib/auth";
 import { canOpenModule, listUserApps } from "@/lib/access";
-import { canFor } from "@/lib/access-control";
+import { canFor, requireCapability } from "@/lib/access-control";
 import { DESK_MODULE, deskHolders, type DeskPerson } from "@/lib/services/lead-desk-assignment-service";
 import { err, fromThrown, type Result } from "@/lib/result";
 import { confirmImpact } from "@/lib/impact/registry";
@@ -208,6 +220,123 @@ export async function leadFromEnquiryContextAction(enquiryId: string): Promise<R
     const user = await requireUser();
     const canAssign = (await canFor(user, "lead.verify")) && (await canOpenModule(user.id, DESK_MODULE));
     return { ok: true, data: { enquiry: found.data, canAssign, assignees: canAssign ? await deskHolders() : [] } };
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * EDITS AND REMOVALS. The service owns the checks; the three that take
+ * something away ask, in order, the service's own refusal, then the impact
+ * confirmation — the person saw what goes, and it is still what goes — and
+ * only then write. A call with no confirmation is refused before anything is
+ * written, whatever the screen did.
+ * ------------------------------------------------------------------------- */
+
+export async function createManualEnquiryAction(input: ManualEnquiryInput): Promise<Result<{ id: string }>> {
+  try {
+    const r = await createManualEnquiry(input);
+    refresh(r.ok ? r.data.id : undefined);
+    return r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+export async function correctEnquiryDetailsAction(
+  enquiryId: string,
+  fields: Partial<Record<CorrectableField, string | null>>,
+): Promise<Result> {
+  try {
+    const r = await correctEnquiryDetails(enquiryId, fields ?? {});
+    refresh(enquiryId);
+    return r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+export async function editEnquiryNoteAction(enquiryId: string, activityId: string, note: string): Promise<Result> {
+  try {
+    const r = await editEnquiryNote(enquiryId, activityId, typeof note === "string" ? note : "");
+    refresh(enquiryId);
+    return r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+export async function deleteEnquiryNoteAction(
+  enquiryId: string,
+  activityId: string,
+  confirmation?: ImpactConfirmation,
+): Promise<Result> {
+  try {
+    const refused = await noteRefusal(enquiryId, activityId);
+    if (refused) return refused;
+    const unconfirmed = await confirmImpact("enquiry-note-delete", activityId, confirmation);
+    if (unconfirmed) return unconfirmed;
+    const r = await deleteEnquiryNote(enquiryId, activityId);
+    refresh(enquiryId);
+    return r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+export async function rescheduleEnquiryReminderAction(
+  enquiryId: string,
+  reminderId: string,
+  dueDate: string,
+  note?: string,
+): Promise<Result> {
+  try {
+    const r = await rescheduleEnquiryReminder(enquiryId, reminderId, dueDate, note);
+    refresh(enquiryId);
+    return r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+export async function cancelEnquiryReminderAction(
+  enquiryId: string,
+  reminderId: string,
+  reason: string,
+  confirmation?: ImpactConfirmation,
+): Promise<Result> {
+  try {
+    if (typeof reason !== "string" || !reason.trim()) {
+      return err("Say why it is being cancelled.", "validation", [{ field: "reason", message: "A reason is required." }]);
+    }
+    const refused = await reminderRefusal(enquiryId, reminderId);
+    if (refused) return refused;
+    /* `reminder.close`, the capability `dismissReminder` asks — first, so a
+       person without it is told that, not shown a picture they cannot act on. */
+    await requireCapability("reminder.close");
+    const unconfirmed = await confirmImpact("enquiry-reminder-cancel", reminderId, confirmation);
+    if (unconfirmed) return unconfirmed;
+    const r = await cancelEnquiryReminder(enquiryId, reminderId, reason);
+    refresh(enquiryId);
+    return r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+export async function markEnquirySpamAction(
+  enquiryId: string,
+  reason: string | undefined,
+  confirmation?: ImpactConfirmation,
+): Promise<Result> {
+  try {
+    const refused = await enquiriesRefusal();
+    if (refused) return refused;
+    const unconfirmed = await confirmImpact("enquiry-spam", enquiryId, confirmation);
+    if (unconfirmed) return unconfirmed;
+    const r = await markEnquirySpam(enquiryId, typeof reason === "string" ? reason : undefined);
+    refresh(enquiryId);
+    return r;
   } catch (e) {
     return fromThrown(e);
   }

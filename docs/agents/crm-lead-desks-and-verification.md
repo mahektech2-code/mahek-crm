@@ -83,6 +83,30 @@ and the loser is undone with its lead. The sales type is asked in the dialog and
 never guessed, which is what makes the new lead a literal Suspect: with none the
 foot of the legacy ladder is `new`, the same first band, but not the word.
 
+**AN ENQUIRY IS CORRECTED OVER ITS SUBMISSION, NEVER IN IT, AND SPAM IS A STAGE,
+NOT A DELETE (0361).** `raw_submission` stays exactly as the visitor sent it; a
+person's corrections to name, phone, email, company and requirement go in
+`enquiries.corrections` and are read over it by `effectiveSubmission` — every
+reader (the list, the record, the lead prefill, HQ's SQL through
+`raw_submission || corrections`) must read the corrected one, and
+`search_text` is rebuilt from it. The activity carries each field's before and
+after. An enquiry typed in by hand (`createManualEnquiry`) is `source` anything
+but `website` — that source is the ingest door's alone and the only one
+`leadConvertibility` lets become a lead, so a manual enquiry cannot be turned
+into one yet. There is NO hard delete: the website retransmits until
+acknowledged and `createEnquiryFromWebsite` recognises a retransmission only by
+the row still existing, so a deleted junk enquiry comes straight back. `spam`
+leaves All, every count and the Unassigned banner, shows only under its own
+tab, is refused by `changeStage` (it goes through `markEnquirySpam` and the
+`enquiry-spam` impact dialog) and is blocked once a customer is linked; any
+other stage brings it back ("Not spam"). Notes are edited and deleted only by
+their author — an edit keeps the previous words in `meta.edits`, a delete leaves
+a `note_deleted` line with the text only in the audit row. A follow-up is moved
+through the CRM's own `rescheduleReminder` (`skipCustomerScope`, as creating one
+is) and cancelled through `dismissReminder`, so cancelling still needs
+`reminder.close` — which no Enquiries level carries: only a CRM manager or an
+admin can cancel an enquiry's follow-up.
+
 **AN UNOWNED LEAD IS ON NO TELECALLER'S DESK, so it is said out loud.** An
 associate's scope is their own book and `owner_id` is the assignment, so a lead
 nobody owns is invisible to every telecaller. It is not automatic to give it an

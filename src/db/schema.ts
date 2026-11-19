@@ -10550,6 +10550,10 @@ export const enquiryStageEnum = pgEnum("enquiry_stage", [
   "qualified",
   "converted",
   "closed",
+  /* Not an enquiry at all — junk, a bot, a sales pitch. A stage rather than a
+     delete: the website retransmits, and a deleted row would let the same
+     submission arrive again as new (0361). */
+  "spam",
 ]);
 
 export const enquiryPriorityEnum = pgEnum("enquiry_priority", [
@@ -10600,6 +10604,14 @@ export const enquiries = pgTable(
     category: text("category"),
     /** The visitor's own submitted fields, kept exactly as sent regardless of how parsing changes later. */
     rawSubmission: jsonb("raw_submission").$type<Record<string, unknown>>().notNull(),
+    /**
+     * What a person CORRECTED of the submission — `{ name, phone, email,
+     * company, message }`, only the keys somebody changed (0361). Read OVER
+     * `rawSubmission` (`effectiveSubmission`), never written into it: the raw
+     * stays exactly as the visitor sent it, and the enquiry's activity carries
+     * each correction's before and after. Null until somebody corrects one.
+     */
+    corrections: jsonb("corrections").$type<Record<string, string>>(),
     /**
      * The name/phone/email/company/message VALUES `readSubmissionFields`
      * already reads off `rawSubmission` — joined into one string, at write

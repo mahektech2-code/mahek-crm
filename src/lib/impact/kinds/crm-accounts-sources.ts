@@ -19,6 +19,12 @@ export const CRM_ACCOUNTS_SOURCES: Record<string, () => Promise<ImpactSource>> =
   "crm-reminder-dismiss": () => import("./crm-customers").then((m) => m.reminderDismissImpact),
   /** `unlinkOrderAction` — the id is `impactPair(enquiryId, orderId)`. */
   "crm-enquiry-order": () => import("./crm-customers").then((m) => m.enquiryOrderImpact),
+  /** `markEnquirySpamAction` — an enquiry off the list and the counts (a stage, not a delete). */
+  "enquiry-spam": () => import("./enquiries").then((m) => m.enquirySpamImpact),
+  /** `deleteEnquiryNoteAction` — by the note's activity id. */
+  "enquiry-note-delete": () => import("./enquiries").then((m) => m.enquiryNoteImpact),
+  /** `cancelEnquiryReminderAction` — an enquiry's follow-up dismissed, through the Enquiries grant. */
+  "enquiry-reminder-cancel": () => import("./enquiries").then((m) => m.enquiryReminderImpact),
   /** `clearManager` — an employee's reporting line, which the CRM reads for the sales manager seat. */
   "crm-reporting-line": () => import("./crm-customers").then((m) => m.reportingLineImpact),
 

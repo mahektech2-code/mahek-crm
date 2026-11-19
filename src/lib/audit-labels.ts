@@ -92,6 +92,7 @@ export const AUDIT_GROUPS = [
       "complaint.",
       "watch.",
       "whatsapp.",
+      "enquiry.",
       "founder.note",
       "admin.bulk-",
       "import.customers",
@@ -358,6 +359,15 @@ const DESCRIBE: Record<string, Describer> = {
   "website.review.rejected": () => ["rejected website changes"],
   "website.review.revoked": () => ["revoked an approval to publish website changes"],
   "website.review.withdrawn": () => ["withdrew website changes from review"],
+
+  /* ---- the enquiry desk's own corrections */
+  "enquiry.create": () => ({ says: ["entered an enquiry by hand"], changes: false }),
+  "enquiry.correct": () => ["corrected the details of an enquiry"],
+  "enquiry.note.edit": () => ["edited their note on an enquiry"],
+  "enquiry.note.delete": () => ({ says: ["deleted their note on an enquiry"], changes: false }),
+  "enquiry.reminder.reschedule": () => ["moved an enquiry's follow-up"],
+  "enquiry.spam": () => ({ says: ["marked an enquiry as spam"], changes: false }),
+  "enquiry.unspam": () => ({ says: ["brought an enquiry back from spam"], changes: false }),
   "website.review.expired": () => ["let an approval to publish website changes expire"],
   "website.review.stale": () => ["voided an approval because the content changed after it was submitted"],
   "website.review.published": () => ["published approved website changes"],

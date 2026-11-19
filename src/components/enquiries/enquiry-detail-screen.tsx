@@ -12,10 +12,10 @@ import {
   Select,
   Textarea,
 } from "@/components/ui/primitives";
-import { Tabs } from "@/components/ui/overlays";
+import { RowMenu, Tabs } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import {
-  ENQUIRY_STAGES,
+  PICKABLE_STAGES,
   ENQUIRY_PRIORITIES,
   STAGE_LABEL,
   PRIORITY_LABEL,
@@ -48,7 +48,16 @@ import {
   linkOrderAction,
   unlinkOrderAction,
   findCustomersByPhoneAction,
+  deleteEnquiryNoteAction,
+  cancelEnquiryReminderAction,
+  markEnquirySpamAction,
 } from "@/lib/actions/enquiries";
+import {
+  EditDetailsDialog,
+  EditNoteDialog,
+  ReasonThenImpact,
+  RescheduleDialog,
+} from "@/components/enquiries/enquiry-edit-dialogs";
 import type { CustomerMatch } from "@/lib/services/enquiry-service";
 import type { Result } from "@/lib/result";
 import { CreateLeadCard } from "@/components/enquiries/create-lead-card";
@@ -64,6 +73,8 @@ export function EnquiryDetailScreen({
   duplicates,
   orderCandidates,
   deskAccess,
+  viewerId,
+  canCloseReminders,
 }: {
   enquiry: EnquiryDetail;
   submission: EnquirySubmissionFields;
@@ -72,8 +83,15 @@ export function EnquiryDetailScreen({
   orderCandidates: OrderCandidate[];
   /** Whether this person holds the Calling desk, so a lead's link is drawn only where it opens. */
   deskAccess: boolean;
+  /** Who is looking — a note is edited or deleted only by its author. */
+  viewerId: string;
+  /** `reminder.close`, which cancelling a follow-up asks, as it does in the CRM. */
+  canCloseReminders: boolean;
 }) {
   const [tab, setTab] = React.useState<Tab>("overview");
+  /* Each dialog keyed by when it opened, so it mounts with today's values. */
+  const [editing, setEditing] = React.useState(0);
+  const [spamming, setSpamming] = React.useState(0);
   const router = useRouter();
   const { run } = useToast();
 
@@ -111,7 +129,50 @@ export function EnquiryDetailScreen({
             )}
           </div>
         </div>
+        <div className="flex shrink-0 gap-2">
+          <Button size="sm" onClick={() => setEditing(Date.now())}>
+            Edit details
+          </Button>
+          {enquiry.stage === "spam" ? (
+            <Button size="sm" onClick={() => after(changeStageAction(enquiry.id, "new"))}>
+              Not spam
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant="dangerOutline"
+              onClick={() => setSpamming(Date.now())}
+              disabled={!!enquiry.customerId}
+              title={enquiry.customerId ? "A customer is linked, so it is not spam — close it instead" : undefined}
+            >
+              Mark as spam
+            </Button>
+          )}
+        </div>
       </div>
+
+      {editing ? (
+        <EditDetailsDialog key={editing} enquiryId={enquiry.id} current={submission} onClose={() => setEditing(0)} />
+      ) : null}
+      {spamming ? (
+        <ReasonThenImpact
+          key={spamming}
+          title="Mark as spam"
+          sub="A spam enquiry leaves the list and every count, and shows only under Spam. Nothing is deleted — Not spam brings it back."
+          reasonLabel="Why (for whoever looks later)"
+          reasonRequired={false}
+          impact={{ kind: "enquiry-spam", id: enquiry.id }}
+          confirmLabel="Mark as spam"
+          onClose={() => setSpamming(0)}
+          onConfirm={(reason, confirmation) => markEnquirySpamAction(enquiry.id, reason, confirmation)}
+        />
+      ) : null}
+
+      {enquiry.stage === "spam" ? (
+        <Card className="mt-4 border-l-[3px] border-l-danger bg-danger-soft px-4 py-3 text-sm text-ink">
+          Marked as spam. It is off the list and out of the counts; Not spam, or any stage below, brings it back.
+        </Card>
+      ) : null}
 
       {duplicates.length > 0 ? (
         <Card className="mt-4 border-l-[3px] border-l-warn bg-warn-soft px-4 py-3">
@@ -146,9 +207,9 @@ export function EnquiryDetailScreen({
               {tab === "overview" ? (
                 <OverviewTab enquiry={enquiry} submission={submission} onAfter={after} />
               ) : null}
-              {tab === "timeline" ? <TimelineTab enquiry={enquiry} /> : null}
+              {tab === "timeline" ? <TimelineTab enquiry={enquiry} viewerId={viewerId} /> : null}
               {tab === "followup" ? (
-                <FollowUpTab enquiry={enquiry} team={team} onAfter={after} />
+                <FollowUpTab enquiry={enquiry} team={team} onAfter={after} canCloseReminders={canCloseReminders} />
               ) : null}
               {tab === "orders" ? (
                 <OrdersTab enquiry={enquiry} candidates={orderCandidates} onAfter={after} />
@@ -190,7 +251,7 @@ function OverviewTab({
 }) {
   const [note, setNote] = React.useState("");
   const [busy, setBusy] = React.useState(false);
-  const other = otherSubmissionFields(enquiry.rawSubmission);
+  const other = otherSubmissionFields(enquiry.submission);
 
   async function saveNote() {
     if (!note.trim()) return;
@@ -206,7 +267,12 @@ function OverviewTab({
   return (
     <div className="flex flex-col gap-5">
       <div>
-        <div className="mb-2 text-xs font-medium tracking-[0.04em] text-muted uppercase">Submission</div>
+        <div className="mb-2 text-xs font-medium tracking-[0.04em] text-muted uppercase">
+          Submission
+          {enquiry.corrected.length ? (
+            <span className="ml-2 normal-case tracking-normal text-muted">· corrected — the Activity tab has what it said before</span>
+          ) : null}
+        </div>
         <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
           <Field label="Name"><div className="text-ink">{submission.name ?? "—"}</div></Field>
           <Field label="Phone"><div className="text-ink">{submission.phone ? phoneDisplay(submission.phone) : "—"}</div></Field>
@@ -254,22 +320,66 @@ function OverviewTab({
 
 /* ------------------------------------------------------------------ timeline */
 
-function TimelineTab({ enquiry }: { enquiry: EnquiryDetail }) {
+function TimelineTab({ enquiry, viewerId }: { enquiry: EnquiryDetail; viewerId: string }) {
+  const [editing, setEditing] = React.useState<{ id: string; note: string; at: number } | null>(null);
+  const [deleting, setDeleting] = React.useState<string | null>(null);
+  const router = useRouter();
+  const { push } = useToast();
+
   if (enquiry.activity.length === 0) {
     return <p className="py-6 text-center text-sm text-muted">Nothing recorded yet.</p>;
   }
   return (
     <div className="flex flex-col gap-3">
-      {enquiry.activity.map((a) => (
-        <div key={a.id} className="relative border-l border-divider py-1 pl-4">
-          <div className="flex items-baseline justify-between gap-2">
-            <span className="text-sm font-medium text-ink">{ACTIVITY_LABEL[a.kind] ?? a.kind}</span>
-            <span className="text-xs text-muted">{stamp(a.at)}</span>
+      {editing ? (
+        <EditNoteDialog
+          key={editing.at}
+          enquiryId={enquiry.id}
+          activityId={editing.id}
+          note={editing.note}
+          onClose={() => setEditing(null)}
+        />
+      ) : null}
+      {deleting ? (
+        <ImpactDialog
+          key={deleting}
+          kind="enquiry-note-delete"
+          id={deleting}
+          onClose={() => setDeleting(null)}
+          onConfirm={async (confirmation) => {
+            const r = await deleteEnquiryNoteAction(enquiry.id, deleting, confirmation);
+            if (r.ok) {
+              push(r.message ?? "Note deleted.");
+              router.refresh();
+            }
+            return r;
+          }}
+        />
+      ) : null}
+      {enquiry.activity.map((a) => {
+        const isNote = a.kind === "note" || a.kind === "note_edited";
+        const mine = isNote && a.actorUserId === viewerId;
+        return (
+          <div key={a.id} className="relative border-l border-divider py-1 pl-4">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-sm font-medium text-ink">{ACTIVITY_LABEL[a.kind] ?? a.kind}</span>
+              <span className="flex items-center gap-1 text-xs text-muted">
+                {stamp(a.at)}
+                {mine ? (
+                  <RowMenu
+                    items={[
+                      { label: "Edit", onSelect: () => setEditing({ id: a.id, note: a.note ?? "", at: Date.now() }) },
+                      { label: "Delete", destructive: true, onSelect: () => setDeleting(a.id) },
+                    ]}
+                  />
+                ) : null}
+              </span>
+            </div>
+            {a.note ? <div className="mt-0.5 text-[13px] whitespace-pre-line text-body">{a.note}</div> : null}
+            <div className="mt-0.5 text-xs text-muted">{a.actorName ?? "System"}</div>
           </div>
-          {a.note ? <div className="mt-0.5 text-[13px] text-body">{a.note}</div> : null}
-          <div className="mt-0.5 text-xs text-muted">{a.actorName ?? "System"}</div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -280,11 +390,15 @@ function FollowUpTab({
   enquiry,
   team,
   onAfter,
+  canCloseReminders,
 }: {
   enquiry: EnquiryDetail;
   team: AssignableUser[];
   onAfter: (p: Promise<Result>) => Promise<void>;
+  canCloseReminders: boolean;
 }) {
+  const [moving, setMoving] = React.useState<{ id: string; dueDate: string; note: string; at: number } | null>(null);
+  const [cancelling, setCancelling] = React.useState<{ id: string; at: number } | null>(null);
   const [dueDate, setDueDate] = React.useState(today());
   const [note, setNote] = React.useState("");
   const [type, setType] = React.useState<EnquiryReminderType>("call_back");
@@ -313,6 +427,29 @@ function FollowUpTab({
 
   return (
     <div className="flex flex-col gap-4">
+      {moving ? (
+        <RescheduleDialog
+          key={moving.at}
+          enquiryId={enquiry.id}
+          reminderId={moving.id}
+          dueDate={moving.dueDate}
+          note={moving.note}
+          onClose={() => setMoving(null)}
+        />
+      ) : null}
+      {cancelling ? (
+        <ReasonThenImpact
+          key={cancelling.at}
+          title="Cancel this follow-up"
+          sub="It comes off the Call Log of whoever it is for, and stays on the record as dismissed with your reason."
+          reasonLabel="Reason"
+          reasonRequired
+          impact={{ kind: "enquiry-reminder-cancel", id: cancelling.id }}
+          confirmLabel="Cancel follow-up"
+          onClose={() => setCancelling(null)}
+          onConfirm={(reason, confirmation) => cancelEnquiryReminderAction(enquiry.id, cancelling.id, reason, confirmation)}
+        />
+      ) : null}
       {enquiry.remindersList.length > 0 ? (
         <div className="flex flex-col gap-2">
           {enquiry.remindersList.map((r) => (
@@ -324,6 +461,20 @@ function FollowUpTab({
               <div className="flex items-center gap-2">
                 <span className="text-xs text-muted">{shortDateWithYear(r.dueDate, today())}</span>
                 <Badge tone={r.status === "completed" ? "success" : r.status === "dismissed" ? "muted" : "neutral"}>{reminderStatusLabel(r.status)}</Badge>
+                {r.pending ? (
+                  <RowMenu
+                    items={[
+                      { label: "Move to another day", onSelect: () => setMoving({ id: r.id, dueDate: r.dueDate, note: r.note, at: Date.now() }) },
+                      {
+                        label: "Cancel follow-up",
+                        destructive: true,
+                        disabled: !canCloseReminders,
+                        title: canCloseReminders ? undefined : "Closing a follow-up by hand is a manager's — the same rule as the CRM's reminders",
+                        onSelect: () => setCancelling({ id: r.id, at: Date.now() }),
+                      },
+                    ]}
+                  />
+                ) : null}
               </div>
             </div>
           ))}
@@ -503,7 +654,8 @@ function StageCard({
         value={enquiry.stage}
         onChange={(e) => onAfter(changeStageAction(enquiry.id, e.target.value as EnquiryStage))}
       >
-        {ENQUIRY_STAGES.map((s) => <option key={s} value={s}>{STAGE_LABEL[s]}</option>)}
+        {enquiry.stage === "spam" ? <option value="spam" disabled>{STAGE_LABEL.spam}</option> : null}
+        {PICKABLE_STAGES.map((s) => <option key={s} value={s}>{STAGE_LABEL[s]}</option>)}
       </Select>
 
       <div className="mt-3 text-xs font-medium tracking-[0.04em] text-muted uppercase">Priority</div>
