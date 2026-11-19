@@ -103,3 +103,16 @@ Accounts, and audit (`order.to.accountsEdit`, `order.accountsEdit`). Saving is
 not deciding: the order stays in the queue, and a saved edit needs no approval
 again. An order with no order number (a CRM or handset order the ERP never
 took) has no ERP lines behind it, so its Edit order is off with a reason.
+
+**A REASONED "NO" ASKS FOR THE REASON, THEN SHOWS WHAT IT TOUCHES.** Declining
+an order, declining or sending back a TO, and the taker cancelling their own
+TO are `ReasonImpactDialog` (`components/ui/reason-impact-dialog.tsx`): the
+reason box, then the ImpactDialog with the reason held, and only the typed
+confirmation sends both. The acts call `confirmImpact` after their own
+permission check and only once there is a reason, so an empty reason keeps the
+service's words (`accounts-order-decline`, `accounts-to-decline`,
+`accounts-to-send-back`, `crm-to-cancel` in `impact/kinds/order-decisions.ts`).
+Hold is NOT routed through it — it moves nothing a person has to be warned
+about and is undone by Release. HQ's Decline calls `declineOrder` (the
+service) directly, behind its own reason form and confirm, because its row
+acts draw no impact modal; the Accounts action is the one that demands it.

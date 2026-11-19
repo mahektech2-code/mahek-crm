@@ -13,6 +13,8 @@ export const PRICING_AND_PEOPLE_SOURCES: Record<string, () => Promise<ImpactSour
   "price-list-withdrawal": () => import("./price-lists").then((m) => m.priceListWithdrawalImpact),
   /** `removeScope` — one rule saying who a list is for. */
   "price-list-scope": () => import("./price-lists").then((m) => m.priceListScopeImpact),
+  /** `cancelOverride` — a special price that should never have applied. */
+  "pricing-override-cancel": () => import("./price-override").then((m) => m.overrideCancelImpact),
   /** `deleteErpDesignation`. */
   "erp-designation": () => import("./erp-designation").then((m) => m.erpDesignationImpact),
   /** `deletePolicySet` — a named expense policy. */

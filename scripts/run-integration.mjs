@@ -64,6 +64,7 @@ const files = [
   "src/lib/tasks/permissions.integration.test.ts",
   "src/lib/tasks/lists.integration.test.ts",
   "src/lib/crm-accounts-impact.test.ts",
+  "src/lib/order-decisions-impact.test.ts",
   // Adding a customer from Accounts, and it reaching every app on its own.
   "src/lib/customer-create.test.ts",
   // Converting a lead straight to a customer from Accounts — the bypass.

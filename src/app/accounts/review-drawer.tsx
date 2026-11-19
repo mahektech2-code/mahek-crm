@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Button, PaiseInput, cx } from "@/components/ui/primitives";
 import { Drawer, DrawerHeader } from "@/components/ui/overlays";
+import { ReasonImpactDialog } from "@/components/ui/reason-impact-dialog";
 import { VoiceTextarea } from "@/components/ui/dictate";
 import type { useToast } from "@/components/ui/toast";
 import { cleanDecimal, longDate, money, parseRupees, rupeesFromPaise, stamp } from "@/lib/format";
@@ -91,6 +92,8 @@ export function ReviewDrawer({
   const [alloc, setAlloc] = React.useState<AllocationChoice | null>(null);
   /** Which of the two negative paths the reason box is collecting for. */
   const [reasonFor, setReasonFor] = React.useState<"reject" | "hold">("reject");
+  /** Declining an order: the reason typed here, then the impact modal before it is sent. */
+  const [declining, setDeclining] = React.useState<number | null>(null);
 
   React.useEffect(() => {
     const controller = new AbortController();
@@ -167,14 +170,17 @@ export function ReviewDrawer({
   }
 
   async function decideNegative() {
+    if (kind === "orders" && reasonFor !== "hold") {
+      setConflict(null);
+      setDeclining(Date.now());
+      return;
+    }
     setBusy(true);
     setConflict(null);
     try {
       const result =
         kind === "orders"
-          ? reasonFor === "hold"
-            ? await run(holdOrderAction(row.id, holdCode, reason))
-            : await run(declineOrderAction(row.id, reason))
+          ? await run(holdOrderAction(row.id, holdCode, reason))
           : kind === "payments"
             ? // Hold and reject collect the same thing — a sentence somebody
               // downstream repeats — so they share the box and differ only in
@@ -359,6 +365,19 @@ export function ReviewDrawer({
           </>
         )}
       </div>
+      {declining ? (
+        <ReasonImpactDialog
+          key={declining}
+          kind="accounts-order-decline"
+          id={row.id}
+          title="Decline this order"
+          initialReason={reason}
+          confirmLabel="Decline"
+          onClose={() => setDeclining(null)}
+          onConfirm={(why, confirmation) => declineOrderAction(row.id, why, confirmation)}
+          onDone={() => onDecided()}
+        />
+      ) : null}
     </Drawer>
   );
 }

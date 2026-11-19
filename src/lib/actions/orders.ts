@@ -12,6 +12,9 @@ import {
   type AccountsOrderEditView,
 } from "@/lib/services/order-approval-service";
 import { err, fromThrown, type Result } from "@/lib/result";
+import { requireCapability } from "@/lib/access-control";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 
 /**
  * Thin over the service, which owns the capability check. Approving is
@@ -39,11 +42,24 @@ export async function approveOrderAction(orderId: string): Promise<Result> {
   }
 }
 
+/**
+ * The reason first, then the impact modal (`accounts-order-decline`): the
+ * buying cycle, the taker's bell, the ERP lines. Checked after the capability
+ * and only once there is a reason, so a missing reason keeps the service's
+ * own words. HQ declines through `declineOrder` directly, behind its own
+ * reason form and confirmation.
+ */
 export async function declineOrderAction(
   orderId: string,
   reason: string,
+  confirmation?: ImpactConfirmation | null,
 ): Promise<Result> {
   try {
+    await requireCapability("order.approve");
+    if (reason.trim()) {
+      const refusal = await confirmImpact("accounts-order-decline", orderId, confirmation);
+      if (refusal) return refusal;
+    }
     const r = await declineOrder(orderId, reason);
     refresh();
     return r;
