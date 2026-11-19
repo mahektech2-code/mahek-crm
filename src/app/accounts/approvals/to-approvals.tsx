@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Button, controlClass, cx } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/modal";
+import { ReasonImpactDialog } from "@/components/ui/reason-impact-dialog";
 import { CardGrid } from "@/components/ui/card-grid";
 import { useToast } from "@/components/ui/toast";
 import { money, stamp } from "@/lib/format";
@@ -456,23 +457,57 @@ function ReviewDialog({ id, canDecide, onClose, onDone }: { id: string; canDecid
 /* --------------------------------------------------- send back · hold · decline */
 
 function DecisionDialog({ kind, row, onClose, onDone }: { kind: "sendBack" | "hold" | "decline"; row: AccountsToRow; onClose: () => void; onDone: () => void }) {
+  return kind === "hold" ? <HoldDialog row={row} onClose={onClose} onDone={onDone} /> : <RefuseDialog kind={kind} row={row} onClose={onClose} onDone={onDone} />;
+}
+
+/**
+ * Send back and decline: the reason first, then what it touches — the CRM
+ * order beside the TO, the checks already done, the taker's bell. Hold moves
+ * nothing anybody has to be warned about, and keeps its own dialog.
+ */
+function RefuseDialog({ kind, row, onClose, onDone }: { kind: "sendBack" | "decline"; row: AccountsToRow; onClose: () => void; onDone: () => void }) {
+  const { push } = useToast();
+  const taker = row.takenBy.split(" · ")[0];
+  const copy = {
+    sendBack: { title: `Send TO-${row.toNo} back`, sub: "It goes back to whoever took it, to correct and send again.", label: "What needs correcting", submit: "Send back", tell: `${taker} is told, with your reason. They correct it and it comes back here.` },
+    decline: { title: `Decline TO-${row.toNo}`, sub: "No order number is made.", label: "Why", submit: "Decline", tell: `${taker} is told the reason, so they can ring the customer. It is also written on the customer's timeline.` },
+  }[kind];
+  return (
+    <ReasonImpactDialog
+      kind={kind === "sendBack" ? "accounts-to-send-back" : "accounts-to-decline"}
+      id={row.id}
+      title={copy.title}
+      body={
+        <div className="flex flex-col gap-2">
+          <p>{copy.sub}</p>
+          <div className="rounded-[7px] bg-ai-soft px-2.5 py-2 text-[12.5px] text-ai">{copy.tell}</div>
+        </div>
+      }
+      reasonLabel={copy.label}
+      confirmLabel={copy.submit}
+      onClose={onClose}
+      onConfirm={(text, confirmation) => (kind === "sendBack" ? sendBackToAction(row.id, text, confirmation) : declineToAction(row.id, text, confirmation))}
+      onDone={(r) => {
+        if (r.message) push(r.message);
+        onDone();
+      }}
+    />
+  );
+}
+
+function HoldDialog({ row, onClose, onDone }: { row: AccountsToRow; onClose: () => void; onDone: () => void }) {
   const { run } = useToast();
   const [text, setText] = React.useState("");
   const [reason, setReason] = React.useState<string>(ACCOUNTS_HOLD_REASONS[0].code);
   const [error, setError] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const taker = row.takenBy.split(" · ")[0];
-  const copy = {
-    sendBack: { title: `Send TO-${row.toNo} back`, sub: "It goes back to whoever took it, to correct and send again.", label: "What needs correcting", submit: "Send back", tell: `${taker} is told, with your reason. They correct it and it comes back here.` },
-    hold: { title: `Hold TO-${row.toNo}`, sub: "It moves to the held TOs below. Releasing it brings it back to Order approvals.", label: "Remarks", submit: "Put on hold", tell: `${taker} is told the order is on hold.` },
-    decline: { title: `Decline TO-${row.toNo}`, sub: "No order number is made.", label: "Why", submit: "Decline", tell: `${taker} is told the reason, so they can ring the customer. It is also written on the customer's timeline.` },
-  }[kind];
+  const copy = { title: `Hold TO-${row.toNo}`, sub: "It moves to the held TOs below. Releasing it brings it back to Order approvals.", label: "Remarks", submit: "Put on hold", tell: `${taker} is told the order is on hold.` };
 
   async function submit() {
-    if (kind !== "hold" && !text.trim()) return setError(kind === "decline" ? "Say why it is declined" : "Say what needs correcting");
     setBusy(true);
     try {
-      const res = await run(kind === "sendBack" ? sendBackToAction(row.id, text) : kind === "hold" ? holdToAction(row.id, reason, text) : declineToAction(row.id, text));
+      const res = await run(holdToAction(row.id, reason, text));
       if (res.ok) onDone();
       else setError(res.fieldErrors?.[0]?.message ?? res.error);
     } finally {
@@ -494,31 +529,27 @@ function DecisionDialog({ kind, row, onClose, onDone }: { kind: "sendBack" | "ho
       footer={
         <>
           <Button onClick={onClose}>Cancel</Button>
-          <Button variant={kind === "decline" ? "danger" : "primary"} disabled={busy} onClick={() => void submit()}>
+          <Button variant="primary" disabled={busy} onClick={() => void submit()}>
             {copy.submit}
           </Button>
         </>
       }
     >
       <div className="flex flex-col gap-2">
-        {kind === "hold" ? (
-          <>
-            <label htmlFor="to-hold-reason" className="text-[12px] font-medium text-muted">
-              Reason <span className="text-danger">*</span>
-            </label>
-            <select id="to-hold-reason" value={reason} onChange={(e) => setReason(e.target.value)} className={controlClass({ className: "h-9 text-sm" })}>
-              {ACCOUNTS_HOLD_REASONS.map((r) => (
-                <option key={r.code} value={r.code}>
-                  {r.label}
-                </option>
-              ))}
-            </select>
-          </>
-        ) : null}
-        <label htmlFor={`to-${kind}-text`} className="text-[12px] font-medium text-muted">
-          {copy.label} {kind !== "hold" ? <span className="text-danger">*</span> : null}
+        <label htmlFor="to-hold-reason" className="text-[12px] font-medium text-muted">
+          Reason <span className="text-danger">*</span>
         </label>
-        <textarea id={`to-${kind}-text`} rows={4} value={text} onChange={(e) => { setText(e.target.value); setError(""); }} className={controlClass({ invalid: !!error, className: "min-h-[84px] py-2 text-sm" })} />
+        <select id="to-hold-reason" value={reason} onChange={(e) => setReason(e.target.value)} className={controlClass({ className: "h-9 text-sm" })}>
+          {ACCOUNTS_HOLD_REASONS.map((r) => (
+            <option key={r.code} value={r.code}>
+              {r.label}
+            </option>
+          ))}
+        </select>
+        <label htmlFor="to-hold-text" className="text-[12px] font-medium text-muted">
+          {copy.label}
+        </label>
+        <textarea id="to-hold-text" rows={4} value={text} onChange={(e) => { setText(e.target.value); setError(""); }} className={controlClass({ invalid: !!error, className: "min-h-[84px] py-2 text-sm" })} />
         {error ? <p className="text-[12.5px] text-danger">{error}</p> : null}
         <div className="rounded-[7px] bg-ai-soft px-2.5 py-2 text-[12.5px] text-ai">{copy.tell}</div>
       </div>

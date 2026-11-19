@@ -21,6 +21,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Callout, Card, EmptyState, Field, Input, MoneyInput, Select, Td, Textarea, Th, Tr } from "@/components/ui/primitives";
 import { FilterPills, Modal, RowMenu } from "@/components/ui/overlays";
+import { ReasonImpactDialog } from "@/components/ui/reason-impact-dialog";
+import type { ImpactConfirmation } from "@/lib/impact/types";
+import type { Result } from "@/lib/result";
 import { useToast } from "@/components/ui/toast";
 import { longDate, money, parseRupees } from "@/lib/format";
 import { daysUntil, OVERRIDE_STATE_LABEL } from "@/lib/engines/price-overrides";
@@ -226,7 +229,16 @@ export function OverridesScreen({
         <ExtendModal key={extending.id} o={extending} todayIso={todayIso} onClose={() => setExtending(null)} onSave={(d) => done(extendOverride(extending.id, d))} />
       ) : null}
       {cancelling ? (
-        <CancelModal key={cancelling.id} o={cancelling} onClose={() => setCancelling(null)} onSave={(reason) => done(cancelOverride(cancelling.id, reason))} />
+        <CancelModal key={cancelling.id} o={cancelling} onClose={() => setCancelling(null)} onSave={async (reason, confirmation) => {
+            /* Not `done`: a refusal is shown inside the impact modal, not toasted over it. */
+            const r = await cancelOverride(cancelling.id, reason, confirmation);
+            if (r.ok) {
+              if (r.message) push(r.message);
+              for (const w of r.warnings ?? []) push(w);
+              router.refresh();
+            }
+            return r;
+          }} />
       ) : null}
     </>
   );
@@ -505,43 +517,27 @@ function ExtendModal({
   );
 }
 
-function CancelModal({ o, onClose, onSave }: { o: OverrideView; onClose: () => void; onSave: (reason: string) => Promise<{ ok: boolean }> }) {
-  const [reason, setReason] = React.useState("");
-  const [busy, setBusy] = React.useState(false);
+/** The reason first, then what cancelling it changes — what the shop pays from today. */
+function CancelModal({
+  o,
+  onClose,
+  onSave,
+}: {
+  o: OverrideView;
+  onClose: () => void;
+  onSave: (reason: string, confirmation: ImpactConfirmation) => Promise<Result<unknown>>;
+}) {
   return (
-    <Modal
-      open
-      onClose={onClose}
+    <ReasonImpactDialog
+      kind="pricing-override-cancel"
+      id={o.id}
       title={`Cancel ${o.customerName}'s special price`}
-      footer={
-        <>
-          <Button variant="secondary" onClick={onClose}>
-            Keep it
-          </Button>
-          <Button
-            variant="danger"
-            disabled={busy || !reason.trim()}
-            onClick={async () => {
-              setBusy(true);
-              const r = await onSave(reason);
-              setBusy(false);
-              if (r.ok) onClose();
-            }}
-          >
-            Cancel it
-          </Button>
-        </>
-      }
-    >
-      <div className="space-y-4">
-        <p className="text-sm text-body">
-          {o.productName} at {money(o.rateInclGstPaise)} comes off at once{o.state === "live" ? " — from today the shop pays its book price" : ""}. Use End instead
-          if it applied correctly and is simply finishing.
-        </p>
-        <Field label="Why" hint="The person who asked for it reads this.">
-          <Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
-        </Field>
-      </div>
-    </Modal>
+      body={`${o.productName} at ${money(o.rateInclGstPaise)} comes off at once${o.state === "live" ? " — from today the shop pays its book price" : ""}. Use End instead if it applied correctly and is simply finishing.`}
+      reasonLabel="Why"
+      reasonHint="The person who asked for it reads this."
+      confirmLabel="Cancel it"
+      onClose={onClose}
+      onConfirm={onSave}
+    />
   );
 }

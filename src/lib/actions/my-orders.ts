@@ -10,6 +10,8 @@ import { shopRates } from "@/lib/services/price-list-service";
 import { db } from "@/db";
 import { orders, products } from "@/db/schema";
 import { eq, inArray } from "drizzle-orm";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
  * A TELECALLER CHANGES HER OWN TO, and nothing else. Only while it is a TO
@@ -95,7 +97,12 @@ export async function editMyToAction(input: z.input<typeof editSchema>): Promise
   }
 }
 
-export async function cancelMyToAction(input: { intakeId: string; reason: string }): Promise<Result<unknown>> {
+/**
+ * The reason first, then the impact modal: the CRM order beside the TO, the
+ * customer's place on the Call Log. The confirmation is checked after the
+ * door and the TO's own refusals, so those keep their words.
+ */
+export async function cancelMyToAction(input: { intakeId: string; reason: string; confirmation?: ImpactConfirmation | null }): Promise<Result<unknown>> {
   try {
     const user = await requireUser();
     if (!(await canOpenModule(user.id, "crm.my-orders"))) return err("My orders is not part of your access.", "not_permitted");
@@ -103,6 +110,9 @@ export async function cancelMyToAction(input: { intakeId: string; reason: string
     if ("error" in m) return m.error!;
     const s = m.got.intake.status;
     if (s !== "open" && s !== "correction") return err(`TO-${m.got.intake.toNo} can no longer be cancelled from here.`, "rule_violation");
+    if (!input.reason?.trim()) return err("Say why it is cancelled.", "validation");
+    const refusal = await confirmImpact("crm-to-cancel", input.intakeId, input.confirmation);
+    if (refusal) return refusal;
     const res = await cancelIntake(user.id, input.intakeId, input.reason ?? "");
     if (res.ok) refresh();
     return res;

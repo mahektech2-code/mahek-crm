@@ -55,6 +55,17 @@ export const CRM_ACCOUNTS_SOURCES: Record<string, () => Promise<ImpactSource>> =
   "accounts-payout-reopen": () => import("./accounts").then((m) => m.payoutReopenImpact),
   "accounts-payout-invoice": () => import("./accounts").then((m) => m.payoutInvoiceImpact),
 
+  /* ---- An order turned down: the reason first, then this ---- */
+
+  /** `cancelMyToAction` — the taker cancels their own TO from My orders. */
+  "crm-to-cancel": () => import("./order-decisions").then((m) => m.myToCancelImpact),
+  /** `declineToAction` — Accounts decline a TO. */
+  "accounts-to-decline": () => import("./order-decisions").then((m) => m.toDeclineImpact),
+  /** `sendBackToAction` — Accounts send a TO back to whoever took it. */
+  "accounts-to-send-back": () => import("./order-decisions").then((m) => m.toSendBackImpact),
+  /** `declineOrderAction` — Accounts decline a numbered order. */
+  "accounts-order-decline": () => import("./order-decisions").then((m) => m.orderDeclineImpact),
+
   /* ---- Leads ---- */
 
   /** `cancelSample`. */

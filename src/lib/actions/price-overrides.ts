@@ -22,6 +22,8 @@ import {
   syncShopOverrides,
 } from "@/lib/services/price-override-service";
 import { err, fieldErr, fromThrown, ok, okVoid, type Result } from "@/lib/result";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 import type { RequestAdvice, RequestContext, ShopProductFacts } from "@/components/pricing/overrides/types";
 
 /* ---------------------------------------------------------------------------
@@ -168,10 +170,13 @@ export async function endOverride(id: string, endDate: string, reason: string): 
 }
 
 /** Cancel it outright — for a special price that should never have applied. */
-export async function cancelOverride(id: string, reason: string): Promise<Result> {
+export async function cancelOverride(id: string, reason: string, confirmation?: ImpactConfirmation | null): Promise<Result> {
   try {
     const ctx = await requirePriceDesk();
     if (!reason.trim()) return fieldErr("reason", "Say why. The person who asked for it reads this.");
+    /* The reason first, then the impact modal: what the shop pays from today. */
+    const refusal = await confirmImpact("pricing-override-cancel", id, confirmation);
+    if (refusal) return refusal;
     const row = await db.transaction(async (tx) => {
       const o = await lockedOverride(tx, id);
       if (o.cancelledAt) throw new Refused(err("That special price was already cancelled.", "rule_violation"));
