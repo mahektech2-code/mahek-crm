@@ -8,12 +8,12 @@ import {
   type EnquiryFilters,
 } from "@/lib/services/enquiry-service";
 import { EnquiryListScreen } from "@/components/enquiries/enquiry-list-screen";
-import { decodeEnquiryCursors } from "@/lib/enquiry-labels";
+import { ENQUIRY_STAGES, decodeEnquiryCursors } from "@/lib/enquiry-labels";
 import type { EnquiryPriority, EnquiryStage } from "@/lib/enquiry-labels";
 
 export const metadata = { title: "Website Enquiries" };
 
-const STAGES = new Set(["new", "contacted", "follow_up", "qualified", "converted", "closed"]);
+const STAGES = new Set<string>(ENQUIRY_STAGES);
 const PRIORITIES = new Set(["low", "normal", "high", "urgent"]);
 
 export default async function EnquiriesPage({

@@ -1,0 +1,12 @@
+-- A credit note that was issued and then taken back is CANCELLED: its own
+-- status, beside requested, under review, refused and issued. Its money comes
+-- back the way any confirmed receipt's does — the Adjustment receipt is marked
+-- reversed and the bills are rebuilt from what is left — so nothing here
+-- touches a figure. Setting it back to "requested" would put an answered
+-- request on Accounts' queue again, and "rejected" would tell the telecaller
+-- it was never granted, which is untrue.
+--
+-- The value is only declared here, never used: drizzle-kit applies every
+-- pending migration in one transaction, and Postgres refuses to use a value in
+-- the transaction that added it.
+ALTER TYPE "public"."credit_note_status" ADD VALUE IF NOT EXISTS 'cancelled';

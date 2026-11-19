@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Field, Input, Textarea, type Tone } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/modal";
+import { ReasonImpactDialog } from "@/components/ui/reason-impact-dialog";
 import { useToast } from "@/components/ui/toast";
 import { ProductCombobox } from "@/components/products/product-combobox";
 import { cancelMyToAction, editMyToAction, loadMyToAction } from "@/lib/actions/my-orders";
@@ -208,44 +209,25 @@ export function EditToDialog({ intakeId, onClose, correcting = false }: { intake
   );
 }
 
+/** The reason first, then what cancelling it touches — the CRM order beside it, the Call Log. */
 export function CancelToDialog({ intakeId, title, onClose }: { intakeId: string; title: string; onClose: () => void }) {
   const router = useRouter();
-  const { run } = useToast();
-  const [reason, setReason] = React.useState("");
-  const [busy, setBusy] = React.useState(false);
+  const { push } = useToast();
   return (
-    <Modal
-      open
-      onClose={onClose}
+    <ReasonImpactDialog
+      kind="crm-to-cancel"
+      id={intakeId}
       title={`Cancel ${title}`}
-      footer={
-        <>
-          <Button onClick={onClose}>Keep it</Button>
-          <Button
-            variant="danger"
-            disabled={busy || !reason.trim()}
-            onClick={async () => {
-              setBusy(true);
-              try {
-                const res = await run(cancelMyToAction({ intakeId, reason }));
-                if (res.ok) {
-                  onClose();
-                  router.refresh();
-                }
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            Cancel the TO
-          </Button>
-        </>
-      }
-    >
-      <Field label="Why is it cancelled?" required>
-        <Textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)} />
-      </Field>
-    </Modal>
+      body="Accounts stop seeing it, and no order number is made. Use Change instead if only the products or cans are wrong."
+      reasonLabel="Why is it cancelled?"
+      confirmLabel="Cancel the TO"
+      onClose={onClose}
+      onConfirm={(reason, confirmation) => cancelMyToAction({ intakeId, reason, confirmation })}
+      onDone={(r) => {
+        if (r.message) push(r.message);
+        router.refresh();
+      }}
+    />
   );
 }
 

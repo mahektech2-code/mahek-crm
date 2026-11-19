@@ -56,6 +56,7 @@ export async function confirmAnswer(execId: string, questionKey: string, input: 
     const { exec, b, stage } = loaded;
     if (exec.supersededById) return err("This run of the stage was superseded by a correction — score the current one.", "rule_violation");
     if (exec.status === "completed") return err(`${stage.name} is already completed. Use “Correct this stage” to reopen it as a new record.`, "rule_violation");
+    if (exec.status === "skipped") return err(`${stage.name} was cancelled — the candidate was withdrawn.`, "rule_violation");
     const q = stage.questions.find((x) => x.key === questionKey);
     if (!q) return err("That question is not in this stage.", "not_found");
     const prev = (await currentAnswers(exec.id)).filter((a) => a.questionKey === q.key).pop();
@@ -209,6 +210,7 @@ export async function completeStage(execId: string, grace: number, graceReason: 
     const { exec, b, stage } = loaded;
     if (exec.supersededById) return err("This run of the stage was superseded.", "rule_violation");
     if (exec.status === "completed") return err(`${stage.name} is already completed.`, "rule_violation");
+    if (exec.status === "skipped") return err(`${stage.name} was cancelled — the candidate was withdrawn.`, "rule_violation");
     const problem = graceProblem(stage, grace, graceReason);
     if (problem) return { ok: false, error: problem, code: "validation", fieldErrors: [{ field: "graceReason", message: problem }] };
     const answers = await currentAnswers(exec.id);

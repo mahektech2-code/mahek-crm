@@ -135,8 +135,12 @@ export async function eodMetricsForRange(
         and a.attempted_at >= ${w.start}::timestamptz and a.attempted_at < ${w.end}::timestamptz)::int as follow_ups,
       (select count(*) from follow_up_attempts a where a.user_id = ${userId}
         and a.promised_amount is not null
+        -- A cancelled promise is not a promise taken: it drops out of the count
+        -- and the value (owner's decision), though the call itself still counts.
+        and a.promise_cancelled_at is null
         and a.attempted_at >= ${w.start}::timestamptz and a.attempted_at < ${w.end}::timestamptz)::int as promises_count,
       (select coalesce(sum(a.promised_amount),0) from follow_up_attempts a where a.user_id = ${userId}
+        and a.promise_cancelled_at is null
         and a.attempted_at >= ${w.start}::timestamptz and a.attempted_at < ${w.end}::timestamptz) as promises_value,
       -- paid_at is a DATE, not a timestamp, so it is compared against the
       -- span's dates rather than its instants. Inclusive of both ends.

@@ -428,6 +428,45 @@ access picture they held. People & access has a **Left, still enabled** tab and
 tile: HRMS says they left (`employeeStatus` inactive) and the account still
 signs in. Never yourself; never the last platform administrator.
 
+**THE PERSON PAGE NAMES EVERY SCOPE SET ELSEWHERE.** Its "Set elsewhere" card
+(`person-access-extras-service.ts`) now also reads the Sales Dashboard's
+oversight regions and working places, and live website assignments. A person
+whose manager-level grant in the CRM, the Sales Dashboard or Founder makes
+regions decide what they see (`managerScope`), and who has none, gets a warning
+line: no region means the WHOLE COUNTRY, and that used to be invisible. ERP
+godown staff are offered and saved under a label that names one person (the
+name, or name with email where two share it) and mapped to the id — matching on
+names gave a godown to every namesake.
+
+**THE DOORS ROUND THE CONSOLE ARE SHUT (Nov 2026).** Three places granted apps
+without a platform administrator, and each now defers to one:
+- **Locker's own access screen** (`setLockerModules`) changes the screens of
+  somebody who already holds the Locker, and takes it away; GIVING the app to
+  somebody new needs `isPlatformAdmin`. Every change is also written to
+  `audit_log` as `locker.access.changed`, so the person's Audit tab sees it.
+- **Hire's provisioning** refuses a blueprint that grants `NEVER_PROVISIONED`
+  (`lib/apps.ts`: admin, founder, hire) on the server, as a blocker — the
+  blueprint editor hiding them was the only guard before.
+- **`hire:deploy`** gives each platform admin Hire ONCE: the `installed` line
+  on `hire_audit` is its memory, so Hire taken away on the console stays away
+  through later deploys.
+And **a template never carries platform Admin** (`grantsPlatformAdmin`, refused
+on save and on apply): it is given one person at a time on their Manage page.
+Bulk take-away on Powers has a review step naming the people, and designation
+Sync names who it brings up before it runs.
+
+**COPYING, TEMPLATES AND TAKING AWAY IN BULK.** The Manage dialog has **Copy
+from** a person: it fills the draft (apps, levels, screens, powers, ERP
+designation, Hire role) and the review still compares against what THIS person
+holds, so whatever the copy removes is named and confirmed. Platform Admin and
+the factory seat are never copied. Job templates carry the ERP designation and
+Hire role too (`AccessTemplateShape.hireRole` / `erpDesignationId`), applied only
+to somebody the template gives that app. People & access's selection bar can
+**Take an app away** (`takeAppFrom`): the names that lose it are listed and the
+app's name is typed — checked on the server — and each person is then saved
+through `setAccess` with their own impact confirmation read for them. Never the
+Admin Console, never yourself.
+
 **EVERYBODY HOLDS HRMS, AS AN ASSOCIATE — and `hrms-for-everyone` fills the
 gap.** The Access dialog starts every person with HRMS ticked (`startingDraft`
 in `app/admin/access-section.tsx`). Accounts set up before that rule are given

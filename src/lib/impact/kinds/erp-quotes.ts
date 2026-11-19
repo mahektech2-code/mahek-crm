@@ -2,7 +2,7 @@ import "server-only";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { erpQuoteRows } from "@/db/schema";
-import { LIVE_PO, requirementLabel } from "@/lib/erp/engines/purchase-flow";
+import { LIVE_PO, RECEIVABLE_PO, requirementLabel } from "@/lib/erp/engines/purchase-flow";
 import { QM_RAISED_REMARK } from "@/lib/erp/screens/requirement-po";
 import { nf } from "@/lib/erp/ui";
 import type { ImpactItem } from "../types";
@@ -14,9 +14,10 @@ import { erpMayDelete, many, present } from "./erp-common";
  * Typing, pasting and colouring are undone with Ctrl+Z and touch nothing but
  * the sheet. Undoing a purchase reaches the ERP: Purchase it wrote a purchase
  * order line, possibly a whole PO, and a requirement it was put against — all
- * three move back when the rate stops being bought. And deleting a row that
- * holds a bought rate leaves that PO standing while the sheet stops showing
- * where it came from, so a requirement can no longer link its number.
+ * three move back when the rate stops being bought. And a row that holds a
+ * bought rate whose PO is still open is refused deletion — the PO would go on
+ * receiving with nothing on the sheet saying where it came from. Undo the
+ * purchase (or close the PO short) first.
  *
  * Those are the two the grid asks about before it saves, and the save refuses
  * without the confirmation (`applyQuoteOps`).
@@ -62,20 +63,34 @@ export const quoteRowImpact: ImpactSource = {
       },
       {
         app: "ERP",
-        label: `bought ${many(bought.length, "rate")} on the row — their purchase orders stay`,
+        label: `bought ${many(bought.length, "rate")} on the row — their finished purchase orders stay`,
         effect: "kept",
         count: bought.length,
         examples: bought.slice(0, 5).map((c) => `${c.material || "Untitled"} · ${c.poNo ?? "no PO number"}`),
-        note: "The POs stay in Purchase orders and go on receiving, but the sheet stops showing where they were bought, and a requirement can no longer link these PO numbers. Undo the purchase first if it should go too.",
+        note: "Only a PO already received or closed lets the row go; it stays in Purchase orders, but the sheet stops showing where it was bought.",
       },
     ];
+    /* A PO still open on a rate of this row would go on receiving with nothing on the sheet saying
+       where it was bought. The row is refused until each purchase is undone (or its PO closed short);
+       a PO already received or closed is history, and the row may go. */
+    const open = (await db.execute(sql`
+      select distinct o.qm_po_no as "poNo"
+        from erp_po_lines l join erp_purchase_orders o on o.id = l.po_id
+       where l.quote_row_id = ${id} and o.source = 'quotation_manager'
+         and o.status in (${sql.join(RECEIVABLE_PO.map((x) => sql`${x}`), sql`, `)})
+    `)) as unknown as { poNo: string | null }[];
+    const blockers = open.length
+      ? [
+          `${open.length === 1 ? "A purchase order is" : `${open.length} purchase orders are`} still open on this row (${open.map((p) => p.poNo ?? "no number").join(", ")}). Undo the purchase on each rate first — or close the PO short on Purchase orders if goods arrived — then delete the row.`,
+        ]
+      : [];
     const party = row.party.trim();
     return {
       title: `${party || "the untitled row"} · ${row.quoteDate}`,
       verb: "Delete",
       confirmWord: party && party.length <= 40 ? party : "DELETE",
       items: present(items),
-      blockers: [],
+      blockers,
     };
   },
 };

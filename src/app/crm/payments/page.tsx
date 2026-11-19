@@ -151,6 +151,7 @@ export default async function PaymentsPage({
       showAssignee={scope === "team"}
       canBulk={await canFor(user, "whatsapp.bulk")}
       canExport={await canFor(user, "customer.export")}
+      canCancelPromise={await canFor(user, "reminder.close")}
       aging={aging}
       workingDaysLeft={workingDaysLeft}
       plan={plan}

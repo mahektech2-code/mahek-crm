@@ -57,7 +57,7 @@ export async function globalSearch(qRaw: string): Promise<(SearchHit & { rk: Sea
     `),
     db
       .execute<{ id: string; name: string | null; company: string | null; stage: string }>(sql`
-        select e.id, e.raw_submission->>'name' as name, e.raw_submission->>'company' as company, e.stage::text as stage
+        select e.id, (e.raw_submission || coalesce(e.corrections, '{}'::jsonb))->>'name' as name, (e.raw_submission || coalesce(e.corrections, '{}'::jsonb))->>'company' as company, e.stage::text as stage
           from enquiries e where e.search_text ilike ${like}
          order by e.received_at desc limit 3
       `)
@@ -238,7 +238,7 @@ export async function searchRecord(kind: SearchKind, id: string): Promise<Record
     };
   }
   const [e] = await db.execute<Record<string, string | null>>(sql`
-    select e.*, e.stage::text as stage_t, e.priority::text as prio, u.name as who, e.raw_submission::text as raw
+    select e.*, e.stage::text as stage_t, e.priority::text as prio, u.name as who, (e.raw_submission || coalesce(e.corrections, '{}'::jsonb))::text as raw
       from enquiries e left join users u on u.id = e.assigned_to_id where e.id = ${id}
   `);
   if (!e) throw new Error("That enquiry no longer exists.");

@@ -30,18 +30,27 @@ import type { Result } from "@/lib/result";
  * by person, and the result names who moved and who was skipped and why.
  * ------------------------------------------------------------------------- */
 
-type Overview = { powers: PowerOverview[]; screens: ScreenOverview[]; people: { userId: string; name: string; apps: string[] }[] };
+type Overview = {
+  powers: PowerOverview[];
+  screens: ScreenOverview[];
+  people: { userId: string; name: string; apps: string[] }[];
+};
 
 /** Shipped in the last three weeks — new enough that nobody may have decided it for anyone. */
 function isRecent(since: string | null, today: string): boolean {
   if (!since) return false;
-  const days = (Date.parse(`${today}T00:00:00Z`) - Date.parse(`${since}T00:00:00Z`)) / 86_400_000;
+  const days =
+    (Date.parse(`${today}T00:00:00Z`) - Date.parse(`${since}T00:00:00Z`)) /
+    86_400_000;
   return days >= 0 && days <= 21;
 }
 
 function NewMark({ since }: { since: string }) {
   return (
-    <span title={`Shipped ${dayLabel(since)}`} className="flex-none rounded-[3px] bg-brand-soft px-1 text-[10px] font-medium text-brand-hover">
+    <span
+      title={`Shipped ${dayLabel(since)}`}
+      className="flex-none rounded-[3px] bg-brand-soft px-1 text-[10px] font-medium text-brand-hover"
+    >
       new
     </span>
   );
@@ -89,22 +98,44 @@ function problemOf(p: PowerOverview): Problem {
   return "none";
 }
 
-function PowersTab({ powers, people, today, onDone }: { powers: PowerOverview[]; people: Overview["people"]; today: string; onDone: (t: string, r: BulkOutcome) => void }) {
+function PowersTab({
+  powers,
+  people,
+  today,
+  onDone,
+}: {
+  powers: PowerOverview[];
+  people: Overview["people"];
+  today: string;
+  onDone: (t: string, r: BulkOutcome) => void;
+}) {
   const [app, setApp] = React.useState("all");
   const [q, setQ] = React.useState("");
   const [onlyProblems, setOnlyProblems] = React.useState(false);
   const [adding, setAdding] = React.useState<PowerOverview | null>(null);
   const [removing, setRemoving] = React.useState<PowerOverview | null>(null);
 
-  const stuck = powers.filter((p) => p.waiting && p.waiting.n > 0 && !p.holders.some((h) => h.how === "row"));
+  const stuck = powers.filter(
+    (p) =>
+      p.waiting && p.waiting.n > 0 && !p.holders.some((h) => h.how === "row"),
+  );
   const nobody = powers.filter((p) => !p.holders.some((h) => h.how === "row"));
   const needle = q.trim().toLowerCase();
   const shown = powers
     .filter((p) => app === "all" || p.app === app)
-    .filter((p) => !needle || `${p.label} ${p.source} ${p.key}`.toLowerCase().includes(needle))
+    .filter(
+      (p) =>
+        !needle ||
+        `${p.label} ${p.source} ${p.key}`.toLowerCase().includes(needle),
+    )
     .filter((p) => !onlyProblems || problemOf(p) !== "none")
     .sort((a, b) => {
-      const w = (p: PowerOverview) => (p.waiting && p.waiting.n > 0 && !p.holders.some((h) => h.how === "row") ? 0 : problemOf(p) !== "none" ? 1 : 2);
+      const w = (p: PowerOverview) =>
+        p.waiting && p.waiting.n > 0 && !p.holders.some((h) => h.how === "row")
+          ? 0
+          : problemOf(p) !== "none"
+            ? 1
+            : 2;
       return w(a) - w(b);
     });
 
@@ -113,9 +144,17 @@ function PowersTab({ powers, people, today, onDone }: { powers: PowerOverview[];
       {stuck.length ? (
         <Callout tone="danger">
           <div>
-            <div className="font-medium text-ink">Work is waiting on {stuck.length === 1 ? "a power" : `${stuck.length} powers`} nobody holds</div>
+            <div className="font-medium text-ink">
+              Work is waiting on{" "}
+              {stuck.length === 1 ? "a power" : `${stuck.length} powers`} nobody
+              holds
+            </div>
             <div className="text-[13px] text-body">
-              {stuck.map((p) => `${p.waiting!.n} ${p.waiting!.what} (${p.label})`).join(" · ")}. Only an administrator can clear them today — give the power to the person whose job it is.
+              {stuck
+                .map((p) => `${p.waiting!.n} ${p.waiting!.what} (${p.label})`)
+                .join(" · ")}
+              . Only an administrator can clear them today — give the power to
+              the person whose job it is.
             </div>
           </div>
         </Callout>
@@ -131,13 +170,29 @@ function PowersTab({ powers, people, today, onDone }: { powers: PowerOverview[];
             { key: "tasks", label: "Tasks" },
           ]}
         />
-        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search powers" className="w-64" aria-label="Search powers" />
-        <Checkbox checked={onlyProblems} onChange={(e) => setOnlyProblems(e.target.checked)} label={`Only powers nobody holds by name (${nobody.length})`} />
+        <Input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search powers"
+          className="w-64"
+          aria-label="Search powers"
+        />
+        <Checkbox
+          checked={onlyProblems}
+          onChange={(e) => setOnlyProblems(e.target.checked)}
+          label={`Only powers nobody holds by name (${nobody.length})`}
+        />
       </div>
       {shown.length ? (
         <div className="grid gap-3">
           {shown.map((p) => (
-            <PowerCard key={p.id} p={p} today={today} onAdd={() => setAdding(p)} onRemove={() => setRemoving(p)} />
+            <PowerCard
+              key={p.id}
+              p={p}
+              today={today}
+              onAdd={() => setAdding(p)}
+              onRemove={() => setRemoving(p)}
+            />
           ))}
         </div>
       ) : (
@@ -155,13 +210,30 @@ function PowersTab({ powers, people, today, onDone }: { powers: PowerOverview[];
               : `Held by row; an ${adding.appName} administrator already holds it.`
           }
           options={[
-            ...adding.candidates.map((c) => ({ id: c.userId, name: c.name, note: "" })),
-            ...people.filter((x) => !x.apps.includes(adding.app)).map((x) => ({ id: x.userId, name: x.name, note: `no ${adding.appName} yet` })),
+            ...adding.candidates.map((c) => ({
+              id: c.userId,
+              name: c.name,
+              note: "",
+            })),
+            ...people
+              .filter((x) => !x.apps.includes(adding.app))
+              .map((x) => ({
+                id: x.userId,
+                name: x.name,
+                note: `no ${adding.appName} yet`,
+              })),
           ]}
           extraToggle={`Also give ${adding.appName} (as an associate) to anybody picked who does not hold it`}
           confirm="Give the power"
           onClose={() => setAdding(null)}
-          onSubmit={(ids, extra) => bulkPower({ power: adding.id, on: true, userIds: ids, grantApp: extra })}
+          onSubmit={(ids, extra) =>
+            bulkPower({
+              power: adding.id,
+              on: true,
+              userIds: ids,
+              grantApp: extra,
+            })
+          }
           onDone={(r) => {
             setAdding(null);
             onDone(`Gave “${adding.label}”`, r);
@@ -173,11 +245,15 @@ function PowersTab({ powers, people, today, onDone }: { powers: PowerOverview[];
           key={`rm-${removing.id}`}
           title={`Take away “${removing.label}”`}
           intro="Only grants by name can be taken away here. An administrator of the app holds every power of it — lower their level on their Access page instead."
-          options={removing.holders.filter((h) => h.how === "row").map((h) => ({ id: h.userId, name: h.name, note: "" }))}
+          options={removing.holders
+            .filter((h) => h.how === "row")
+            .map((h) => ({ id: h.userId, name: h.name, note: "" }))}
           confirm="Take it away"
           danger
           onClose={() => setRemoving(null)}
-          onSubmit={(ids) => bulkPower({ power: removing.id, on: false, userIds: ids })}
+          onSubmit={(ids) =>
+            bulkPower({ power: removing.id, on: false, userIds: ids })
+          }
           onDone={(r) => {
             setRemoving(null);
             onDone(`Took away “${removing.label}”`, r);
@@ -188,46 +264,97 @@ function PowersTab({ powers, people, today, onDone }: { powers: PowerOverview[];
   );
 }
 
-function PowerCard({ p, today, onAdd, onRemove }: { p: PowerOverview; today: string; onAdd: () => void; onRemove: () => void }) {
+function PowerCard({
+  p,
+  today,
+  onAdd,
+  onRemove,
+}: {
+  p: PowerOverview;
+  today: string;
+  onAdd: () => void;
+  onRemove: () => void;
+}) {
   const byRow = p.holders.filter((h) => h.how === "row");
   const admins = p.holders.filter((h) => h.how === "admin");
   const waitingStuck = p.waiting && p.waiting.n > 0 && !byRow.length;
   return (
-    <Card className={cx("px-5 py-4", waitingStuck ? "border-l-[3px] border-l-danger" : !byRow.length ? "border-l-[3px] border-l-warn" : null)}>
+    <Card
+      className={cx(
+        "px-5 py-4",
+        waitingStuck
+          ? "border-l-[3px] border-l-danger"
+          : !byRow.length
+            ? "border-l-[3px] border-l-warn"
+            : null,
+      )}
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-semibold text-ink">{p.label}</span>
             <Badge tone="neutral">{p.appName}</Badge>
-            {p.since && isRecent(p.since, today) ? <NewMark since={p.since} /> : null}
+            {p.since && isRecent(p.since, today) ? (
+              <NewMark since={p.since} />
+            ) : null}
             {p.waiting ? (
-              <Badge tone={p.waiting.n > 0 ? (byRow.length ? "warn" : "danger") : "neutral"}>
+              <Badge
+                tone={
+                  p.waiting.n > 0
+                    ? byRow.length
+                      ? "warn"
+                      : "danger"
+                    : "neutral"
+                }
+              >
                 {p.waiting.n} {p.waiting.what}
               </Badge>
             ) : null}
           </div>
           <p className="mt-1 max-w-[860px] text-[13px] text-body">{p.source}</p>
           {p.screens.length ? (
-            <div className="mt-1 text-[12px] text-muted">Used on: {p.screens.map((s) => s.label).join(", ")}</div>
+            <div className="mt-1 text-[12px] text-muted">
+              Used on: {p.screens.map((s) => s.label).join(", ")}
+            </div>
           ) : null}
           <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[13px]">
             {byRow.length ? (
               byRow.map((h) => (
-                <Link key={h.userId} href={ADMIN.person(h.userId, "apps")} className="rounded-full border border-line bg-canvas px-2 py-0.5 text-body no-underline hover:border-line-strong">
+                <Link
+                  key={h.userId}
+                  href={ADMIN.person(h.userId, "apps")}
+                  className="rounded-full border border-line bg-canvas px-2 py-0.5 text-body no-underline hover:border-line-strong"
+                >
                   {h.name}
                 </Link>
               ))
             ) : (
-              <span className={waitingStuck ? "font-medium text-danger" : "text-warn"}>Nobody holds it by name.</span>
+              <span
+                className={
+                  waitingStuck ? "font-medium text-danger" : "text-warn"
+                }
+              >
+                Nobody holds it by name.
+              </span>
             )}
-            {admins.length ? <span className="text-muted">· and {admins.map((a) => a.name).join(", ")} as {p.appName} administrator{admins.length === 1 ? "" : "s"}</span> : null}
+            {admins.length ? (
+              <span className="text-muted">
+                · and {admins.map((a) => a.name).join(", ")} as {p.appName}{" "}
+                administrator{admins.length === 1 ? "" : "s"}
+              </span>
+            ) : null}
           </div>
         </div>
         <div className="flex flex-none gap-2">
           <Button size="sm" variant="primary" onClick={onAdd}>
             Give to…
           </Button>
-          <Button size="sm" onClick={onRemove} disabled={!byRow.length} title={byRow.length ? undefined : "Nobody holds it by name"}>
+          <Button
+            size="sm"
+            onClick={onRemove}
+            disabled={!byRow.length}
+            title={byRow.length ? undefined : "Nobody holds it by name"}
+          >
             Take away…
           </Button>
         </div>
@@ -304,9 +431,23 @@ function SeatTable({ groups, empty }: { groups: SeatGroup[]; empty: string }) {
 
 /* ================================================================ screens */
 
-function ScreensTab({ screens, people, today, onDone }: { screens: ScreenOverview[]; people: Overview["people"]; today: string; onDone: (t: string, r: BulkOutcome) => void }) {
-  const apps = [...new Map(screens.map((s) => [s.app, s.appName])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  const [app, setApp] = React.useState<string>(apps.find(([a]) => a === "erp")?.[0] ?? apps[0]?.[0] ?? "");
+function ScreensTab({
+  screens,
+  people,
+  today,
+  onDone,
+}: {
+  screens: ScreenOverview[];
+  people: Overview["people"];
+  today: string;
+  onDone: (t: string, r: BulkOutcome) => void;
+}) {
+  const apps = [
+    ...new Map(screens.map((s) => [s.app, s.appName])).entries(),
+  ].sort((a, b) => a[1].localeCompare(b[1]));
+  const [app, setApp] = React.useState<string>(
+    apps.find(([a]) => a === "erp")?.[0] ?? apps[0]?.[0] ?? "",
+  );
   const [q, setQ] = React.useState("");
   const [onlyMissing, setOnlyMissing] = React.useState(false);
   const [giving, setGiving] = React.useState<ScreenOverview | null>(null);
@@ -314,30 +455,54 @@ function ScreensTab({ screens, people, today, onDone }: { screens: ScreenOvervie
   const needle = q.trim().toLowerCase();
   const shown = screens
     .filter((s) => s.app === app)
-    .filter((s) => !needle || `${s.label} ${s.group}`.toLowerCase().includes(needle))
+    .filter(
+      (s) => !needle || `${s.label} ${s.group}`.toLowerCase().includes(needle),
+    )
     .filter((s) => !onlyMissing || s.missing.length > 0);
-  const newMissing = screens.filter((s) => s.since && isRecent(s.since, today) && s.missing.length);
+  const newMissing = screens.filter(
+    (s) => s.since && isRecent(s.since, today) && s.missing.length,
+  );
 
   return (
     <>
       {newMissing.length ? (
         <Callout tone="warn">
           <div className="text-[13px] text-body">
-            <span className="font-medium text-ink">New screens some people cannot open: </span>
-            {newMissing.map((s) => `${s.appName} ${s.label} (${s.missing.length})`).join(" · ")}. A narrowed grant does not receive new screens by itself.
+            <span className="font-medium text-ink">
+              New screens some people cannot open:{" "}
+            </span>
+            {newMissing
+              .map((s) => `${s.appName} ${s.label} (${s.missing.length})`)
+              .join(" · ")}
+            . A narrowed grant does not receive new screens by itself.
           </div>
         </Callout>
       ) : null}
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <Select value={app} onChange={(e) => setApp(e.target.value)} aria-label="App" className="w-56">
+        <Select
+          value={app}
+          onChange={(e) => setApp(e.target.value)}
+          aria-label="App"
+          className="w-56"
+        >
           {apps.map(([a, n]) => (
             <option key={a} value={a}>
               {n}
             </option>
           ))}
         </Select>
-        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search screens" className="w-64" aria-label="Search screens" />
-        <Checkbox checked={onlyMissing} onChange={(e) => setOnlyMissing(e.target.checked)} label="Only screens somebody with the app cannot open" />
+        <Input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search screens"
+          className="w-64"
+          aria-label="Search screens"
+        />
+        <Checkbox
+          checked={onlyMissing}
+          onChange={(e) => setOnlyMissing(e.target.checked)}
+          label="Only screens somebody with the app cannot open"
+        />
       </div>
       <Card>
         <table className="w-full text-[13px]">
@@ -345,27 +510,55 @@ function ScreensTab({ screens, people, today, onDone }: { screens: ScreenOvervie
             <tr className="border-b border-divider text-left text-muted">
               <th className="px-5 py-2.5 font-medium">Screen</th>
               <th className="px-3 py-2.5 font-medium">Can open</th>
-              <th className="px-3 py-2.5 font-medium">Holds the app but cannot open it</th>
+              <th className="px-3 py-2.5 font-medium">
+                Holds the app but cannot open it
+              </th>
               <th className="px-5 py-2.5" />
             </tr>
           </thead>
           <tbody>
             {shown.map((s) => (
-              <tr key={s.key} className="border-b border-divider align-top last:border-0">
+              <tr
+                key={s.key}
+                className="border-b border-divider align-top last:border-0"
+              >
                 <td className="px-5 py-2.5">
                   <div className="flex items-center gap-1.5 font-medium text-ink">
                     {s.label}
-                    {s.since && isRecent(s.since, today) ? <NewMark since={s.since} /> : null}
+                    {s.since && isRecent(s.since, today) ? (
+                      <NewMark since={s.since} />
+                    ) : null}
                   </div>
                   <div className="text-[12px] text-muted">{s.group}</div>
                 </td>
-                <td className="px-3 py-2.5 text-body">{s.holders.length ? s.holders.map((h) => h.name).join(", ") : <span className="text-warn">Nobody</span>}</td>
-                <td className="px-3 py-2.5 text-body">{s.missing.length ? s.missing.map((h) => h.name).join(", ") : <span className="text-muted">—</span>}</td>
+                <td className="px-3 py-2.5 text-body">
+                  {s.holders.length ? (
+                    s.holders.map((h) => h.name).join(", ")
+                  ) : (
+                    <span className="text-warn">Nobody</span>
+                  )}
+                </td>
+                <td className="px-3 py-2.5 text-body">
+                  {s.missing.length ? (
+                    s.missing.map((h) => h.name).join(", ")
+                  ) : (
+                    <span className="text-muted">—</span>
+                  )}
+                </td>
                 <td className="px-5 py-2.5 text-right whitespace-nowrap">
-                  <Button size="sm" variant="primary" onClick={() => setGiving(s)}>
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    onClick={() => setGiving(s)}
+                  >
                     Give to…
                   </Button>{" "}
-                  <Button size="sm" onClick={() => setTaking(s)} disabled={!s.holders.length} title={s.holders.length ? undefined : "Nobody can open it"}>
+                  <Button
+                    size="sm"
+                    onClick={() => setTaking(s)}
+                    disabled={!s.holders.length}
+                    title={s.holders.length ? undefined : "Nobody can open it"}
+                  >
                     Take away…
                   </Button>
                 </td>
@@ -381,13 +574,30 @@ function ScreensTab({ screens, people, today, onDone }: { screens: ScreenOvervie
           title={`Give the ${giving.appName} screen “${giving.label}”`}
           intro="People who hold the whole app already open it. Ticking it for a narrowed grant adds just this screen."
           options={[
-            ...giving.missing.map((m) => ({ id: m.userId, name: m.name, note: "" })),
-            ...people.filter((x) => !x.apps.includes(giving.app)).map((x) => ({ id: x.userId, name: x.name, note: `no ${giving.appName} yet` })),
+            ...giving.missing.map((m) => ({
+              id: m.userId,
+              name: m.name,
+              note: "",
+            })),
+            ...people
+              .filter((x) => !x.apps.includes(giving.app))
+              .map((x) => ({
+                id: x.userId,
+                name: x.name,
+                note: `no ${giving.appName} yet`,
+              })),
           ]}
           extraToggle={`Also give ${giving.appName} (as an associate, this screen only) to anybody picked who does not hold it`}
           confirm="Give the screen"
           onClose={() => setGiving(null)}
-          onSubmit={(ids, extra) => bulkScreen({ module: giving.key, on: true, userIds: ids, grantApp: extra })}
+          onSubmit={(ids, extra) =>
+            bulkScreen({
+              module: giving.key,
+              on: true,
+              userIds: ids,
+              grantApp: extra,
+            })
+          }
           onDone={(r) => {
             setGiving(null);
             onDone(`Gave ${giving.label}`, r);
@@ -399,11 +609,17 @@ function ScreensTab({ screens, people, today, onDone }: { screens: ScreenOvervie
           key={`take-${taking.key}`}
           title={`Take away “${taking.label}”`}
           intro="Somebody who holds the whole app becomes narrowed to every other screen, and stops receiving new screens by themselves."
-          options={taking.holders.map((h) => ({ id: h.userId, name: h.name, note: h.whole ? "whole app" : "" }))}
+          options={taking.holders.map((h) => ({
+            id: h.userId,
+            name: h.name,
+            note: h.whole ? "whole app" : "",
+          }))}
           confirm="Take it away"
           danger
           onClose={() => setTaking(null)}
-          onSubmit={(ids) => bulkScreen({ module: taking.key, on: false, userIds: ids })}
+          onSubmit={(ids) =>
+            bulkScreen({ module: taking.key, on: false, userIds: ids })
+          }
           onDone={(r) => {
             setTaking(null);
             onDone(`Took away ${taking.label}`, r);
@@ -416,20 +632,34 @@ function ScreensTab({ screens, people, today, onDone }: { screens: ScreenOvervie
 
 /* ================================================================ templates */
 
-const levelWord = (l: string) => (l === "admin" ? "admin" : l === "manager" ? "manager" : "associate");
+const levelWord = (l: string) =>
+  l === "admin" ? "admin" : l === "manager" ? "manager" : "associate";
 
 function shapeSummary(t: TemplateRow): string[] {
-  const out = t.shape.apps.map((a) => `${getApp(a.app)?.name ?? a.app} — ${levelWord(a.role)}, ${a.modules == null ? "every screen" : `${a.modules.length} screen${a.modules.length === 1 ? "" : "s"}`}`);
+  const out = t.shape.apps.map(
+    (a) =>
+      `${getApp(a.app)?.name ?? a.app} — ${levelWord(a.role)}, ${a.modules == null ? "every screen" : `${a.modules.length} screen${a.modules.length === 1 ? "" : "s"}`}`,
+  );
   const powers = [
     ...t.shape.erpPowers.map((k) => powerById(`erp.${k}`)?.label ?? k),
     ...t.shape.hrmsPowers.map((k) => powerById(`hrms.${k}`)?.label ?? k),
     ...t.shape.taskPowers.map((k) => powerById(`tasks.${k}`)?.label ?? k),
   ];
   if (powers.length) out.push(`Powers: ${powers.join(", ")}`);
+  if (t.shape.hireRole) out.push(`Hire role: ${t.shape.hireRole.replace(/_/g, " ")}`);
+  if (t.shape.erpDesignationId) out.push("Carries an ERP designation");
   return out;
 }
 
-function TemplatesTab({ templates, people, onDone }: { templates: TemplateRow[]; people: Overview["people"]; onDone: (t: string, r: BulkOutcome) => void }) {
+function TemplatesTab({
+  templates,
+  people,
+  onDone,
+}: {
+  templates: TemplateRow[];
+  people: Overview["people"];
+  onDone: (t: string, r: BulkOutcome) => void;
+}) {
   const toast = useToast();
   const router = useRouter();
   const [creating, setCreating] = React.useState(false);
@@ -441,7 +671,7 @@ function TemplatesTab({ templates, people, onDone }: { templates: TemplateRow[];
     <>
       <Callout tone="info">
         <div className="text-[13px] text-body">
-          A job template is a named shape of access across every app — the apps, the level each is held at, the screens and the powers. Applying one only ever <b>adds</b>: it never takes anything away, and editing a template later moves nobody. Make one from somebody who already has the right access.
+          A job template is a named shape of access across every app — the apps, the level each is held at, the screens, the powers, and the ERP designation and Hire role where the person it was made from had them. Applying one only ever <b>adds</b>: it never takes anything away, and editing a template later moves nobody. Make one from somebody who already has the right access.
         </div>
       </Callout>
       <div className="mb-4">
@@ -456,7 +686,11 @@ function TemplatesTab({ templates, people, onDone }: { templates: TemplateRow[];
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="font-semibold text-ink">{t.name}</div>
-                  {t.description ? <p className="mt-0.5 text-[13px] text-body">{t.description}</p> : null}
+                  {t.description ? (
+                    <p className="mt-0.5 text-[13px] text-body">
+                      {t.description}
+                    </p>
+                  ) : null}
                   <ul className="mt-1.5 list-disc pl-5 text-[13px] text-body">
                     {shapeSummary(t).map((l) => (
                       <li key={l}>{l}</li>
@@ -464,7 +698,11 @@ function TemplatesTab({ templates, people, onDone }: { templates: TemplateRow[];
                   </ul>
                 </div>
                 <div className="flex flex-none gap-2">
-                  <Button size="sm" variant="primary" onClick={() => setApplying(t)}>
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    onClick={() => setApplying(t)}
+                  >
                     Apply to…
                   </Button>
                   <Button size="sm" onClick={() => setEditing(t)}>
@@ -484,7 +722,10 @@ function TemplatesTab({ templates, people, onDone }: { templates: TemplateRow[];
         </div>
       ) : (
         <Card>
-          <EmptyState title="No job templates yet" body="Make one from somebody whose access is right for their job — then stamp it onto the next person who does that job." />
+          <EmptyState
+            title="No job templates yet"
+            body="Make one from somebody whose access is right for their job — then stamp it onto the next person who does that job."
+          />
         </Card>
       )}
       <NewTemplateModal key={creating ? "open" : "shut"} open={creating} people={people} onClose={() => setCreating(false)} />
@@ -509,10 +750,16 @@ function TemplatesTab({ templates, people, onDone }: { templates: TemplateRow[];
           key={`apply-${applying.id}`}
           title={`Apply “${applying.name}”`}
           intro="Each person picked gains whatever in the template they do not hold yet — apps, screens, a higher level, powers. Nothing they hold is taken away."
-          options={people.map((p) => ({ id: p.userId, name: p.name, note: "" }))}
+          options={people.map((p) => ({
+            id: p.userId,
+            name: p.name,
+            note: "",
+          }))}
           confirm="Apply"
           onClose={() => setApplying(null)}
-          onSubmit={(ids) => applyAccessTemplate({ templateId: applying.id, userIds: ids })}
+          onSubmit={(ids) =>
+            applyAccessTemplate({ templateId: applying.id, userIds: ids })
+          }
           onDone={(r) => {
             setApplying(null);
             onDone(`Applied “${applying.name}”`, r);
@@ -523,7 +770,15 @@ function TemplatesTab({ templates, people, onDone }: { templates: TemplateRow[];
   );
 }
 
-function NewTemplateModal({ open, people, onClose }: { open: boolean; people: Overview["people"]; onClose: () => void }) {
+function NewTemplateModal({
+  open,
+  people,
+  onClose,
+}: {
+  open: boolean;
+  people: Overview["people"];
+  onClose: () => void;
+}) {
   const toast = useToast();
   const router = useRouter();
   const [from, setFrom] = React.useState("");
@@ -543,7 +798,9 @@ function NewTemplateModal({ open, people, onClose }: { open: boolean; people: Ov
             disabled={busy || !from || !name.trim()}
             onClick={async () => {
               setBusy(true);
-              const r = await toast.run(templateFromPerson({ userId: from, name, description }));
+              const r = await toast.run(
+                templateFromPerson({ userId: from, name, description }),
+              );
               setBusy(false);
               if (r.ok) {
                 router.refresh();
@@ -567,16 +824,30 @@ function NewTemplateModal({ open, people, onClose }: { open: boolean; people: Ov
         </Select>
       </Field>
       <Field label="Name">
-        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Back office" />
+        <Input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="e.g. Back office"
+        />
       </Field>
       <Field label="What the job is (optional)">
-        <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} />
+        <Textarea
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          rows={2}
+        />
       </Field>
     </Modal>
   );
 }
 
-function EditTemplateModal({ t, onClose }: { t: TemplateRow; onClose: () => void }) {
+function EditTemplateModal({
+  t,
+  onClose,
+}: {
+  t: TemplateRow;
+  onClose: () => void;
+}) {
   const toast = useToast();
   const router = useRouter();
   const [name, setName] = React.useState(t.name);
@@ -586,7 +857,8 @@ function EditTemplateModal({ t, onClose }: { t: TemplateRow; onClose: () => void
   const [hrms, setHrms] = React.useState(t.shape.hrmsPowers);
   const [tasks, setTasks] = React.useState(t.shape.taskPowers);
   const [busy, setBusy] = React.useState(false);
-  const toggle = (list: string[], set: (v: string[]) => void, k: string) => set(list.includes(k) ? list.filter((x) => x !== k) : [...list, k]);
+  const toggle = (list: string[], set: (v: string[]) => void, k: string) =>
+    set(list.includes(k) ? list.filter((x) => x !== k) : [...list, k]);
   return (
     <Modal
       open
@@ -601,7 +873,7 @@ function EditTemplateModal({ t, onClose }: { t: TemplateRow; onClose: () => void
             disabled={busy || !name.trim() || !apps.length}
             onClick={async () => {
               setBusy(true);
-              const r = await toast.run(saveAccessTemplate({ id: t.id, name, description, shape: { apps, erpPowers: erp, hrmsPowers: hrms, taskPowers: tasks } }));
+              const r = await toast.run(saveAccessTemplate({ id: t.id, name, description, shape: { apps, erpPowers: erp, hrmsPowers: hrms, taskPowers: tasks, hireRole: t.shape.hireRole ?? null, erpDesignationId: t.shape.erpDesignationId ?? null } }));
               setBusy(false);
               if (r.ok) {
                 router.refresh();
@@ -618,16 +890,33 @@ function EditTemplateModal({ t, onClose }: { t: TemplateRow; onClose: () => void
         <Input value={name} onChange={(e) => setName(e.target.value)} />
       </Field>
       <Field label="What the job is">
-        <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} />
+        <Textarea
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          rows={2}
+        />
       </Field>
       <div className="mb-2 text-[13px] font-medium text-ink">Apps</div>
       <div className="mb-3 grid gap-1.5">
         {apps.map((a, i) => (
-          <div key={a.app} className="flex flex-wrap items-center gap-2 text-[13px]">
-            <span className="w-32 font-medium text-ink">{getApp(a.app)?.name ?? a.app}</span>
+          <div
+            key={a.app}
+            className="flex flex-wrap items-center gap-2 text-[13px]"
+          >
+            <span className="w-32 font-medium text-ink">
+              {getApp(a.app)?.name ?? a.app}
+            </span>
             <Select
               value={a.role}
-              onChange={(e) => setApps(apps.map((x, j) => (j === i ? { ...x, role: e.target.value as typeof x.role } : x)))}
+              onChange={(e) =>
+                setApps(
+                  apps.map((x, j) =>
+                    j === i
+                      ? { ...x, role: e.target.value as typeof x.role }
+                      : x,
+                  ),
+                )
+              }
               className="w-36"
               aria-label="Level"
             >
@@ -636,9 +925,15 @@ function EditTemplateModal({ t, onClose }: { t: TemplateRow; onClose: () => void
               <option value="admin">Admin</option>
             </Select>
             <span className="text-muted">
-              {a.modules == null ? "every screen" : a.modules.map((m) => getModule(m)?.label ?? m).join(", ")}
+              {a.modules == null
+                ? "every screen"
+                : a.modules.map((m) => getModule(m)?.label ?? m).join(", ")}
             </span>
-            <Button size="sm" variant="ghost" onClick={() => setApps(apps.filter((_, j) => j !== i))}>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setApps(apps.filter((_, j) => j !== i))}
+            >
               Remove
             </Button>
           </div>
@@ -651,14 +946,26 @@ function EditTemplateModal({ t, onClose }: { t: TemplateRow; onClose: () => void
       ].map(([label, list, set, app]) =>
         (list as string[]).length ? (
           <div key={app as string} className="mb-3">
-            <div className="mb-1 text-[13px] font-medium text-ink">{label as string}</div>
+            <div className="mb-1 text-[13px] font-medium text-ink">
+              {label as string}
+            </div>
             {(list as string[]).map((k) => (
-              <Checkbox key={k} checked onChange={() => toggle(list as string[], set as (v: string[]) => void, k)} label={powerById(`${app}.${k}`)?.label ?? k} />
+              <Checkbox
+                key={k}
+                checked
+                onChange={() =>
+                  toggle(list as string[], set as (v: string[]) => void, k)
+                }
+                label={powerById(`${app}.${k}`)?.label ?? k}
+              />
             ))}
           </div>
         ) : null,
       )}
-      <p className="text-[12px] text-muted">To add apps, screens or powers, change the person&apos;s access and make a fresh template from them.</p>
+      <p className="text-[12px] text-muted">
+        To add apps, screens or powers, change the person&apos;s access and make
+        a fresh template from them.
+      </p>
     </Modal>
   );
 }
@@ -691,9 +998,16 @@ function PeoplePicker({
   const [extra, setExtra] = React.useState(false);
   const [q, setQ] = React.useState("");
   const [busy, setBusy] = React.useState(false);
+  /* A take-away is reviewed before it is sent: the names, then the button.
+     Picking twenty boxes in a long list is how the wrong person loses a power. */
+  const [reviewing, setReviewing] = React.useState(false);
   const needle = q.trim().toLowerCase();
-  const shown = options.filter((o) => !needle || o.name.toLowerCase().includes(needle));
-  const needsApp = options.filter((o) => o.note.startsWith("no ") && picked.includes(o.id)).length;
+  const shown = options.filter(
+    (o) => !needle || o.name.toLowerCase().includes(needle),
+  );
+  const needsApp = options.filter(
+    (o) => o.note.startsWith("no ") && picked.includes(o.id),
+  ).length;
   return (
     <Modal
       open
@@ -702,66 +1016,157 @@ function PeoplePicker({
       title={title}
       footer={
         <>
-          <Button onClick={onClose}>Cancel</Button>
-          <Button
-            variant={danger ? "danger" : "primary"}
-            disabled={busy || !picked.length || (needsApp > 0 && !extra)}
-            title={needsApp > 0 && !extra ? "Tick the box above to give the app to people who do not hold it" : undefined}
-            onClick={async () => {
-              setBusy(true);
-              const r = await onSubmit(picked, extra);
-              setBusy(false);
-              if (!r.ok) toast.push(r.error, "error");
-              else onDone(r.data);
-            }}
-          >
-            {busy ? "Saving…" : `${confirm}${picked.length ? ` (${picked.length})` : ""}`}
-          </Button>
+          {reviewing ? (
+            <Button onClick={() => setReviewing(false)}>Back</Button>
+          ) : (
+            <Button onClick={onClose}>Cancel</Button>
+          )}
+          {danger && !reviewing ? (
+            <Button
+              variant="primary"
+              disabled={!picked.length}
+              onClick={() => setReviewing(true)}
+            >
+              {`Review${picked.length ? ` (${picked.length})` : ""}`}
+            </Button>
+          ) : (
+            <Button
+              variant={danger ? "danger" : "primary"}
+              disabled={busy || !picked.length || (needsApp > 0 && !extra)}
+              title={
+                needsApp > 0 && !extra
+                  ? "Tick the box above to give the app to people who do not hold it"
+                  : undefined
+              }
+              onClick={async () => {
+                setBusy(true);
+                const r = await onSubmit(picked, extra);
+                setBusy(false);
+                if (!r.ok) toast.push(r.error, "error");
+                else onDone(r.data);
+              }}
+            >
+              {busy
+                ? "Saving…"
+                : `${confirm}${picked.length ? ` (${picked.length})` : ""}`}
+            </Button>
+          )}
         </>
       }
     >
-      <p className="mb-3 text-[13px] text-body">{intro}</p>
-      {options.length > 8 ? <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search people" className="mb-2" aria-label="Search people" /> : null}
-      <div className="max-h-[360px] overflow-y-auto rounded-control border border-line px-3 py-2">
-        {shown.length ? (
-          shown.map((o) => (
-            <Checkbox
-              key={o.id}
-              checked={picked.includes(o.id)}
-              onChange={() => setPicked(picked.includes(o.id) ? picked.filter((x) => x !== o.id) : [...picked, o.id])}
-              label={
-                <span>
+      {reviewing ? (
+        <>
+          <p className="mb-2 text-[13px] text-body">
+            {picked.length === 1
+              ? "This person loses it"
+              : `These ${picked.length} people lose it`}{" "}
+            from their next screen. Nothing else they hold changes, and it can
+            be given back.
+          </p>
+          <ul className="max-h-[360px] list-disc overflow-y-auto pl-5 text-[13px] text-ink">
+            {options
+              .filter((o) => picked.includes(o.id))
+              .map((o) => (
+                <li key={o.id}>
                   {o.name}
-                  {o.note ? <span className="ml-1.5 text-[12px] text-muted">({o.note})</span> : null}
-                </span>
-              }
+                  {o.note ? (
+                    <span className="ml-1.5 text-[12px] text-muted">
+                      ({o.note})
+                    </span>
+                  ) : null}
+                </li>
+              ))}
+          </ul>
+        </>
+      ) : (
+        <>
+          <p className="mb-3 text-[13px] text-body">{intro}</p>
+          {options.length > 8 ? (
+            <Input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search people"
+              className="mb-2"
+              aria-label="Search people"
             />
-          ))
-        ) : (
-          <div className="py-3 text-center text-[13px] text-muted">Nobody to pick.</div>
-        )}
-      </div>
-      {extraToggle && needsApp > 0 ? (
-        <div className="mt-3">
-          <Checkbox checked={extra} onChange={(e) => setExtra(e.target.checked)} label={extraToggle} />
-        </div>
-      ) : null}
+          ) : null}
+          <div className="max-h-[360px] overflow-y-auto rounded-control border border-line px-3 py-2">
+            {shown.length ? (
+              shown.map((o) => (
+                <Checkbox
+                  key={o.id}
+                  checked={picked.includes(o.id)}
+                  onChange={() =>
+                    setPicked(
+                      picked.includes(o.id)
+                        ? picked.filter((x) => x !== o.id)
+                        : [...picked, o.id],
+                    )
+                  }
+                  label={
+                    <span>
+                      {o.name}
+                      {o.note ? (
+                        <span className="ml-1.5 text-[12px] text-muted">
+                          ({o.note})
+                        </span>
+                      ) : null}
+                    </span>
+                  }
+                />
+              ))
+            ) : (
+              <div className="py-3 text-center text-[13px] text-muted">
+                Nobody to pick.
+              </div>
+            )}
+          </div>
+          {extraToggle && needsApp > 0 ? (
+            <div className="mt-3">
+              <Checkbox
+                checked={extra}
+                onChange={(e) => setExtra(e.target.checked)}
+                label={extraToggle}
+              />
+            </div>
+          ) : null}
+        </>
+      )}
     </Modal>
   );
 }
 
-function OutcomeModal({ outcome, onClose }: { outcome: { title: string; result: BulkOutcome } | null; onClose: () => void }) {
+function OutcomeModal({
+  outcome,
+  onClose,
+}: {
+  outcome: { title: string; result: BulkOutcome } | null;
+  onClose: () => void;
+}) {
   if (!outcome) return null;
   const { moved, skipped } = outcome.result;
   return (
-    <Modal open width={560} onClose={onClose} title={outcome.title} footer={<Button variant="primary" onClick={onClose}>Done</Button>}>
+    <Modal
+      open
+      width={560}
+      onClose={onClose}
+      title={outcome.title}
+      footer={
+        <Button variant="primary" onClick={onClose}>
+          Done
+        </Button>
+      }
+    >
       {moved.length ? (
         <>
-          <div className="mb-1 text-[13px] font-medium text-ink">Changed for {moved.length}</div>
+          <div className="mb-1 text-[13px] font-medium text-ink">
+            Changed for {moved.length}
+          </div>
           <ul className="mb-3 list-disc pl-5 text-[13px] text-body">
             {moved.map((m) => (
               <li key={m.userId}>
-                <Link href={ADMIN.person(m.userId, "apps")}>{m.name}</Link> — {m.words}
+                <Link href={ADMIN.person(m.userId, "apps")}>{m.name}</Link> —{" "}
+                {m.words}
               </li>
             ))}
           </ul>
@@ -771,7 +1176,9 @@ function OutcomeModal({ outcome, onClose }: { outcome: { title: string; result: 
       )}
       {skipped.length ? (
         <>
-          <div className="mb-1 text-[13px] font-medium text-ink">Skipped {skipped.length}</div>
+          <div className="mb-1 text-[13px] font-medium text-ink">
+            Skipped {skipped.length}
+          </div>
           <ul className="list-disc pl-5 text-[13px] text-muted">
             {skipped.map((s) => (
               <li key={s.userId}>

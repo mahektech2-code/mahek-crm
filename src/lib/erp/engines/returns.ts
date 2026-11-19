@@ -248,6 +248,8 @@ export function creditNoteWord(cnStatus: string | null | undefined, raised: bool
       return "Issued";
     case "rejected":
       return "Refused";
+    case "cancelled":
+      return "Cancelled";
     default:
       return "With accounts";
   }

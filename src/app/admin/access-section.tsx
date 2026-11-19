@@ -64,7 +64,7 @@ import { ADMIN } from "@/lib/admin-routes";
 import { AdminPage } from "./_shell/admin-page";
 import { Avatar, Pill, btnClass } from "./_shell/kit";
 import type { AccessView, PersonExtras } from "@/lib/services/admin-access-view-service";
-import { giveAppTo } from "./access/bulk-apps";
+import { giveAppTo, takeAppFrom } from "./access/bulk-apps";
 
 /* ---------------------------------------------------------------------------
  * The Access screen.
@@ -251,6 +251,7 @@ export function AccessSection({
   const [page, setPage] = React.useState(0);
   const [filtersOpen, setFiltersOpen] = React.useState(false);
   const [giving, setGiving] = React.useState(false);
+  const [taking, setTaking] = React.useState(false);
   const rows = allRows
     .filter((r) =>
       !byDesignation
@@ -507,6 +508,9 @@ export function AccessSection({
           <BarButton disabled={bulkBusy} onClick={() => setGiving(true)}>
             Give an app
           </BarButton>
+          <BarButton disabled={bulkBusy} onClick={() => setTaking(true)}>
+            Take an app away
+          </BarButton>
           <BarButton disabled={bulkBusy} onClick={() => void runBulk("Reset link sent", sendPasswordResetFor)}>
             Send reset links
           </BarButton>
@@ -701,6 +705,27 @@ export function AccessSection({
         </div>
       ) : null}
 
+      {taking ? (
+        <TakeAppDialog
+          people={rows.filter((r) => picked.has(r.userId))}
+          onClose={() => setTaking(false)}
+          onTake={async (app, typed) => {
+            setBulkBusy(true);
+            const res = await takeAppFrom({ app, typed, userIds: [...picked] });
+            setBulkBusy(false);
+            if (!res.ok) return res.error;
+            setTaking(false);
+            const { moved, skipped } = res.data;
+            push(
+              skipped.length
+                ? `Taken from ${moved.length}. Skipped ${skipped.length}: ${skipped.slice(0, 3).map((s) => `${s.name} ${s.why}`).join("; ")}${skipped.length > 3 ? "…" : ""}`
+                : `Taken from ${moved.length} ${moved.length === 1 ? "person" : "people"}.`,
+            );
+            setPicked(new Set());
+            router.refresh();
+          }}
+        />
+      ) : null}
       {giving ? (
         <GiveAppDialog
           count={picked.size}
@@ -1137,6 +1162,94 @@ function FilterSelect({ label, value, onChange, options }: { label: string; valu
   );
 }
 
+/**
+ * Pick an app to take from everybody selected who holds it. The names that
+ * lose it are listed, and the app's name is typed to confirm — the batch's one
+ * confirmation; each person is then saved through `setAccess`, which takes the
+ * app's screens, powers and seats with it. The Admin Console is not offered.
+ */
+function TakeAppDialog({
+  people,
+  onClose,
+  onTake,
+}: {
+  people: AccessRow[];
+  onClose: () => void;
+  onTake: (app: AppId, typed: string) => Promise<string | void>;
+}) {
+  const [app, setApp] = React.useState<AppId | "">("");
+  const [typed, setTyped] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const held = APPS.filter((a) => a.id !== "admin" && people.some((p) => p.grants.some((g) => g.app === a.id)));
+  const losing = app ? people.filter((p) => p.grants.some((g) => g.app === app)) : [];
+  const name = app ? (getApp(app)?.name ?? app) : "";
+  const matches = Boolean(app) && typed.trim().toLowerCase() === name.toLowerCase();
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      width={560}
+      title={`Take an app away from ${people.length} ${people.length === 1 ? "person" : "people"}`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="danger"
+            disabled={!matches || !losing.length || busy}
+            title={!app ? "Choose an app" : !matches ? `Type ${name} to confirm` : undefined}
+            onClick={async () => {
+              if (!app) return;
+              setBusy(true);
+              setError(null);
+              const problem = await onTake(app, typed);
+              setBusy(false);
+              if (problem) setError(problem);
+            }}
+          >
+            {busy ? "Working…" : losing.length ? `Take it from ${losing.length}` : "Take it away"}
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-3 text-sm text-body">
+        <FilterSelect
+          label="App"
+          value={app}
+          onChange={(v) => {
+            setApp(v as AppId);
+            setTyped("");
+          }}
+          options={[{ value: "", label: "Choose an app" }, ...held.map((a) => ({ value: a.id, label: a.name }))]}
+        />
+        {app ? (
+          <>
+            <p className="m-0 text-[13px]">
+              {losing.length === 1 ? "This person loses" : `These ${losing.length} people lose`} {name} — every screen, and the powers, designation, role or seat that come with it. Their records stay.
+            </p>
+            <ul className="m-0 max-h-[200px] list-disc overflow-y-auto pl-5 text-[13px] text-ink">
+              {losing.map((p) => (
+                <li key={p.userId}>{p.name}</li>
+              ))}
+            </ul>
+            <label className="block">
+              <span className="mb-1 block text-[13px] text-muted">
+                Type <b className="text-ink">{name}</b> to confirm
+              </span>
+              <Input value={typed} onChange={(e) => setTyped(e.target.value)} autoFocus />
+            </label>
+          </>
+        ) : (
+          <p className="m-0 text-[13px] text-muted">Only the apps somebody selected holds are offered. The Admin Console is taken away one person at a time.</p>
+        )}
+        {error ? <p className="m-0 text-[13px] text-danger">{error}</p> : null}
+      </div>
+    </Modal>
+  );
+}
+
 /** Pick the app and the level to give everybody selected. It only ever widens. */
 function GiveAppDialog({ count, onClose, onGive }: { count: number; onClose: () => void; onGive: (app: AppId, role: RoleId) => Promise<void> }) {
   const [app, setApp] = React.useState<AppId | "">("");
@@ -1447,6 +1560,35 @@ function AccessDialog({
    * only meant to open a screen.
    */
   const [roleDraft, setRoleDraft] = React.useState<Record<string, RoleId>>(levelsBefore);
+
+  /*
+   * COPY ACCESS FROM SOMEBODY ALREADY DOING THE JOB. It fills the draft —
+   * apps, levels, screens, ERP / HRMS / Tasks powers, the ERP designation and
+   * the Hire role — and nothing is written until the review step, which still
+   * compares against what THIS person holds, so whatever the copy takes away
+   * is named there and asks the usual confirmation.
+   *
+   * Two things are never copied: platform Admin (one person at a time, on
+   * purpose) and the factory seat (a seat has one holder, so copying it would
+   * move it).
+   */
+  const copyFrom = (source: AccessRow) => {
+    const next = draftOf(source);
+    const levels = levelsOf(source);
+    if (levels.admin === "admin") {
+      delete next.admin;
+      delete levels.admin;
+    }
+    setDraft(next);
+    setRoleDraft(levels);
+    setPowers(source.erpPowers);
+    setHrmsPowers(source.hrmsPowers);
+    setTaskPowers(source.taskPowers);
+    setHireRole(source.hireRole ?? null);
+    setDesignationId(source.erpDesignation?.id ?? null);
+    setCopiedFrom(source.name);
+  };
+  const [copiedFrom, setCopiedFrom] = React.useState<string | null>(null);
   const [email, setEmail] = React.useState(person?.email ?? "");
   const [phone, setPhone] = React.useState(person?.phone ?? "");
   const [saving, setSaving] = React.useState(false);
@@ -1636,6 +1778,29 @@ function AccessDialog({
             </Button>
           ) : (
             <>
+              {step === "access" ? (
+                <label className="mr-2 flex items-center gap-1.5 self-center text-[13px] text-muted">
+                  Copy from
+                  <select
+                    className="h-8 max-w-[200px] rounded-control border border-line bg-surface px-2 text-[13px] text-ink"
+                    value=""
+                    title="Start from somebody already doing this job: their apps, levels, screens, powers, ERP designation and Hire role. You review every change before it saves."
+                    onChange={(e) => {
+                      const src = rows.find((r) => r.userId === e.target.value);
+                      if (src) copyFrom(src);
+                    }}
+                  >
+                    <option value="">{copiedFrom ? `Copied: ${copiedFrom}` : "a person…"}</option>
+                    {rows
+                      .filter((r) => r.active && r.userId !== chosen?.userId && r.grants.length)
+                      .map((r) => (
+                        <option key={r.userId} value={r.userId}>
+                          {r.name}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+              ) : null}
               {step !== "who" && changeCount ? (
                 <span className="mr-auto self-center">
                   <Pill tone="brand">

@@ -478,6 +478,13 @@ panel):
   `erp.purchase.poGstPercent`. Several requirements on one number are one PO.
   **Unlink** is allowed while nothing has arrived; a PO left empty is cancelled
   and reused if linked again (the number is unique).
+  **A Quotation manager row is NOT deleted while a PO it bought is still open**
+  (Approved, Sent or Partly received): the `erp-quote-row` impact carries a
+  blocker naming the PO, and the save refuses. Undo the purchase on each rate
+  (which withdraws the line, cancelling a PO left empty) or close the PO short,
+  then delete. It used to leave the PO receiving with nothing on the sheet
+  saying where it came from; refusing was chosen over cancelling the PO
+  automatically, because a PO the vendor already has is not undone by a row.
 - **Direct purchase** — no quotation. **Create PO** opens a three-page modal
   (Vendor → Delivery → Review) OVER the requirement, which stays open. The rate is
   the item's `erp_raw_materials.price_paise` and is never read from the request;

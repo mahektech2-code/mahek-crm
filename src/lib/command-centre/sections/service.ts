@@ -416,7 +416,7 @@ async function figure(ctx: Ctx, metric: string): Promise<FigureDrawer> {
     const [bars, rows] = await Promise.all([
       monthlyBars(p.to, sql`(select count(*) from enquiries e where e.source = 'website' and ${IN_MONTH("e.received_at")})`),
       db.execute<{ raw: unknown; received_at: string; lead: string | null }>(sql`
-        select e.raw_submission as raw, e.received_at, cu.name as lead
+        select (e.raw_submission || coalesce(e.corrections, '{}'::jsonb)) as raw, e.received_at, cu.name as lead
           from enquiries e left join customers cu on cu.id = e.customer_id
          where e.source = 'website'
            and (e.received_at at time zone ${TZ})::date between ${p.from}::date and ${p.to}::date

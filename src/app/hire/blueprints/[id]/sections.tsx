@@ -1,6 +1,6 @@
 "use client";
 
-import { APPS } from "@/lib/apps";
+import { APPS, NEVER_PROVISIONED } from "@/lib/apps";
 import {
   MASKABLE,
   QUESTION_TYPES,
@@ -580,7 +580,7 @@ export function Onboarding({ def, mut, ro }: SecProps) {
 
 export function Provisioning({ def, mut, ro }: SecProps) {
   const p = def.provisioning;
-  const grantable = APPS.filter((a) => a.id !== "admin" && a.id !== "founder" && a.id !== "hire" && a.built);
+  const grantable = APPS.filter((a) => !NEVER_PROVISIONED.includes(a.id) && a.built);
   return (
     <Card>
       <ElementHead title="What the hire receives" ai={p.ai} approved={p.approved} ro={ro} onApprove={() => mut((d) => void (d.provisioning.approved = true))} />
