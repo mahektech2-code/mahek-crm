@@ -14,7 +14,7 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appAccess, appModuleAccess, erpUserDesignations, erpUserPowers, users } from "@/db/schema";
+import { appAccess, appModuleAccess, auditLog, erpUserDesignations, erpUserPowers, users } from "@/db/schema";
 import { setAccess } from "@/lib/actions/access";
 import { deleteErpDesignation, saveErpDesignation } from "@/lib/actions/erp-designations";
 import { erpLoadForm, erpRunAction, erpSetWorkingGodown, erpStartViewAs, erpStopViewAs } from "@/lib/actions/erp";
@@ -114,6 +114,19 @@ describe("designations", () => {
     setTestUser(platform);
     const bad = await setAccess({ userId: meena.id, ...grantFor(TESTER), erpDesignationId: "erpd_nope" });
     assert.ok(!bad.ok);
+  });
+
+  test("the audit row holds the whole access picture before and after, not only a sentence", async () => {
+    const rows = await db
+      .select()
+      .from(auditLog)
+      .where(sql`${auditLog.entityId} = ${meena.id} and ${auditLog.action} in ('set-app-access', 'create-user')`);
+    const row = rows.find((r) => (r.afterState as { access?: unknown } | null)?.access);
+    assert.ok(row, "an access save records a snapshot");
+    const after = (row.afterState as { access: { apps: { app: string }[]; erpDesignation: string | null } }).access;
+    assert.ok(after.apps.some((a) => a.app === "erp"), JSON.stringify(after));
+    assert.equal(after.erpDesignation, "Quality tester", "the designation is in the picture, saved in the same transaction");
+    assert.ok((row.beforeState as { access?: unknown } | null)?.access, "and what was held before it");
   });
 
   test("a change by hand keeps the name and marks them customised", async () => {
