@@ -284,6 +284,7 @@ export async function listBatches() {
       audience: studioBatches.audience,
       requested: studioBatches.requested,
       skipped: studioBatches.skipped,
+      cancelledAt: studioBatches.cancelledAt,
       made: sql<number>`(select count(*)::int from studio_posters p where p.batch_id = studio_batches.id)`,
     })
     .from(studioBatches)
@@ -303,7 +304,8 @@ export async function getBatch(id: string) {
     .where(and(eq(studioBatches.id, id), ids ? inArray(studioBatches.createdById, ids) : undefined))
     .limit(1);
   if (!batch) return null;
-  const posters = await db.select().from(studioPosters).where(eq(studioPosters.batchId, id)).orderBy(studioPosters.createdAt, studioPosters.id);
+  /* A poster taken off (Remove, or a cancelled run's unshared ones) is off the run's page and its ZIP too. */
+  const posters = await db.select().from(studioPosters).where(and(eq(studioPosters.batchId, id), isNull(studioPosters.removedAt))).orderBy(studioPosters.createdAt, studioPosters.id);
   return { ...batch.batch, createdByName: batch.createdByName, posters };
 }
 

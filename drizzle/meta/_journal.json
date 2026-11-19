@@ -2479,6 +2479,13 @@
       "when": 1794947788699,
       "tag": "0359_hq_lead_source",
       "breakpoints": true
+    },
+    {
+      "idx": 355,
+      "version": "7",
+      "when": 1794948288699,
+      "tag": "0366_studio_cancel_batch_forward",
+      "breakpoints": true
     }
   ]
 }

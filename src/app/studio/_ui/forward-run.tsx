@@ -17,7 +17,7 @@ export type RunRow = { id: string; company: string; place: string; status: Forwa
 
 const TONE: Record<ForwardStatus, "neutral" | "brand" | "success" | "warn"> = { pending: "neutral", opened: "brand", sent: "success", skipped: "warn" };
 
-export function ForwardRun({ title, imageUrl, rows }: { title: string; imageUrl: string; rows: RunRow[] }) {
+export function ForwardRun({ title, imageUrl, rows, cancelled = false }: { title: string; imageUrl: string; rows: RunRow[]; cancelled?: boolean }) {
   const router = useRouter();
   const toast = useToast();
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -52,6 +52,11 @@ export function ForwardRun({ title, imageUrl, rows }: { title: string; imageUrl:
         </div>
       </Card>
       <div className="flex flex-col gap-3">
+        {cancelled ? (
+          <Callout tone="warn">
+            <span className="block">This forward was cancelled. Nobody left on it is offered a chat; what was already sent stays sent, and each person keeps the status you gave them.</span>
+          </Callout>
+        ) : null}
         <Callout tone="info">
           <span className="block">
             For each person: press <b>Open WhatsApp chat</b>, attach the poster you downloaded, send it, then press <b>Mark sent</b>. MahekOne cannot see whether WhatsApp delivered it, so “Marked sent” means you said you sent it.
@@ -66,21 +71,25 @@ export function ForwardRun({ title, imageUrl, rows }: { title: string; imageUrl:
                   <span className="block truncate text-[12.5px] text-muted">{r.place || "—"}</span>
                 </span>
                 <Badge tone={TONE[r.status]}>{STATUS_LABEL[r.status]}</Badge>
-                <Button size="sm" variant="whatsapp" onClick={() => void open(r.id)} disabled={busyId === r.id || r.status === "sent" || r.status === "skipped"}>
-                  Open WhatsApp chat
-                </Button>
-                {r.status === "sent" || r.status === "skipped" ? (
-                  <Button size="sm" variant="ghost" onClick={() => void mark(r.id, "pending")} disabled={busyId === r.id}>
-                    Undo
-                  </Button>
-                ) : (
+                {cancelled ? null : (
                   <>
-                    <Button size="sm" variant="primary" onClick={() => void mark(r.id, "sent")} disabled={busyId === r.id}>
-                      Mark sent
+                    <Button size="sm" variant="whatsapp" onClick={() => void open(r.id)} disabled={busyId === r.id || r.status === "sent" || r.status === "skipped"}>
+                      Open WhatsApp chat
                     </Button>
-                    <Button size="sm" variant="ghost" onClick={() => void mark(r.id, "skipped")} disabled={busyId === r.id}>
-                      Skip
-                    </Button>
+                    {r.status === "sent" || r.status === "skipped" ? (
+                      <Button size="sm" variant="ghost" onClick={() => void mark(r.id, "pending")} disabled={busyId === r.id}>
+                        Undo
+                      </Button>
+                    ) : (
+                      <>
+                        <Button size="sm" variant="primary" onClick={() => void mark(r.id, "sent")} disabled={busyId === r.id}>
+                          Mark sent
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => void mark(r.id, "skipped")} disabled={busyId === r.id}>
+                          Skip
+                        </Button>
+                      </>
+                    )}
                   </>
                 )}
               </li>

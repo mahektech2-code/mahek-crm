@@ -17992,6 +17992,9 @@ export const studioBatches = pgTable(
     requested: integer("requested").notNull(),
     /** The recipients that could not be made into a poster, each with the reason said in words. */
     skipped: jsonb("skipped").$type<{ customerId: string; name: string; reason: string }[]>().notNull().default([]),
+    /** Cancelled by its maker (0366): its unshared posters left the lists; shared ones stayed. */
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    cancelledById: text("cancelled_by_id").references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -18206,12 +18209,14 @@ export const studioForwards = pgTable(
     caption: text("caption").notNull().default(""),
     status: text("status").notNull().default("draft"),
     startedAt: timestamp("started_at", { withTimezone: true }),
+    /** Set with status `cancelled` (0366): the list stops; every recipient keeps its status. */
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index("studio_forwards_created_by_idx").on(t.createdById, t.createdAt),
     index("studio_forwards_sha_idx").on(t.sha256),
-    check("studio_forwards_status", sql`${t.status} in ('draft','started')`),
+    check("studio_forwards_status", sql`${t.status} in ('draft','started','cancelled')`),
     check("studio_forwards_format", sql`${t.format} in ('png','jpeg','webp')`),
   ],
 );

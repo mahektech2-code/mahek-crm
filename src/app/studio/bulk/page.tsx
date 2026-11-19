@@ -37,6 +37,7 @@ export default async function BulkPage() {
                   <Td>
                     {b.made} of {b.requested}
                     {b.skipped.length ? <span className="text-warn-ink"> · {b.skipped.length} skipped</span> : null}
+                    {b.cancelledAt ? <span className="text-muted"> · cancelled</span> : null}
                   </Td>
                   <Td>
                     {stamp(b.createdAt)}

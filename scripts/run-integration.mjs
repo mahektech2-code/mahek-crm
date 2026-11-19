@@ -51,6 +51,8 @@ const files = [
   "src/lib/studio/studio.integration.test.ts",
   // My posters with the forwarding history in its table: one row per poster or started-list recipient, never twice; scope and removed records.
   "src/lib/studio/history.integration.test.ts",
+  // Upload & Bulk Forward: upload checks, recipients in scope, per-recipient status, and a cancel that never unsends.
+  "src/lib/studio/forward.integration.test.ts",
   // The WhatsApp Inbox on a fake Kapso: the company number judged from Kapso, signed webhooks stored once, CRM names, window/DND refusals, one press of Send = one message.
   "src/lib/studio/inbox.integration.test.ts",
   // The Locker: register scope, renewals that supersede, one reminder digest;

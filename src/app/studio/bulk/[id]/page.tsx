@@ -4,7 +4,9 @@ import { notFound } from "next/navigation";
 import { Callout, Card, CardHeader, PageHeader, Td, Th, buttonClass } from "@/components/ui/primitives";
 import { stamp } from "@/lib/format";
 import { LANGUAGE_NAMES, type Language } from "@/lib/studio/domain/language";
+import { requireUser } from "@/lib/auth";
 import { designPreviewUrl, getBatch } from "@/lib/studio/service";
+import { CancelBatchButton } from "../../_ui/cancel-buttons";
 import { plural } from "../../_ui/parts";
 
 export const metadata: Metadata = { title: "Bulk run" };
@@ -12,8 +14,9 @@ export const dynamic = "force-dynamic";
 
 export default async function BatchPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const batch = await getBatch(id);
+  const [batch, user] = await Promise.all([getBatch(id), requireUser()]);
   if (!batch) notFound();
+  const shared = batch.posters.filter((p) => p.shareCount > 0).length;
   const zip = `/api/studio/batches/${encodeURIComponent(id)}/zip`;
   return (
     <div className="mx-auto w-full min-w-0 px-6 py-6">
@@ -26,6 +29,7 @@ export default async function BatchPage({ params }: { params: Promise<{ id: stri
         subtitleShown
         actions={
           <>
+            {batch.createdById === user.id && !batch.cancelledAt ? <CancelBatchButton id={batch.id} unshared={batch.posters.length - shared} shared={shared} /> : null}
             <a href={`${zip}?format=jpeg`} className={buttonClass({ variant: "secondary" })}>
               ZIP of JPGs
             </a>
@@ -35,6 +39,9 @@ export default async function BatchPage({ params }: { params: Promise<{ id: stri
           </>
         }
       />
+      {batch.cancelledAt ? (
+        <Callout tone="warn">This run was cancelled {stamp(batch.cancelledAt)}. The posters nobody had shared were taken off; the ones below had already been shared and stay.</Callout>
+      ) : null}
       <Callout tone="info">The ZIP draws every poster as it is downloaded, one at a time, so a large run takes a minute or two to start.</Callout>
       {batch.skipped.length ? (
         <Card className="mb-4">

@@ -20,7 +20,7 @@ import { appAccess, appModuleAccess, appSettings, auditLog, customers, studioBat
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { fileStorage } from "@/lib/storage";
-import { approveDesign, archiveDesign, deleteDraft, makeBatch, makePoster, publishDesign, recordShare, restoreDesign, reviseDesign, saveDraftPlacement, savePersonDate } from "@/lib/actions/studio";
+import { approveDesign, archiveDesign, cancelBatch, deleteDraft, makeBatch, makePoster, publishDesign, recordShare, restoreDesign, reviseDesign, saveDraftPlacement, savePersonDate } from "@/lib/actions/studio";
 import { POST as uploadRoute } from "@/app/api/studio/designs/upload/route";
 import { buildManifest, copyFromDraft, defaultPlacement, canvasById, type PlacementDraft } from "./domain/template-upload";
 import { listRecipients } from "./recipients";
@@ -149,6 +149,30 @@ describe("Bulk posters", () => {
     setTestUser(priya);
     const run = await makeBatch({ list: "customer", templateId: "diwali-classic", language: "en", showProduct: true, customerIds: Array.from({ length: 51 }, (_, i) => `c${i}`) });
     assert.equal(run.ok, false);
+  });
+
+  test("cancelling a run takes off what nobody shared; what was shared stays", async () => {
+    const a = await makeCustomer(priya.id, { companyName: "Alpha Paints", name: "Alpha Paints" });
+    const b = await makeCustomer(priya.id, { companyName: "Beta Paints", name: "Beta Paints" });
+    setTestUser(priya);
+    const run = await makeBatch({ list: "customer", templateId: "diwali-classic", language: "en", showProduct: true, customerIds: [a, b] });
+    assert.ok(run.ok, run.ok ? "" : run.error);
+    const posters = await db.select().from(studioPosters).where(eq(studioPosters.batchId, run.data.id));
+    assert.ok((await recordShare(posters[0].id, "download")).ok);
+
+    setTestUser(rakesh);
+    assert.equal((await cancelBatch(run.data.id)).ok, false, "only its maker cancels it");
+    setTestUser(priya);
+    const done = await cancelBatch(run.data.id);
+    assert.ok(done.ok, done.ok ? "" : done.error);
+    assert.deepEqual(done.ok ? done.data : null, { removed: 1, kept: 1 });
+    const after = await db.select().from(studioPosters).where(eq(studioPosters.batchId, run.data.id));
+    assert.equal(after.find((p) => p.id === posters[0].id)!.removedAt, null, "the shared poster stays");
+    assert.ok(after.find((p) => p.id === posters[1].id)!.removedAt, "the unshared one is taken off");
+    const [batch] = await db.select().from(studioBatches).where(eq(studioBatches.id, run.data.id));
+    assert.ok(batch.cancelledAt);
+    assert.equal((await cancelBatch(run.data.id)).ok, false, "once");
+    assert.equal((await db.select().from(auditLog).where(eq(auditLog.action, "studio.batch.cancelled"))).length, 1);
   });
 });
 

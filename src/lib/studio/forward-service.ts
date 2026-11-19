@@ -37,7 +37,7 @@ export async function forwardRecipients(forwardId: string) {
   return db.select().from(studioForwardRecipients).where(eq(studioForwardRecipients.forwardId, forwardId)).orderBy(asc(studioForwardRecipients.company), asc(studioForwardRecipients.id));
 }
 
-/** Customers this person has already forwarded this very picture (same bytes) to, in a forward they actually started. */
+/** Customers this person has already forwarded this very picture (same bytes) to, in a forward they actually started (cancelled since or not). */
 export async function alreadySentTo(userId: string, sha256: string, exceptForwardId: string, customerIds: readonly string[]): Promise<Set<string>> {
   if (!customerIds.length) return new Set();
   const rows = await db
@@ -48,7 +48,8 @@ export async function alreadySentTo(userId: string, sha256: string, exceptForwar
       and(
         eq(studioForwards.createdById, userId),
         eq(studioForwards.sha256, sha256),
-        eq(studioForwards.status, "started"),
+        /* A cancelled forward stopped the list; what it sent stays sent, and counts. */
+        inArray(studioForwards.status, ["started", "cancelled"]),
         inArray(studioForwardRecipients.customerId, [...customerIds]),
         inArray(studioForwardRecipients.status, ["opened", "sent"]),
       ),
