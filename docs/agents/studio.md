@@ -103,3 +103,61 @@ version is never edited. The ORIGINAL upload is kept in file storage beside the
 normalised background (`source_ref`, `source_format`); `/tmp` holds only a
 rebuildable cache, and a registry built after a folder could not be written is
 never remembered, so the next request tries again.
+
+## The WhatsApp Inbox
+
+**THE INBOX SHOWS WHAT KAPSO SAID ABOUT THE COMPANY NUMBER, AND NOTHING ELSE.**
+`/studio/inbox` (module `studio.inbox`, everybody holding it sees every
+conversation) is a shared inbox for the company WhatsApp number, read and
+answered inside the Studio — text replies, and a poster or an uploaded picture
+sent with its caption. It replaces opening a chat in WhatsApp Web for normal
+chat work, but the existing "Open WhatsApp" buttons are untouched until it has
+been verified on real conversations. `kapso.ts` is the one place Kapso is
+called; the project key (`kapso.apiKey`) and the webhook secret
+(`kapso.webhookSecret`) are Admin Console credentials read on the server for
+the request that spends them, and never reach a page. The company number is the
+setting `studio.whatsapp.number`.
+
+**IS IT CONNECTED IS ANSWERED FROM KAPSO'S OWN LIST OF NUMBERS.** `connection()`
+(`inbox-service.ts`) lists the project's numbers and finds the company number as
+a LIVE one: a sandbox number is never shown as the company's WhatsApp, and a
+missing key, a refused key, an unreachable Kapso and a number that is not there
+each say so on the screen instead of drawing a chat. Nothing is seeded.
+
+**ONE MESSAGE IS ONE ROW, AND A STATUS ONLY MOVES FORWARD.**
+`studio_wa_messages` is unique on the WhatsApp message id; a webhook delivery
+is remembered by Kapso's idempotency key (`studio_wa_events`), so a retry does
+nothing; `/api/studio/whatsapp/webhook` verifies the HMAC-SHA256 signature of
+the RAW body before reading anything, and a webhook for another number in the
+project is ignored. A message the Studio is sending is reserved under the
+browser's own key first, so a double press, a webhook that arrives before the
+send call returns, and the refresh that reads the same message back all land on
+one row. `mergeStatus` (`domain/inbox.ts`) never demotes read to delivered and
+never un-delivers; a lost connection is marked failed AND says it is not known
+whether the message went, and is never retried. "Refresh from Kapso" is the
+catch-up under the webhook (Kapso retries for about fifty seconds), and brings
+in messages written on the phone (`origin: business_app`).
+
+**A REPLY IS REFUSED WHERE WHATSAPP OR THE CRM WOULD REFUSE IT.** A free-form
+message or poster needs the customer's last message within 24 hours; a customer
+marked do-not-contact or WhatsApp-DND is never messaged from here. The CRM name
+is matched at read time on the last ten digits of any phone on the record, and
+nothing about the match is stored; only the name and those two flags leave the
+CRM.
+
+**LOCAL PREVIEW — SAMPLE DATA IS FOR A DEVELOPER'S MACHINE AND FOR NOBODY ELSE.**
+`STUDIO_INBOX_PREVIEW=1` draws invented, clearly labelled conversations and
+generic sample pictures held in memory (`inbox-preview.ts`,
+`inbox-preview-assets.ts`): nothing is stored, nothing is read from Kapso, and
+Send only adds a line to the sample chat. It needs ALL of: not a production
+build, the switch, and a database on localhost named `mahekone…`
+(`previewAllowed`, `domain/inbox-preview-gate.ts`, pure and tested) — on the
+droplet the database host is the container, so a stray variable there changes
+nothing. `scripts/local-inbox-preview-posters.ts` makes a few real posters in a
+local database for the picker's real-poster path and refuses any other.
+
+**NOT BUILT YET, AND SAID SO ON THE SCREEN.** Starting a conversation (it
+needs an approved template), a preview of a customer's inbound photo, and a
+link from an API send into My posters' forwarding history. Webhook events for
+messages written on the phone, and whether the Free plan includes webhooks,
+are unconfirmed until real conversations flow.

@@ -1123,6 +1123,14 @@ export const APP_MODULES: AppModule[] = [
     note: "Upload a finished poster and forward the same picture, unchanged, to many of their own leads and customers. They send each message themselves.",
   },
   { key: "studio.posters", app: "studio", label: "My posters", group: "Studio", href: "/studio/posters", note: "Every poster they made, to open, download or share again." },
+  {
+    key: "studio.inbox",
+    app: "studio",
+    label: "WhatsApp Inbox",
+    group: "Studio",
+    href: "/studio/inbox",
+    note: "Every WhatsApp conversation on the company number, read and answered inside the Studio — text replies, and posters sent from My posters. Everybody holding it sees every conversation.",
+  },
   { key: "studio.dates", app: "studio", label: "Dates", group: "Studio", href: "/studio/dates", note: "The festival calendar, and the birthdays and anniversaries everybody shares." },
   { key: "studio.designs", app: "studio", label: "Designs", group: "Designs", href: "/studio/designs", note: "The approved designs, and uploading their own artwork as a private draft." },
   {

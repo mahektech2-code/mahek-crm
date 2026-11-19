@@ -18240,6 +18240,85 @@ export const studioForwardRecipients = pgTable(
   ],
 );
 
+/**
+ * The Studio's WhatsApp Inbox: what Kapso says about the company number, kept
+ * so the screen opens without a round trip. A conversation is Kapso's own id;
+ * a message is one row per WhatsApp message id, however many webhooks or
+ * refreshes report it. `phone_key` is the last ten digits, the key a CRM
+ * customer's phone is matched on at read time — nothing about the match is
+ * stored, so a corrected CRM phone corrects the name at once.
+ */
+export const studioWaConversations = pgTable(
+  "studio_wa_conversations",
+  {
+    /** Kapso's conversation id. */
+    id: text("id").primaryKey(),
+    phoneNumberId: text("phone_number_id").notNull(),
+    phone: text("phone"),
+    phoneKey: text("phone_key"),
+    contactName: text("contact_name"),
+    lastMessageText: text("last_message_text"),
+    lastMessageAt: timestamp("last_message_at", { withTimezone: true }),
+    /** The customer's last message — the start of WhatsApp's 24-hour window. */
+    lastInboundAt: timestamp("last_inbound_at", { withTimezone: true }),
+    /** Inbound messages nobody has opened. Shared: the inbox belongs to everybody holding it. */
+    unread: integer("unread").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("studio_wa_conversations_recent_idx").on(t.phoneNumberId, t.lastMessageAt.desc()),
+    index("studio_wa_conversations_phone_key_idx").on(t.phoneKey),
+  ],
+);
+
+export const studioWaMessages = pgTable(
+  "studio_wa_messages",
+  {
+    id: text("id").primaryKey(),
+    conversationId: text("conversation_id")
+      .notNull()
+      .references(() => studioWaConversations.id, { onDelete: "cascade" }),
+    /** WhatsApp's message id. A message being sent holds `pending:<client key>` until Kapso answers. */
+    wamid: text("wamid").notNull(),
+    direction: text("direction").notNull(),
+    type: text("type").notNull().default("text"),
+    body: text("body"),
+    caption: text("caption"),
+    hasMedia: boolean("has_media").notNull().default(false),
+    mediaType: text("media_type"),
+    mediaUrl: text("media_url"),
+    /** Outbound only: pending, sent, delivered, read, failed — exactly what Kapso reported. */
+    status: text("status"),
+    errorCode: text("error_code"),
+    errorText: text("error_text"),
+    /** cloud_api, business_app (written on the phone) or history_sync. */
+    origin: text("origin"),
+    /** Who pressed Send in the Studio, and the poster they attached. Null for anything written elsewhere. */
+    sentById: text("sent_by_id").references(() => users.id),
+    posterId: text("poster_id").references(() => studioPosters.id, { onDelete: "set null" }),
+    /** The browser's own key for one press of Send, so a double click is one message. */
+    clientKey: text("client_key"),
+    at: timestamp("at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("studio_wa_messages_wamid_key").on(t.wamid),
+    uniqueIndex("studio_wa_messages_client_key").on(t.clientKey),
+    index("studio_wa_messages_thread_idx").on(t.conversationId, t.at),
+    check("studio_wa_messages_direction", sql`${t.direction} in ('inbound','outbound')`),
+    check("studio_wa_messages_status", sql`${t.status} is null or ${t.status} in ('pending','sent','delivered','read','failed')`),
+  ],
+);
+
+/** Every webhook delivery Kapso made, by its idempotency key, so a retry is recognised and does nothing twice. */
+export const studioWaEvents = pgTable("studio_wa_events", {
+  key: text("key").primaryKey(),
+  event: text("event").notNull(),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 /* ===========================================================================
  * LOCKER — the company's licences, policies, contracts, subscriptions and
  * company records, each with an end date somebody owns; and the vault of

@@ -85,6 +85,9 @@ const NOT_IN_PRODUCTION_ENV: Record<string, string> = {
   JWT_SECRET: "legacy fallback for MBOS_JWT_SECRET, which IS documented",
   FACTORY_BUILD: "inlined at build time by next.config.ts from NEXT_DEPLOYMENT_ID, which the Dockerfile sets — nothing to put in the env file",
   MAHEK_BUILD: "inlined at build time by next.config.ts from NEXT_DEPLOYMENT_ID, for VersionGuard — nothing to put in the env file",
+  // Deliberately NOT a production variable: it turns on the WhatsApp Inbox's labelled sample data on a developer machine.
+  // previewAllowed() ignores it in a production build and for any database that is not localhost — it must never be set on the droplet.
+  STUDIO_INBOX_PREVIEW: "developer machines only — the Inbox's local sample-data preview, refused by previewAllowed() in production",
 };
 
 describe("The production env example matches what the code reads", () => {

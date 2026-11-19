@@ -407,6 +407,8 @@ const DESCRIBE: Record<string, Describer> = {
   "studio.forward.created": () => ["uploaded a finished poster to forward"],
   "studio.forward.started": () => ["started forwarding an uploaded poster to a list of people"],
   "studio.forward.recipient": () => ["recorded what happened with an uploaded poster for one recipient"],
+  "studio.inbox.sent": () => ["sent a WhatsApp message or poster from the Studio's WhatsApp Inbox"],
+  "studio.inbox.synced": () => ["refreshed the Studio's WhatsApp Inbox from Kapso"],
   "studio.date.created": () => ["added a shared birthday or anniversary"],
   "studio.date.edited": () => ["changed a shared birthday or anniversary"],
   "studio.date.deleted": () => ["deleted a shared birthday or anniversary"],
@@ -1115,6 +1117,8 @@ const SECRET_LABEL: Record<string, string> = {
   "wati.apiKey": "WhatsApp (Wati)",
   "resend.apiKey": "email (Resend)",
   "github.token": "GitHub",
+  "kapso.apiKey": "WhatsApp Inbox (Kapso)",
+  "kapso.webhookSecret": "WhatsApp Inbox webhook (Kapso)",
 };
 function secretLabel(name: string): string {
   return SECRET_LABEL[name] ?? cap(words(name.replace(/\.?api_?key$/i, "")));

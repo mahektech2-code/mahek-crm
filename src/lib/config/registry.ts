@@ -2006,6 +2006,15 @@ export const SETTINGS = [
       "On: whoever uploads a poster template publishes it to everybody in the Studio the moment every check passes — the artwork fits, every language it declares has its own wording and every one draws without overflow. Off: an uploaded template waits for somebody who approves designs, as before. Templates already published stay published either way.",
     default: true,
   },
+  {
+    key: "studio.whatsapp.number",
+    type: "text",
+    category: "attachments",
+    label: "Studio: the WhatsApp number the Inbox is for",
+    description:
+      "The company WhatsApp number whose conversations the Studio's WhatsApp Inbox shows, digits with the country code. The Inbox only treats Kapso as connected when a LIVE (not sandbox) number in the Kapso project matches this one — a sandbox number is never shown as the company's WhatsApp. Changing it points the Inbox at a different number; conversations already stored stay readable.",
+    default: "919137466424",
+  },
   /* ----------------------------------------------------------- attachments */
   {
     key: "attachments.maxSizeMb",
@@ -7081,6 +7090,7 @@ export type Config = {
   "customers.birthdayHeadsUpDays": number;
 
   "studio.publishImmediately": boolean;
+  "studio.whatsapp.number": string;
   "attachments.maxSizeMb": number;
   "attachments.acceptedTypes": string[];
   "attachments.maxPerComplaint": number;
