@@ -328,4 +328,9 @@ where `payments.allowOnAccountRemainder` refuses it) — "settle these bills"
 would refuse a smaller figure outright, which is the usual correction. Before
 this, a mistyped figure had to be rejected ("never arrived") and recorded again,
 which tells the customer's statement something untrue. It is the Correct button
-in the Accounts review drawer.
+in the Accounts review drawer, and in the CRM customer record's Ledger tab for
+the person who recorded it: `/api/customer-statement` returns `mine`, their own
+`reported` claims for that customer (`myReportedReceipts`, read after the
+statement so scope has answered), and the tab lists them above the statement
+with Correct, which opens the same `CorrectReceiptDialog`. Held claims are not
+listed there — they are Accounts' by then.
