@@ -14,7 +14,7 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appAccess, hireApplications, hireAudit, hireDecisions, hireOffers, hireStageExecutions, hireUserRoles, users } from "@/db/schema";
-import { recordResponse } from "@/lib/hire/services/offers";
+import { currentOffer, recordResponse, withdrawOffer } from "@/lib/hire/services/offers";
 import { setTestUser } from "@/lib/auth";
 import { hireContext, type HireContext } from "@/lib/hire/access";
 import { boardRows, createApplication, resolveDuplicate, screenIn } from "@/lib/hire/services/pipeline";
@@ -211,6 +211,36 @@ describe("Hire core", () => {
     assert.deepEqual(closed.data.blockers, ["This application is already closed."]);
     assert.equal((await confirmImpact("hire-withdraw", appId, { typed: "Meena Joshi", fingerprint: closed.data.fingerprint }))?.code, "rule_violation");
   });
+  test("an issued offer can be withdrawn: it says what stays, the candidate is told, and the application stays open", async () => {
+    const ctx = await as(manager);
+    const r = await createApplication(ctx, { fullName: "Asha Kulkarni", phone: "98200 77441", blueprintId: SE, consent: true, location: "Pune" });
+    assert.ok(r.ok, !r.ok ? r.error : "");
+    const appId = r.data.applicationId;
+    const offerId = `hof_${randomUUID().slice(0, 12)}`;
+    await db.insert(hireOffers).values({ id: offerId, applicationId: appId, status: "accepted", grade: "g1", gradeLabel: "Grade 1", basicPaise: 2000000 });
+
+    const report = await impactReport("hire-offer-withdraw", appId);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    assert.deepEqual(report.data.blockers, []);
+    assert.ok(report.data.items.some((i) => i.effect === "changed" && /accepted offer/.test(i.label)), JSON.stringify(report.data.items));
+    assert.ok(report.data.items.some((i) => i.effect === "kept" && i.label === "application"));
+    assert.ok(await confirmImpact("hire-offer-withdraw", appId, undefined), "no confirmation, no withdrawal");
+
+    const short = await withdrawOffer(ctx, appId, "Role closed.");
+    assert.equal(short.ok, false, "a reason under twenty characters is refused");
+    const done = await withdrawOffer(ctx, appId, "The territory was merged and the role has closed.");
+    assert.equal(done.ok, true, done.ok ? "" : done.error);
+
+    const [o] = await db.select().from(hireOffers).where(eq(hireOffers.id, offerId));
+    assert.equal(o.status, "withdrawn", "the row stays, marked withdrawn");
+    const [a] = await db.select().from(hireApplications).where(eq(hireApplications.id, appId));
+    assert.equal(a.status, "in_progress", "withdrawing the offer is not closing the application");
+    assert.equal((await currentOffer(appId))?.status, "withdrawn");
+    assert.equal((await withdrawOffer(ctx, appId, "The territory was merged and the role has closed.")).ok, false, "nothing left to withdraw");
+    const after = await impactReport("hire-offer-withdraw", appId);
+    assert.ok(after.ok && after.data.blockers.length > 0, "the modal says so instead of offering the button");
+  });
+
   test("an answer to an offer is refused once the application is closed, and the closure stands", async () => {
     const ctx = await as(recruiter);
     const r = await createApplication(ctx, { fullName: "Farhan Qureshi", phone: "98765 11223", blueprintId: SE, consent: true, location: "Thane" });

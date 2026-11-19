@@ -34,4 +34,5 @@ export const HRMS_SOURCES: Record<string, () => Promise<ImpactSource>> = {
 
   /* Hire → a candidate's application withdrawn. */
   "hire-withdraw": () => import("./hire").then((m) => m.hireWithdrawImpact),
+  "hire-offer-withdraw": () => import("./hire").then((m) => m.hireOfferWithdrawImpact),
 };
