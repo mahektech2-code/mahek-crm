@@ -862,6 +862,8 @@ const DESCRIBE: Record<string, Describer> = {
   "whatsapp.test_send": (c) => ({ says: ["sent a test WhatsApp message", c.a.ok === false ? "— it failed" : ""], changes: false }),
   "whatsapp.replies_backfilled": (c) => ({ says: ["imported", plural(num(c.a.imported) ?? 0, "older WhatsApp reply", "older WhatsApp replies")], changes: false }),
   "founder.note": () => ({ says: ["added a note"], changes: false }),
+  "founder.note_edit": (c) => ({ says: ["corrected their own note"], note: str(c.a.note), changes: false }),
+  "founder.note_delete": (c) => ({ says: ["deleted their own note"], note: str(c.b.note), changes: false }),
   "admin.bulk-sales-am-correction": (c) => ({ says: ["corrected the salesperson on", plural(num(c.a.count) ?? 0, "customer"), "directly in the database"], changes: false }),
   "admin.bulk-sales-manager-correction": (c) => ({ says: ["corrected the sales manager on", plural(num(c.a.count) ?? 0, "customer"), "directly in the database"], changes: false }),
   "admin.bulk-sales-manager-derivation": (c) => ({ says: ["filled in the sales manager on", plural(num(c.a.count) ?? 0, "customer"), "from HRMS, directly in the database"], changes: false }),
