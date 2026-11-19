@@ -21,6 +21,7 @@ import { setTestUser } from "@/lib/auth";
 import { HireNotPermitted, hireContext, requireHireCap, type HireContext } from "@/lib/hire/access";
 import { boardRows, createApplication, resolveDuplicate, screenIn } from "@/lib/hire/services/pipeline";
 import { getApplication, moveApplication, stageOutcome } from "@/lib/hire/services/core";
+import { cancelBookedInterviews } from "@/lib/hire/services/schedule";
 import { seedHireBlueprints } from "@/lib/hire/seed/seed";
 import { installHire } from "@/lib/hire/install";
 import { runTask } from "@/lib/hire/ai/orchestrator";
@@ -188,14 +189,15 @@ describe("Hire core", () => {
     const r = await createApplication(ctx, { fullName: "Meena Joshi", phone: "98111 22233", blueprintId: SE, consent: true, location: "Nashik" });
     assert.ok(r.ok, !r.ok ? r.error : "");
     const appId = r.data.applicationId;
-    /* An interview already booked for her stays booked — the thing a person recording a withdrawal assumes goes. */
-    await db.insert(hireStageExecutions).values({ id: `hex_${randomUUID().slice(0, 12)}`, applicationId: appId, stageKey: "app", status: "scheduled", scheduledAt: new Date(Date.now() + 86_400_000), conductedById: interviewer.id });
+    /* An interview already booked for her is cancelled with her — the thing a person recording a withdrawal assumes goes. */
+    const execId = `hex_${randomUUID().slice(0, 12)}`;
+    await db.insert(hireStageExecutions).values({ id: execId, applicationId: appId, stageKey: "app", status: "scheduled", scheduledAt: new Date(Date.now() + 86_400_000), conductedById: interviewer.id });
 
     const report = await impactReport("hire-withdraw", appId);
     assert.ok(report.ok, report.ok ? "" : report.error);
-    const kept = report.data.items.find((i) => i.app === "Hire" && i.effect === "kept" && /interview/.test(i.label));
-    assert.equal(kept?.count, 1, JSON.stringify(report.data.items));
-    assert.match(kept?.examples?.[0] ?? "", /Rakesh Interviewer/);
+    const going = report.data.items.find((i) => i.app === "Hire" && i.effect === "changed" && /interview.*cancelled/.test(i.label));
+    assert.equal(going?.count, 1, JSON.stringify(report.data.items));
+    assert.match(going?.examples?.[0] ?? "", /Rakesh Interviewer/);
     assert.equal(report.data.confirmWord, "Meena Joshi");
 
     /* `changeStatus` cannot be imported here — it pulls Hire's client kit, which
@@ -206,8 +208,22 @@ describe("Hire core", () => {
     assert.equal(stale?.code, "conflict");
     assert.equal(await confirmImpact("hire-withdraw", appId, { typed: "meena  joshi", fingerprint: report.data.fingerprint }), null);
 
-    /* Withdrawn, it is closed: the modal says so instead of offering the button. */
-    await db.update(hireApplications).set({ status: "withdrawn", closedAt: new Date() }).where(eq(hireApplications.id, appId));
+    /* Withdrawn, it is closed — and the booked interview comes off the calendar in the same transaction,
+       with a trail line, as `changeStatus` does it. Answers already recorded would stay. */
+    const bundle = await getApplication(ctx, appId);
+    assert.ok(bundle);
+    const cancelled = await db.transaction(async (tx) => {
+      const rows = await cancelBookedInterviews(ctx, bundle, tx);
+      await tx.update(hireApplications).set({ status: "withdrawn", closedAt: new Date() }).where(eq(hireApplications.id, appId));
+      return rows;
+    });
+    assert.deepEqual(cancelled.map((x) => [x.id, x.conductedById]), [[execId, interviewer.id]]);
+    const [exec] = await db.select().from(hireStageExecutions).where(eq(hireStageExecutions.id, execId));
+    assert.equal(exec.status, "skipped");
+    assert.equal(exec.outcome, "not_applicable");
+    const trail = await db.select().from(hireAudit).where(eq(hireAudit.entityId, execId));
+    assert.ok(trail.some((t) => t.eventType === "interview_cancelled" && /cancelled — the candidate was withdrawn/.test(t.summary)), JSON.stringify(trail));
+    /* The modal says so instead of offering the button. */
     const closed = await impactReport("hire-withdraw", appId);
     assert.ok(closed.ok, closed.ok ? "" : closed.error);
     assert.deepEqual(closed.data.blockers, ["This application is already closed."]);

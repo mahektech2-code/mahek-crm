@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { hireAiOutputs, hireApplications, hireCandidates, hireDecisions, hireFiles, hireProfiles, type HireProfileData } from "@/db/schema";
+import { cancelBookedInterviews, tellInterviewersCancelled, type CancelledInterview } from "../services/schedule";
 import { getConfig } from "@/lib/config/store";
 import { sendMail } from "@/lib/mailer";
 import { err, fieldErr, ok, type Result } from "@/lib/result";
@@ -74,9 +75,10 @@ export async function screenInAction(applicationId: string): Promise<Result> {
 
 /**
  * Hold, resume or withdraw: a decision with its reasoning, never a silent
- * status flip. A withdrawal is the one of the three that cannot be undone, and
- * it leaves booked interviews and a standing offer where they are — so it also
- * carries the impact modal's confirmation, checked before anything is written.
+ * status flip. A withdrawal is the one of the three that cannot be undone. It
+ * takes the interviews still booked off the calendar in the same transaction
+ * (`cancelBookedInterviews`) and tells each interviewer. A standing offer stays as it is, recorded on the offer itself.
+ * It carries the impact modal's confirmation, checked before anything is written.
  */
 export async function changeStatus(
   applicationId: string,
@@ -99,7 +101,9 @@ export async function changeStatus(
     }
     const status = to === "hold" ? "on_hold" : to === "resume" ? "in_progress" : "withdrawn";
     const now = new Date();
+    let cancelled: CancelledInterview[] = [];
     await db.transaction(async (tx) => {
+      if (to === "withdraw") cancelled = await cancelBookedInterviews(ctx, b, tx);
       await tx.insert(hireDecisions).values({
         id: hid("hde"),
         applicationId,
@@ -134,8 +138,17 @@ export async function changeStatus(
         tx,
       );
     });
+    await tellInterviewersCancelled(ctx, b, cancelled);
     revalidatePath(path(applicationId));
-    return ok(undefined, to === "hold" ? "On hold — the reason is on the record." : to === "resume" ? "Resumed." : "Withdrawn.");
+    revalidatePath("/hire/calendar");
+    return ok(
+      undefined,
+      to === "hold"
+        ? "On hold — the reason is on the record."
+        : to === "resume"
+          ? "Resumed."
+          : `Withdrawn.${cancelled.length ? ` ${cancelled.length} booked interview${cancelled.length === 1 ? "" : "s"} cancelled.` : ""}`,
+    );
   });
 }
 

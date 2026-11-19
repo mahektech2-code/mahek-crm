@@ -135,3 +135,14 @@ keeps the booking as it stood and the reason (10+ characters). The interviewer
 is belled; the candidate is told through `recordMessage` — an email sent from
 here, or a WhatsApp/SMS/call recorded `logged` — never while do-not-contact.
 Started or completed interviews are refused.
+
+**WITHDRAWING A CANDIDATE CANCELS THE INTERVIEWS STILL BOOKED.** `changeStatus`
+"withdraw" calls `cancelBookedInterviews` (`services/schedule.ts`) inside its own
+transaction: every live run still `scheduled` or `in_progress` becomes `skipped`
+with outcome `not_applicable` — the status check has no `cancelled`, and
+`skipped` was written by nothing else — plus an `interview_cancelled` trail
+line, so it leaves the calendar, the Interviews list and the interviewer's
+scope. Each interviewer (not the person withdrawing) gets a bell. Answers
+already recorded stay, and scoring a skipped run is refused. An offer still
+stays as it stands. The `hire-withdraw` impact says "booked interviews
+cancelled" (it said "stays" before).

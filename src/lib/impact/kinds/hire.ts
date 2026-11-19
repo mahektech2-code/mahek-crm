@@ -17,10 +17,9 @@ import { typeable } from "./hrms-common";
  * Withdrawing deletes nothing — Hire's record is append-only — but it is the
  * one closing act on a candidate that cannot be undone: a withdrawn
  * application is never resumed. And it closes the application without
- * touching what was already arranged for it. Interviews already booked stay
- * on the interviewer's calendar and list, and an offer stays as it stands;
- * both are what somebody recording a withdrawal assumes goes with it, so both
- * are said as "stays".
+ * touching an offer, which stays as it stands and is said as "stays".
+ * Interviews still booked are cancelled with it (taken off the interviewer's
+ * calendar and list, the interviewer told), and that is said as a change.
  * ------------------------------------------------------------------------- */
 
 const OPEN = ["in_progress", "on_hold"];
@@ -64,11 +63,11 @@ export const hireWithdrawImpact: ImpactSource = {
     const items: ImpactItem[] = [
       {
         app: "Hire",
-        label: many(booked.length, "interview still booked", "interviews still booked"),
-        effect: "kept",
+        label: many(booked.length, "booked interview cancelled", "booked interviews cancelled"),
+        effect: "changed",
         count: booked.length,
         examples: booked.map((b) => [stageName(b.stage), b.at ? stamp(b.at) : null, b.who].filter(Boolean).join(" · ")),
-        note: "Withdrawing does not cancel them: they stay on the interviewer’s calendar and list. Tell the interviewer.",
+        note: "They come off the interviewer’s calendar and list, and each interviewer gets a bell. Anything already recorded in them is kept.",
       },
       {
         app: "Hire",

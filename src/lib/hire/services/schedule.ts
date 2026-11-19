@@ -1,12 +1,12 @@
 import "server-only";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { sendMail } from "@/lib/mailer";
-import { addDays } from "@/lib/format";
+import { addDays, stamp } from "@/lib/format";
 import { db } from "@/db";
 import { hireApplications, hireStageExecutions } from "@/db/schema";
 import { notifyUsers } from "@/lib/notify";
 import { err, ok, type Result } from "@/lib/result";
-import { isScored } from "../blueprint-types";
+import { isScored, stageByKey } from "../blueprint-types";
 import { scopeWhere, type HireContext } from "../access";
 import { hireTrail, ensureExecution, recordMessage, type AppBundle } from "./core";
 
@@ -287,4 +287,65 @@ export async function hireStaff(): Promise<{ id: string; name: string; role: str
     left join hire_user_roles r on r.user_id = u.id
     where u.active is not false order by u.name`)) as unknown as { id: string; name: string; role: string | null }[];
   return rows.map((r) => ({ id: String(r.id), name: String(r.name), role: r.role ?? null }));
+}
+
+/* ------------------------------------------------- a withdrawal's interviews */
+
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+export type CancelledInterview = { id: string; stageKey: string; conductedById: string | null; scheduledAt: Date | null };
+
+/**
+ * A WITHDRAWN CANDIDATE'S BOOKED INTERVIEWS COME OFF THE CALENDAR, inside the
+ * withdrawal's own transaction. Each live run still `scheduled` or
+ * `in_progress` becomes `skipped` — the stage's "not run"; the status check has
+ * no other word for it, and nothing else writes it — with outcome not
+ * applicable and a trail line. Answers already recorded stay on it. The bell
+ * to each interviewer goes after the commit (`tellInterviewersCancelled`).
+ */
+export async function cancelBookedInterviews(ctx: HireContext, b: AppBundle, tx: Tx): Promise<CancelledInterview[]> {
+  const now = new Date();
+  const rows = await tx
+    .update(hireStageExecutions)
+    .set({ status: "skipped", outcome: "not_applicable", updatedAt: now, updatedById: ctx.user.id })
+    .where(
+      and(
+        eq(hireStageExecutions.applicationId, b.app.id),
+        isNull(hireStageExecutions.supersededById),
+        inArray(hireStageExecutions.status, ["scheduled", "in_progress"]),
+      ),
+    )
+    .returning({ id: hireStageExecutions.id, stageKey: hireStageExecutions.stageKey, conductedById: hireStageExecutions.conductedById, scheduledAt: hireStageExecutions.scheduledAt });
+  for (const x of rows) {
+    const stage = stageByKey(b.def, x.stageKey)?.name ?? x.stageKey;
+    await hireTrail(
+      ctx,
+      {
+        applicationId: b.app.id,
+        candidateId: b.candidate.id,
+        entityType: "execution",
+        entityId: x.id,
+        event: "interview_cancelled",
+        summary: `${stage}${x.scheduledAt ? ` on ${stamp(x.scheduledAt)}` : ""} cancelled — the candidate was withdrawn`,
+        before: { status: "booked" },
+        after: { status: "skipped" },
+      },
+      tx,
+    );
+  }
+  return rows;
+}
+
+/** One bell per interviewer whose interview a withdrawal cancelled — never to the person who withdrew. */
+export async function tellInterviewersCancelled(ctx: HireContext, b: AppBundle, rows: CancelledInterview[]): Promise<void> {
+  const told = [...new Set(rows.map((x) => x.conductedById).filter((u): u is string => !!u && u !== ctx.user.id))];
+  if (!told.length) return;
+  await notifyUsers(
+    told.map((userId) => ({
+      userId,
+      title: `Interview cancelled: ${b.candidate.fullName}`,
+      body: `${b.blueprint.title} · the candidate was withdrawn, so the interview is off your calendar.`,
+      href: "/hire/calendar",
+      kind: "info" as const,
+    })),
+  );
 }

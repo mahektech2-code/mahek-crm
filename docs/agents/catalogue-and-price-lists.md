@@ -192,3 +192,10 @@ time, lets each be checked, corrected and approved in place, and "Approve all
 ready" goes through `publishDocument` once per file — the same action and
 checks as the review screen, never a looser batch path. "Ready" means read,
 nothing held, a name and a date.
+
+**Deleting an imported document takes its file off with it.** `deleteDocument`
+marks the document's attachment (its `attachment_id`, and anything bound to
+`price_list_document`/<id>) removed in the same transaction — detached, never
+hard-deleted there — with no `removed_parent_*`, because there is no document
+left to restore it onto; the orphan sweep frees the bytes. It used to leave the
+row bound to a document that no longer existed, which nothing would ever tidy.
