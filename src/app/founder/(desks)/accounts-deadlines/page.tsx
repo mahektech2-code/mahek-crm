@@ -5,7 +5,7 @@ import { ADMIN } from "@/lib/admin-routes";
 import { nowMs } from "@/lib/format";
 import { DeadlinesDesk } from "./deadlines-desk";
 
-export const metadata = { title: "Accounts deadlines - Founder Command Centre - MahekOne" };
+export const metadata = { title: "Accounts deadlines - HQ - MahekOne" };
 
 /**
  * THE ACCOUNTS DEADLINE, as the founder reads it: what the ledger desk has

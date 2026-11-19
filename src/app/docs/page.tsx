@@ -62,7 +62,7 @@ export default function DocsHome() {
           );
         })}
         <div className="rounded-[8px] border border-dashed border-line-strong p-5 text-[13px] leading-[20px] text-muted">
-          Accounts, HRMS, ERP, the Founder Command Centre, Hire and Website follow, one app at a time.
+          Accounts, HRMS, ERP, HQ, Hire and Website follow, one app at a time.
         </div>
       </div>
     </div>

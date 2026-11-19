@@ -1600,7 +1600,7 @@ function RecordDrawer({
     <>
       <div style={{ flex: "none", padding: "18px 22px", borderBottom: `1px solid ${C.soft}`, display: "flex", alignItems: "flex-start", gap: 12 }}>
         <span style={{ flex: 1, minWidth: 0 }}>
-          <span style={{ display: "block", fontSize: 12, fontWeight: 600, color: C.muted }}>{r?.kind ?? "Record · Command Centre"}</span>
+          <span style={{ display: "block", fontSize: 12, fontWeight: 600, color: C.muted }}>{r?.kind ?? "Record · HQ"}</span>
           <span style={{ display: "block", fontSize: 20, fontWeight: 600, color: C.ink, marginTop: 2 }}>{r?.title ?? rec.ref.subject}</span>
           <span style={{ display: "block", fontSize: 14, color: C.muted, marginTop: 2 }}>{r?.sub ?? (rec.loading ? "Reading the record…" : "")}</span>
         </span>

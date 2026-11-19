@@ -610,7 +610,7 @@ export function MarginsDesk({ period, cur, prev: prevRead, tooWide, cap, rules, 
 
   return (
     <div className="fcc-root" style={{ display: "contents" }}>
-      <TitleBlock crumb="Command Centre · Sell" title="Margins" subtitle="What every sale earned after lot cost, discount, expenses and credit notes" right={periodBar} below={tabsBar} />
+      <TitleBlock crumb="HQ · Sell" title="Margins" subtitle="What every sale earned after lot cost, discount, expenses and credit notes" right={periodBar} below={tabsBar} />
       <div style={{ padding: "20px 28px 48px 28px", animation: `fd-fade 160ms ${EASE}`, opacity: pending ? 0.55 : 1, transition: `opacity 120ms ${EASE}` }}>
         {tooWide ? (
           <div style={{ ...card, padding: 28, textAlign: "center", color: C.body }}>

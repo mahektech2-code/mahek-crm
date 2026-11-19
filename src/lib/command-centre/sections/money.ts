@@ -926,7 +926,7 @@ async function act(ctx: Ctx, table: string, key: string, id: string, input: Reco
         dueDate: ctx.period.today,
         type: "call_back",
         assignedUserId: r.owner_id,
-        note: `Chase the payment: owes ${inr(owes)}${overdue > 0 ? `, ${inr(overdue)} of it overdue` : ""}. Asked from the Founder Command Centre.`,
+        note: `Chase the payment: owes ${inr(owes)}${overdue > 0 ? `, ${inr(overdue)} of it overdue` : ""}. Asked from HQ.`,
       });
       return owned(res, `Chased · ${r.name} is on ${r.collector ?? "their telecaller"}'s Call Log today`);
     }

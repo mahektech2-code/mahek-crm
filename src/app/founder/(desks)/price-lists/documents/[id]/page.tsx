@@ -15,7 +15,7 @@ import { importFactsFor } from "@/lib/services/price-import-service";
 import { PricingSubNav } from "@/components/pricing/sub-nav";
 import { DocumentReviewScreen } from "@/components/pricing/document-review-screen";
 
-export const metadata = { title: "Review a price list — Founder Command Centre — MahekOne" };
+export const metadata = { title: "Review a price list — HQ — MahekOne" };
 
 export default async function Page({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();

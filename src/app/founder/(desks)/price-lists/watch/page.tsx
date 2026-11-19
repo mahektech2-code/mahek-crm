@@ -12,7 +12,7 @@ import { PageHeader } from "@/components/ui/primitives";
 import { PricingSubNav } from "@/components/pricing/sub-nav";
 import { WatchScreen } from "@/components/pricing/watch/watch-screen";
 
-export const metadata = { title: "Watch — Founder Command Centre — MahekOne" };
+export const metadata = { title: "Watch — HQ — MahekOne" };
 
 export default async function Page({
   searchParams,

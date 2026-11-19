@@ -1,6 +1,6 @@
 import { OverridesPage } from "@/components/pricing/overrides/overrides-page";
 
-export const metadata = { title: "Special prices — Founder Command Centre — MahekOne" };
+export const metadata = { title: "Special prices — HQ — MahekOne" };
 
 export default async function Page() {
   return (

@@ -73,8 +73,8 @@ export const TITLES: Record<SectionKey, [string, string]> = {
 
 /** "Command Centre · Founder desks" — the group a section sits in. */
 export function crumbFor(section: SectionKey): string {
-  if (section === "company") return "Command Centre";
-  return `Command Centre · ${NAV.find((g) => g.items.some((i) => i[0] === section))?.label ?? ""}`;
+  if (section === "company") return "HQ";
+  return `HQ · ${NAV.find((g) => g.items.some((i) => i[0] === section))?.label ?? ""}`;
 }
 
 export type ChromeUser = { name: string; initials: string; hatLabel: string };
@@ -150,7 +150,7 @@ export function FounderHeader({
         collapsed={collapsed}
         onToggleSidebar={onToggleSidebar}
         href="/founder"
-        label="MAHEK COMMAND CENTRE"
+        label="MAHEK HQ"
         wordmark={false}
         toggleIcon={
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>

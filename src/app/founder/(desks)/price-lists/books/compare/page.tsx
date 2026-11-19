@@ -3,7 +3,7 @@ import { compareLists } from "@/lib/services/price-list-service";
 import { bookIdOfList } from "@/lib/services/price-book-service";
 import { RevisionCompare } from "@/components/pricing/books/revision-compare";
 
-export const metadata = { title: "Compare prices — Founder Command Centre — MahekOne" };
+export const metadata = { title: "Compare prices — HQ — MahekOne" };
 
 export default async function Page({ searchParams }: { searchParams: Promise<{ a?: string; b?: string }> }) {
   const { a, b } = await searchParams;

@@ -4,7 +4,7 @@ import { DeliveryStatus } from "@/components/whatsapp/delivery-status";
 import { stamp } from "@/lib/format";
 import { trackerPage } from "@/lib/services/whatsapp-tracker-service";
 
-export const metadata = { title: "WhatsApp messages - Founder Command Centre - MahekOne" };
+export const metadata = { title: "WhatsApp messages - HQ - MahekOne" };
 
 const STATUSES: Array<[string, string]> = [
   ["", "Any status"],

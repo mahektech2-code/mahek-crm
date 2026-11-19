@@ -91,7 +91,7 @@ const JOBS: Partial<Record<AppId, Partial<Record<Level, string>>>> = {
   field: { associate: "field salesman", manager: "field sales manager", admin: "Salesman App administrator" },
   sales: { associate: "reads the field team's day", manager: "sales manager", admin: "Sales Dashboard administrator" },
   reports: { associate: "reads the owner's figures", manager: "reads the owner's figures for a team", admin: "Reports administrator" },
-  founder: { associate: "works the founder's desks", manager: "founder", admin: "Command Centre administrator" },
+  founder: { associate: "works the founder's desks", manager: "founder", admin: "HQ administrator" },
   enquiries: { associate: "works website enquiries", manager: "runs the enquiries desk", admin: "Enquiries administrator" },
   /* The level is only the floor: the job inside Hire is its own role row. */
   hire: { associate: "interviews candidates", manager: "hiring manager", admin: "Hire administrator" },

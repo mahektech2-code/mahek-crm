@@ -1,6 +1,6 @@
 import { ShopPricesPage } from "@/components/pricing/shops/shops-page";
 
-export const metadata = { title: "What a shop pays — Founder Command Centre — MahekOne" };
+export const metadata = { title: "What a shop pays — HQ — MahekOne" };
 
 export default async function Page({ params }: { params: Promise<{ customerId: string }> }) {
   const { customerId } = await params;
