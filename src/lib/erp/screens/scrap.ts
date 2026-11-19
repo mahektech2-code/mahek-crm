@@ -1310,7 +1310,15 @@ const scrapBuyers: ScreenModule = {
           title: b.name,
           fields: [{ l: "GSTIN", v: b.gstin ?? "—" }, { l: "Address", v: b.address ?? "—" }],
           contacts: b.phone ? [{ l: "Call", href: `tel:${b.phone}` }] : [],
-          actions: [b.active ? { id: "retire", l: "Retire", why: why(ctx, "scrapSale"), impact: { kind: "erp-scrap-buyer", id: b.id } } : { id: "restore", l: "Restore", why: why(ctx, "scrapSale") }],
+          actions: [
+            {
+              id: "edit",
+              l: "Edit",
+              why: can(ctx, "scrapSale") || can(ctx, "scrapAccounts") ? "" : why(ctx, "scrapSale"),
+              form: { ...form, id: "edit", recordId: b.id, title: `Edit ${b.name}`, submit: "Save changes", init: { name: b.name, phone: b.phone ?? "", gstin: b.gstin ?? "", address: b.address ?? "" } },
+            },
+            b.active ? { id: "retire", l: "Retire", why: why(ctx, "scrapSale"), impact: { kind: "erp-scrap-buyer", id: b.id } } : { id: "restore", l: "Restore", why: why(ctx, "scrapSale") },
+          ],
           by: stampLine(null, b.createdAt),
           panel: {
             kind: "scrap",
@@ -1347,6 +1355,20 @@ const scrapBuyers: ScreenModule = {
       await db.insert(erpScrapBuyers).values({ id, name, phone: text(h.phone), gstin: text(h.gstin)?.toUpperCase() ?? null, address: text(h.address), createdById: ctx.user.id });
       await erpAudit(ctx, "erp.scrapBuyer.create", "erp_scrap_buyer", id, null, { name });
       return okVoid(`${name} added`);
+    },
+    async edit(ctx, h, _l, id) {
+      if (!can(ctx, "scrapSale") && !can(ctx, "scrapAccounts")) return refused("scrapSale");
+      if (!id) return err("Choose the buyer to edit.");
+      const name = text(h.name);
+      if (!name) return fieldErr("name", "Enter the buyer's name.");
+      const [dup] = (await db.execute(sql`select id from erp_scrap_buyers where lower(name) = lower(${name}) and id <> ${id}`)) as unknown as { id: string }[];
+      if (dup) return fieldErr("name", "A scrap buyer of that name already exists.");
+      const [before] = await db.select().from(erpScrapBuyers).where(eq(erpScrapBuyers.id, id));
+      if (!before) return err("That scrap buyer no longer exists.");
+      const after = { name, phone: text(h.phone), gstin: text(h.gstin)?.toUpperCase() ?? null, address: text(h.address) };
+      await db.update(erpScrapBuyers).set(after).where(eq(erpScrapBuyers.id, id));
+      await erpAudit(ctx, "erp.scrapBuyer.edit", "erp_scrap_buyer", id, { name: before.name, phone: before.phone, gstin: before.gstin, address: before.address }, after);
+      return okVoid("Saved");
     },
   },
   actions: {

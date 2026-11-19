@@ -483,6 +483,7 @@ const DESCRIBE: Record<string, Describer> = {
   "erp.scrap.entry": () => ["recorded scrap"],
   "erp.scrap.entry.cancel": () => ["cancelled a scrap entry"],
   "erp.scrapBuyer.create": () => ["added a scrap buyer"],
+  "erp.scrapBuyer.edit": () => ["changed a scrap buyer's details"],
   "erp.scrapBuyer.retire": () => ["retired a scrap buyer"],
   "erp.scrapBuyer.restore": () => ["restored a scrap buyer"],
   "erp.receipt.create": () => ["recorded a scrap buyer's receipt"],

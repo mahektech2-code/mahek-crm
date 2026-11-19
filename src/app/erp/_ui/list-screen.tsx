@@ -1199,9 +1199,12 @@ export function ListScreen({
 const MENU_COL = 52;
 const EDIT_COL = 64;
 
-/** An action that changes the record itself: "Edit", "Edit order", "Edit TO", "Edit packing"… */
+/**
+ * An action that changes the record itself: "Edit", "Edit order", "Edit TO",
+ * "Update consignment", "Change quantity", "Correct weight", "Rename"…
+ */
 export function isEditAction(a: { id: string; l: string; ai?: boolean }): boolean {
-  return !a.ai && (/^edit/i.test(a.id) || /^edit\b/i.test(a.l));
+  return !a.ai && (/^edit/i.test(a.id) || /^(edit|update|change|correct|rename)\b/i.test(a.l));
 }
 
 /** The record's first edit action, the one its row draws as a button. */
