@@ -1,5 +1,10 @@
 import "server-only";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
+import { err, ok, type Result } from "@/lib/result";
+import type { HireContext } from "../access";
+import { hireTrail } from "./core";
 import { db } from "@/db";
 import { hireBlueprints, type HireBlueprint } from "@/db/schema";
 import type { BlueprintDefinition } from "../blueprint-types";
@@ -217,4 +222,39 @@ export async function freeKey(title: string): Promise<string> {
   const taken = new Set((await db.select({ key: hireBlueprints.key }).from(hireBlueprints).where(sql`${hireBlueprints.key} like ${base + "%"}`)).map((r) => r.key));
   if (!taken.has(base)) return base;
   for (let i = 2; ; i++) if (!taken.has(`${base}-${i}`)) return `${base}-${i}`;
+}
+
+/**
+ * DELETING A DRAFT THAT WAS NEVER PUBLISHED. A published or retired version is
+ * history candidates were scored against and is never deleted; a draft is
+ * somebody's unfinished work nobody was ever scored under, so it may go. The
+ * impact modal says so (`hire-blueprint-draft`) and this checks the same
+ * picture; the trail keeps a line naming what was deleted, because
+ * `hire_audit` is append-only and outlives the row. The caller has checked
+ * the person may edit blueprints.
+ */
+export async function deleteDraftBlueprint(
+  ctx: Pick<HireContext, "user" | "roleLabel">,
+  id: string,
+  confirmation: ImpactConfirmation | null,
+): Promise<Result> {
+  const b = await getBlueprintRow(id);
+  if (!b) return err("That blueprint no longer exists.", "not_found");
+  const refusal = await confirmImpact("hire-blueprint-draft", id, confirmation);
+  if (refusal) return refusal;
+  const gone = await db.transaction(async (tx) => {
+    const rows = await tx
+      .delete(hireBlueprints)
+      .where(and(eq(hireBlueprints.id, id), eq(hireBlueprints.status, "draft"), isNull(hireBlueprints.publishedAt)))
+      .returning({ id: hireBlueprints.id });
+    if (!rows.length) return false;
+    await hireTrail(
+      ctx,
+      { entityType: "blueprint", entityId: id, event: "blueprint_draft_deleted", summary: `Deleted the unpublished draft ${b.title} v${b.version}`, before: { title: b.title, version: b.version, key: b.key } },
+      tx,
+    );
+    return true;
+  });
+  if (!gone) return err("Only a draft that was never published can be deleted.", "rule_violation");
+  return ok(undefined, `Draft ${b.title} v${b.version} deleted.`);
 }

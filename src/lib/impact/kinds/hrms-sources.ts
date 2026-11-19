@@ -7,6 +7,8 @@ import type { ImpactSource } from "../registry";
 export const HRMS_SOURCES: Record<string, () => Promise<ImpactSource>> = {
   /* HRMS → Pick lists: one value removed (the id is `impactPart(list, value)` — the prompt picks the value). */
   "hrms-pick-list-value": () => import("./hrms-ref-lists").then((m) => m.pickListValueImpact),
+  /* Hire → Blueprints: an unpublished draft deleted. */
+  "hire-blueprint-draft": () => import("./hire-blueprints").then((m) => m.hireBlueprintDraftImpact),
 
   /* HRMS → Leave, Overtime, Monthly report, Attendance. */
   "hrms-leave-request": () => import("./hrms-time").then((m) => m.leaveRequestImpact),
