@@ -2,8 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { requireCapability } from "@/lib/access-control";
-import { fromThrown, ok, type Result } from "@/lib/result";
-import { approvableProducts, approveTo, declineTo, holdTo, releaseTo, sendBackTo, toReview, type ToReview } from "@/lib/services/to-approval-service";
+import { err, fromThrown, ok, type Result } from "@/lib/result";
+import { z } from "zod";
+import { approvableProducts, approveTo, declineTo, holdTo, releaseTo, saveToLines, sendBackTo, toReview, type ToReview } from "@/lib/services/to-approval-service";
 import type { ApprovalLine } from "@/lib/erp/order-hub";
 
 /* Thin over the service, which owns the `order.approve` check on every decision. */
@@ -60,4 +61,14 @@ export async function releaseToAction(id: string, note: string) {
 
 export async function declineToAction(id: string, reason: string) {
   return run(() => declineTo(id, reason));
+}
+
+/* Lines only: `strict` refuses a line or a body that carries anything else (a party, a godown). */
+const toLines = z.array(z.object({ skuId: z.string(), qtyCans: z.number(), ratePaise: z.number().int().nullable(), discountBp: z.number().int().nullable() }).strict()).max(500);
+
+/** Accounts save a TO's lines without deciding it; it stays waiting for them. */
+export async function saveToLinesAction(id: string, lines: ApprovalLine[]) {
+  const parsed = toLines.safeParse(lines);
+  if (!parsed.success) return err("Accounts change the lines only. Open the TO again.", "validation");
+  return run(() => saveToLines(id, parsed.data));
 }

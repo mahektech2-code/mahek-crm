@@ -574,3 +574,77 @@ export async function approvalBoard(): Promise<ApprovalBoardRow[]> {
     };
   });
 }
+
+/* ======================================================= ACCOUNTS EDIT
+ * Option A: Accounts may change an order's LINES while it waits for them —
+ * product, cans, rate, discount, a line added or taken off — and fill a rate
+ * that is missing before they approve. The billing and delivery parties and
+ * the godown are not theirs: a wrong party is declined or sent back to
+ * whoever took it. A saved edit needs no approval again.
+ *
+ * Only a numbered ERP order can be edited here (its lines are the ERP's, and
+ * the write is the Production Head's own, `editOrderLinesByAccounts`); a TO is
+ * edited in its review (`saveToLines`), and an order with no ERP lines behind
+ * it has nothing to edit. No ERP grant is needed: the person is checked as
+ * Accounts — the app, and `order.approve`, the approval's own capability.
+ * ------------------------------------------------------------------------ */
+
+/** Why an order may not be edited by Accounts now, or its ERP order number. */
+async function accountsEditable(orderId: string): Promise<Result<{ ctx: Awaited<ReturnType<typeof requireCapability>>; order: typeof orders.$inferSelect; no: number }>> {
+  const ctx = await requireCapability("order.approve");
+  const { listUserApps } = await import("../access");
+  if (!(await listUserApps(ctx.user.id)).includes("accounts")) return err("Only the Accounts team edits an order while approving it.", "not_permitted");
+  const [order] = await db.select().from(orders).where(eq(orders.id, orderId));
+  if (!order) return err("That order no longer exists.", "not_found");
+  const asTo = await stillATo(orderId);
+  if (asTo) return err(`It is still a TO: change its lines in the TO's review at the top of Order approvals.`, "rule_violation");
+  if (order.status !== "pending_approval") return err(`That order was already ${order.status === "declined" ? "declined" : "decided"}, so Accounts no longer edit it here.`, "conflict");
+  const no = erpOrderNo(order);
+  if (no == null) return err("Only an order with an order number can be edited here. Approve or decline this one.", "rule_violation");
+  return { ok: true, data: { ctx, order, no } };
+}
+
+export type AccountsOrderEditView = import("../erp/screens/sales").AccountsOrderEdit & { products: { id: string; name: string }[] };
+
+/** The order's lines for Accounts' Edit order dialog, with the products a line may become. */
+export async function accountsOrderEdit(orderId: string): Promise<Result<AccountsOrderEditView>> {
+  const can = await accountsEditable(orderId);
+  if (!can.ok) return can;
+  const [{ orderForAccountsEdit }, { approvableProducts }] = await Promise.all([import("../erp/screens/sales"), import("./to-approval-service")]);
+  const [got, products] = await Promise.all([orderForAccountsEdit(can.data.no), approvableProducts()]);
+  if (!got.ok) return got;
+  /* A line on a product since retired still shows as itself. */
+  const known = new Set(products.map((p) => p.id));
+  const kept = got.data.lines.filter((l) => !known.has(l.skuId)).map((l) => ({ id: l.skuId, name: l.name }));
+  return { ok: true, data: { ...got.data, products: [...products, ...kept] } };
+}
+
+/**
+ * SAVES ACCOUNTS' LINES on an order still waiting for them. Re-checked here
+ * whatever the dialog showed: the person, the app, that the order is still
+ * pending, and that it is not billed. The order stays pending — editing is not
+ * deciding — and the book row, its value and the customer's caches are
+ * rewritten from the ERP lines (`syncBookOrders`).
+ */
+export async function editOrderByAccounts(orderId: string, lines: import("../erp/screens/sales").AccountsOrderLine[]): Promise<Result> {
+  const can = await accountsEditable(orderId);
+  if (!can.ok) return can;
+  const { ctx, order, no } = can.data;
+  const { editOrderLinesByAccounts } = await import("../erp/screens/sales");
+  const res = await editOrderLinesByAccounts(ctx.user.id, no, lines);
+  if (!res.ok) return res;
+  await db.insert(auditLog).values({
+    id: id("aud"),
+    actorId: ctx.user.id,
+    actorRole: ctx.authorisedBy,
+    actorApp: ctx.authorisedIn,
+    action: "order.accountsEdit",
+    entityType: "order",
+    entityId: orderId,
+    beforeState: { orderNo: no, lines: res.data.before, amount: Number(order.totalAmount) } as never,
+    afterState: { orderNo: no, lines: res.data.after } as never,
+  });
+  const { syncBookOrders } = await import("../erp/book");
+  await syncBookOrders([no]);
+  return okVoid(res.data.message);
+}

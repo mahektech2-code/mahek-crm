@@ -2,15 +2,16 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Button, DecimalInput, PaiseInput, controlClass, cx } from "@/components/ui/primitives";
+import { Button, controlClass, cx } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/modal";
 import { CardGrid } from "@/components/ui/card-grid";
 import { useToast } from "@/components/ui/toast";
 import { money, stamp } from "@/lib/format";
-import { approveToAction, declineToAction, holdToAction, loadToReviewAction, releaseToAction, sendBackToAction } from "@/lib/actions/to-approval";
+import { approveToAction, declineToAction, holdToAction, loadToReviewAction, releaseToAction, saveToLinesAction, sendBackToAction } from "@/lib/actions/to-approval";
 import type { AccountsToRow, ToReview } from "@/lib/services/to-approval-service";
 import { ACCOUNTS_HOLD_REASONS } from "@/lib/erp/engines/order-hub";
 import { Cell, Empty, HeadCell, Pill, Row, ScreenHeader, Table, plural } from "../parts";
+import { OrderLinesEditor, discountBpOf, lineAmount, lineErrors, linesEdited, type EditLine } from "./order-lines-editor";
 
 /* ---------------------------------------------------------------------------
  * ACCOUNTS › ORDER APPROVALS, the TO queue (Option A).
@@ -227,10 +228,6 @@ export function ToApprovals({
 
 /* ------------------------------------------------------------- the review */
 
-type EditLine = { key: string; skuId: string; qtyCans: number | null; ratePaise: number | null; discountPct: number | null };
-
-const lineAmount = (l: EditLine) => (l.ratePaise == null || l.qtyCans == null ? null : Math.round(l.ratePaise * l.qtyCans * (1 - (l.discountPct ?? 0) / 100)));
-
 function ReviewDialog({ id, canDecide, onClose, onDone }: { id: string; canDecide: boolean; onClose: () => void; onDone: () => void }) {
   const { run } = useToast();
   const [data, setData] = React.useState<{ review: ToReview; products: { id: string; name: string }[] } | null>(null);
@@ -258,35 +255,31 @@ function ReviewDialog({ id, canDecide, onClose, onDone }: { id: string; canDecid
   const r = data?.review.row;
   const open = r?.status === "open";
   const total = lines.reduce((n, l) => n + (lineAmount(l) ?? 0), 0);
-  const noRate = lines.filter((l) => l.ratePaise == null).length;
-  const original = data?.review.lines ?? [];
-  const edited =
-    lines.length !== original.length ||
-    lines.some((l, i) => l.skuId !== original[i]?.skuId || l.qtyCans !== original[i]?.qtyCans || l.ratePaise !== original[i]?.ratePaise || (l.discountPct == null ? null : Math.round(l.discountPct * 100)) !== (original[i]?.discountBp ?? null));
+  const edited = linesEdited(lines, data?.review.lines ?? []);
+  const asSent = () => lines.map((l) => ({ skuId: l.skuId, qtyCans: l.qtyCans!, ratePaise: l.ratePaise, discountBp: discountBpOf(l) }));
 
-  function patch(key: string, p: Partial<EditLine>) {
-    setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...p } : l)));
-  }
-
-  async function approve() {
-    const e: Record<string, string> = {};
-    lines.forEach((l, i) => {
-      if (!l.skuId) e[`l${i}.skuId`] = "Pick the product";
-      if (!l.qtyCans || l.qtyCans <= 0 || !Number.isInteger(l.qtyCans)) e[`l${i}.qtyCans`] = "Whole cans above 0";
-      if (l.ratePaise == null) e[`l${i}.ratePaise`] = "No rate - add it to approve";
-      if (l.discountPct != null && (l.discountPct < 0 || l.discountPct > 100)) e[`l${i}.discountBp`] = "0 to 100";
-    });
-    if (!lines.length) e.lines = "An order needs at least one line.";
+  /* Saving is not deciding: the TO stays here, and a line may still lack its rate. */
+  async function save() {
+    const e = lineErrors(lines, { rateRequired: false });
     setErrs(e);
     if (Object.keys(e).length) return;
     setBusy(true);
     try {
-      const res = await run(
-        approveToAction(
-          id,
-          edited ? lines.map((l) => ({ skuId: l.skuId, qtyCans: l.qtyCans!, ratePaise: l.ratePaise, discountBp: l.discountPct == null ? null : Math.round(l.discountPct * 100) })) : null,
-        ),
-      );
+      const res = await run(saveToLinesAction(id, asSent()));
+      if (res.ok) onDone();
+      else if (res.fieldErrors?.length) setErrs(Object.fromEntries(res.fieldErrors.map((f) => [f.field, f.message])));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function approve() {
+    const e = lineErrors(lines, { rateRequired: true });
+    setErrs(e);
+    if (Object.keys(e).length) return;
+    setBusy(true);
+    try {
+      const res = await run(approveToAction(id, edited ? asSent() : null));
       if (res.ok) onDone();
       else if (res.fieldErrors?.length) setErrs(Object.fromEntries(res.fieldErrors.map((f) => [f.field, f.message])));
     } finally {
@@ -343,6 +336,9 @@ function ReviewDialog({ id, canDecide, onClose, onDone }: { id: string; canDecid
             <Button disabled={!canDecide || busy || !open} onClick={() => setSub("sendBack")}>
               Send back
             </Button>
+            <Button disabled={!canDecide || busy || !open || !edited} title={!canDecide ? "Only an Accounts manager edits an order" : !edited ? "Change a line first" : "Keep the changes without approving it yet"} onClick={() => void save()}>
+              Save changes
+            </Button>
             <Button variant="primary" disabled={!canDecide || busy || !open} title={canDecide ? undefined : "Only an Accounts manager approves an order"} onClick={() => void approve()}>
               Approve
             </Button>
@@ -390,72 +386,7 @@ function ReviewDialog({ id, canDecide, onClose, onDone }: { id: string; canDecid
                     <strong>{data.review.godown ?? "Not picked"}</strong>
                   </div>
                 </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse">
-                    <thead>
-                      <tr className="bg-ink text-left text-[11px] font-semibold tracking-[0.05em] text-white uppercase">
-                        <th className="px-2.5 py-2">Product</th>
-                        <th className="px-2.5 py-2">Cans</th>
-                        <th className="px-2.5 py-2">Rate</th>
-                        <th className="px-2.5 py-2">Disc. %</th>
-                        <th className="px-2.5 py-2 text-right">Amount</th>
-                        {open ? <th className="px-1 py-2"><span className="sr-only">Remove</span></th> : null}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {lines.map((l, i) => {
-                        const amt = lineAmount(l);
-                        return (
-                          <tr key={l.key} className="border-b border-divider align-top">
-                            <td className="px-1.5 py-1.5">
-                              <select aria-label="Product" disabled={!open} value={l.skuId} onChange={(e) => patch(l.key, { skuId: e.target.value })} className={controlClass({ invalid: !!errs[`l${i}.skuId`], className: "h-8 w-full text-[13px]" })}>
-                                <option value="">Pick a product</option>
-                                {data.products.map((p) => (
-                                  <option key={p.id} value={p.id}>
-                                    {p.name}
-                                  </option>
-                                ))}
-                              </select>
-                              {l.ratePaise == null ? <div className="mt-0.5 text-[11.5px] font-semibold text-danger">No rate - add it to approve</div> : null}
-                            </td>
-                            <td className="px-1.5 py-1.5">
-                              <input aria-label="Cans" inputMode="numeric" disabled={!open} value={l.qtyCans ?? ""} onChange={(e) => { const v = e.target.value.replace(/\D/g, ""); patch(l.key, { qtyCans: v ? Number(v) : null }); }} className={controlClass({ invalid: !!errs[`l${i}.qtyCans`], className: "h-8 w-16 text-[13px]" })} />
-                            </td>
-                            <td className="px-1.5 py-1.5">
-                              <PaiseInput aria-label="Rate" disabled={!open} paise={l.ratePaise} onPaise={(p) => patch(l.key, { ratePaise: p })} placeholder="₹" className={controlClass({ invalid: !!errs[`l${i}.ratePaise`] || l.ratePaise == null, className: cx("h-8 w-24 text-[13px]", l.ratePaise == null ? "border-2 border-brand" : "") })} />
-                            </td>
-                            <td className="px-1.5 py-1.5">
-                              <DecimalInput aria-label="Discount" disabled={!open} value={l.discountPct} onValue={(v) => patch(l.key, { discountPct: v })} invalid={!!errs[`l${i}.discountBp`]} className="h-8 w-16 text-[13px]" />
-                            </td>
-                            <td className={cx("px-2.5 py-2.5 text-right text-[13px] tabular-nums", amt == null ? "text-faint" : "")}>{amt == null ? "-" : money(amt)}</td>
-                            {open ? (
-                              <td className="px-1 py-1.5">
-                                <button type="button" aria-label="Remove line" disabled={lines.length <= 1} onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))} className="cursor-pointer rounded px-1.5 py-1 text-muted hover:text-danger disabled:cursor-not-allowed disabled:opacity-40">
-                                  ×
-                                </button>
-                              </td>
-                            ) : null}
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-                {errs.lines ? <p className="text-[12.5px] text-danger">{errs.lines}</p> : null}
-                <div className="flex items-center justify-between">
-                  {open ? (
-                    <Button size="sm" onClick={() => setLines((ls) => [...ls, { key: `l${seq.current++}`, skuId: "", qtyCans: null, ratePaise: null, discountPct: null }])}>
-                      + Add a line
-                    </Button>
-                  ) : (
-                    <span />
-                  )}
-                  <div className="text-sm">
-                    {noRate ? "Total so far " : "Total "}
-                    <strong>{money(total)}</strong>
-                    {noRate ? <span className="text-[12.5px] text-muted"> ({plural(noRate, "line")} {noRate === 1 ? "has" : "have"} no rate)</span> : null}
-                  </div>
-                </div>
+                <OrderLinesEditor lines={lines} setLines={setLines} products={data.products} errs={errs} editable={open} />
                 {data.review.remark ? <p className="text-[12.5px] text-muted">Remark: {data.review.remark}</p> : null}
                 {r.duplicate ? (
                   <p className="text-[12.5px] text-warn-ink">

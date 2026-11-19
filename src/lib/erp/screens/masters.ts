@@ -1,6 +1,6 @@
 import "server-only";
 import { CUSTOMER_EDIT_REFUSAL } from "@/lib/customer-edit-gate";
-import { has, type Col } from "./common";
+import { has, inTx, refuse, type Col } from "./common";
 import { and, asc, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import { foldName, renameValues } from "@/lib/customer-rename";
 import { db } from "@/db";
@@ -33,6 +33,7 @@ import {
   REGIONS,
   RM_UNITS,
   WEIGHT_TYPES,
+  refRenameRefusal,
   refValues, refOptions } from "../refs";
 import {
   erpAudit,
@@ -1452,6 +1453,23 @@ const refListsScreen: ScreenModule = {
               primary: true,
               prompt: { title: `Add to ${l.label}`, submit: "Add value", fields: [{ k: "v", l: "Value", t: "text", req: true }] },
             },
+            ...(vals.length || retired.length
+              ? [
+                  {
+                    id: "edit",
+                    l: "Rename a value",
+                    prompt: {
+                      title: `Rename in ${l.label}`,
+                      sub: "Records store the value as text, so only a value no record carries yet can be renamed. For one in use, retire it and add the new spelling.",
+                      submit: "Save changes",
+                      fields: [
+                        { k: "v", l: "Value", t: "select" as const, req: true, opts: [...vals, ...retired] },
+                        { k: "to", l: "New spelling", t: "text" as const, req: true },
+                      ],
+                    },
+                  },
+                ]
+              : []),
             ...(vals.length
               ? [
                   {
@@ -1496,6 +1514,33 @@ const refListsScreen: ScreenModule = {
       await db.insert(erpRefValues).values({ id: erpId("erprv"), listKey, value: v, sortOrder: Number(n), createdById: ctx.user.id });
       await erpAudit(ctx, "erp.ref.add", "erp_ref_value", listKey, null, { value: v });
       return okVoid(`Added “${v}”`);
+    },
+    async edit(ctx, listKey, values) {
+      const from = text(values.v);
+      const to = text(values.to)?.replace(/\s+/g, " ") ?? null;
+      if (!from) return fieldErr("v", "Choose the value to rename.");
+      if (!to) return fieldErr("to", "Type the new spelling.");
+      if (to === from) return fieldErr("to", "That is the spelling it already has.");
+      if (!REF_LISTS.some((l) => l.key === listKey)) return err("That is not one of the reference lists.", "not_found");
+      const res = await inTx(async (tx) => {
+        const [row] = await tx
+          .select({ id: erpRefValues.id })
+          .from(erpRefValues)
+          .where(and(eq(erpRefValues.listKey, listKey), eq(erpRefValues.value, from)))
+          .for("update");
+        if (!row) return err("That value is no longer on the list.", "not_found");
+        const dup = await tx
+          .select({ id: erpRefValues.id })
+          .from(erpRefValues)
+          .where(and(eq(erpRefValues.listKey, listKey), ne(erpRefValues.id, row.id), sql`lower(${erpRefValues.value}) = lower(${to})`));
+        if (dup.length) return fieldErr("to", "That value is already on the list.");
+        const why = await refRenameRefusal(listKey, from, tx);
+        if (why) return refuse(err(why, "rule_violation"));
+        await tx.update(erpRefValues).set({ value: to }).where(eq(erpRefValues.id, row.id));
+        return okVoid(`Renamed “${from}” to “${to}”`);
+      });
+      if (res.ok) await erpAudit(ctx, "erp.ref.edit", "erp_ref_value", listKey, { value: from }, { value: to });
+      return res;
     },
     async retire(ctx, listKey, values) {
       const v = text(values.v);

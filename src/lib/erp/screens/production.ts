@@ -42,6 +42,7 @@ import {
   fgLotStock,
   lockLot,
   packBatchCosting,
+  packLotStock,
   packLots,
   rmLevelAvailable,
   rmLots,
@@ -57,7 +58,7 @@ import { qcRefusal } from "../engines/trace";
 import { hasEvidence, evidenceFileIds, qcEvidenceFields, readQcEvidence, testResultsLine, type QcEvidence } from "../engines/sfg-tests";
 import { bindErpFiles } from "../attachments";
 import { refValues } from "../refs";
-import { boxHeadroom, cancelBatchBoxes, ensureBatchBoxes, labelBatchBoxes, looseHeadroom, mintLooseUnits, trimLooseUnits } from "../units";
+import { boxHeadroom, cancelBatchBoxes, cancelBoxesAbove, ensureBatchBoxes, labelBatchBoxes, looseHeadroom, mintLooseUnits, trimLooseUnits } from "../units";
 import { erpLabelsHref, erpTraceHref } from "../trace-links";
 import { confirmImpact } from "@/lib/impact/registry";
 import { readConfirmation } from "@/lib/impact/types";
@@ -1155,6 +1156,160 @@ async function packForm(ctx: ErpContext, fixed?: { serial: number; batchNo: stri
   };
 }
 
+/**
+ * WHY A PACKING BATCH CAN NO LONGER BE EDITED, per batch: its boxes have gone
+ * somewhere a record of their own points at — moved or written off, allocated
+ * to an order, scanned, dispatched or held, or come back on a return or an
+ * adjustment. An edit changes the whole batch (its boxes, its date, which
+ * cans fill them), so any one of those holds every line of it.
+ */
+async function packHolds(ex: Ex, batchNos: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (!batchNos.length) return out;
+  const rows = (await ex.execute(sql`
+    select batch_no as "batchNo", why from (
+      select lot_no as batch_no, 1 as o, 'Boxes of this batch have been moved to another godown or written off, so it can no longer be edited.' as why
+        from erp_transfers where item_type = 'FG Packing' and lot_no in ${batchNos}
+      union all
+      select lot_code, 2, 'Boxes of this batch are allocated to an order, so it can no longer be edited.'
+        from erp_batch_codes where lot_from = 'pack' and lot_code in ${batchNos}
+      union all
+      select lot_code, 3, 'Boxes of this batch have been scanned, dispatched or put on hold, so it can no longer be edited.'
+        from erp_units where lot_from = 'pack' and lot_code in ${batchNos} and status not in ('available', 'cancelled')
+      union all
+      select batch_no, 4, 'Boxes of this batch came back on a return or were adjusted, so it can no longer be edited.'
+        from erp_pack_entries where batch_no in ${batchNos} and source_type <> 'batch'
+    ) x order by o
+  `)) as unknown as { batchNo: string; why: string }[];
+  for (const r of rows) if (!out.has(r.batchNo)) out.set(r.batchNo, r.why);
+  return out;
+}
+
+const PACK_MOVED_ON = "Boxes of this batch have already moved on, so it can no longer be edited.";
+
+async function packEditForm(ctx: ErpContext, id: string): Promise<FormSpec | null> {
+  const [x] = await db
+    .select({ l: erpPackLines, godown: erpGodowns.name, sku: products.name, cpb: products.cansPerBox })
+    .from(erpPackLines)
+    .innerJoin(erpGodowns, eq(erpGodowns.id, erpPackLines.godownId))
+    .innerJoin(products, eq(products.id, erpPackLines.skuId))
+    .where(eq(erpPackLines.id, id));
+  if (!x) return null;
+  const l = x.l;
+  const [own, lines, printed] = await Promise.all([
+    fgLotStock(l.finishedGoodId, l.fgLotCode, l.godownId),
+    db.select({ id: erpPackLines.id, cans: erpPackLines.cans }).from(erpPackLines).where(eq(erpPackLines.batchNo, l.batchNo)),
+    batchLabelsPrinted(db, l.batchNo),
+  ]);
+  const others = lines.filter((o) => o.id !== id).reduce((n, o) => n + o.cans, 0);
+  const printedHint = "Its box labels are printed with the box count and the date, so those stay as they are.";
+  return {
+    screen: "packBatches",
+    id: "edit",
+    recordId: id,
+    title: `Edit ${l.batchNo} · ${l.fgLotCode}`,
+    sub: `${x.sku} at ${x.godown}. The batch, its SKU, godown and FG lot are fixed; add another line to draw from a different lot.${printed ? ` ${printedHint}` : ""}`,
+    submit: "Save changes",
+    init: { batchNo: l.batchNo, godown: x.godown, sku: x.sku, lot: l.fgLotCode, date: l.packDate, boxes: String(l.boxes), cans: String(l.cans), remarks: l.remarks ?? "" },
+    header: [
+      { k: "batchNo", l: "Batch no", t: "text", readOnly: true, sec: "Batch" },
+      { k: "godown", l: "Godown", t: "text", readOnly: true },
+      { k: "sku", l: "Description of goods (boxed SKU)", t: "text", readOnly: true },
+      { k: "date", l: "Date", t: "date", req: true, readOnly: printed, hint: "The whole batch's packing date." },
+      {
+        k: "boxes",
+        l: "Boxes in the whole batch",
+        t: "num",
+        qtyUnit: { base: "boxes" },
+        req: true,
+        min: 1,
+        readOnly: printed,
+        hint: `${nf(x.cpb)} cans a box. The other lines of the batch draw ${nf(others)} cans. Changing it changes every line of this batch.`,
+      },
+      { k: "lot", l: "Finished lot", t: "text", readOnly: true, sec: "Lot" },
+      { k: "cans", l: "Cans from this lot", t: "num", qtyUnit: { base: "cans" }, req: true, min: 1, hint: `Up to ${nf(own + l.cans)}: what the lot holds now plus the ${nf(l.cans)} this line already drew.` },
+      { k: "remarks", l: "Remarks", t: "area", mic: true },
+    ],
+  };
+}
+
+/** Whether any box label of the batch has been printed — they carry its box count and date. */
+async function batchLabelsPrinted(ex: Ex, batchNo: string): Promise<boolean> {
+  const rows = (await ex.execute(sql`select 1 from erp_units where lot_from = 'pack' and lot_code = ${batchNo} and label_printed_at is not null limit 1`)) as unknown as unknown[];
+  return rows.length > 0;
+}
+
+/**
+ * EDITING A PACKING LINE redoes the batch in one transaction: the lines are
+ * the documents the FG and box stock are read from, so changing them gives
+ * the old cans and boxes back and takes the new ones; the batch's one entry
+ * and its box ids then follow through `syncPackEntry`, exactly as a save does.
+ * Refused once anything downstream points at the batch's boxes.
+ */
+async function editPack(ctx: ErpContext, h: Record<string, string>, id: string): Promise<Result<unknown>> {
+  const boxes = int(h.boxes);
+  if (boxes == null || boxes <= 0) return fieldErr("boxes", "Boxes must be above 0.");
+  const cans = int(h.cans);
+  if (cans == null || cans <= 0) return fieldErr("cans", "Cans must be above 0.");
+  const remarks = text(h.remarks);
+  const seen: { before?: typeof erpPackLines.$inferSelect; after?: typeof erpPackLines.$inferSelect } = {};
+  const res = await inTx(async (tx) => {
+    const [b] = await tx.select().from(erpPackLines).where(eq(erpPackLines.id, id)).for("update");
+    if (!b) return refuse(err("That line no longer exists.", "not_found"));
+    seen.before = b;
+    const date = text(h.date) ?? b.packDate;
+    await lockLot(tx, "pack", b.batchNo, b.godownId);
+    await lockLot(tx, "fg", b.fgLotCode, b.godownId);
+    const hold = (await packHolds(tx, [b.batchNo])).get(b.batchNo);
+    if (hold) return refuse(err(hold, "rule_violation"));
+    const [entry] = await tx.select().from(erpPackEntries).where(and(eq(erpPackEntries.sourceType, "batch"), eq(erpPackEntries.sourceId, b.batchNo)));
+    if (entry && (await packLotStock(b.batchNo, b.godownId, tx)) < entry.boxes - 1e-9) return refuse(err(PACK_MOVED_ON, "rule_violation"));
+    const [sku] = await tx
+      .select({ name: products.name, cpb: products.cansPerBox, empty: erpProductPacking.emptyBoxesRequired, boxType: erpProductPacking.boxType })
+      .from(products)
+      .leftJoin(erpProductPacking, eq(erpProductPacking.productId, products.id))
+      .where(eq(products.id, b.skuId));
+    const cpb = sku?.cpb ?? 1;
+    if ((boxes !== b.boxes || date !== b.packDate) && (await batchLabelsPrinted(tx, b.batchNo)))
+      return refuse(fieldErr(boxes !== b.boxes ? "boxes" : "date", "The box labels of this batch are printed with its box count and date; those can no longer change."));
+    const lines = await tx.select().from(erpPackLines).where(eq(erpPackLines.batchNo, b.batchNo));
+    const others = lines.filter((o) => o.id !== id).reduce((n, o) => n + o.cans, 0);
+    const total = boxes * cpb;
+    if (others > total) return refuse(fieldErr("boxes", `The other lines of this batch already draw ${nf(others)} cans; ${nf(boxes)} boxes hold only ${nf(total)}.`));
+    if (others + cans > total) return refuse(fieldErr("cans", `${nf(boxes)} boxes take ${nf(total)} cans and the other lines draw ${nf(others)}; this line can draw at most ${nf(total - others)}.`));
+    const avail = (await fgLotStock(b.finishedGoodId, b.fgLotCode, b.godownId, tx)) + b.cans;
+    if (cans > avail + 1e-9) return refuse(fieldErr("cans", "There is not enough stock in this lot."));
+    /* More boxes are more empty boxes, taken from the box item at the godown — the save's own check, on the difference. */
+    if (boxes > b.boxes && sku?.boxType && Number(sku.empty) > 0) {
+      const need = (boxes - b.boxes) * Number(sku.empty);
+      const boxLots = (await rmLots(tx)).filter((l) => l.item.toLowerCase() === sku.boxType!.toLowerCase() && l.godownId === b.godownId);
+      if (boxLots.length || (await boxItemExists(tx, sku.boxType))) {
+        const have = boxLots.reduce((n, l) => n + l.stock, 0);
+        if (need > have + 1e-9) return refuse(fieldErr("boxes", `Low Box Quantity · ${nf(need)} more ${sku.boxType} needed, ${nf(Math.max(have, 0))} at ${await godownName(b.godownId)}`));
+      }
+    }
+    const now = new Date();
+    /* The box count and the date belong to the whole batch, on every line of it. */
+    if (boxes !== b.boxes || date !== b.packDate)
+      await tx.update(erpPackLines).set({ boxes, packDate: date, updatedAt: now, updatedById: ctx.user.id }).where(eq(erpPackLines.batchNo, b.batchNo));
+    const [a] = await tx.update(erpPackLines).set({ cans, remarks, updatedAt: now, updatedById: ctx.user.id }).where(eq(erpPackLines.id, id)).returning();
+    seen.after = a;
+    if (boxes < b.boxes) await cancelBoxesAbove(tx, b.batchNo, boxes, ctx.user.id);
+    await syncPackEntry(tx, b.batchNo, ctx.user.id);
+    /* More cans drawn from the FG lot: it cannot carry more loose labels than cans. */
+    if (cans > b.cans)
+      await trimLooseUnits(tx, { lotCode: b.fgLotCode, finishedGoodId: b.finishedGoodId, godownId: b.godownId, ledgerStock: avail - cans, byId: ctx.user.id, why: `Cans packed into ${b.batchNo}` });
+    const st = batchState(boxes, cpb, lines.map((o) => ({ id: o.id, cans: o.id === id ? cans : o.cans })));
+    return okVoid(
+      st.complete
+        ? `${b.batchNo} saved · ${nf(boxes)} boxes of ${sku?.name ?? "the SKU"} in packing stock`
+        : `${b.batchNo} saved · ${nf(st.remaining)} cans still to draw from another lot`,
+    );
+  });
+  if (res.ok) await erpAudit(ctx, "erp.pack.edit", "erp_pack_line", id, seen.before ?? null, seen.after ?? null);
+  return res;
+}
+
 const packBatches: ScreenModule = {
   key: "packBatches",
   window: PACK_WINDOW,
@@ -1182,6 +1337,11 @@ const packBatches: ScreenModule = {
       ? await db.select({ id: erpPackEntries.sourceId }).from(erpPackEntries).where(and(eq(erpPackEntries.sourceType, "batch"), inArray(erpPackEntries.sourceId, batchNos)))
       : [];
     const postedSet = new Set(posted.map((p) => p.id));
+    const [holds, packStockNow] = await Promise.all([
+      packHolds(db, batchNos),
+      batchNos.length ? packLots(db, { lots: batchNos, rates: false }) : Promise.resolve([]),
+    ]);
+    const shelf = new Map(packStockNow.map((p) => [pair(p.batchNo, p.godownId), p.stock]));
     const byBatch = new Map<string, typeof rows>();
     rows.forEach((r) => byBatch.set(r.l.batchNo, [...(byBatch.get(r.l.batchNo) ?? []), r]));
     const all: Col[] = [
@@ -1227,6 +1387,8 @@ const packBatches: ScreenModule = {
         const actions: ActionSpec[] = [];
         if (st.remaining > 0) actions.push({ id: "more", l: "Add another", primary: true, loadsForm: true });
         else actions.push({ id: "labels", l: "Print box labels", primary: true, href: erpLabelsHref({ batch: x.l.batchNo }) });
+        const movedOn = postedSet.has(x.l.batchNo) && (shelf.get(pair(x.l.batchNo, x.l.godownId)) ?? 0) < x.l.boxes - 1e-9;
+        actions.push({ id: "edit", l: "Edit", loadsForm: true, why: holds.get(x.l.batchNo) ?? (movedOn ? PACK_MOVED_ON : "") });
         actions.push({ id: "trace", l: "Trace this batch", href: erpTraceHref(x.l.batchNo) });
         actions.push({ id: "select", l: "Show the whole batch", href: `?f=${encodeURIComponent(batch.map((b) => b.l.id).join(","))}&fl=${encodeURIComponent(x.l.batchNo)}` });
         actions.push({
@@ -1265,6 +1427,7 @@ const packBatches: ScreenModule = {
     };
   },
   formLoaders: {
+    edit: packEditForm,
     async more(ctx, id) {
       const [l] = await db
         .select({ l: erpPackLines, godown: erpGodowns.name, fg: finishedGoods.name, sku: products.name, cpb: products.cansPerBox })
@@ -1282,6 +1445,10 @@ const packBatches: ScreenModule = {
   forms: {
     new: (ctx, h) => savePack(ctx, h),
     more: (ctx, h) => savePack(ctx, h),
+    async edit(ctx, h, _l, id) {
+      if (!id) return err("No line named.", "not_found");
+      return editPack(ctx, h, id);
+    },
   },
   actions: {
     async delete(ctx, id, values) {

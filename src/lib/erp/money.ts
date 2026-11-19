@@ -650,6 +650,61 @@ export async function giveAdvance(actor: Actor, x: AdvanceInput): Promise<Result
   return ok(r.data, `${r.data.label}: ${inr(x.amountPaise)} given to ${person.name} · ${from.name} now ${inr(bal)}`);
 }
 
+/**
+ * What a correction of an advance may touch. `why` refuses it whole; `moneyWhy`
+ * keeps the amount, date, account and mode as they are and leaves the purpose,
+ * due date, reference and notes — once bills hang off the issue date and the
+ * amount, or a bank line explains it, or it is settled, the money is not
+ * changed in place. Pure, so the list, the form and the save say the same.
+ */
+export function advanceEditLock(a: Pick<AdvanceRow, "status" | "bills" | "issueTxn">, actorId: string, approver: boolean): { why: string; moneyWhy: string } {
+  if (a.status === "cancelled") return { why: "This advance is cancelled", moneyWhy: "" };
+  if (!a.issueTxn || a.issueTxn.status !== "active") return { why: "Its payment is cancelled", moneyWhy: "" };
+  if (!approver && a.issueTxn.createdById !== actorId) return { why: "Only the accountant, or whoever gave it", moneyWhy: "" };
+  const moneyWhy =
+    a.status === "settled" ? "Settled — reopen it to change the amount, date or account"
+    : a.bills.some((b) => b.status === "active") ? "Bills are against it — cancel them to change the amount, date or account"
+    : a.issueTxn.matchedPaise > 0 ? "Matched to a bank line — undo the match to change the amount, date or account"
+    : "";
+  return { why: "", moneyWhy };
+}
+
+export type AdvanceEdit = { amountPaise: number | null; date: string; purpose: string | null; billsDueOn: string | null; from: string | null; mode: string | null; reference: string | null; note: string | null };
+
+/** Corrects an advance and the row that paid it out, in place, keeping the before in the audit log. Who holds it never changes: that is a cancel and a new advance. */
+export async function editAdvance(actor: Actor, advanceId: string, x: AdvanceEdit): Promise<Result> {
+  if (!(x.amountPaise && x.amountPaise > 0)) return fieldErr("amount", "Enter the amount given.");
+  if (!x.date) return fieldErr("date", "When was it given?");
+  if (x.date > today()) return fieldErr("date", "An advance cannot be dated in the future.");
+  if (x.billsDueOn && x.billsDueOn < x.date) return fieldErr("billsDueOn", "Bills cannot be due before the advance is given.");
+  if (!x.mode || !(PAY_MODES as readonly string[]).includes(x.mode)) return fieldErr("mode", "Choose how it was handed over.");
+  const r = await inTx<{ label: string; before: Record<string, unknown> }>(async (tx) => {
+    await tx.execute(sql`select id from erp_advances where id = ${advanceId} for update`);
+    await tx.execute(sql`select id from erp_money_txns where advance_id = ${advanceId} for update`);
+    const [a] = await advanceRows(sql`a.id = ${advanceId}`);
+    if (!a) return err("That advance no longer exists.", "not_found");
+    const lock = advanceEditLock(a, actor.id, actor.approver);
+    if (lock.why) return err(`${lock.why}.`, a.status === "cancelled" ? "rule_violation" : "not_permitted");
+    const issue = a.issueTxn!;
+    /* The account it was given from stays allowed even if it has since been closed. */
+    const from = (await moneyAccounts()).find((m) => m.id === issue.fromAccountId && m.name === x.from) ?? (await accountByName(tx, x.from));
+    if (!from) return fieldErr("from", "Choose the account it was given from.");
+    if (lock.moneyWhy && (x.amountPaise !== issue.amountPaise || x.date !== a.issuedOn || from.id !== issue.fromAccountId || (issue.mode != null && x.mode !== issue.mode))) return err(`${lock.moneyWhy}.`, "rule_violation");
+    await tx.update(erpAdvances).set({ purpose: x.purpose, issuedOn: x.date, billsDueOn: x.billsDueOn }).where(eq(erpAdvances.id, advanceId));
+    await tx
+      .update(erpMoneyTxns)
+      .set({ txnDate: x.date, amountPaise: x.amountPaise!, fromAccountId: from.id, mode: x.mode, reference: x.reference, description: x.purpose, note: x.note, updatedAt: new Date() })
+      .where(eq(erpMoneyTxns.id, issue.id));
+    return ok({
+      label: advanceLabel(a.no, x.date),
+      before: { amountPaise: issue.amountPaise, date: a.issuedOn, purpose: a.purpose, billsDueOn: a.billsDueOn, from: issue.from, mode: issue.mode, reference: issue.reference, note: issue.note },
+    });
+  });
+  if (!r.ok) return r;
+  await audit(actor, "erp.money.advance.edit", advanceId, x, r.data.before);
+  return okVoid(`${r.data.label} saved`);
+}
+
 export type BillInput = { date: string | null; category: string | null; payee: string | null; invoiceNo: string | null; amountPaise: number | null; noBillReason: string | null; description: string | null; photo: string | null };
 
 /** The employee's bills against their advance: each one an expense drawn from the advance, waiting for the accountant. */
@@ -1034,6 +1089,35 @@ export async function recordScrapMoney(tx: Ex & { insert: Tx["insert"] }, x: { s
   const no = await nextNumber(tx, "moneyTxn");
   await tx.insert(erpMoneyTxns).values({ id: erpId("mtx"), txnNo: no, txnDate: x.date, kind: "receipt", amountPaise: x.amountPaise, toAccountId: acc.id, mode: x.mode === "Bank transfer" ? "NEFT" : x.mode, reference: x.reference, payer: x.payer, scrapReceiptId: x.scrapReceiptId, note: x.note, createdById: x.createdById });
   return ok(null);
+}
+
+/**
+ * The money side of a corrected scrap receipt, in the receipt's transaction.
+ * A receipt from before Petty Cash has no row, and nothing to correct here.
+ * Returns the account it was in, for the receipt's audit.
+ */
+export async function editScrapMoney(
+  tx: Tx,
+  x: { scrapReceiptId: string; date: string; mode: string; amountPaise: number; accountName: string | null; payer: string; reference: string | null; note: string | null; matchedToSales: boolean },
+): Promise<Result<{ before: string | null }>> {
+  await tx.execute(sql`select id from erp_money_txns where scrap_receipt_id = ${x.scrapReceiptId} and status = 'active' for update`);
+  const [t] = await txnRows(sql`t.scrap_receipt_id = ${x.scrapReceiptId} and t.status = 'active'`, tx);
+  if (!t) return ok({ before: null });
+  /* The account it is already in stays allowed even if it has since been closed. */
+  const accounts = await moneyAccounts();
+  const acc = accounts.find((a) => a.id === t.toAccountId && a.name === x.accountName) ?? accounts.find((a) => a.name === x.accountName && a.active) ?? null;
+  if (!acc) return fieldErr("into", "Choose the account it came into.");
+  if (acc.kind !== "bank" && x.mode !== "Cash") return fieldErr("into", `${acc.name} only takes cash.`);
+  const moved = acc.id !== t.toAccountId;
+  if (moved && x.matchedToSales) return fieldErr("into", "This receipt is matched to a sale. Undo the match first to change the account it came into.");
+  if (t.matchedPaise > 0 && (moved || x.amountPaise !== t.amountPaise)) return err("Its money is matched to a bank line. Undo that match first to change the amount or the account.", "rule_violation");
+  if (t.usedPaise > 0 && moved) return fieldErr("into", "Cash from it has been paid onward, so it stays in the account it came into.");
+  if (t.usedPaise > x.amountPaise) return fieldErr("amount", `${inr(t.usedPaise)} of it has been paid onward — it cannot be less than that.`);
+  await tx
+    .update(erpMoneyTxns)
+    .set({ txnDate: x.date, amountPaise: x.amountPaise, toAccountId: acc.id, mode: x.mode === "Bank transfer" ? "NEFT" : x.mode, reference: x.reference, payer: x.payer, note: x.note, updatedAt: new Date() })
+    .where(eq(erpMoneyTxns.id, t.id));
+  return ok({ before: t.to });
 }
 
 export async function cancelScrapMoney(tx: Tx, scrapReceiptId: string, reason: string, byId: string): Promise<Result<null>> {

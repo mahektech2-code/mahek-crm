@@ -188,6 +188,72 @@ export async function moveUnitsForTransfer(ex: Ex, p: { lotFrom: "pack" | "fg"; 
   return rows.length;
 }
 
+/**
+ * A PACKING BATCH EDITED DOWN TO FEWER BOXES cancels the ids above its new
+ * count, the ones still on the shelf — the edit refused anything else. Raising
+ * the count again restores them under the same ids (`ensureBatchBoxes`).
+ */
+export async function cancelBoxesAbove(ex: Ex, batchNo: string, keep: number, byId: string | null): Promise<void> {
+  const rows = await q<{ id: string; godown: string }>(ex, sql`
+    update erp_units set status = 'cancelled', status_note = ${`Packing batch now has ${keep} boxes`}, updated_at = now()
+     where lot_from = 'pack' and lot_code = ${batchNo} and seq > ${keep} and status = 'available' returning id, godown_id as godown
+  `);
+  for (const r of rows) await unitEvent(ex, { unitId: r.id, event: "cancel", from: "available", to: "cancelled", godownId: r.godown, note: `Packing batch ${batchNo} edited to ${keep} boxes`, byId });
+}
+
+const transferNote = (id: string) => `Transfer ${id}`;
+const transferUndoNote = (id: string) => `Transfer ${id} undone for an edit`;
+
+/**
+ * The units a transfer holds NOW — those its latest application moved
+ * (`moveUnitsForTransfer` notes each with the transfer's id; an edit undoes
+ * them and moves again, all in one transaction, so one timestamp) — each with
+ * where it is and whether anything has happened to it since.
+ */
+export async function unitsOfTransfer(
+  ex: Ex,
+  p: { transferId: string; lotFrom: "pack" | "fg"; lotCode: string },
+): Promise<{ id: string; status: string; godownId: string; touched: boolean }[]> {
+  const fwd = transferNote(p.transferId);
+  const undo = transferUndoNote(p.transferId);
+  const rows = await q<{ id: string; status: string; godownId: string; touched: boolean }>(ex, sql`
+    with marks as (
+      select e.unit_id, e.event, e.note, e.at from erp_unit_events e
+       where e.unit_id in (select id from erp_units where lot_from = ${p.lotFrom} and lot_code = ${p.lotCode})
+         and e.note in (${fwd}, ${undo})
+    ),
+    cur as (
+      select m.unit_id, m.at from marks m
+       where m.at = (select max(at) from marks) and m.note = ${fwd} and m.event in ('transfer', 'lost')
+    )
+    select u.id, u.status, u.godown_id as "godownId",
+           exists (select 1 from erp_unit_events e where e.unit_id = u.id and e.at > cur.at) as touched
+      from cur join erp_units u on u.id = cur.unit_id
+  `);
+  return rows.map((r) => ({ ...r, touched: !!r.touched }));
+}
+
+/**
+ * Puts the units a transfer moved back where they came from, as a further
+ * event on each — the caller has checked, under the lot's lock, that every
+ * one is still exactly where the transfer left it.
+ */
+export async function undoUnitsForTransfer(ex: Ex, p: { transferId: string; unitIds: string[]; fromGodownId: string; byId: string | null }): Promise<void> {
+  for (const id of p.unitIds) {
+    const [u] = await q<{ status: string }>(ex, sql`select status from erp_units where id = ${id} for update`);
+    await ex.execute(sql`update erp_units set status = 'available', status_note = null, godown_id = ${p.fromGodownId}, updated_at = now() where id = ${id}`);
+    await unitEvent(ex, {
+      unitId: id,
+      event: u?.status === "lost" ? "restored" : "transfer",
+      from: (u?.status ?? "available") as UnitStatus,
+      to: "available",
+      godownId: p.fromGodownId,
+      note: transferUndoNote(p.transferId),
+      byId: p.byId,
+    });
+  }
+}
+
 /** Whether any of these lots carries units — the line they are allocated to is then scanned before it leaves. */
 export async function lotsWithUnits(ex: Ex = db): Promise<Set<string>> {
   const rows = await q<{ k: string }>(ex, sql`select distinct lot_from || '|' || lot_code as k from erp_units where status <> 'cancelled'`);

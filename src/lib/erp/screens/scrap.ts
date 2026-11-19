@@ -10,9 +10,9 @@ import type { ErpContext } from "../access";
 import { refValues } from "../refs";
 import { erpAudit, erpId, int, num, paise, stampLine, text, type ScreenModule } from "../server";
 import type { ActionSpec, ColSpec, FieldSpec, FormSpec, ListRow } from "../ui";
-import { fd, impactPart, inr, nf } from "../ui";
+import { fd, impactPart, inr, nf, rupeesField } from "../ui";
 import { godownField, godownIdByName, godownOptions, today } from "./common";
-import { moneyAccounts } from "../money";
+import { moneyAccounts, txnRows } from "../money";
 import { confirmImpact } from "@/lib/impact/registry";
 import { readConfirmation } from "@/lib/impact/types";
 import {
@@ -47,6 +47,9 @@ import {
   classifyDrum,
   correctDrumWeight,
   decideDrumAdjustment,
+  editDrumReturn,
+  editReceipt,
+  editScrapSale,
   drumHistories,
   drumRows,
   findDrumLot,
@@ -401,6 +404,76 @@ async function saveSale(ctx: ErpContext, h: Record<string, string>, drumId?: str
     drumIds: drumId ? [drumId] : undefined,
   });
   return r.ok ? okVoid(r.message) : r;
+}
+
+/** Why a sale's Edit is locked, or "" — the row and the loader say the same. */
+const saleEditWhy = (ctx: ErpContext, s: SaleRow) => (s.status !== "confirmed" ? "The sale is cancelled" : why(ctx, "scrapSale"));
+
+/**
+ * Edit opens the sale's own form, filled in. Category, unit and godown decide
+ * which stock it drew and stay; while money is matched to it the buyer,
+ * quantity and rate stay too, until the accountant undoes the match.
+ */
+async function saleEditForm(ctx: ErpContext, id: string): Promise<FormSpec | null> {
+  const s = (await saleRows()).find((x) => x.id === id);
+  if (!s || s.status !== "confirmed") return null;
+  const base = await saleForm(ctx);
+  const matched = s.matchedPaise > 0;
+  const fixed = new Set(["category", "unit", "godown", ...(matched ? ["buyer", "quantity", "rate"] : [])]);
+  return {
+    ...base,
+    id: "edit",
+    recordId: s.id,
+    title: `Edit ${scrapSaleLabel(s.saleNo)}`,
+    sub: matched
+      ? `${inr(s.matchedPaise)} is matched to it, so the buyer, quantity and rate stay until the accountant undoes the match. Category and godown decide the stock it drew — to change those, cancel it and sell again.`
+      : s.category === DRUM_CATEGORY
+        ? "More drums are allocated oldest first; fewer puts the most recently recorded back in stock. Category and godown stay — to change those, cancel it and sell again."
+        : "Category, unit and godown decide the stock it drew and stay — to change those, cancel it and sell again.",
+    submit: "Save changes",
+    init: {
+      date: s.date,
+      buyer: s.buyer,
+      category: s.category,
+      godown: s.godown ?? "",
+      quantity: String(s.quantity),
+      unit: s.unit,
+      rate: rupeesField(s.ratePaise),
+      refKind: REF_KIND[s.refKind as keyof typeof REF_KIND] ?? REF_KIND.invoice,
+      externalRef: s.externalRef ?? "",
+      dueDate: s.dueDate ?? "",
+      remark: s.remark ?? "",
+    },
+    header: base.header.map((f) => {
+      /* A retired buyer is still this sale's buyer. */
+      const g = f.k === "buyer" && f.opts && !f.opts.includes(s.buyer) ? { ...f, opts: [s.buyer, ...f.opts] } : f;
+      return fixed.has(f.k) ? { ...g, readOnly: true } : g;
+    }),
+  };
+}
+
+async function saveSaleEdit(ctx: ErpContext, h: Record<string, string>, _l: unknown, id?: string): Promise<Result> {
+  if (!can(ctx, "scrapSale")) return refused("scrapSale");
+  if (!id) return err("Choose the sale to edit.");
+  const s = (await saleRows()).find((x) => x.id === id);
+  if (!s) return err("That sale is gone.", "not_found");
+  /* The current buyer stays allowed even if retired since; a new one must be active. */
+  const buyer = h.buyer === s.buyer ? { id: s.buyerId } : (await buyerOptions()).find((b) => b.name === h.buyer);
+  if (!buyer) return fieldErr("buyer", "Choose the scrap buyer.");
+  const kind = refKindByLabel(h.refKind);
+  if (!kind) return fieldErr("refKind", "Say whether an external invoice was issued.");
+  const ratePaise = paise(h.rate);
+  if (ratePaise == null) return fieldErr("rate", "Enter the rate.");
+  return editScrapSale(actorOf(ctx), id, {
+    date: text(h.date) ?? "",
+    buyerId: buyer.id,
+    quantity: num(h.quantity) ?? 0,
+    ratePaise,
+    refKind: kind,
+    externalRef: kind === "none" ? null : text(h.externalRef),
+    dueDate: text(h.dueDate),
+    remark: text(h.remark),
+  });
 }
 
 /* ============================================================ the modules */
@@ -839,6 +912,30 @@ const drumReturns: ScreenModule = {
           title: `${drumReturnLabel(Number(r.no))} · ${r.quantity} drums to ${r.supplier}`,
           fields: [{ l: "Remarks", v: r.remark ?? "—" }, ...(r.cancelReason ? [{ l: "Cancelled because", v: r.cancelReason }] : [])],
           actions: [
+            {
+              id: "edit",
+              l: "Edit",
+              why: r.status !== "confirmed" ? "The outward is cancelled" : why(ctx, "scrapSale"),
+              form:
+                r.status === "confirmed" && can(ctx, "scrapSale")
+                  ? {
+                      screen: "drumReturns",
+                      id: "edit",
+                      recordId: r.id,
+                      title: `Edit ${drumReturnLabel(Number(r.no))}`,
+                      sub: "The drums have gone, so the supplier and the count stay. A wrong count is cancelled and entered again, which puts the drums back first.",
+                      submit: "Save changes",
+                      init: { supplier: r.supplier, quantity: String(r.quantity), date: r.date, challan: r.challan ?? "", remark: r.remark ?? "" },
+                      header: [
+                        { k: "supplier", l: "Supplier", t: "text", readOnly: true },
+                        { k: "quantity", l: "Drums returned", t: "num", readOnly: true },
+                        { k: "date", l: "Return date", t: "date", req: true },
+                        { k: "challan", l: "Challan / return reference no.", t: "text" },
+                        { k: "remark", l: "Remarks", t: "area", mic: true },
+                      ],
+                    }
+                  : undefined,
+            },
             { id: "cancel", l: "Cancel outward", why: r.status !== "confirmed" ? "Already cancelled" : why(ctx, "scrapApprove"), prompt: { title: `Cancel ${drumReturnLabel(Number(r.no))}?`, sub: "Its drums go back to waiting for return.", submit: "Cancel outward", fields: [reasonField()] }, impact: { kind: "erp-drum-return", id: r.id } },
           ],
           by: stampLine(r.by, r.at),
@@ -854,7 +951,14 @@ const drumReturns: ScreenModule = {
       }),
     };
   },
-  forms: { new: saveReturn },
+  forms: {
+    new: saveReturn,
+    async edit(ctx, h, _l, id) {
+      if (!can(ctx, "scrapSale")) return refused("scrapSale");
+      if (!id) return err("Choose the outward to edit.");
+      return editDrumReturn(actorOf(ctx), id, { date: text(h.date) ?? "", challanRef: text(h.challan), remark: text(h.remark) });
+    },
+  },
   actions: {
     async cancel(ctx, id, v) {
       if (!can(ctx, "scrapApprove")) return refused("scrapApprove");
@@ -997,6 +1101,7 @@ async function saleRowsFor(ctx: ErpContext, rows: SaleRow[]): Promise<ListRow[]>
           { l: "Remarks", v: s.remark ?? "—" },
         ],
         actions: [
+          { id: "edit", l: "Edit", loadsForm: true, why: saleEditWhy(ctx, s) },
           {
             id: "match",
             l: "Match a receipt",
@@ -1074,7 +1179,8 @@ const scrapSales: ScreenModule = {
       rows: await saleRowsFor(ctx, rows),
     };
   },
-  forms: { new: (ctx, h) => saveSale(ctx, h) },
+  forms: { new: (ctx, h) => saveSale(ctx, h), edit: saveSaleEdit },
+  formLoaders: { edit: saleEditForm },
   actions: saleActions,
 };
 
@@ -1105,6 +1211,8 @@ const scrapReceivables: ScreenModule = {
       rows: (await saleRowsFor(ctx, rows)).sort((a, b) => AGE_BUCKETS.indexOf(b.v.bucket as never) - AGE_BUCKETS.indexOf(a.v.bucket as never)),
     };
   },
+  /* Its rows are Sales' rows: Edit loads Sales' form, which saves on Sales. */
+  formLoaders: { edit: saleEditForm },
   actions: saleActions,
 };
 
@@ -1310,7 +1418,15 @@ const scrapBuyers: ScreenModule = {
           title: b.name,
           fields: [{ l: "GSTIN", v: b.gstin ?? "—" }, { l: "Address", v: b.address ?? "—" }],
           contacts: b.phone ? [{ l: "Call", href: `tel:${b.phone}` }] : [],
-          actions: [b.active ? { id: "retire", l: "Retire", why: why(ctx, "scrapSale"), impact: { kind: "erp-scrap-buyer", id: b.id } } : { id: "restore", l: "Restore", why: why(ctx, "scrapSale") }],
+          actions: [
+            {
+              id: "edit",
+              l: "Edit",
+              why: can(ctx, "scrapSale") || can(ctx, "scrapAccounts") ? "" : why(ctx, "scrapSale"),
+              form: { ...form, id: "edit", recordId: b.id, title: `Edit ${b.name}`, submit: "Save changes", init: { name: b.name, phone: b.phone ?? "", gstin: b.gstin ?? "", address: b.address ?? "" } },
+            },
+            b.active ? { id: "retire", l: "Retire", why: why(ctx, "scrapSale"), impact: { kind: "erp-scrap-buyer", id: b.id } } : { id: "restore", l: "Restore", why: why(ctx, "scrapSale") },
+          ],
           by: stampLine(null, b.createdAt),
           panel: {
             kind: "scrap",
@@ -1348,6 +1464,20 @@ const scrapBuyers: ScreenModule = {
       await erpAudit(ctx, "erp.scrapBuyer.create", "erp_scrap_buyer", id, null, { name });
       return okVoid(`${name} added`);
     },
+    async edit(ctx, h, _l, id) {
+      if (!can(ctx, "scrapSale") && !can(ctx, "scrapAccounts")) return refused("scrapSale");
+      if (!id) return err("Choose the buyer to edit.");
+      const name = text(h.name);
+      if (!name) return fieldErr("name", "Enter the buyer's name.");
+      const [dup] = (await db.execute(sql`select id from erp_scrap_buyers where lower(name) = lower(${name}) and id <> ${id}`)) as unknown as { id: string }[];
+      if (dup) return fieldErr("name", "A scrap buyer of that name already exists.");
+      const [before] = await db.select().from(erpScrapBuyers).where(eq(erpScrapBuyers.id, id));
+      if (!before) return err("That scrap buyer no longer exists.");
+      const after = { name, phone: text(h.phone), gstin: text(h.gstin)?.toUpperCase() ?? null, address: text(h.address) };
+      await db.update(erpScrapBuyers).set(after).where(eq(erpScrapBuyers.id, id));
+      await erpAudit(ctx, "erp.scrapBuyer.edit", "erp_scrap_buyer", id, { name: before.name, phone: before.phone, gstin: before.gstin, address: before.address }, after);
+      return okVoid("Saved");
+    },
   },
   actions: {
     async retire(ctx, id, v) {
@@ -1369,31 +1499,77 @@ const scrapBuyers: ScreenModule = {
 
 /* ------------------------------------------------------------ Scrap buyers' receipts */
 
+/** The receipt form as New draws it; Edit starts from it. */
+function receiptFormOf(buyers: { name: string }[], accounts: Awaited<ReturnType<typeof moneyAccounts>>): FormSpec {
+  const live = accounts.filter((a) => a.active);
+  return {
+    screen: "cashReceipts",
+    id: "new",
+    title: "Record a receipt",
+    sub: "Money from a scrap buyer. Match it to the sales it pays for.",
+    submit: "Save receipt",
+    init: { date: today(), mode: "Bank transfer", into: live.find((a) => a.kind === "bank")?.name ?? "" },
+    header: [
+      { k: "date", l: "Received on", t: "date", req: true },
+      { k: "mode", l: "Mode", t: "select", req: true, opts: RECEIPT_MODES },
+      { k: "into", l: "Received into", t: "select", req: true, opts: live.map((a) => a.name), hint: "The Petty Cash account it landed in — cash goes to Cash in Hand." },
+      { k: "amount", l: "Amount (₹)", t: "num", req: true, min: 0.01 },
+      /* One of the two is needed — the save refuses money from nobody — so each is required while the other is empty. */
+      { k: "buyer", l: "Scrap buyer", t: "select", opts: buyers.map((b) => b.name), reqWhen: { k: "payer", eq: "" }, hint: "Leave empty if the bank line does not say who — name the payer instead." },
+      { k: "payer", l: "Payer as on the bank line", t: "text", reqWhen: { k: "buyer", eq: "" } },
+      { k: "reference", l: "UTR / cheque no. / slip", t: "text" },
+      { k: "note", l: "Note", t: "area" },
+    ],
+  };
+}
+
+/** Why a receipt's Edit is locked, or "". */
+const receiptEditWhy = (ctx: ErpContext, r: { status: string }) => (r.status !== "active" ? "This receipt is void" : why(ctx, "scrapAccounts"));
+
+/**
+ * Edit opens the receipt's form, filled in. While it is matched to a sale its
+ * money — amount, buyer, mode, account — stays; a bank match or cash paid
+ * onward from it keeps the amount and the account too (Petty Cash says so on
+ * save). The date, payer, reference and note can always be put right.
+ */
+async function receiptEditForm(ctx: ErpContext, id: string): Promise<FormSpec | null> {
+  const [rows, buyers, accounts] = await Promise.all([receiptRows(), buyerOptions(), moneyAccounts()]);
+  const r = rows.find((x) => x.id === id);
+  if (!r || r.status !== "active") return null;
+  const [t] = await txnRows(sql`t.scrap_receipt_id = ${id} and t.status = 'active'`);
+  const base = receiptFormOf(buyers, accounts);
+  const matched = r.matchedPaise > 0;
+  const bank = !!t && t.matchedPaise > 0;
+  const used = !!t && t.usedPaise > 0;
+  const fixed = new Set([...(matched ? ["amount", "buyer", "mode", "into"] : []), ...(bank ? ["amount", "into"] : []), ...(used ? ["into"] : []), ...(t ? [] : ["into"])]);
+  const why = [
+    matched ? `${inr(r.matchedPaise)} of it is matched to sales — undo the match to change the amount, buyer, mode or account` : "",
+    bank ? "its money is matched to a bank line" : "",
+    used ? `${inr(t!.usedPaise)} of its cash has been paid onward` : "",
+  ].filter(Boolean);
+  return {
+    ...base,
+    id: "edit",
+    recordId: r.id,
+    title: `Edit ${receiptLabel(r.receiptNo)}`,
+    sub: why.length ? `${why.join("; ")}. The date, payer, reference and note can still be corrected.` : "The receipt and its Petty Cash entry are corrected together.",
+    submit: "Save changes",
+    init: { date: r.date, mode: r.mode, into: t?.to ?? "", amount: rupeesField(r.amountPaise), buyer: r.buyer ?? "", payer: r.payer ?? "", reference: r.reference ?? "", note: r.note ?? "" },
+    header: base.header.map((f) => {
+      /* A retired buyer, or a closed account, is still this receipt's. */
+      const withOwn = f.k === "buyer" && r.buyer && f.opts && !f.opts.includes(r.buyer) ? { ...f, opts: [r.buyer, ...f.opts] } : f.k === "into" && t?.to && f.opts && !f.opts.includes(t.to) ? { ...f, opts: [t.to, ...f.opts] } : f;
+      const g = f.k === "into" && !t ? { ...withOwn, req: false, hint: "Recorded before Petty Cash — no account to correct." } : withOwn;
+      return fixed.has(f.k) ? { ...g, readOnly: true } : g;
+    }),
+  };
+}
+
 const cashReceipts: ScreenModule = {
   key: "cashReceipts",
   async load(ctx) {
     const [rows, buyers, sales, allocs, accounts] = await Promise.all([receiptRows(), buyerOptions(), saleRows(), allocationRows(), moneyAccounts()]);
     const acc = can(ctx, "scrapAccounts");
-    const live = accounts.filter((a) => a.active);
-    const form: FormSpec = {
-      screen: "cashReceipts",
-      id: "new",
-      title: "Record a receipt",
-      sub: "Money from a scrap buyer. Match it to the sales it pays for.",
-      submit: "Save receipt",
-      init: { date: today(), mode: "Bank transfer", into: live.find((a) => a.kind === "bank")?.name ?? "" },
-      header: [
-        { k: "date", l: "Received on", t: "date", req: true },
-        { k: "mode", l: "Mode", t: "select", req: true, opts: RECEIPT_MODES },
-        { k: "into", l: "Received into", t: "select", req: true, opts: live.map((a) => a.name), hint: "The Petty Cash account it landed in — cash goes to Cash in Hand." },
-        { k: "amount", l: "Amount (₹)", t: "num", req: true, min: 0.01 },
-        /* One of the two is needed — the save refuses money from nobody — so each is required while the other is empty. */
-        { k: "buyer", l: "Scrap buyer", t: "select", opts: buyers.map((b) => b.name), reqWhen: { k: "payer", eq: "" }, hint: "Leave empty if the bank line does not say who — name the payer instead." },
-        { k: "payer", l: "Payer as on the bank line", t: "text", reqWhen: { k: "buyer", eq: "" } },
-        { k: "reference", l: "UTR / cheque no. / slip", t: "text" },
-        { k: "note", l: "Note", t: "area" },
-      ],
-    };
+    const form = receiptFormOf(buyers, accounts);
     return {
       spec: {
         screen: "cashReceipts",
@@ -1449,6 +1625,7 @@ const cashReceipts: ScreenModule = {
           title: `${receiptLabel(r.receiptNo)} · ${inr(r.amountPaise)} · ${r.buyer ?? r.payer ?? ""}`,
           fields: [{ l: "Note", v: r.note ?? "—" }],
           actions: [
+            { id: "edit", l: "Edit", loadsForm: true, why: receiptEditWhy(ctx, r) },
             {
               id: "match",
               l: "Match to a sale",
@@ -1516,7 +1693,20 @@ const cashReceipts: ScreenModule = {
       const r = await recordReceipt(actorOf(ctx), { date: text(h.date) ?? today(), mode: h.mode ?? "", amountPaise: amount, buyerId: buyer?.id ?? null, payer: text(h.payer), reference: text(h.reference), note: text(h.note), into: text(h.into) });
       return r.ok ? okVoid(r.message) : r;
     },
+    async edit(ctx, h, _l, id) {
+      if (!can(ctx, "scrapAccounts")) return refused("scrapAccounts");
+      if (!id) return err("Choose the receipt to edit.");
+      const rc = (await receiptRows()).find((x) => x.id === id);
+      if (!rc) return err("That receipt is gone.", "not_found");
+      /* The current buyer stays allowed even if retired since; a new one must be active. */
+      const buyer = h.buyer && h.buyer === rc.buyer ? { id: rc.buyerId } : (await buyerOptions()).find((b) => b.name === h.buyer);
+      if (h.buyer && !buyer) return fieldErr("buyer", "Choose the scrap buyer from the list.");
+      const amount = paise(h.amount);
+      if (amount == null) return fieldErr("amount", "Enter the amount received.");
+      return editReceipt(actorOf(ctx), id, { date: text(h.date) ?? "", mode: h.mode ?? "", amountPaise: amount, buyerId: buyer?.id ?? null, payer: text(h.payer), reference: text(h.reference), note: text(h.note), into: text(h.into) });
+    },
   },
+  formLoaders: { edit: receiptEditForm },
   actions: {
     async match(ctx, id, v) {
       if (!can(ctx, "scrapAccounts")) return refused("scrapAccounts");

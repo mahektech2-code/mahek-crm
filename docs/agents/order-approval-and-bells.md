@@ -88,3 +88,18 @@ the same discipline as a reassignment that changes nothing notifying nobody.
 decided, audited and recomputed before the courtesy runs, exactly as the
 next-step sentence is a courtesy on top of a completed call. A bell that could
 not be written must not undo an order decision already standing in the ledger.
+
+**ACCOUNTS EDIT AN ORDER'S LINES WHILE APPROVING IT, in place and without the
+ERP grant (Option A).** Product, cans, rate, discount, a line added or taken
+off, and a missing rate filled before Approve. The billing party, the delivery
+party and the godown are NOT theirs: the dialog shows them read-only, the
+action refuses a body that names one, and the write carries them over from
+the order as it stands. A TO is changed in its review (Save changes, or with
+Approve) through `saveIntakeLinesByAccounts`/`approveIntake`; a numbered order
+on "Other orders waiting" through `editOrderByAccounts`, which writes with the
+Production Head's own `writeOrderEdit` and then `syncBookOrders`. Both ask the
+Accounts app AND `order.approve`, re-check the order is still waiting for
+Accounts, and audit (`order.to.accountsEdit`, `order.accountsEdit`). Saving is
+not deciding: the order stays in the queue, and a saved edit needs no approval
+again. An order with no order number (a CRM or handset order the ERP never
+took) has no ERP lines behind it, so its Edit order is off with a reason.

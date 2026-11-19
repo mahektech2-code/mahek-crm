@@ -172,7 +172,7 @@ export default async function PettyCashPage({ searchParams }: { searchParams: Pr
       const d = await advanceView(advId);
       if (!d) notFound();
       return shell(
-        <AdvancePage a={d.a} files={d.files} history={d.history} approver={approver} canWrite={canWrite} accounts={kit.accounts} billsHref={here({ dlg: "bills" })} backHref={erpLink("advances")} />,
+        <AdvancePage a={d.a} files={d.files} history={d.history} me={ctx.actor.id} approver={approver} canWrite={canWrite} accounts={kit.accounts} billsHref={here({ dlg: "bills" })} backHref={erpLink("advances")} />,
       );
     }
     const rows = await advanceList();
@@ -180,7 +180,7 @@ export default async function PettyCashPage({ searchParams }: { searchParams: Pr
     return shell(
       <Panel>
         <SubTabs tabs={tabs} />
-        <AdvancesTable rows={rows} depts={depts} today={day} />
+        <AdvancesTable rows={rows} depts={depts} today={day} me={ctx.actor.id} approver={approver} canWrite={canWrite} />
       </Panel>,
     );
   }

@@ -172,6 +172,23 @@ never carries more labels than it has cans (`looseHeadroom`), and packing or
 a can adjustment cancels the newest labels the lot can no longer be
 (`trimLooseUnits`).
 
+**A PACKING LINE OR A TRANSFER IS EDITED BY REDOING IT, AND ONLY WHILE
+NOTHING DOWNSTREAM HOLDS IT.** Packing batches → Edit (`editPack`) changes a
+line's cans and remarks and the batch's boxes and date (not once its box
+labels are printed), then re-syncs the batch's entry and box ids through
+`syncPackEntry`; fewer boxes cancels the ids above the new count
+(`cancelBoxesAbove`). `packHolds` refuses it once any box is moved, written
+off, allocated, scanned, dispatched, held, returned or adjusted. Item transfers
+→ Edit (`editTransfer`) changes the date, quantity, destination and remark:
+the destination entry is deleted and the units the transfer moved are put back
+(`unitsOfTransfer` / `undoUnitsForTransfer`, matched on the transfer's id in
+the event note), then it is posted again with `postTransferIn` and
+`moveUnitsForTransfer`. `transferHolds` refuses one an adjustment wrote, or
+whose lot moved on from the destination, or that a count, a floor check or an
+adjustment at either end came after; the edit also refuses when the
+destination no longer holds all it delivered. A write-off, either side of the
+edit, needs `lostStock`.
+
 **EVERY CHANGE OF A BOX IS AN EVENT, APPENDED.** `erp_unit_events`: created,
 labelled, scanned, unscanned, dispatched, transfer, hold, release, reject,
 return, lost, override. A transfer moves the lowest-numbered boxes in stock
