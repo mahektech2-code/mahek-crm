@@ -50,7 +50,7 @@ import {
   type ScreenModule,
 } from "../server";
 import type { ActionSpec, ColSpec, FieldSpec, FormSpec, ListRow } from "../ui";
-import { inr, nf } from "../ui";
+import { impactPart, inr, nf } from "../ui";
 import { getConfig } from "@/lib/config/store";
 import { rmTotalsByItem } from "../stock";
 import { PURCHASE_METHODS, methodByLabel, methodLabel, type PurchaseMethod } from "../engines/purchase-flow";
@@ -1498,10 +1498,12 @@ const refListsScreen: ScreenModule = {
                     l: "Retire a value",
                     prompt: {
                       title: `Retire from ${l.label}`,
-                      sub: "Records that already carry it keep it; new forms stop offering it.",
-                      submit: "Retire",
+                      sub: "Records that already carry it keep it; new forms stop offering it. The next step lists those records.",
+                      submit: "Next",
                       fields: [{ k: "v", l: "Value", t: "select" as const, req: true, opts: vals }],
                     },
+                    /* The report is about the value the prompt picked. */
+                    impact: { kind: "erp-ref-value-retire", id: l.key, withValue: "v" },
                   },
                 ]
               : []),
@@ -1566,6 +1568,9 @@ const refListsScreen: ScreenModule = {
     async retire(ctx, listKey, values) {
       const v = text(values.v);
       if (!v) return fieldErr("v", "Type the value.");
+      /* The person saw which records carry it — they keep it — before it stops being offered. */
+      const refusal = await confirmImpact("erp-ref-value-retire", impactPart(listKey, v), readConfirmation(values));
+      if (refusal) return refusal;
       await db.update(erpRefValues).set({ active: false }).where(and(eq(erpRefValues.listKey, listKey), eq(erpRefValues.value, v)));
       await erpAudit(ctx, "erp.ref.retire", "erp_ref_value", listKey, null, { value: v });
       return okVoid(`Retired “${v}”`);

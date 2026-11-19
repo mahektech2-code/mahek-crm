@@ -12780,6 +12780,9 @@ export const erpRecipes = pgTable(
       .references(() => erpRawMaterials.id),
     qtyPerBatch: erpQty("qty_per_batch").notNull(),
     note: text("note"),
+    /** Set on every line of the product when its recipe is retired (0365); every reader filters it out. */
+    retiredAt: timestamp("retired_at", { withTimezone: true }),
+    retiredById: text("retired_by_id").references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id").references(() => users.id),

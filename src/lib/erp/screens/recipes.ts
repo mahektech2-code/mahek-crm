@@ -1,6 +1,6 @@
 import "server-only";
 import { isErpManager } from "./common";
-import { and, asc, eq, inArray, notInArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, notInArray } from "drizzle-orm";
 import { db } from "@/db";
 import { erpRawMaterials, erpRecipes, productFormulations, users } from "@/db/schema";
 import { err, fieldErr, ok, okVoid, type Result } from "@/lib/result";
@@ -30,19 +30,36 @@ import { readConfirmation } from "@/lib/impact/types";
 
 type Row = { r: typeof erpRecipes.$inferSelect; product: string; item: string; by: string | null };
 
-async function recipeRows(): Promise<Row[]> {
+/**
+ * The recipe lines. Only LIVE recipes unless asked: a retired recipe (0365) no
+ * longer prefills a batch, flags one, or reaches the Factory phones and the
+ * MRP check — only the Recipes list itself shows it, to restore.
+ */
+async function recipeRows(opts: { retired?: boolean } = {}): Promise<Row[]> {
   return db
     .select({ r: erpRecipes, product: productFormulations.name, item: erpRawMaterials.name, by: users.name })
     .from(erpRecipes)
     .innerJoin(productFormulations, eq(productFormulations.id, erpRecipes.formulationId))
     .innerJoin(erpRawMaterials, eq(erpRawMaterials.id, erpRecipes.rawMaterialId))
     .leftJoin(users, eq(users.id, erpRecipes.updatedById))
+    .where(opts.retired ? undefined : isNull(erpRecipes.retiredAt))
     .orderBy(asc(productFormulations.name), asc(erpRawMaterials.name));
+}
+
+/** Why a recipe cannot be changed: it is retired, and is restored first. */
+async function retiredRefusal(formulationId: string): Promise<Result<unknown> | null> {
+  const [r] = await db
+    .select({ product: productFormulations.name })
+    .from(erpRecipes)
+    .innerJoin(productFormulations, eq(productFormulations.id, erpRecipes.formulationId))
+    .where(and(eq(erpRecipes.formulationId, formulationId), isNotNull(erpRecipes.retiredAt)))
+    .limit(1);
+  return r ? err(`The recipe for ${r.product} is retired. Restore it on Recipes before changing it.`, "rule_violation") : null;
 }
 
 /** Every recipe line, keyed `formulationId|rawMaterialId` — what the batches list checks against. */
 export async function recipeMap(): Promise<Map<string, number>> {
-  const rows = await db.select().from(erpRecipes);
+  const rows = await db.select().from(erpRecipes).where(isNull(erpRecipes.retiredAt));
   return new Map(rows.map((r) => [`${r.formulationId}|${r.rawMaterialId}`, Number(r.qtyPerBatch)]));
 }
 
@@ -143,7 +160,7 @@ async function parseLines(ls: Record<string, string>[]): Promise<Result<Parsed[]
 export const recipesScreen: ScreenModule = {
   key: "recipes",
   async load(ctx) {
-    const [rows, choices] = await Promise.all([recipeRows(), recipeChoices()]);
+    const [rows, choices] = await Promise.all([recipeRows({ retired: true }), recipeChoices()]);
     const writer = mayWrite(ctx);
     const why = writer ? "" : "A manager sets a recipe";
     const cols: ColSpec[] = [
@@ -163,6 +180,7 @@ export const recipesScreen: ScreenModule = {
           { l: "Recipes", kind: "distinct", k: "product" },
           { l: "Raw materials", kind: "distinct", k: "item" },
           { l: "Lines" },
+          { l: "Retired", where: { flag: "retired" }, tone: "muted" },
         ],
         hidden: [],
         groups: ["product"],
@@ -182,14 +200,25 @@ export const recipesScreen: ScreenModule = {
         newLabel: "New recipe",
         noDataLine: "No recipes yet. A recipe is what one batch of an SFG product takes, in litres.",
       },
-      rows: rows.map(
-        (x): ListRow => ({
+      rows: rows.map((x): ListRow => {
+        const retired = !!x.r.retiredAt;
+        return {
           id: x.r.id,
           v: { product: x.product, item: x.item, qty: Number(x.r.qtyPerBatch), note: x.r.note },
-          flags: [],
+          flags: retired ? ["retired"] : [],
           title: `${x.product} · ${x.item}`,
-          header: `${nf(Number(x.r.qtyPerBatch))} L per batch`,
-          actions: [
+          header: `${nf(Number(x.r.qtyPerBatch))} L per batch${retired ? " · retired" : ""}`,
+          actions: retired
+            ? [
+                {
+                  id: "restore",
+                  l: "Restore recipe",
+                  primary: true,
+                  why,
+                  confirm: `Restore the recipe for ${x.product}? It prefills new SFG batches, flags lines above it and is on the Factory phones' batch sheets again.`,
+                },
+              ]
+            : [
             { id: "start", l: "Start a batch", primary: true, loadsForm: true },
             { id: "edit", l: "Edit recipe", why, loadsForm: true },
             {
@@ -199,11 +228,16 @@ export const recipesScreen: ScreenModule = {
               prompt: { title: "Quantity per batch (litres)", sub: `${x.product} · ${x.item} · in litres`, submit: "Save", fields: [{ k: "qty", l: "Quantity per batch (litres)", t: "num", req: true, min: 0.001 }], init: { qty: String(x.r.qtyPerBatch) } },
             },
             { id: "remove", l: "Remove from recipe", why, impact: { kind: "erp-recipe-line", id: x.r.id } },
+            { id: "retire", l: "Retire whole recipe", why, impact: { kind: "erp-recipe-retire", id: x.r.id } },
           ],
-          fields: [{ l: "Unit", v: "Litres (L)" }, { l: "The whole recipe (litres per batch)", v: (byProduct.get(x.product) ?? []).map((y) => `${y.item} ${nf(Number(y.r.qtyPerBatch))} L`).join(" · ") }],
+          fields: [
+            { l: "Unit", v: "Litres (L)" },
+            { l: "The whole recipe (litres per batch)", v: (byProduct.get(x.product) ?? []).map((y) => `${y.item} ${nf(Number(y.r.qtyPerBatch))} L`).join(" · ") },
+            ...(retired ? [{ l: "Retired", v: "Not offered on new batches, the Factory phones or the MRP check. Batches already made keep their lines." }] : []),
+          ],
           by: stampLine(x.by, x.r.updatedAt).replace(/^Created/, "Set"),
-        }),
-      ),
+        };
+      }),
     };
   },
   formLoaders: {
@@ -228,6 +262,8 @@ export const recipesScreen: ScreenModule = {
       if (!mayWrite(ctx)) return err("A manager sets a recipe.", "not_permitted");
       const [f] = await db.select({ id: productFormulations.id }).from(productFormulations).where(eq(productFormulations.name, text(h.product) ?? ""));
       if (!f) return fieldErr("product", "Pick the SFG product");
+      const retiredNew = await retiredRefusal(f.id);
+      if (retiredNew) return retiredNew;
       const lines = await parseLines(ls);
       if (!lines.ok) return lines;
       const parsed = lines.data;
@@ -251,6 +287,8 @@ export const recipesScreen: ScreenModule = {
         .innerJoin(productFormulations, eq(productFormulations.id, erpRecipes.formulationId))
         .where(eq(erpRecipes.id, id));
       if (!anchor) return err("That recipe line was removed while the form was open. Close it and open the recipe again.", "not_found");
+      const retiredEdit = await retiredRefusal(anchor.formulationId);
+      if (retiredEdit) return retiredEdit;
       const lines = await parseLines(ls);
       if (!lines.ok) return lines;
       const parsed = lines.data;
@@ -293,6 +331,9 @@ export const recipesScreen: ScreenModule = {
       if (!mayWrite(ctx)) return err("A manager sets a recipe.", "not_permitted");
       const qty = num(v.qty);
       if (qty == null || qty <= 0) return fieldErr("qty", "Quantity per batch, in litres, is required");
+      const [line] = await db.select({ f: erpRecipes.formulationId }).from(erpRecipes).where(eq(erpRecipes.id, id));
+      const retiredQty = line ? await retiredRefusal(line.f) : null;
+      if (retiredQty) return retiredQty;
       const res = await db.update(erpRecipes).set({ qtyPerBatch: qty, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpRecipes.id, id)).returning({ id: erpRecipes.id });
       if (!res.length) return err("That recipe line no longer exists.", "not_found");
       await erpAudit(ctx, "erp.recipe.qty", "erp_recipe", id, null, { qty });
@@ -302,12 +343,48 @@ export const recipesScreen: ScreenModule = {
       if (!mayWrite(ctx)) return err("A manager sets a recipe.", "not_permitted");
       const [r] = await db.select().from(erpRecipes).where(and(eq(erpRecipes.id, id)));
       if (!r) return err("That recipe line no longer exists.", "not_found");
+      const retiredRemove = await retiredRefusal(r.formulationId);
+      if (retiredRemove) return retiredRemove;
       /* A recipe line is the batch sheet on the Factory phones too: the modal says what that changes. */
       const refusal = await confirmImpact("erp-recipe-line", id, readConfirmation(values));
       if (refusal) return refusal;
       await db.delete(erpRecipes).where(eq(erpRecipes.id, id));
       await erpAudit(ctx, "erp.recipe.remove", "erp_recipe", id, r, null);
       return okVoid("Taken out of the recipe");
+    },
+    /*
+     * RETIRING A WHOLE RECIPE stamps every line of the product (0365): it stops
+     * prefilling and flagging batches and leaves the Factory phones and the MRP
+     * check. Nothing is deleted — the batches made to it keep their lines, and
+     * Restore brings it back exactly as it was.
+     */
+    async retire(ctx, id, values) {
+      if (!mayWrite(ctx)) return err("A manager sets a recipe.", "not_permitted");
+      const [r] = await db.select().from(erpRecipes).where(eq(erpRecipes.id, id));
+      if (!r) return err("That recipe no longer exists.", "not_found");
+      const refusal = await confirmImpact("erp-recipe-retire", id, readConfirmation(values));
+      if (refusal) return refusal;
+      const lines = await db
+        .update(erpRecipes)
+        .set({ retiredAt: new Date(), retiredById: ctx.user.id, updatedAt: new Date(), updatedById: ctx.user.id })
+        .where(and(eq(erpRecipes.formulationId, r.formulationId), isNull(erpRecipes.retiredAt)))
+        .returning({ id: erpRecipes.id });
+      if (!lines.length) return err("That recipe is already retired.", "conflict");
+      await erpAudit(ctx, "erp.recipe.retire", "erp_recipe", r.formulationId, { lines: lines.length }, { retired: true });
+      return okVoid(`Recipe retired · its ${lines.length} line${lines.length === 1 ? " is" : "s are"} kept, off new batches and the Factory phones`);
+    },
+    async restore(ctx, id) {
+      if (!mayWrite(ctx)) return err("A manager sets a recipe.", "not_permitted");
+      const [r] = await db.select().from(erpRecipes).where(eq(erpRecipes.id, id));
+      if (!r) return err("That recipe no longer exists.", "not_found");
+      const lines = await db
+        .update(erpRecipes)
+        .set({ retiredAt: null, retiredById: null, updatedAt: new Date(), updatedById: ctx.user.id })
+        .where(and(eq(erpRecipes.formulationId, r.formulationId), isNotNull(erpRecipes.retiredAt)))
+        .returning({ id: erpRecipes.id });
+      if (!lines.length) return err("That recipe is not retired.", "conflict");
+      await erpAudit(ctx, "erp.recipe.restore", "erp_recipe", r.formulationId, { retired: true }, { retired: false, lines: lines.length });
+      return okVoid("Recipe restored");
     },
   },
 };

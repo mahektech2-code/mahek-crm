@@ -704,6 +704,20 @@ above it is flagged on the batches list; nothing is refused. A new below-level
 alert tells whoever works at that godown and can raise requisitions, once, as it
 is raised.
 
+**A whole recipe is RETIRED, never deleted** (`0365`, `erp_recipes.retired_at`
+stamped on every line of the product; impact kind `erp-recipe-retire`). EVERY
+reader of `erp_recipes` filters `retired_at is null` — `recipeRows`,
+`recipeMap`, `mrp-stock.ts`, `factory/server.ts` (the phones' batch sheets) and
+`factory/head.ts` (starting a mixing batch) — so a new reader must too. A
+retired recipe refuses edits, quantity changes and a New recipe for the same
+product until Restore. Batches made to it keep their lines.
+
+**Retiring a reference list value says which records carry it.** Settings →
+Reference lists → Retire a value goes through `erp-ref-value-retire` (id
+`impactPart(listKey, value)`); `refValueUses` counts each `STORED_IN` source,
+named by `STORED_WHAT` entry for entry — add a label when you add a source.
+`IN_USE` is `union all` so those counts are records, not distinct values.
+
 **The AI features draft and a person decides** (`docs/erp/04`). Everything a
 rule can do is ordinary code: the alert rules (`engines/alerts.ts`, run hourly
 and nightly by `runErpAlerts`, deduplicated by a partial unique index and

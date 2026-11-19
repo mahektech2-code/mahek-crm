@@ -1350,3 +1350,79 @@ describe("the goods receipt corrects the PO (0357)", () => {
     assert.ok(!(await pos.actions!.cancelCorrection(ctx, a.poId, { correction: label, reason: "again" })).ok, "only once");
   });
 });
+
+describe("voiding a mistaken goods inward line", () => {
+  const grn = (ctx: Awaited<ReturnType<typeof as>>, po: string, line: Record<string, string>) =>
+    mod("inward").forms!.new(ctx, { date: TODAY, po, godown: "Bhiwandi", transportMode: NONE }, [line]);
+  const lineOf = async (poId: string) => (await db.select().from(erpInward).where(eq(erpInward.poId, poId)))[0];
+  const poStatus = async (poId: string) => (await db.select().from(erpPurchaseOrders).where(eq(erpPurchaseOrders.id, poId)))[0].status;
+  const reason = { reason: "Received against the wrong PO" };
+
+  test("the line, its lot and the stock it added go; the PO waits for goods again", async () => {
+    const ctx = await as(admin);
+    const a = await approvedPo("Asian Solvents", [{ item: "1 L Tin Can", quantity: 1000, ratePaise: 8950 }]);
+    assert.ok((await grn(ctx, a.po, { poLine: a.lines["1 L Tin Can"], qty: "300" })).ok);
+    assert.equal(await poStatus(a.poId), "Partly received");
+    const line = await lineOf(a.poId);
+    const [lot] = await db.select().from(erpPurchases).where(eq(erpPurchases.inwardId, line.id));
+    assert.ok(lot, "the line went straight to the register");
+    assert.equal((await db.select().from(erpRmEntries).where(eq(erpRmEntries.sourceId, lot.id))).length, 1);
+
+    const { report, values } = await impact("erp-inward-void", line.id);
+    assert.equal(report.blockers.length, 0);
+    assert.equal(labelled(report, /purchase register lot/)?.count, 1);
+    assert.equal(labelled(report, /stock entr/)?.count, 1);
+    assert.equal(labelled(report, /received quantity/)?.effect, "changed");
+
+    const noReason = await mod("inward").actions!.void(ctx, line.id, values);
+    assert.equal(noReason.ok ? "ok" : noReason.fieldErrors?.[0]?.field, "reason");
+    const unconfirmed = await mod("inward").actions!.void(ctx, line.id, reason);
+    assert.equal(unconfirmed.ok ? "ok" : unconfirmed.error, UNCONFIRMED);
+    const c = await as(clerk);
+    assert.equal((await mod("inward").actions!.void(c, line.id, { ...reason, ...values })).ok, false, "a clerk without stock control");
+    const peek = await impactReport("erp-inward-void", line.id);
+    assert.equal(peek.ok ? "ok" : peek.code, "not_permitted");
+
+    const done = await mod("inward").actions!.void(await as(admin), line.id, { ...reason, ...values });
+    assert.ok(done.ok, JSON.stringify(done));
+    assert.equal((await db.select().from(erpInward).where(eq(erpInward.id, line.id))).length, 0);
+    assert.equal((await db.select().from(erpPurchases).where(eq(erpPurchases.id, lot.id))).length, 0);
+    assert.equal((await db.select().from(erpRmEntries).where(eq(erpRmEntries.sourceId, lot.id))).length, 0);
+    assert.equal(await poStatus(a.poId), "Sent", "nothing received against it any more: waiting for goods");
+    const [audit] = (await db.execute(sql`select before_state from audit_log where action = 'erp.inward.void' and entity_id = ${line.id}`)) as unknown as { before_state: unknown }[];
+    assert.ok(audit, "the audit row keeps what was voided");
+  });
+
+  test("the PO corrections the line made are cancelled with the reason, and stay", async () => {
+    const ctx = await as(admin);
+    const a = await approvedPo("Asian Solvents", [{ item: "1 L Tin Can", quantity: 1000, ratePaise: 8950 }]);
+    assert.ok((await grn(ctx, a.po, { poLine: a.lines["1 L Tin Can"], qty: "1150" })).ok);
+    const line = await lineOf(a.poId);
+    const { report, values } = await impact("erp-inward-void", line.id);
+    assert.equal(labelled(report, /PO correction/)?.count, 1);
+    assert.ok((await mod("inward").actions!.void(ctx, line.id, { ...reason, ...values })).ok);
+    const [c] = await db.select().from(erpPoCorrections).where(eq(erpPoCorrections.poId, a.poId));
+    assert.ok(c.cancelledAt);
+    assert.match(c.cancelReason ?? "", /GRN line voided: Received against the wrong PO/);
+  });
+
+  test("a lot already moved, or billed, holds the line, and the modal says why", async () => {
+    const ctx = await as(admin);
+    const a = await approvedPo("Asian Solvents", [{ item: "1 L Tin Can", quantity: 100, ratePaise: 8950 }]);
+    assert.ok((await grn(ctx, a.po, { poLine: a.lines["1 L Tin Can"], qty: "100" })).ok);
+    const line = await lineOf(a.poId);
+    const [lot] = await db.select().from(erpPurchases).where(eq(erpPurchases.inwardId, line.id));
+    const billed = await mod("register").actions!.billReceived(ctx, lot.id, { billNo: "B-77" });
+    assert.ok(billed.ok, JSON.stringify(billed));
+    const held = await impact("erp-inward-void", line.id);
+    assert.match(held.report.blockers[0] ?? "", /bill is recorded/);
+    const r = await mod("inward").actions!.void(ctx, line.id, { ...reason, [IMPACT_FIELD]: JSON.stringify({ typed: "VOID", fingerprint: held.report.fingerprint }) });
+    assert.equal(r.ok ? "ok" : r.code, "rule_violation");
+    await db.update(erpPurchases).set({ status: "Pending", billReceived: null }).where(eq(erpPurchases.id, lot.id));
+
+    const moved = await mod("transfers").forms!.new(ctx, { date: TODAY, type: "Purchase", from: "Bhiwandi", item: "1 L Tin Can", lot: lot.lotNo, qty: "5", to: "Ambernath" }, []);
+    assert.ok(moved.ok, JSON.stringify(moved));
+    assert.match((await impact("erp-inward-void", line.id)).report.blockers[0] ?? "", /moved to another godown/);
+    assert.equal((await db.select().from(erpInward).where(eq(erpInward.id, line.id))).length, 1, "nothing was taken");
+  });
+});

@@ -52,7 +52,7 @@ export async function assignTask(fc: FactoryCtx, a: { proc: Proc; item: string; 
   /* The item has to be something the ERP can make here — the formula is the
      approved batch sheet and is never edited from a phone. */
   if (a.proc === "mixing") {
-    const [r] = await q(sql`select 1 from erp_recipes where formulation_id = ${a.item} limit 1`);
+    const [r] = await q(sql`select 1 from erp_recipes where formulation_id = ${a.item} and retired_at is null limit 1`);
     if (!r) return err("This base has no approved batch sheet.", "validation");
   } else if (a.proc === "filling") {
     const [fg] = await q(sql`select 1 from finished_goods where id = ${a.item.split(":")[0]} and active`);
@@ -106,7 +106,7 @@ export async function startMixingBatch(fc: FactoryCtx, a: { item: string; qty: n
   if (!(qty > 0) || qty > MIX_BATCH_MAX) return err(`Enter how many batches, 1 to ${MIX_BATCH_MAX}.`, "validation");
   const [r] = await q(sql`
     select 1 from erp_recipes r join product_formulations f on f.id = r.formulation_id
-     where r.formulation_id = ${a.item} and f.active and r.qty_per_batch > 0 limit 1`);
+     where r.formulation_id = ${a.item} and f.active and r.qty_per_batch > 0 and r.retired_at is null limit 1`);
   if (!r) return err("This base has no approved batch sheet.", "validation");
   const team = meInCharge(fc, (await teamDefaults()).mixing);
   const id = await insertTask(fc, { proc: "mixing", item: a.item, qty, due: nowHM() > "18:00" ? nowHM() : "18:00", sfgLot: null }, team);
