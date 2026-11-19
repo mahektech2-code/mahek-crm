@@ -171,10 +171,10 @@ async function requestForm(ctx: ErpContext, init?: Record<string, string>): Prom
   };
 }
 
-async function saveRequest(ctx: ErpContext, h: Record<string, string>): Promise<Result<unknown>> {
-  const [c] = await loadCustomers(eq(customers.name, text(h.customer) ?? ""));
-  if (!c) return fieldErr("customer", "Customer is required");
-  const type = ERP_COMPLAINT_TYPE;
+type RequestFields = { description: string; cn: boolean; billId: string | null; goods: string | null; salesman: { id: string; name: string } | null };
+
+/** The fields a raise and an edit both read: the description, the credit-note request and its bill, and the salesman by account. */
+async function readRequest(h: Record<string, string>, c: { id: string }): Promise<Result<unknown> | RequestFields> {
   const description = text(h.description);
   if (!description) return fieldErr("description", "Complaint description is required");
   const cn = h.cn === "Yes";
@@ -202,6 +202,16 @@ async function saveRequest(ctx: ErpContext, h: Record<string, string>): Promise<
       salesman = found;
     }
   }
+  return { description, cn, billId, goods, salesman };
+}
+
+async function saveRequest(ctx: ErpContext, h: Record<string, string>): Promise<Result<unknown>> {
+  const [c] = await loadCustomers(eq(customers.name, text(h.customer) ?? ""));
+  if (!c) return fieldErr("customer", "Customer is required");
+  const type = ERP_COMPLAINT_TYPE;
+  const read = await readRequest(h, c);
+  if ("ok" in read) return read;
+  const { description, cn, billId, goods, salesman } = read;
   const id = await db.transaction(async (tx) => {
     const made = await createComplaint(
       {
@@ -224,6 +234,70 @@ async function saveRequest(ctx: ErpContext, h: Record<string, string>): Promise<
   });
   await erpAudit(ctx, "erp.request.create", "complaint", id, null, { customer: c.name, type, cn });
   return okVoid(`Complaint raised for ${c.name} · on their CRM record too, waiting for the office`);
+}
+
+/**
+ * Why a complaint cannot be edited here, or "" when it can. Raising needs only
+ * the screen, so whoever raised it may correct it, and so may the office that
+ * decides it; only while it is still a request — once accepted, rejected or
+ * credited, the decision was taken on what it said. A complaint a customer
+ * return raised carries the return's own credit-note figure, so the return is
+ * where it changes.
+ */
+function editRefusal(ctx: ErpContext, c: typeof complaints.$inferSelect, fromReturn: boolean): string {
+  if (c.category !== ERP_COMPLAINT_CATEGORY) return NOT_ERP;
+  if (c.loggedByUserId !== ctx.user.id && !ctx.powers.has("decideRequests")) return "Only whoever raised it or the office edits a complaint";
+  if (requestStatus(c) !== "Requested" || c.cnStatus === "issued") return "It has been decided — a decided complaint is not edited";
+  if (fromReturn) return "A customer return raised it — change the return instead";
+  return "";
+}
+
+/** Complaints a customer return raised (`approveCredit` in screens/returns.ts). */
+async function raisedByReturns(ids: string[]): Promise<Set<string>> {
+  if (!ids.length) return new Set();
+  const rows = (await db.execute(sql`select complaint_id as id from erp_customer_returns where complaint_id in (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`)) as unknown as { id: string }[];
+  return new Set(rows.map((r) => r.id));
+}
+
+async function editRequest(ctx: ErpContext, id: string | undefined, h: Record<string, string>): Promise<Result<unknown>> {
+  if (!id) return err("Choose the complaint to edit.", "not_found");
+  const [x] = await complaintRows(eq(complaints.id, id));
+  if (!x) return err("That complaint no longer exists.", "not_found");
+  const refusal = editRefusal(ctx, x.c, (await raisedByReturns([id])).has(id));
+  if (refusal) return err(`${refusal}.`, refusal === NOT_ERP ? "not_found" : "conflict");
+  const read = await readRequest(h, { id: x.c.customerId });
+  if ("ok" in read) return read;
+  const before = { description: x.c.description, requestCn: x.c.requestCn, billId: x.c.billId, goods: x.c.goodsDescription, salesmanId: x.c.salesmanId };
+  const after = {
+    description: read.description.trim(),
+    requestCn: read.cn,
+    /* The same shape `createComplaint` writes: no request, no bill or goods. */
+    billId: read.cn ? read.billId : null,
+    goods: read.cn ? read.goods?.trim() || null : null,
+    salesmanId: read.salesman?.id ?? null,
+  };
+  const done = await db.transaction(async (tx) => {
+    const rows = await tx
+      .update(complaints)
+      .set({
+        description: after.description,
+        requestCn: after.requestCn,
+        billId: after.billId,
+        goodsDescription: after.goods,
+        salesmanId: after.salesmanId,
+        salesmanName: read.salesman?.name ?? null,
+        updatedAt: new Date(),
+        updatedById: ctx.user.id,
+      })
+      /* Still a request as it is written: a decision taken meanwhile wins. */
+      .where(and(eq(complaints.id, id), eq(complaints.status, "open"), sql`${complaints.cnStatus} is distinct from 'issued'`))
+      .returning({ id: complaints.id });
+    if (rows.length) await bindComplaintFiles(tx, [text(h.photo)], id, ctx.user.id);
+    return rows.length > 0;
+  });
+  if (!done) return err("It has been decided meanwhile — a decided complaint is not edited.", "conflict");
+  await erpAudit(ctx, "erp.request.edit", "complaint", id, before, after);
+  return okVoid("Saved");
 }
 
 /** A file taken on the ERP form becomes the complaint's own attachment, read under the complaint's rules. */
@@ -300,12 +374,12 @@ async function assist(rows: Row[]): Promise<Map<string, ListRow["panel"]>> {
   return out;
 }
 
-function toRow(ctx: ErpContext, x: Row, files: Map<string, string[]>, canIssue: boolean, panel?: ListRow["panel"], ai?: { on: boolean; pending: boolean; summary?: string }): ListRow {
+function toRow(ctx: ErpContext, x: Row, files: Map<string, string[]>, canIssue: boolean, panel?: ListRow["panel"], ai?: { on: boolean; pending: boolean; summary?: string }, fromReturn = false): ListRow {
   const c = x.c;
   const word = requestStatus(c);
   const decider = ctx.powers.has("decideRequests");
   const why = decider ? "" : "Only an admin or the office decides a request";
-  const actions: ActionSpec[] = [];
+  const actions: ActionSpec[] = [{ id: "edit", l: "Edit", loadsForm: true, why: editRefusal(ctx, c, fromReturn) }];
   if (word === "Requested") actions.push({ id: "accept", l: "Accept", primary: true, why });
   if (word === "Requested" || word === "Accepted") actions.push({ id: "reject", l: "Reject", why, confirm: `Reject the complaint from ${x.party}?` });
   if (word === "Accepted" && c.requestCn)
@@ -414,7 +488,13 @@ function complaintList(scope: ComplaintScope): ScreenModule {
       const decider = ctx.powers.has("decideRequests");
       const ai = await import("../ai");
       const cmp = await import("../ai-complaints");
-      const [panels, on, pend, summaries] = await Promise.all([assist(rows), ai.featureState("complaints").then((s) => s.on), ai.pendingFor("complaints"), cmp.confirmedSummaries(rows.map((x) => x.c.id))]);
+      const [panels, on, pend, summaries, fromReturns] = await Promise.all([
+        assist(rows),
+        ai.featureState("complaints").then((s) => s.on),
+        ai.pendingFor("complaints"),
+        cmp.confirmedSummaries(rows.map((x) => x.c.id)),
+        raisedByReturns(rows.filter((x) => x.c.status === "open").map((x) => x.c.id)),
+      ]);
       return {
         spec: {
           screen: scope,
@@ -434,14 +514,37 @@ function complaintList(scope: ComplaintScope): ScreenModule {
           newLabel: "Raise product quality complaint",
           noDataLine: scope === "issueCn" ? "No credit notes asked for." : scope === "complaints" ? "No complaints without a credit note." : "No product quality complaints yet.",
         },
-        rows: rows.map((x) => toRow(ctx, x, files, canIssue, panels.get(x.c.id), { on, pending: pend.has(x.c.id), summary: summaries.get(x.c.id) })),
+        rows: rows.map((x) => toRow(ctx, x, files, canIssue, panels.get(x.c.id), { on, pending: pend.has(x.c.id), summary: summaries.get(x.c.id) }, fromReturns.has(x.c.id))),
       };
     },
     forms: {
       new: (ctx, h) => saveRequest(ctx, h),
+      edit: (ctx, h, _l, id) => editRequest(ctx, id, h),
       aiComplaint: async (ctx, h, _l, id) => (id ? (await import("../ai-complaints")).applyComplaint(ctx, id, h) : err("No suggestion named.", "not_found")),
     },
     formLoaders: {
+      async edit(ctx, id) {
+        const [x] = await complaintRows(eq(complaints.id, id));
+        if (!x) return null;
+        const f = await requestForm(ctx, {
+          salesman: x.c.salesmanId ?? "",
+          customer: x.party,
+          description: x.c.description,
+          cn: x.c.requestCn ? "Yes" : "No",
+          bill: x.billNo ?? "",
+          goods: x.c.goodsDescription ?? "",
+        });
+        return {
+          ...f,
+          screen: scope,
+          id: "edit",
+          recordId: id,
+          title: `Edit the complaint from ${x.party}`,
+          sub: "Editable while it waits for a decision. The customer stays — raise a new complaint for another.",
+          submit: "Save changes",
+          header: f.header.map((h) => (h.k === "customer" ? { ...h, readOnly: true } : h.k === "photo" ? { ...h, l: "Add a picture" } : h)),
+        };
+      },
       aiComplaint: async (_ctx, id) => (await import("../ai-complaints")).complaintReviewForm(scope, id),
       async more(ctx, id) {
         const [x] = await complaintRows(eq(complaints.id, id));

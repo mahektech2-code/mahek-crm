@@ -55,6 +55,7 @@ import {
   reworkFigures,
   reworkLabel,
   reworkLotCode,
+  returnableQty,
   toStockQty,
   vendorReturnRefusal,
   vendorReturnStage,
@@ -218,6 +219,7 @@ function vendorActions(ctx: ErpContext, r: VendorRow, stockGodowns: string[], ca
   const can = approves(ctx);
   const own = r.requesterId === ctx.user.id && !ctx.administrator;
   const out: ActionSpec[] = [];
+  if (stage !== "cancelled" && stage !== "rejected") out.push({ id: "edit", l: "Edit", loadsForm: true, why: vendorEditRefusal(ctx, r) });
   if (stage === "awaiting_approval") {
     out.push({
       id: "approve",
@@ -295,6 +297,112 @@ async function vendorForm(ctx: ErpContext) {
     { k: "photo", l: "Photo / document", t: "photo" },
   ];
   return { screen: "vendorReturns", id: "new", title: "Raise a purchase return", sub: "Against the original GRN lot. Approval issues the debit note.", submit: "Raise return", header, init: { date: today() } };
+}
+
+/**
+ * Why a purchase return cannot be edited, or "". Raising needs only the
+ * screen, so whoever raised it corrects it, as does somebody who approves
+ * returns — the people who may also cancel it. Only while it waits for its
+ * first approval: from then on the approval, the debit note and the outward
+ * were all decided on what it said.
+ */
+function vendorEditRefusal(ctx: ErpContext, r: VendorRow): string {
+  if (r.requesterId !== ctx.user.id && !approves(ctx)) return "Only whoever raised it or somebody who approves returns edits it";
+  if (r.status !== "pending" || r.approvedAt) return r.status === "approved" ? "It has been approved — cancel it and raise a new one instead" : "It is closed";
+  if (r.dnId) return "Its debit note has been issued — cancel it and raise a new one instead";
+  if (r.outId) return "Its goods return outward has been prepared — cancel it and raise a new one instead";
+  return "";
+}
+
+async function vendorEditForm(ctx: ErpContext, id: string) {
+  const [r] = await vendorRows(sql`r.id = ${id}`);
+  if (!r) return null;
+  const lot = (await returnableLots()).find((l) => l.purchaseId === r.purchaseId);
+  const money = seesMoney(ctx);
+  const header: FieldSpec[] = [
+    { k: "material", l: "Original GRN lot", t: "text", readOnly: true, wide: true, hint: "The lot stays: to return another, cancel this and raise a new one." },
+    { k: "vendor", l: "Supplier", t: "text", readOnly: true },
+    { k: "available", l: "Available to return", t: "text", readOnly: true },
+    ...(money ? [{ k: "rate", l: "Purchase rate", t: "text" as const, readOnly: true }] : []),
+    { k: "date", l: "Return date", t: "date", req: true, sec: "The return" },
+    { k: "qty", l: "Return quantity", t: "num", req: true, min: 0.001, hint: "Kept in the lot's purchase unit (Kg, Litre or Pcs); type it in any unit of that kind.", qtyUnit: { base: r.unit } },
+    { k: "reason", l: "Return reason", t: "select", req: true, opts: VENDOR_REASON_LABELS },
+    { k: "remarks", l: "Remarks", t: "area", mic: true, wide: true },
+    { k: "photo", l: "Add a photo / document", t: "photo" },
+  ];
+  const left = lot ? returnableQty(lot.quantity, lot.returned - r.qty) : r.qty;
+  return {
+    screen: "vendorReturns",
+    id: "edit",
+    recordId: r.id,
+    title: `Edit ${purchaseReturnLabel(r.no)}`,
+    sub: "Editable while it waits for approval. Nothing has moved yet.",
+    submit: "Save changes",
+    header,
+    init: {
+      material: `${r.lot} · ${r.item} · PR ${r.pr}`,
+      vendor: r.supplier,
+      available: lot ? `${nf(left)} ${r.unit} · ${nf(lot.onShelf)} ${r.unit === "Pcs" ? "Pcs" : "L"} on the shelf` : "—",
+      rate: lot?.ratePaise == null ? "No rate yet" : `${inr(lot.ratePaise)} / ${r.unit} + ${lot.gstBp / 100}% GST`,
+      date: r.date,
+      qty: String(r.qty),
+      reason: reasonLabel(r.reason, "vendor"),
+      remarks: r.remarks ?? "",
+    },
+  };
+}
+
+async function editVendorReturn(ctx: ErpContext, h: Record<string, string>, id: string | undefined): Promise<Result<unknown>> {
+  if (!id) return err("Choose the return to edit.", "not_found");
+  const qty = num(h.qty);
+  if (qty == null) return fieldErr("qty", "Enter the quantity to return.");
+  const reason = reasonByLabel(h.reason ?? "", "vendor");
+  if (!reason) return fieldErr("reason", "Choose a reason.");
+  const date = text(h.date);
+  if (!date) return fieldErr("date", "Enter the return date.");
+  const limit = await ownerLimit();
+  let before: Record<string, unknown> = {};
+  let after: Record<string, unknown> = {};
+  const res = await inTx(async (tx) => {
+    await tx.select({ id: erpPurchaseReturns.id }).from(erpPurchaseReturns).where(eq(erpPurchaseReturns.id, id)).for("update");
+    const [r] = await vendorRows(sql`r.id = ${id}`, tx);
+    if (!r) return err("That return is gone.", "not_found");
+    const refusal = vendorEditRefusal(ctx, r);
+    if (refusal) return err(`${refusal}.`, refusal.startsWith("Only") ? "not_permitted" : "conflict");
+    const lot = (await returnableLots(tx)).find((l) => l.purchaseId === r.purchaseId);
+    if (!lot) return err("Its GRN lot is no longer on the register.", "not_found");
+    const stockQty = toStockQty(qty, lot.unit, lot.density);
+    if (stockQty == null) return fieldErr("qty", "This kg lot has no density, so its stock in litres is unknown. Set the density on the register first.");
+    /* What is left to return, with this return's own quantity given back first. */
+    const onShelfPurchase = lot.unit === "Kg" && lot.density ? r3(lot.onShelf * lot.density) : lot.onShelf;
+    const over = vendorReturnRefusal({ qty, returnable: returnableQty(lot.quantity, lot.returned - r.qty), onShelf: onShelfPurchase });
+    if (over) return fieldErr("qty", over);
+    const v = returnValue({ qty, ratePaise: lot.ratePaise, gstBp: lot.gstBp });
+    const needsOwner = approvalSteps(v?.totalPaise ?? null, limit) === 2;
+    before = { date: r.date, qty: r.qty, reason: r.reason, remarks: r.remarks, total: r.total };
+    after = { date, qty, reason, remarks: text(h.remarks), total: v?.totalPaise ?? null };
+    await tx
+      .update(erpPurchaseReturns)
+      .set({
+        returnDate: date,
+        quantity: qty,
+        stockQty,
+        ratePaise: lot.ratePaise,
+        gstBp: lot.gstBp,
+        amountPaise: v?.amountPaise ?? null,
+        taxPaise: v?.taxPaise ?? null,
+        totalPaise: v?.totalPaise ?? null,
+        reasonCode: reason,
+        remarks: text(h.remarks),
+        needsOwner,
+        updatedAt: new Date(),
+      })
+      .where(eq(erpPurchaseReturns.id, id));
+    await bindErpFiles(tx as unknown as typeof db, [text(h.photo)], "erp_vendor_return", id, ctx.actor.id);
+    return okVoid(`${purchaseReturnLabel(r.no)} saved — it still waits for approval`);
+  });
+  if (res.ok) await erpAudit(ctx, "erp.purchaseReturn.edit", "erp_purchase_return", id, before, after);
+  return res;
 }
 
 const vendorReturns: ScreenModule = {
@@ -416,7 +524,9 @@ const vendorReturns: ScreenModule = {
       if (res.ok) await erpAudit(ctx, "erp.purchaseReturn.create", "erp_purchase_return", id, null, { lot: lot.lotNo, qty, unit: lot.unit, reason, total: v?.totalPaise ?? null, needsOwner });
       return res;
     },
+    edit: (ctx, h, _l, id) => editVendorReturn(ctx, h, id),
   },
+  formLoaders: { edit: vendorEditForm },
   actions: {
     async approve(ctx, id) {
       return decideVendor(ctx, id, 1);
@@ -915,6 +1025,7 @@ function customerActions(ctx: ErpContext, r: CustomerRow, ds: DecisionRow[], god
   const own = r.requesterId === ctx.user.id && !ctx.administrator;
   const unit = r.unit.toLowerCase();
   const out: ActionSpec[] = [];
+  if (r.status === "open") out.push({ id: "edit", l: "Edit", loadsForm: true, why: customerEditRefusal(ctx, r) });
   if (stage === "awaiting_receipt") {
     out.push({
       id: "receive",
@@ -1235,6 +1346,127 @@ async function reverseDecision(ctx: ErpContext, dispId: string, reason: string):
   return res;
 }
 
+/**
+ * Why a customer return cannot be edited, or "". Recording one needs only the
+ * screen, so whoever recorded it corrects it, as does somebody who approves
+ * returns — who may also cancel it. Only until it is received: the receipt
+ * moves its boxes and cans into quarantine, and the credit note and QC follow
+ * from what was received.
+ */
+function customerEditRefusal(ctx: ErpContext, r: CustomerRow): string {
+  if (r.requesterId !== ctx.user.id && !approves(ctx)) return "Only whoever recorded it or somebody who approves returns edits it";
+  if (r.status !== "open") return "It is closed";
+  if (r.received != null) return "It has been received into quarantine — cancel it and record a new one instead";
+  if (r.complaintId) return "Its credit note has been raised — cancel it and record a new one instead";
+  return "";
+}
+
+/** The dispatched line a return was recorded against, as the raise form read it. */
+async function lineOf(r: Pick<CustomerRow, "batchCodeId" | "orderId">, ex: Tx | typeof db = db) {
+  const lines = await returnableLines(ex, { unallocatedDays: await unallocatedDays() });
+  return lines.find((l) => (r.batchCodeId ? l.batchCodeId === r.batchCodeId : l.batchCodeId == null && l.orderId === r.orderId)) ?? null;
+}
+
+async function customerEditForm(_ctx: ErpContext, id: string) {
+  const [r] = await customerRows(sql`r.id = ${id}`);
+  if (!r) return null;
+  const line = await lineOf(r);
+  const unit = r.unit.toLowerCase();
+  const header: FieldSpec[] = [
+    { k: "line", l: "Original order line and lot", t: "text", readOnly: true, wide: true, hint: "The line stays: for another, cancel this and record a new one." },
+    { k: "customer", l: "Customer", t: "text", readOnly: true },
+    { k: "sent", l: "Sent · on other returns", t: "text", readOnly: true },
+    ...(r.batchCodeId == null ? [{ k: "batch", l: "Batch on the returned cans", t: "text" as const, req: true, hint: "No lot was allocated on this line, so it is read off the label of the cans that came back." }] : []),
+    { k: "date", l: "Return date", t: "date", req: true, sec: "The return" },
+    { k: "qty", l: "Return quantity", t: "num", req: true, min: 1, hint: "Whole cans, or whole boxes on a boxed line.", qtyUnit: { base: unit } },
+    { k: "reason", l: "Return reason", t: "select", req: true, opts: CUSTOMER_REASON_LABELS },
+    { k: "remarks", l: "Customer remarks", t: "area", mic: true, wide: true },
+    { k: "transporter", l: "Transporter", t: "select", opts: await transporterChoices(), sec: "Transport", hint: "From ERP → Logistics → Transporters." },
+    { k: "vehicle", l: "Vehicle number", t: "text" },
+    { k: "lr", l: "LR / transport details", t: "text" },
+    { k: "photo", l: "Add a photo / document", t: "photo" },
+  ];
+  return {
+    screen: "customerReturns",
+    id: "edit",
+    recordId: r.id,
+    title: `Edit ${customerReturnLabel(r.no)}`,
+    sub: "Editable until it is received into quarantine. Nothing has moved yet.",
+    submit: "Save changes",
+    header,
+    init: {
+      line: `${orderTraceCode(r.orderNo)} · ${r.sku} · ${r.batchCodeId ? `lot ${r.lot}` : "no lot allocated"}`,
+      customer: r.customer,
+      sent: line ? `${nf(line.sent)} ${unit} · ${nf(line.returned - r.qty)} on other returns` : "—",
+      batch: r.lot,
+      date: r.date,
+      qty: String(r.qty),
+      reason: reasonLabel(r.reason, "customer"),
+      remarks: r.remarks ?? "",
+      transporter: r.transporter ?? "",
+      vehicle: r.vehicle ?? "",
+      lr: r.lr ?? "",
+    },
+  };
+}
+
+async function editCustomerReturn(ctx: ErpContext, h: Record<string, string>, id: string | undefined): Promise<Result<unknown>> {
+  if (!id) return err("Choose the return to edit.", "not_found");
+  const qty = num(h.qty);
+  if (qty == null) return fieldErr("qty", "Enter the quantity being returned.");
+  const reason = reasonByLabel(h.reason ?? "", "customer");
+  if (!reason) return fieldErr("reason", "Choose a reason.");
+  const date = text(h.date);
+  if (!date) return fieldErr("date", "Enter the return date.");
+  const carrier = await listedTransporterName(db, text(h.transporter));
+  if (!carrier.ok) return fieldErr("transporter", carrier.error);
+  let before: Record<string, unknown> = {};
+  let after: Record<string, unknown> = {};
+  const res = await inTx(async (tx) => {
+    const [stored] = await tx.select().from(erpCustomerReturns).where(eq(erpCustomerReturns.id, id)).for("update");
+    const [r] = await customerRows(sql`r.id = ${id}`, tx);
+    if (!stored || !r) return err("That return is gone.", "not_found");
+    const refusal = customerEditRefusal(ctx, r);
+    if (refusal) return err(`${refusal}.`, refusal.startsWith("Only") ? "not_permitted" : "conflict");
+    const lotCode = r.batchCodeId ? r.lot : (text(h.batch)?.toUpperCase() ?? null);
+    if (!lotCode) return fieldErr("batch", "No lot was allocated on this line — enter the batch printed on the returned cans.");
+    let litres = Number(stored.litres);
+    let total = stored.totalPaise == null ? null : Number(stored.totalPaise);
+    if (qty !== r.qty) {
+      /* Checked as the raise is, with this return's own quantity given back first. */
+      const line = await lineOf(r, tx);
+      if (!line) return fieldErr("qty", "That order line is no longer offered for returns, so its quantity cannot change. Cancel the return and record a new one.");
+      const over = customerReturnRefusal({ qty, dispatched: line.sent, alreadyReturned: line.returned - r.qty, whole: true });
+      if (over) return fieldErr("qty", over);
+      litres = returnLitres({ qty, lotFrom: line.lotFrom, cansPerBox: line.cansPerBox, millilitres: line.millilitres });
+      /* Valued at the rate it was recorded at, as the credit note will be. */
+      total = returnValue({ qty: valuedQty(line, qty), ratePaise: stored.ratePaise == null ? null : Number(stored.ratePaise), gstBp: Number(stored.gstBp), discountBp: stored.discountBp })?.totalPaise ?? null;
+    }
+    before = { date: r.date, qty: r.qty, lot: r.lot, reason: r.reason, remarks: r.remarks, transporter: r.transporter, vehicle: r.vehicle, lr: r.lr, total: r.total };
+    after = { date, qty, lot: lotCode, reason, remarks: text(h.remarks), transporter: carrier.name, vehicle: text(h.vehicle), lr: text(h.lr), total };
+    await tx
+      .update(erpCustomerReturns)
+      .set({
+        returnDate: date,
+        lotCode,
+        quantity: qty,
+        litres,
+        totalPaise: total,
+        reasonCode: reason,
+        customerRemarks: text(h.remarks),
+        transporter: carrier.name,
+        vehicleNo: text(h.vehicle),
+        lrNo: text(h.lr),
+        updatedAt: new Date(),
+      })
+      .where(eq(erpCustomerReturns.id, id));
+    await bindErpFiles(tx as unknown as typeof db, [text(h.photo)], "erp_customer_return", id, ctx.actor.id);
+    return okVoid(`${customerReturnLabel(r.no)} saved — receive it into quarantine when it arrives`);
+  });
+  if (res.ok) await erpAudit(ctx, "erp.customerReturn.edit", "erp_customer_return", id, before, after);
+  return res;
+}
+
 const customerActionHandlers: ScreenModule["actions"] = {
   async receive(ctx, id, v) {
     const qty = num(v.qty);
@@ -1350,13 +1582,18 @@ const customerReturns: ScreenModule = {
       if (res.ok) await erpAudit(ctx, "erp.customerReturn.create", "erp_customer_return", id, null, { order: line.orderNo, lot: lotCode, allocated: line.batchCodeId != null, qty, reason, total: v?.totalPaise ?? null });
       return res;
     },
+    edit: (ctx, h, _l, id) => editCustomerReturn(ctx, h, id),
   },
+  formLoaders: { edit: customerEditForm },
   actions: customerActionHandlers,
 };
 
+/* Its rows are the same records, so the same Edit — refused there by the receipt every row on it has had. */
 const returnQc: ScreenModule = {
   key: "returnQc",
   load: (ctx) => customerScreen(ctx, "returnQc"),
+  forms: { edit: (ctx, h, _l, id) => editCustomerReturn(ctx, h, id) },
+  formLoaders: { edit: customerEditForm },
   actions: customerActionHandlers,
 };
 

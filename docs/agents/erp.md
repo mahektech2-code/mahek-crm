@@ -267,6 +267,15 @@ a rule checks against it. And a select whose list lacks a record's saved value
 now offers it first (`withSaved` in `_ui/field.tsx`) — "Choose…" over a value
 was a blank written on the next save.
 
+**A LIST VALUE IS RENAMED ONLY WHILE NO RECORD CARRIES IT.** Records copy a
+reference-list value as text — synced sheet rows, jsonb test results, arrays
+of tags — so a rename either rewrites all of them (and the next sheet sync puts
+the old spelling back) or strands them on a spelling the list no longer has.
+`refRenameRefusal` (`lib/erp/refs.ts`) refuses a value any column in its
+`STORED_IN` map carries, a spelling a rule reads (`REF_RULE_SPELLINGS`:
+"Chemical", "Chemical Scrap", "Bank charges"…), and every value of a list the
+map does not name. A new list that records copy needs its columns added there.
+
 **Every write goes through five server actions** (`lib/actions/erp.ts`): run
 an action, run a bulk action, run a header tool (a `ToolSpec` with no `href`,
 answered by the module's `tools`), submit a form, load a form (which writes

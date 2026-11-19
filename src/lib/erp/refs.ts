@@ -98,3 +98,74 @@ export async function refOptions(listKey: string): Promise<string[]> {
   extra.sort((a, b) => a.localeCompare(b)).forEach(add);
   return out;
 }
+
+/* ------------------------------------------------- renaming a list value */
+
+/**
+ * Values a RULE reads by their exact spelling: renaming one would leave the
+ * code comparing against a word no record carries any more ("Chemical" is
+ * what gives a material its density and tests; "Chemical Scrap" is where QC
+ * posts a customer return's scrap).
+ */
+export const REF_RULE_SPELLINGS: Record<string, readonly string[]> = {
+  materialType: ["Chemical", "Can", "Box", "Drum"],
+  scrapCategory: ["Chemical Scrap", "Empty Metal Drum"],
+  expenseCategory: ["Bank charges"],
+};
+
+/**
+ * WHERE A LIST'S VALUE IS COPIED ONTO RECORDS — every column that stores it as
+ * text, as `v` (a scalar) or `arr` (a text[] column) or `key` (a jsonb
+ * object's keys). A list with an empty entry is read live and copied nowhere
+ * (`shortLabel` pairs are the mapping itself). A list missing from here is
+ * one nobody has mapped, so renaming in it is refused rather than guessed.
+ */
+const STORED_IN: Record<string, ReturnType<typeof sql>[]> = {
+  materialType: [
+    sql`select material_type as v from erp_material_groups`,
+    sql`select material_type from erp_raw_materials`,
+    sql`select material_type from erp_requisitions`,
+    sql`select material_type from erp_inward`,
+    sql`select material_type from erp_rm_levels`,
+  ],
+  testingList: [
+    sql`select unnest(testing_list) as v from erp_raw_materials`,
+    sql`select unnest(tests) from erp_tests`,
+    sql`select jsonb_object_keys(tests) from erp_sfg_qc`,
+  ],
+  area: [IN_USE.area, sql`select area from erp_suppliers`],
+  state: [IN_USE.state, sql`select state from erp_suppliers`],
+  segment: [IN_USE.segment],
+  counterType: [IN_USE.counterType],
+  godownCity: [IN_USE.godownCity],
+  complaintType: [sql`select complaint_type as v from erp_requests`],
+  expenseCategory: [sql`select category as v from erp_expenses`, sql`select category from erp_money_txns`],
+  expenseParticular: [sql`select particular as v from erp_expenses`],
+  videoTag: [sql`select unnest(tags) as v from erp_videos`],
+  paymentTerms: [sql`select payment_terms as v from erp_quotations`, sql`select payment_terms from erp_purchase_orders`],
+  scrapCategory: [sql`select category as v from erp_scrap_sales`, sql`select category from erp_scrap_entries`],
+  consignmentLabel: [sql`select consignment_label as v from erp_transporters`],
+  shortLabel: [],
+  creditNote: [],
+  zone: [],
+};
+
+/**
+ * Why a list value cannot be renamed, or "" when it can. A value is stored as
+ * TEXT on the records that picked it, so a rename either rewrites every one of
+ * those columns or leaves them carrying a spelling the list no longer has.
+ * Rewriting reaches into synced sheet rows (which the next sync puts back) and
+ * jsonb test results, so it is not done: a value is renamed only while no
+ * record carries it — retire it and add the new spelling otherwise.
+ */
+export async function refRenameRefusal(listKey: string, value: string, ex: { execute: (q: ReturnType<typeof sql>) => Promise<unknown> } = db): Promise<string> {
+  if ((REF_RULE_SPELLINGS[listKey] ?? []).some((v) => v.toLowerCase() === value.trim().toLowerCase()))
+    return `The ERP's rules read “${value}” by its exact spelling, so it cannot be renamed.`;
+  const uses = STORED_IN[listKey];
+  if (!uses) return "Records may carry this list's values, so they cannot be renamed. Retire the value and add the new spelling instead.";
+  if (!uses.length) return "";
+  const union = sql.join(uses, sql` union all `);
+  const [row] = (await ex.execute(sql`select count(*)::int as n from (${union}) s where lower(trim(s.v)) = lower(trim(${value}))`)) as unknown as { n: number }[];
+  const n = Number(row?.n ?? 0);
+  return n > 0 ? `${n} record${n === 1 ? " carries" : "s carry"} “${value}”, so renaming it would leave them on a spelling the list no longer has. Retire it and add the new spelling instead.` : "";
+}
