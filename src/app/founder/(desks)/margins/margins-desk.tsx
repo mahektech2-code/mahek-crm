@@ -397,7 +397,7 @@ function alertCols(): Col[] {
 
 function Tag({ tone, children }: { tone: "bad" | "warn" | "info"; children: React.ReactNode }) {
   const [bg, fg] = tone === "bad" ? [C.badTint, C.bad] : tone === "warn" ? [C.warnTint, C.warnInk] : [C.brandTint, C.brandDark];
-  return <span style={{ display: "inline-block", marginLeft: 6, fontSize: 10, fontWeight: 600, letterSpacing: "0.03em", padding: "1px 6px", borderRadius: 4, verticalAlign: 1, background: bg, color: fg }}>{children}</span>;
+  return <span style={{ display: "inline-block", marginLeft: 6, fontSize: 10, fontWeight: 600, letterSpacing: "0.03em", padding: "1px 6px", borderRadius: 7, verticalAlign: 1, background: bg, color: fg }}>{children}</span>;
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -587,14 +587,14 @@ export function MarginsDesk({ period, cur, prev: prevRead, tooWide, cap, rules, 
   const periodBar = (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
-        <div style={{ position: "relative", display: "flex", gap: 2, padding: 3, background: C.white, border: `1px solid ${C.line}`, borderRadius: 6, flexWrap: "wrap" }}>
+        <div style={{ position: "relative", display: "flex", gap: 2, padding: 3, background: C.white, border: `1px solid ${C.line}`, borderRadius: 7, flexWrap: "wrap" }}>
           {period.views.map((p) => {
             const on = p.key === period.key;
             return (
               <button
                 key={p.key}
                 onClick={() => (p.key === "custom" ? setPop(pop === "custom" ? null : "custom") : startTransition(() => router.push(periodHref(p.key))))}
-                style={{ height: 28, padding: "0 10px", border: "none", borderRadius: 4, background: on ? C.brand : "transparent", color: on ? C.white : C.body, fontSize: 13, fontWeight: on ? 500 : 400, cursor: "pointer", whiteSpace: "nowrap" }}
+                style={{ height: 28, padding: "0 10px", border: "none", borderRadius: 7, background: on ? C.brand : "transparent", color: on ? C.white : C.body, fontSize: 13, fontWeight: on ? 500 : 400, cursor: "pointer", whiteSpace: "nowrap" }}
               >
                 {p.label}
               </button>
@@ -621,11 +621,11 @@ export function MarginsDesk({ period, cur, prev: prevRead, tooWide, cap, rules, 
             {TABS.find((t) => t.key === tab)!.views.length > 1 ? (
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
                 <span style={upper}>View</span>
-                <div style={{ display: "flex", gap: 2, padding: 3, background: C.white, border: `1px solid ${C.line}`, borderRadius: 6, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", gap: 2, padding: 3, background: C.white, border: `1px solid ${C.line}`, borderRadius: 7, flexWrap: "wrap" }}>
                   {TABS.find((t) => t.key === tab)!.views.map(([k, l]) => {
                     const on = k === view;
                     return (
-                      <button key={k} onClick={() => goView(k, { keepFilters: true })} style={{ height: 28, padding: "0 10px", border: "none", borderRadius: 4, background: on ? C.brandTint : "transparent", color: on ? C.brandDark : C.body, fontSize: 13, fontWeight: on ? 500 : 400, cursor: "pointer", whiteSpace: "nowrap" }}>
+                      <button key={k} onClick={() => goView(k, { keepFilters: true })} style={{ height: 28, padding: "0 10px", border: "none", borderRadius: 7, background: on ? C.brandTint : "transparent", color: on ? C.brandDark : C.body, fontSize: 13, fontWeight: on ? 500 : 400, cursor: "pointer", whiteSpace: "nowrap" }}>
                         {l}
                         {k === "needs" && alerts.length ? ` (${alerts.length})` : ""}
                       </button>
@@ -717,7 +717,7 @@ export function MarginsDesk({ period, cur, prev: prevRead, tooWide, cap, rules, 
 /* --------------------------------------------------------------- styles */
 
 const card: React.CSSProperties = { background: C.white, border: `1px solid ${C.line}`, borderRadius: 8 };
-const btn: React.CSSProperties = { height: 32, padding: "0 12px", display: "inline-flex", alignItems: "center", gap: 6, border: `1px solid ${C.line}`, background: C.white, borderRadius: 4, fontSize: 13, fontWeight: 500, color: C.body, cursor: "pointer", whiteSpace: "nowrap" };
+const btn: React.CSSProperties = { height: 32, padding: "0 12px", display: "inline-flex", alignItems: "center", gap: 6, border: `1px solid ${C.line}`, background: C.white, borderRadius: 7, fontSize: 13, fontWeight: 500, color: C.body, cursor: "pointer", whiteSpace: "nowrap" };
 const btnOn: React.CSSProperties = { ...btn, borderColor: C.brand, background: C.brandTint, color: C.brandDark };
 const popCss: React.CSSProperties = { position: "absolute", zIndex: 30, background: C.white, border: `1px solid ${C.line}`, borderRadius: 8, boxShadow: "0 8px 24px rgba(22,22,22,0.12)" };
 const chip = (on: boolean): React.CSSProperties => ({ height: 28, padding: "0 10px", borderRadius: 14, border: `1px solid ${on ? C.brand : C.line}`, background: on ? C.brandTint : C.white, color: on ? C.brandDark : C.body, fontSize: 13, fontWeight: on ? 500 : 400, cursor: "pointer", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 6 });
@@ -730,11 +730,11 @@ function CustomRange({ from, to, onApply }: { from: string; to: string; onApply:
     <div style={{ ...popCss, top: 40, right: 0, width: 300, padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
       <span style={{ fontSize: 13, color: C.muted }}>Any start and end date, compared with the equal span before it.</span>
       <div style={{ display: "flex", gap: 8 }}>
-        <label style={{ flex: 1, fontSize: 12, color: C.body }}>From<input type="date" value={f} onChange={(e) => setF(e.target.value)} style={{ display: "block", width: "100%", height: 32, border: `1px solid ${C.line}`, borderRadius: 4, padding: "0 6px" }} /></label>
-        <label style={{ flex: 1, fontSize: 12, color: C.body }}>To<input type="date" value={t} onChange={(e) => setT(e.target.value)} style={{ display: "block", width: "100%", height: 32, border: `1px solid ${C.line}`, borderRadius: 4, padding: "0 6px" }} /></label>
+        <label style={{ flex: 1, fontSize: 12, color: C.body }}>From<input type="date" value={f} onChange={(e) => setF(e.target.value)} style={{ display: "block", width: "100%", height: 32, border: `1px solid ${C.line}`, borderRadius: 7, padding: "0 6px" }} /></label>
+        <label style={{ flex: 1, fontSize: 12, color: C.body }}>To<input type="date" value={t} onChange={(e) => setT(e.target.value)} style={{ display: "block", width: "100%", height: 32, border: `1px solid ${C.line}`, borderRadius: 7, padding: "0 6px" }} /></label>
       </div>
       {f && t && t < f ? <span style={{ fontSize: 12, color: C.bad }}>The end is before the start.</span> : null}
-      <button disabled={bad} onClick={() => onApply(f, t)} style={{ height: 32, border: "none", borderRadius: 4, background: bad ? C.soft : C.brand, color: bad ? C.muted : C.white, fontSize: 13, fontWeight: 500, cursor: bad ? "not-allowed" : "pointer" }}>Apply</button>
+      <button disabled={bad} onClick={() => onApply(f, t)} style={{ height: 32, border: "none", borderRadius: 7, background: bad ? C.soft : C.brand, color: bad ? C.muted : C.white, fontSize: 13, fontWeight: 500, cursor: bad ? "not-allowed" : "pointer" }}>Apply</button>
     </div>
   );
 }
@@ -755,7 +755,7 @@ function Tiles({ tiles }: { tiles: Tile[] }) {
           hover={m.onClick ? { borderColor: C.brand } : undefined}
         >
           <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-            <span style={{ fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.label}</span>
+            <span style={{ fontSize: 12, fontWeight: 600, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.label}</span>
             <span style={{ fontSize: 11, fontWeight: 500, padding: "1px 7px", borderRadius: 9, flex: "none", background: m.kind === "Now" ? C.soft : C.brandTint, color: m.kind === "Now" ? C.body : C.brandDark }}>{m.kind ?? "Period"}</span>
           </span>
           <span style={{ display: "block", fontSize: 24, lineHeight: "30px", fontWeight: 600, marginTop: 8, letterSpacing: "-0.01em", color: m.tone === "bad" ? C.bad : m.tone === "warn" ? C.warnInk : C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{m.value}</span>
@@ -881,7 +881,7 @@ function Overview({ cur, prev, rules, alerts, godown, setGodown, widgets, goView
         ) : null}
         {w("bands") ? (
           <Panel title="How the lines are spread" hint="Sales by margin band · bands are set in Margin rules">
-            <div style={{ display: "flex", height: 20, borderRadius: 4, overflow: "hidden", background: C.soft }}>
+            <div style={{ display: "flex", height: 20, borderRadius: 7, overflow: "hidden", background: C.soft }}>
               {bandRows.map((x) => <span key={x.band} title={`${BAND_LABEL[x.band]}: ${rs(x.sales)}`} style={{ display: "block", background: BAND_BAR[x.band], width: `${t.sales ? (x.sales / t.sales) * 100 : 0}%` }} />)}
             </div>
             {bandRows.map((x) => (
@@ -929,7 +929,7 @@ function Overview({ cur, prev, rules, alerts, godown, setGodown, widgets, goView
           {alerts.length ? (
             <CardGrid min="panel" gap="gap-2.5">
               {alerts.slice(0, 6).map((a) => (
-                <Hov key={a.id} onClick={() => openAlert(a)} style={{ display: "flex", flexDirection: "column", gap: 5, padding: "12px 14px", borderRadius: 8, textAlign: "left", cursor: "pointer", border: `1px solid ${a.tone === "bad" ? C.badTint : a.tone === "warn" ? C.warnLine : C.brandTint2}`, background: a.tone === "bad" ? "#FEF7F7" : a.tone === "warn" ? C.warnTint : "#FAF8FF", color: C.body }} hover={{ borderColor: C.brand }}>
+                <Hov key={a.id} onClick={() => openAlert(a)} style={{ display: "flex", flexDirection: "column", gap: 5, padding: "12px 14px", borderRadius: 8, textAlign: "left", cursor: "pointer", border: `1px solid ${a.tone === "bad" ? C.badTint : a.tone === "warn" ? C.warnLine : C.brandTint2}`, background: a.tone === "bad" ? "#FEF6F5" : a.tone === "warn" ? C.warnTint : "#FAF8FF", color: C.body }} hover={{ borderColor: C.brand }}>
                   <span style={{ fontSize: 14, fontWeight: 500, color: C.ink }}>{a.title}</span>
                   <span style={{ fontSize: 13 }}>{a.body}</span>
                   <span style={{ fontSize: 12, fontWeight: 500, color: C.brand }}>Open →{a.stakePaise != null ? ` · ${rs(a.stakePaise)} at stake` : ""}</span>
@@ -959,7 +959,7 @@ function placeSteps(steps: [number, boolean][]): [number, number][] {
   });
 }
 
-const rowBtn: React.CSSProperties = { display: "grid", gridTemplateColumns: "150px minmax(0,1fr) 110px 50px", gap: 10, alignItems: "center", fontSize: 13, background: "none", border: "none", padding: "4px 6px", textAlign: "left", width: "100%", borderRadius: 4, color: C.body, cursor: "pointer" };
+const rowBtn: React.CSSProperties = { display: "grid", gridTemplateColumns: "150px minmax(0,1fr) 110px 50px", gap: 10, alignItems: "center", fontSize: 13, background: "none", border: "none", padding: "4px 6px", textAlign: "left", width: "100%", borderRadius: 7, color: C.body, cursor: "pointer" };
 const linkBtn: React.CSSProperties = { background: "none", border: "none", padding: 0, color: C.brand, fontWeight: 500, fontSize: 13, cursor: "pointer" };
 
 function Panel({ title, hint, action, children }: { title: string; hint?: string; action?: React.ReactNode; children: React.ReactNode }) {
@@ -1031,7 +1031,7 @@ function ListCard(p: ListProps) {
       as="div"
       key={x.key}
       onClick={() => (x.alert ? p.openAlert(x.alert) : p.openRow(x))}
-      style={{ display: "grid", gridTemplateColumns: tpl, gap: 12, alignItems: "start", minWidth: minW, padding: "11px 18px", borderTop: `1px solid ${C.canvas}`, background: sel.has(x.key) ? "#F8F5FF" : C.white, cursor: "pointer", fontSize: 14 }}
+      style={{ display: "grid", gridTemplateColumns: tpl, gap: 12, alignItems: "start", minWidth: minW, padding: "11px 18px", borderTop: `1px solid ${C.canvas}`, background: sel.has(x.key) ? "#F7F5FE" : C.white, cursor: "pointer", fontSize: 14 }}
       hover={{ background: C.canvas }}
     >
       <span onClick={(e) => e.stopPropagation()}>
@@ -1051,7 +1051,7 @@ function ListCard(p: ListProps) {
         <span style={{ fontSize: 16, fontWeight: 600, color: C.ink }}>{TABS.flatMap((t) => t.views).find((v) => v[0] === p.view)?.[1]}</span>
         <span style={{ fontSize: 13, color: C.body }}>{rows.length === p.all ? `${whole(rows.length)} rows` : `${whole(rows.length)} of ${whole(p.all)}`}</span>
         <span style={{ flex: 1 }} />
-        <Hov as="input" value={p.q} onChange={(e: React.ChangeEvent<HTMLInputElement>) => p.setQ(e.target.value)} placeholder="Search this list" aria-label="Search this list" style={{ width: 240, height: 32, padding: "0 10px", border: `1px solid ${C.line}`, borderRadius: 4, background: C.canvas, fontSize: 13 }} focus={{ background: C.white, borderColor: C.brand }} />
+        <Hov as="input" value={p.q} onChange={(e: React.ChangeEvent<HTMLInputElement>) => p.setQ(e.target.value)} placeholder="Search this list" aria-label="Search this list" style={{ width: 240, height: 32, padding: "0 10px", border: `1px solid ${C.line}`, borderRadius: 7, background: C.canvas, fontSize: 13 }} focus={{ background: C.white, borderColor: C.brand }} />
       </div>
 
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "10px 18px", borderBottom: `1px solid ${C.soft}`, position: "relative" }}>
@@ -1123,7 +1123,7 @@ function ListCard(p: ListProps) {
                 }}
                 style={{ display: "flex", gap: 6, padding: "8px 14px", borderTop: `1px solid ${C.soft}` }}
               >
-                <input value={saveName} onChange={(e) => setSaveName(e.target.value)} placeholder="Name this view" aria-label="Name this view" style={{ flex: 1, height: 30, border: `1px solid ${C.line}`, borderRadius: 4, padding: "0 8px", fontSize: 13 }} />
+                <input value={saveName} onChange={(e) => setSaveName(e.target.value)} placeholder="Name this view" aria-label="Name this view" style={{ flex: 1, height: 30, border: `1px solid ${C.line}`, borderRadius: 7, padding: "0 8px", fontSize: 13 }} />
                 <button type="submit" disabled={!saveName.trim()} style={{ ...btn, height: 30, background: C.brand, color: C.white, borderColor: C.brand }}>Save</button>
               </form>
             </div>
@@ -1167,12 +1167,12 @@ function ListCard(p: ListProps) {
           <div style={{ padding: "32px 18px", textAlign: "center", fontSize: 14, color: C.muted }}>Nothing was sold in the period before, so there is nothing to compare against.</div>
         ) : (
           <>
-            <div style={{ display: "grid", gridTemplateColumns: tpl, gap: 12, padding: "9px 18px", background: C.canvas, borderBottom: `1px solid ${C.soft}`, minWidth: minW, alignItems: "center" }}>
+            <div style={{ display: "grid", gridTemplateColumns: tpl, gap: 12, padding: "10px 18px", background: C.ink, borderBottom: `1px solid ${C.ink}`, minWidth: minW, alignItems: "center" }}>
               <span><input type="checkbox" aria-label="Tick every row" checked={allTicked} onChange={tickAll} style={{ accentColor: C.brand, width: 15, height: 15, cursor: "pointer" }} /></span>
               {cols.map((c) => {
                 const on = p.sort[0] === c.k;
                 return (
-                  <button key={c.k} onClick={() => p.setSort(c.k)} title={`Sort by ${c.l.toLowerCase()}`} aria-pressed={on} style={{ fontSize: 11, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: on ? C.brandDark : C.muted, textAlign: c.right ? "right" : "left", whiteSpace: "nowrap", background: "none", border: "none", padding: 0, cursor: "pointer" }}>
+                  <button key={c.k} onClick={() => p.setSort(c.k)} title={`Sort by ${c.l.toLowerCase()}`} aria-pressed={on} style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: on ? "#FF7A59" : C.white, textAlign: c.right ? "right" : "left", whiteSpace: "nowrap", background: "none", border: "none", padding: 0, cursor: "pointer" }}>
                     {c.l} <span style={{ opacity: on ? 1 : 0.4 }}>{on ? (p.sort[1] === 1 ? "▲" : "▼") : "↕"}</span>
                   </button>
                 );
@@ -1222,7 +1222,7 @@ function ListCard(p: ListProps) {
           <span>Showing {whole(pg * p.size + 1)}–{whole(Math.min(rows.length, pg * p.size + p.size))} of {whole(rows.length)}</span>
           <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <span style={{ fontSize: 12, color: C.muted }}>Rows</span>
-            {[25, 50, 100].map((z) => <button key={z} onClick={() => p.setSize(z)} style={{ ...chip(p.size === z), height: 26, borderRadius: 4 }}>{z}</button>)}
+            {[25, 50, 100].map((z) => <button key={z} onClick={() => p.setSize(z)} style={{ ...chip(p.size === z), height: 26, borderRadius: 7 }}>{z}</button>)}
           </span>
           <span style={{ flex: 1 }} />
           <button disabled={pg <= 0} onClick={() => p.setPage(pg - 1)} style={{ ...btn, height: 28, color: pg > 0 ? C.body : C.faint }}>‹ Previous</button>
@@ -1234,7 +1234,7 @@ function ListCard(p: ListProps) {
   );
 }
 
-const darkBtn: React.CSSProperties = { height: 28, border: "1px solid #3d3d3d", background: "#2a2a2a", color: C.white, borderRadius: 4, padding: "0 10px", fontSize: 13, cursor: "pointer" };
+const darkBtn: React.CSSProperties = { height: 28, border: "1px solid #3d3d3d", background: "#2a2a2a", color: C.white, borderRadius: 7, padding: "0 10px", fontSize: 13, cursor: "pointer" };
 
 function MenuItem({ on, onClick, children }: { on?: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
@@ -1341,7 +1341,7 @@ function DrawerHead({ kind, title, sub, close }: { kind: string; title: string; 
         <span style={{ display: "block", fontSize: 20, fontWeight: 600, color: C.ink, marginTop: 2 }}>{title}</span>
         {sub ? <span style={{ display: "block", fontSize: 14, color: C.muted, marginTop: 2 }}>{sub}</span> : null}
       </span>
-      <button onClick={close} aria-label="Close" style={{ width: 32, height: 32, border: `1px solid ${C.line}`, background: C.white, borderRadius: 4, cursor: "pointer", color: C.muted, fontSize: 16 }}>✕</button>
+      <button onClick={close} aria-label="Close" style={{ width: 32, height: 32, border: `1px solid ${C.line}`, background: C.white, borderRadius: 7, cursor: "pointer", color: C.muted, fontSize: 16 }}>✕</button>
     </div>
   );
 }

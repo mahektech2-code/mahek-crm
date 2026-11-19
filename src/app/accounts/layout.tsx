@@ -18,12 +18,14 @@ import { AccountsShell } from "./accounts-shell";
 import { DeadlineGate } from "./deadline-gate";
 import { deadlineItemsFor, sweepAccountsSla } from "@/lib/services/accounts-sla-service";
 import { nowMs } from "@/lib/format";
+import "@/styles/v4-theme.css";
 
 /**
  * The Accounts app's own shell.
  *
  * Deliberately not the CRM's `AppShell`: that carries the calling sidebar and
- * its reminder and complaint badges, and accounts have no calling book.
+ * its reminder and complaint badges, and accounts have no calling book. It
+ * wears the ERP's look all the same (`styles/v4-theme.css`, Nov 2026).
  *
  * The counts are read once here rather than by each screen for itself — the
  * sidebar badges them on every route, and three screens asking the same three
@@ -73,6 +75,8 @@ export default async function OrdersLayout({
       <AccountsShell
         user={{
           name: user.name,
+          email: user.email,
+          phone: user.phone,
           /* The level for THIS app, not the widest held anywhere. Vikram is
              an admin on the account and an ASSOCIATE here, deliberately — the
              ledger desk's decisions are the Accounts manager's — and this

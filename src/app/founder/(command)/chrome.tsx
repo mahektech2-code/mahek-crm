@@ -138,8 +138,11 @@ export function FounderHeader({
   actions: React.ReactNode;
 }) {
   return (
+    /* The v4 header (Nov 2026): lavender, beside a sidebar that runs the full
+       height under the Mahek mark — the wordmark lives up there now. */
     <header
-      style={{ height: 56, flex: "none", position: "relative", zIndex: 3, background: C.white, borderBottom: `1px solid ${C.line}`, display: "flex", alignItems: "center", gap: 16, padding: "0 24px" }}
+      data-v4-header=""
+      style={{ height: 56, flex: "none", position: "relative", zIndex: 3, background: C.brandTint, borderBottom: `1px solid ${C.brandTint2}`, display: "flex", alignItems: "center", gap: 12, padding: "0 12px" }}
     >
       <HeaderLead
         apps={switcherApps}
@@ -148,30 +151,35 @@ export function FounderHeader({
         onToggleSidebar={onToggleSidebar}
         href="/founder"
         label="MAHEK COMMAND CENTRE"
+        wordmark={false}
+        toggleIcon={
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M4 5h16v14H4zM9 5v14" />
+          </svg>
+        }
       />
-      <span style={{ width: 1, height: 22, background: C.soft, flex: "none" }} />
       {search}
       <span style={{ flex: 1 }} />
       {actions}
       <Hov
         onClick={onBell}
         title="Needs you"
-        style={{ position: "relative", width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", border: `1px solid ${C.line}`, background: C.white, borderRadius: 4, color: C.muted, cursor: "pointer", flex: "none" }}
-        hover={{ background: C.canvas, color: C.body }}
+        style={{ position: "relative", width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid transparent", background: "transparent", borderRadius: 7, color: "#5A4E8C", cursor: "pointer", flex: "none" }}
+        hover={{ background: "#E4DBFF", color: "#1E1446" }}
       >
         <Icon name="bell" />
         {liveCount > 0 ? (
-          <span style={{ position: "absolute", top: -5, right: -5, minWidth: 16, height: 16, padding: "0 4px", borderRadius: 8, background: C.bad, color: C.white, fontSize: 11, fontWeight: 500, lineHeight: "16px", textAlign: "center" }}>
+          <span style={{ position: "absolute", top: -5, right: -5, minWidth: 16, height: 16, padding: "0 4px", borderRadius: 8, background: C.brand, color: C.white, fontSize: 11, fontWeight: 700, lineHeight: "16px", textAlign: "center" }}>
             {liveCount}
           </span>
         ) : null}
       </Hov>
       <span style={{ display: "flex", alignItems: "center", gap: 8, flex: "none" }}>
-        <span style={{ width: 28, height: 28, borderRadius: 4, background: C.brandTint, color: C.brandDark, fontSize: 12, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <span style={{ width: 32, height: 32, borderRadius: "50%", background: C.brand, color: C.white, fontSize: 12, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center" }}>
           {user.initials}
         </span>
         <span style={{ lineHeight: "14px" }}>
-          <span style={{ display: "block", fontSize: 13, fontWeight: 500, color: C.ink, whiteSpace: "nowrap" }}>{user.name}</span>
+          <span style={{ display: "block", fontSize: 13, fontWeight: 600, color: C.ink, whiteSpace: "nowrap" }}>{user.name}</span>
           <span style={{ ...upper, display: "block", whiteSpace: "nowrap" }}>{user.hatLabel}</span>
         </span>
       </span>
@@ -184,10 +192,10 @@ export const SEARCH_BOX: React.CSSProperties = {
   width: "100%",
   height: 34,
   padding: "0 12px 0 32px",
-  border: `1px solid ${C.line}`,
-  borderRadius: 4,
-  background: C.canvas,
-  fontSize: 14,
+  border: `1px solid ${C.brandTint2}`,
+  borderRadius: 8,
+  background: C.white,
+  fontSize: 13,
   color: C.ink,
 };
 
@@ -199,9 +207,9 @@ export const QUICK_BUTTON: React.CSSProperties = {
   gap: 6,
   border: `1px solid ${C.brand}`,
   background: C.brand,
-  borderRadius: 4,
+  borderRadius: 7,
   fontSize: 13,
-  fontWeight: 500,
+  fontWeight: 600,
   color: C.white,
   cursor: "pointer",
 };
@@ -213,10 +221,10 @@ export const ASK_BUTTON: React.CSSProperties = {
   alignItems: "center",
   gap: 7,
   border: `1px solid ${C.brandTint2}`,
-  background: C.brandTint,
-  borderRadius: 4,
+  background: C.white,
+  borderRadius: 7,
   fontSize: 13,
-  fontWeight: 500,
+  fontWeight: 600,
   color: C.brandDark,
   cursor: "pointer",
   flex: "none",
@@ -240,7 +248,21 @@ export function FounderSidebar({
 }) {
   return (
     <aside style={{ width: collapsed ? 56 : 232, transition: "width 150ms", flex: "none", background: C.white, borderRight: `1px solid ${C.line}`, display: "flex", flexDirection: "column", minHeight: 0 }}>
-      <nav style={{ flex: 1, overflowY: "auto", padding: "8px 6px 16px 6px" }}>
+      {/* The Mahek mark atop the sidebar, as in the ERP. */}
+      <Link
+        href="/founder"
+        title="MahekOne Command Centre"
+        style={{ height: 56, flex: "none", display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : undefined, gap: 10, padding: collapsed ? 0 : "0 16px", textDecoration: "none" }}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element -- a 256px static mark, nothing for the optimiser to do */}
+        <img src="/brand/mahek-logo.png" alt="Mahek" width={30} height={30} style={{ width: 30, height: 30, flex: "none", borderRadius: "50%", background: C.white, objectFit: "contain" }} />
+        {collapsed ? null : (
+          <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: "-0.01em", whiteSpace: "nowrap", color: C.ink }}>
+            MahekOne <span style={{ fontWeight: 500, color: C.muted }}>Founder</span>
+          </span>
+        )}
+      </Link>
+      <nav style={{ flex: 1, overflowY: "auto", padding: "4px 8px 16px 8px" }}>
         {NAV.map((g) => {
           const items = g.items.filter(([k]) => allowed.includes(k));
           if (!items.length) return null;
@@ -249,7 +271,7 @@ export function FounderSidebar({
               {collapsed ? (
                 <div style={{ height: 1, background: C.soft, margin: "10px 8px" }} />
               ) : (
-                <div style={{ ...upper, padding: "14px 12px 6px 12px" }}>{g.label}</div>
+                <div style={{ ...upper, color: "#9AA5BA", padding: "14px 12px 6px 12px" }}>{g.label}</div>
               )}
               {items.map(([k, label, ic]) => {
                 const on = active === k;
@@ -259,10 +281,11 @@ export function FounderSidebar({
                     key={k}
                     onClick={() => onGo(k)}
                     title={label}
-                    style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : undefined, gap: 10, width: "100%", height: 36, padding: collapsed ? 0 : "0 10px", border: "none", borderRadius: 6, background: "transparent", cursor: "pointer", fontSize: 14, textAlign: "left", color: on ? C.brandDark : C.body, fontWeight: on ? 500 : 400, marginBottom: 1 }}
-                    hover={on ? undefined : { background: C.canvas }}
+                    aria-current={on ? "page" : undefined}
+                    style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : undefined, gap: 10, width: "100%", height: 36, padding: collapsed ? 0 : "0 10px", border: "none", borderRadius: 7, background: "transparent", cursor: "pointer", fontSize: 13.5, textAlign: "left", color: on ? C.brandDark : "#4A5872", fontWeight: on ? 600 : 400, marginBottom: 1 }}
+                    hover={on ? undefined : { background: C.hover, color: C.ink }}
                   >
-                    <span style={on ? { position: "absolute", inset: 0, background: C.brandTint, borderRadius: 6, borderLeft: `3px solid ${C.brand}`, display: "block" } : { display: "none" }} />
+                    <span style={on ? { position: "absolute", inset: 0, background: "#ECE6FF", borderRadius: 7, display: "block" } : { display: "none" }} />
                     <span style={{ position: "relative", zIndex: 1, display: "flex", flex: "none" }}>
                       <Icon name={ic} />
                     </span>
@@ -273,7 +296,7 @@ export function FounderSidebar({
                       <span style={{ position: "absolute", zIndex: 1, top: 7, right: 12, width: 7, height: 7, borderRadius: "50%", background: k === "inbox" ? C.bad : C.warn, display: "block" }} />
                     ) : c > 0 ? (
                       <span
-                        style={{ position: "relative", zIndex: 1, minWidth: 20, height: 18, padding: "0 6px", borderRadius: 9, fontSize: 11, fontWeight: 600, lineHeight: "18px", textAlign: "center", flex: "none", background: k === "inbox" ? C.bad : C.warnTint, color: k === "inbox" ? C.white : C.warnInk }}
+                        style={{ position: "relative", zIndex: 1, minWidth: 20, height: 18, padding: "0 6px", borderRadius: 9, fontSize: 11, fontWeight: 600, lineHeight: "18px", textAlign: "center", flex: "none", background: k === "inbox" ? "#FBEAE8" : "#EEF2F7", color: k === "inbox" ? "#C0362C" : C.body }}
                       >
                         {c}
                       </span>
@@ -320,8 +343,8 @@ export function TitleBlock({
     <div style={{ position: "sticky", top: 0, zIndex: 2, background: C.canvas, borderBottom: `1px solid ${C.soft}`, padding: below ? "16px 28px 0 28px" : "16px 28px 14px 28px" }}>
       <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 20, flexWrap: "wrap" }}>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: C.muted }}>{crumb}</div>
-          <div style={{ fontSize: 26, lineHeight: "32px", fontWeight: 600, color: C.ink, marginTop: 2 }}>{title}</div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: C.muted }}>{crumb}</div>
+          <div style={{ fontSize: 22, lineHeight: "28px", fontWeight: 700, letterSpacing: "-0.02em", color: C.ink, marginTop: 2 }}>{title}</div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 4 }}>
             <span style={{ fontSize: 14, color: C.muted }}>{subtitle}</span>
             <span
@@ -390,7 +413,7 @@ export function DeskTabs({ tabs, pathname }: { tabs: DeskTab[]; pathname: string
               padding: "8px 12px 10px 12px",
               borderBottom: `2px solid ${on ? C.brand : "transparent"}`,
               fontSize: 14,
-              fontWeight: on ? 500 : 400,
+              fontWeight: on ? 600 : 400,
               color: on ? C.brandDark : C.muted,
               textDecoration: "none",
               whiteSpace: "nowrap",
