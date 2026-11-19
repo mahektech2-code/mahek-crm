@@ -8,7 +8,7 @@ import { occurrenceOn, windowWords, type RoutineFrequency } from "./routines";
 import { audienceWords, readAudience, type Audience } from "./audience";
 import { resolveFor } from "./audience-service";
 import { MISSED_FROM, missedRemark, routineMissed, type TaskApp, type TaskPriority } from "./rules";
-import { appClock } from "./clock";
+import { appClock, tasksNow } from "./clock";
 import { routineDeadlineSql, routineGraceMinutes, teamOf } from "./service";
 
 /* ---------------------------------------------------------------------------
@@ -220,11 +220,13 @@ export async function writeRoutineTasks(day: string, opts: { assigneeId?: string
 export async function markMissedRoutineTasks(opts: { assigneeId?: string; ids?: string[] } = {}): Promise<number> {
   /* Missed once the grace time after the due moment has run out; closed AT the due moment, which is what it missed. */
   const grace = await routineGraceMinutes();
+  /* The Tasks clock, bound — the same moment `appClock` reads, so a pinned test clock reaches the sweep too. */
+  const now = tasksNow().toISOString();
   const due = (await db.execute(sql`
-    select t.id, t.due_date::text as "dueDate", t.due_time as "dueTime", least(${routineDeadlineSql}, now()) as deadline
+    select t.id, t.due_date::text as "dueDate", t.due_time as "dueTime", least(${routineDeadlineSql}, ${now}::timestamptz) as deadline
       from tasks t
      where t.routine_id is not null and t.status <> 'done' and t.status <> 'missed'
-       and ${routineDeadlineSql} + make_interval(mins => ${grace}) <= now()
+       and ${routineDeadlineSql} + make_interval(mins => ${grace}) <= ${now}::timestamptz
        and t.due_date >= ${MISSED_FROM}::date
        ${opts.assigneeId ? sql`and t.assignee_id = ${opts.assigneeId}` : sql``}
        ${opts.ids ? (opts.ids.length ? sql`and t.id in ${opts.ids}` : sql`and false`) : sql``}
