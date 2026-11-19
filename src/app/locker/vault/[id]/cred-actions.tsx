@@ -47,7 +47,7 @@ export function CredActions({ id, title, provider, fields, canWrite }: { id: str
   );
 }
 
-export function LinkControls(p: { mode: "add"; credentialId: string; identities: { id: string; email: string }[] } | { mode: "remove"; credentialId: string; linkId: string }) {
+export function LinkControls(p: { mode: "add"; credentialId: string; identities: { id: string; email: string }[] } | { mode: "remove"; credentialId: string; linkId: string; label: string; sole: boolean }) {
   const modal = useModal();
   const toast = useToast();
   const router = useRouter();
@@ -56,11 +56,22 @@ export function LinkControls(p: { mode: "add"; credentialId: string; identities:
       <button
         type="button"
         title="Remove this connection"
-        onClick={async () => {
-          const r = await removeLink(p.linkId, p.credentialId);
-          if (!r.ok) return toast(r.error);
-          router.refresh();
-        }}
+        onClick={() =>
+          modal({
+            title: "Remove this connection?",
+            sub: `${p.label}. The vault stops recording that this login relies on it, so the account's page and the risk checks no longer count it.`,
+            notes: p.sole ? [{ t: "This was marked as the only way in. Remove it only if that is no longer true." }] : undefined,
+            danger: true,
+            okL: "Remove connection",
+            cancel: "Keep it",
+            done: async () => {
+              const r = await removeLink(p.linkId, p.credentialId);
+              if (!r.ok) return r.error;
+              toast("Connection removed");
+              router.refresh();
+            },
+          })
+        }
         className="cursor-pointer text-sm text-muted hover:text-danger"
       >
         ×

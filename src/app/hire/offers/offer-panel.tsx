@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import { cx } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
 import type { OfferModel } from "@/lib/hire/blueprint-types";
-import { issueOfferAction, offerResponseAction, offerTrackingAction, saveOfferAction } from "@/lib/hire/actions/onboarding";
+import { issueOfferAction, offerResponseAction, offerTrackingAction, saveOfferAction, withdrawOfferAction } from "@/lib/hire/actions/onboarding";
+import { ReasonButton } from "../c/[id]/client";
 import { Btn, Callout, Icon, Label, Locked, Panel, Pill, fd } from "../_ui/kit";
 import { growthLadder, renderLetter, rupees } from "../_onboard/letter";
 import { cleanDecimal, rupeesFromPaise } from "@/lib/format";
@@ -92,12 +93,13 @@ export function OfferPanel({
   const [lc, setLc] = useState(offer?.letterConfirmation ?? "");
   const [note, setNote] = useState("");
 
-  const editable = canOffer && (!offer || offer.status === "draft") && (status === "in_progress" || status === "on_hold") && atOfferStage;
+  /* A withdrawn offer is history: the form opens again to make a new one. */
+  const editable = canOffer && (!offer || offer.status === "draft" || offer.status === "withdrawn") && (status === "in_progress" || status === "on_hold") && atOfferStage;
   const basicPaise = Math.round((Number(basic) || 0) * 100);
   const inBand = g ? basicPaise >= g.basicMinPaise && basicPaise <= g.basicMaxPaise : false;
   const ladder = g ? growthLadder({ offer: offerModel }, grade, basicPaise || g.basicMinPaise) : [];
   const letter =
-    offer && offer.status !== "draft" && offer.letter
+    offer && offer.status !== "draft" && offer.status !== "withdrawn" && offer.letter
       ? offer.letter
       : g
         ? renderLetter({
@@ -286,7 +288,22 @@ export function OfferPanel({
             </div>
           ) : null}
 
-          {offer && offer.status !== "draft" ? (
+          {(offer?.status === "issued" || offer?.status === "accepted") && canOffer && (status === "in_progress" || status === "on_hold") ? (
+            <div className="mt-3">
+              <ReasonButton
+                label="Withdraw offer"
+                danger
+                kind="ghost"
+                title="Withdraw this offer"
+                sub={`Use this when the business takes the offer back — the role closed, a check came back flagged. ${candidateName} is told. The application stays open: make a new offer, or close it as a separate decision.`}
+                okLabel="Continue"
+                impact={{ kind: "hire-offer-withdraw", id: applicationId }}
+                onSubmit={(r, c) => withdrawOfferAction(applicationId, r, c)}
+              />
+            </div>
+          ) : null}
+
+          {offer && offer.status !== "draft" && offer.status !== "withdrawn" ? (
             <div className="mt-4 grid grid-cols-2 gap-3">
               <label>
                 <Label className="mb-1">Courier</Label>
