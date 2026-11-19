@@ -135,3 +135,38 @@ describe("applyChange", () => {
     assert.deepEqual(s.erpPowers, ["verifyOrders"]);
   });
 });
+
+describe("a template that carries a Hire role and an ERP designation", () => {
+  const held = (apps: string[], over: Partial<HeldAccess> = {}): HeldAccess => ({
+    userId: "u1",
+    name: "Asha",
+    role: "associate",
+    active: true,
+    grants: apps.map((app) => ({ app: app as never, role: "associate", modules: moduleKeysForApp(app as never).map((key) => ({ key, granted: true })) })),
+    erpPowers: [],
+    hrmsPowers: [],
+    taskPowers: [],
+    ...over,
+  });
+  const shape = { apps: [{ app: "erp" as const, role: "associate" as const, modules: null }, { app: "hire" as const, role: "associate" as const, modules: null }], erpPowers: [], hrmsPowers: [], taskPowers: [], hireRole: "recruiter", erpDesignationId: "erpd_x" };
+
+  it("sets both on somebody it gives those apps, and is made from a person who holds them", () => {
+    const r = applyChange(held([]), { kind: "template", shape });
+    assert.ok(r.changed);
+    assert.equal(r.changed && r.save.hireRole, "recruiter");
+    assert.equal(r.changed && r.save.erpDesignationId, "erpd_x");
+    const made = shapeFromRow(held(["erp", "hire"], { hireRole: "interviewer", erpDesignation: { id: "erpd_y" } }));
+    assert.equal(made.hireRole, "interviewer");
+    assert.equal(made.erpDesignationId, "erpd_y");
+  });
+
+  it("leaves them alone where the person already has them, so nothing changes", () => {
+    const r = applyChange(held(["erp", "hire"], { hireRole: "recruiter", erpDesignation: { id: "erpd_x" } }), { kind: "template", shape });
+    assert.equal(r.changed, false);
+  });
+
+  it("survives cleaning, and an old template without them still applies", () => {
+    assert.equal(cleanShape(shape).hireRole, "recruiter");
+    assert.equal(cleanShape({ apps: [], erpPowers: [], hrmsPowers: [], taskPowers: [] }).hireRole, null);
+  });
+});
