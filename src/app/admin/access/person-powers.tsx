@@ -235,6 +235,8 @@ export type ElsewhereLink = {
   now: string;
   /** Why it matters to their access. */
   why: string;
+  /** Said in the warning colour, where what is set there widens their reach without anybody having decided it. */
+  warn?: string;
 };
 
 /**
@@ -256,6 +258,7 @@ export function SetElsewhere({ links }: { links: ElsewhereLink[] }) {
             </Link>
           </div>
           <div className="mt-0.5 text-[13px] text-body">{l.now}</div>
+          {l.warn ? <div className="mt-0.5 text-[13px] font-medium text-warn-ink">{l.warn}</div> : null}
           <div className="mt-0.5 text-[13px] text-muted">{l.why}</div>
         </div>
       ))}
