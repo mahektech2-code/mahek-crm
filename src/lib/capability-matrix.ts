@@ -800,7 +800,9 @@ export const MATRIX: Record<AppId, AppMatrix> = {
      inside it yet, and inventing one nothing checks would be worse. */
   hrms: { associate: [], manager: [] },
   people: { associate: [], manager: [] },
-  enquiries: { associate: [], manager: [] },
+  /* An Enquiries manager cancels a follow-up raised from an enquiry — the same
+     right a CRM manager uses to dismiss a reminder (owner's decision, Nov 2026). */
+  enquiries: { associate: [], manager: ["reminder.close"] },
   /* The website CMS. No decision here needs withholding from an associate
      yet — content is mock-only in this PR, and every real capability this
      app ends up needing (publish, delete, etc.) arrives with the PR that

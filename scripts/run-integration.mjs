@@ -247,6 +247,9 @@ const files = [
   "src/lib/price-overrides.integration.test.ts",
   "src/lib/sample-logistics.test.ts",
   "src/lib/enquiries.test.ts",
+  // The enquiry desk's edits and removals: entered by hand, corrected over the
+  // submission, own notes, follow-ups moved and cancelled, spam as a stage.
+  "src/lib/enquiry-edits.test.ts",
   // A website enquiry becomes a lead by hand, through the one writer, and only
   // the people granted the calling desk can work it: the four forms that may,
   // the atomic link, assignment and who sees an unowned lead, and the

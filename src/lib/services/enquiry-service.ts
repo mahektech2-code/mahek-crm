@@ -4,9 +4,11 @@ import { and, desc, eq, ilike, isNull, notInArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appAccess,
+  auditLog,
   customers,
   enquiries,
   enquiryActivity,
+  enquiryDeletions,
   enquiryOrders,
   orders,
   reminders,
@@ -15,6 +17,7 @@ import {
 
 import { requireUser } from "@/lib/auth";
 import { listUserApps } from "@/lib/access";
+import { levelInApp } from "@/lib/access-control";
 import { monthKey, monthWindowSql } from "@/lib/business-date";
 import { today } from "@/lib/recompute";
 import type { AppId } from "@/lib/apps";
@@ -22,12 +25,21 @@ import { err, ok, okVoid, type Err, type Result } from "@/lib/result";
 import type { User } from "@/db/schema";
 import {
   readSubmissionFields,
+  effectiveSubmission,
+  CORRECTABLE_FIELDS,
+  type CorrectableField,
   phoneDigits,
   buildEnquirySearchText,
   readLeadPrefill,
   type LeadPrefill,
 } from "@/lib/enquiry-submission";
-import { leadConvertibility, sourceFormLabel } from "@/lib/enquiry-labels";
+import {
+  ENQUIRY_PRIORITIES,
+  MANUAL_ENQUIRY_SOURCES,
+  leadConvertibility,
+  sourceFormLabel,
+  sourceLabel,
+} from "@/lib/enquiry-labels";
 import type {
   EnquiryCursor,
   EnquiryPriority,
@@ -35,7 +47,11 @@ import type {
   EnquirySource,
   EnquiryStage,
 } from "@/lib/enquiry-labels";
-import { createReminder as createSharedReminder } from "./worklist-services";
+import {
+  createReminder as createSharedReminder,
+  dismissReminder as dismissSharedReminder,
+  rescheduleReminder as rescheduleSharedReminder,
+} from "./worklist-services";
 import { notifyUser } from "@/lib/notify";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
@@ -154,6 +170,12 @@ export async function createEnquiryFromWebsite(
     .from(enquiries)
     .where(and(eq(enquiries.source, ENQUIRY_SOURCE_WEBSITE), eq(enquiries.externalRef, input.externalRef)));
   if (existing) return { id: existing.id, duplicate: true };
+  /* Deleted on purpose: a resend of it is acknowledged and dropped, not stored again. */
+  const [gone] = await db
+    .select({ ref: enquiryDeletions.externalRef })
+    .from(enquiryDeletions)
+    .where(and(eq(enquiryDeletions.source, ENQUIRY_SOURCE_WEBSITE), eq(enquiryDeletions.externalRef, input.externalRef)));
+  if (gone) return { id: "deleted", duplicate: true };
 
   const enquiryId = id("enq");
   try {
@@ -253,23 +275,25 @@ export async function enquiryDashboardCounts(): Promise<EnquiryDashboardCounts> 
     qualified: number;
     converted: number;
     closed: number;
+    spam: number;
     unassigned: number;
     high_or_urgent: number;
     unassigned_high_or_urgent: number;
     new_this_month: number;
   }>(sql`
     select
-      count(*)::int as total,
+      count(*) filter (where stage::text <> 'spam')::int as total,
       count(*) filter (where stage = 'new')::int as new,
       count(*) filter (where stage = 'contacted')::int as contacted,
       count(*) filter (where stage = 'follow_up')::int as follow_up,
       count(*) filter (where stage = 'qualified')::int as qualified,
       count(*) filter (where stage = 'converted')::int as converted,
       count(*) filter (where stage = 'closed')::int as closed,
-      count(*) filter (where assigned_to_id is null)::int as unassigned,
-      count(*) filter (where priority in ('high','urgent'))::int as high_or_urgent,
-      count(*) filter (where assigned_to_id is null and priority in ('high','urgent'))::int as unassigned_high_or_urgent,
-      count(*) filter (where received_at >= ${sql.raw(month.start)} and received_at < ${sql.raw(month.end)})::int as new_this_month
+      count(*) filter (where stage::text = 'spam')::int as spam,
+      count(*) filter (where assigned_to_id is null and stage::text <> 'spam')::int as unassigned,
+      count(*) filter (where priority in ('high','urgent') and stage::text <> 'spam')::int as high_or_urgent,
+      count(*) filter (where assigned_to_id is null and priority in ('high','urgent') and stage::text <> 'spam')::int as unassigned_high_or_urgent,
+      count(*) filter (where received_at >= ${sql.raw(month.start)} and received_at < ${sql.raw(month.end)} and stage::text <> 'spam')::int as new_this_month
     from enquiries
     where workspace = 'enquiries'
   `);
@@ -283,6 +307,7 @@ export async function enquiryDashboardCounts(): Promise<EnquiryDashboardCounts> 
       qualified: row?.qualified ?? 0,
       converted: row?.converted ?? 0,
       closed: row?.closed ?? 0,
+      spam: row?.spam ?? 0,
     },
     unassigned: row?.unassigned ?? 0,
     highOrUrgent: row?.high_or_urgent ?? 0,
@@ -342,7 +367,10 @@ export async function listEnquiries(
   const descending = filters.sort !== "received_asc";
 
   const conditions = [eq(enquiries.workspace, ENQUIRY_WORKSPACE)];
+  /* Spam is out of every view but its own: it is not an enquiry, and a junk
+     submission in "All" is the thing marking it was meant to stop. */
   if (filters.stage) conditions.push(eq(enquiries.stage, filters.stage));
+  else conditions.push(sql`${enquiries.stage}::text <> 'spam'`);
   if (filters.priority) conditions.push(eq(enquiries.priority, filters.priority));
   if (filters.source) conditions.push(eq(enquiries.source, filters.source));
   if (filters.assignedToId === "unassigned") {
@@ -396,6 +424,7 @@ export async function listEnquiries(
       .select({
         id: enquiries.id,
         rawSubmission: enquiries.rawSubmission,
+        corrections: enquiries.corrections,
         source: enquiries.source,
         sourceForm: enquiries.sourceForm,
         category: enquiries.category,
@@ -427,7 +456,7 @@ export async function listEnquiries(
   const pageRows = rows.slice(0, pageSize);
 
   const items: EnquiryListItem[] = pageRows.map((r) => {
-    const fields = readSubmissionFields(r.rawSubmission);
+    const fields = readSubmissionFields(effectiveSubmission(r.rawSubmission, r.corrections));
     return {
       id: r.id,
       name: r.customerName ?? fields.name,
@@ -460,6 +489,8 @@ export type EnquiryActivityEntry = {
   id: string;
   kind: string;
   at: string;
+  /** Who wrote it — a note may be edited or deleted only by its author. */
+  actorUserId: string | null;
   actorName: string | null;
   note: string | null;
   meta: Record<string, unknown> | null;
@@ -467,6 +498,8 @@ export type EnquiryActivityEntry = {
 
 export type EnquiryReminder = {
   id: string;
+  /** Whether it may still be moved or cancelled — only a pending one may. */
+  pending: boolean;
   dueDate: string;
   note: string;
   type: string;
@@ -488,7 +521,12 @@ export type EnquiryDetail = {
   source: string;
   sourceForm: string | null;
   category: string | null;
+  /** Exactly as the source sent it — never rewritten. */
   rawSubmission: Record<string, unknown>;
+  /** The submission as it now reads: the raw with a person's corrections over it (`effectiveSubmission`). */
+  submission: Record<string, unknown>;
+  /** Which fields somebody corrected, so the screen can say so. */
+  corrected: string[];
   stage: EnquiryStage;
   priority: EnquiryPriority;
   assignedToId: string | null;
@@ -519,6 +557,7 @@ export async function getEnquiry(enquiryId: string): Promise<EnquiryDetail | nul
       sourceForm: enquiries.sourceForm,
       category: enquiries.category,
       rawSubmission: enquiries.rawSubmission,
+      corrections: enquiries.corrections,
       stage: enquiries.stage,
       priority: enquiries.priority,
       assignedToId: enquiries.assignedToId,
@@ -548,6 +587,7 @@ export async function getEnquiry(enquiryId: string): Promise<EnquiryDetail | nul
         at: enquiryActivity.at,
         note: enquiryActivity.note,
         meta: enquiryActivity.meta,
+        actorUserId: enquiryActivity.actorUserId,
         actorName: users.name,
       })
       .from(enquiryActivity)
@@ -595,6 +635,8 @@ export async function getEnquiry(enquiryId: string): Promise<EnquiryDetail | nul
     sourceForm: row.sourceForm,
     category: row.category,
     rawSubmission: (row.rawSubmission as Record<string, unknown>) ?? {},
+    submission: effectiveSubmission(row.rawSubmission, row.corrections),
+    corrected: Object.keys(row.corrections ?? {}),
     stage: row.stage as EnquiryStage,
     priority: row.priority as EnquiryPriority,
     assignedToId: row.assignedToId,
@@ -611,12 +653,14 @@ export async function getEnquiry(enquiryId: string): Promise<EnquiryDetail | nul
       id: a.id,
       kind: a.kind,
       at: a.at.toISOString(),
+      actorUserId: a.actorUserId,
       actorName: a.actorName,
       note: a.note,
       meta: (a.meta as Record<string, unknown>) ?? null,
     })),
     remindersList: reminderRows.map((r) => ({
       id: r.id,
+      pending: r.status === "pending",
       dueDate: r.dueDate,
       note: r.note,
       type: r.type,
@@ -746,6 +790,10 @@ export async function changeStage(enquiryId: string, stage: EnquiryStage): Promi
   const { user, error } = await requireEnquiriesAccess();
   if (error) return error;
 
+  /* Spam takes an enquiry out of every list and count, so it is said first —
+     `markEnquirySpam`, behind its impact dialog — never picked from here. */
+  if (stage === "spam") return err("Use Mark as spam — it says first what that takes the enquiry out of.", "validation");
+
   const [before] = await db.select({ stage: enquiries.stage }).from(enquiries).where(eq(enquiries.id, enquiryId));
   if (!before) return err("That enquiry no longer exists.", "not_found");
   if (before.stage === stage) return okVoid();
@@ -755,6 +803,12 @@ export async function changeStage(enquiryId: string, stage: EnquiryStage): Promi
     .set({ stage, updatedAt: new Date(), updatedById: user.id })
     .where(eq(enquiries.id, enquiryId));
 
+  if (before.stage === "spam") {
+    /* Out of spam is a decision about the enquiry, not a step in working it. */
+    await writeActivity(enquiryId, "unmarked_spam", user.id, `Not spam — back as ${stage.replace(/_/g, " ")}.`, { from: before.stage, to: stage });
+    await audit(user, "enquiry.unspam", enquiryId, { stage: before.stage }, { stage });
+    return okVoid("Back on the list.");
+  }
   await writeActivity(enquiryId, "stage_changed", user.id, null, { from: before.stage, to: stage });
   return okVoid("Stage updated.");
 }
@@ -1112,6 +1166,8 @@ export async function enquiryForLeadConversion(enquiryId: string): Promise<Resul
       sourceForm: enquiries.sourceForm,
       category: enquiries.category,
       rawSubmission: enquiries.rawSubmission,
+      corrections: enquiries.corrections,
+      stage: enquiries.stage,
       customerId: enquiries.customerId,
       customerName: customers.name,
       receivedAt: enquiries.receivedAt,
@@ -1123,6 +1179,7 @@ export async function enquiryForLeadConversion(enquiryId: string): Promise<Resul
 
   const may = leadConvertibility(row);
   if (!may.ok) return err(may.reason, "rule_violation");
+  if (row.stage === "spam") return err("This enquiry is marked as spam. Bring it back first if it is a real one.", "rule_violation");
 
   if (row.customerId) {
     return err(
@@ -1138,7 +1195,7 @@ export async function enquiryForLeadConversion(enquiryId: string): Promise<Resul
     sourceDetail: `${formLabel} form on the website`,
     form: row.sourceForm ?? "",
     formLabel,
-    prefill: readLeadPrefill(row.rawSubmission),
+    prefill: readLeadPrefill(effectiveSubmission(row.rawSubmission, row.corrections)),
     receivedAt: row.receivedAt.toISOString(),
   });
 }
@@ -1183,4 +1240,442 @@ export async function linkEnquiryToNewLead(
     note: `Lead created from this enquiry: ${input.leadName}.`,
     meta: { customerId: input.customerId },
   });
+}
+
+/* ===========================================================================
+ * EDITS AND REMOVALS — the desk's own corrections to what it holds.
+ *
+ * Every write here answers to the same Website Enquiries grant as everything
+ * above, writes the enquiry's own activity (the story a person reads) AND an
+ * `audit_log` row (the record of who changed what under which authority). The
+ * ones that take something away — a note, a follow-up, the enquiry itself as
+ * spam — are confirmed through the impact dialog by their actions
+ * (`lib/actions/enquiries.ts`), which ask `confirmImpact` before calling here.
+ * ========================================================================= */
+
+async function audit(
+  user: User,
+  action: string,
+  entityId: string,
+  beforeState: Record<string, unknown> | null,
+  afterState: Record<string, unknown> | null,
+  entityType = "enquiry",
+) {
+  await db.insert(auditLog).values({
+    id: id("aud"),
+    actorId: user.id,
+    actorRole: user.role,
+    actorApp: ENQUIRY_WORKSPACE,
+    action,
+    entityType,
+    entityId,
+    beforeState: beforeState as never,
+    afterState: afterState as never,
+  });
+}
+
+const trimOrNull = (v: string | null | undefined) => (v && v.trim() ? v.trim() : null);
+
+/* ------------------------------------------------------ entered by hand */
+
+export type ManualEnquiryInput = {
+  name: string;
+  phone?: string | null;
+  email?: string | null;
+  company?: string | null;
+  /** What they asked for, in their words. */
+  requirement?: string | null;
+  /** Where it came from — anything but `website` (`MANUAL_ENQUIRY_SOURCES`). */
+  source: string;
+  priority?: EnquiryPriority;
+};
+
+/**
+ * An enquiry somebody took by phone, at the counter or off IndiaMART — the
+ * same row a website submission makes, with the person as its author. The
+ * fields are stored under the keys `readSubmissionFields` reads first, so
+ * every screen reads it exactly as it reads the website's. It cannot claim to
+ * be a website enquiry: that source is the ingest door's alone, and the only
+ * one that may become a lead.
+ */
+export async function createManualEnquiry(input: ManualEnquiryInput): Promise<Result<{ id: string }>> {
+  const { user, error } = await requireEnquiriesAccess();
+  if (error) return error;
+
+  const name = trimOrNull(input.name);
+  const phoneRaw = trimOrNull(input.phone);
+  const email = trimOrNull(input.email);
+  if (!name) return err("Say who the enquiry is from.", "validation", [{ field: "name", message: "A name is required." }]);
+  if (!phoneRaw && !email) {
+    return err("Give a phone number or an email — somebody has to be able to reply.", "validation", [
+      { field: "phone", message: "A phone number or an email is required." },
+    ]);
+  }
+  const phone = phoneRaw ? phoneDigits(phoneRaw) : null;
+  if (phoneRaw && !phone) {
+    return err("That phone number does not have ten digits.", "validation", [{ field: "phone", message: "Ten digits." }]);
+  }
+  const source = (input.source ?? "").trim();
+  if (!(MANUAL_ENQUIRY_SOURCES as readonly string[]).includes(source)) {
+    return err("Pick where the enquiry came from.", "validation", [{ field: "source", message: "Pick a source." }]);
+  }
+  const priority = input.priority ?? "normal";
+  if (!(ENQUIRY_PRIORITIES as readonly string[]).includes(priority)) {
+    return err("That is not a priority an enquiry can carry.", "validation");
+  }
+
+  const submission: Record<string, string> = { name };
+  if (phone) submission.phone = phone;
+  if (email) submission.email = email;
+  const company = trimOrNull(input.company);
+  if (company) submission.company = company;
+  const requirement = trimOrNull(input.requirement);
+  if (requirement) submission.message = requirement;
+
+  const enquiryId = id("enq");
+  await db.transaction(async (tx) => {
+    await tx.insert(enquiries).values({
+      id: enquiryId,
+      workspace: ENQUIRY_WORKSPACE,
+      customerId: null,
+      source,
+      sourceForm: null,
+      category: null,
+      rawSubmission: submission,
+      searchText: buildEnquirySearchText(submission),
+      stage: "new",
+      priority,
+      assignedToId: null,
+      receivedAt: new Date(),
+      externalRef: null,
+      createdById: user.id,
+      updatedById: user.id,
+    });
+    await tx.insert(enquiryActivity).values({
+      id: id("act"),
+      enquiryId,
+      kind: "created",
+      actorUserId: user.id,
+      note: `Entered by hand — ${sourceLabel(source)}.`,
+      meta: { source },
+    });
+  });
+  await audit(user, "enquiry.create", enquiryId, null, { source, priority, ...submission });
+  return ok({ id: enquiryId }, "Enquiry added.");
+}
+
+/* ------------------------------------------------------- corrections */
+
+const CORRECTION_LABEL: Record<CorrectableField, string> = {
+  name: "Name",
+  phone: "Phone",
+  email: "Email",
+  company: "Company",
+  message: "Requirement",
+};
+
+/**
+ * A person correcting what was submitted — a misspelt name, a wrong digit, a
+ * requirement clarified on the call. Written to `enquiries.corrections`, never
+ * over `raw_submission`, and the activity carries the before and after of
+ * every field that changed, so the original stays readable for as long as the
+ * enquiry exists. Only the fields that actually changed are written: a
+ * correction that changes nothing is not a correction.
+ */
+export async function correctEnquiryDetails(
+  enquiryId: string,
+  fields: Partial<Record<CorrectableField, string | null>>,
+): Promise<Result> {
+  const { user, error } = await requireEnquiriesAccess();
+  if (error) return error;
+
+  const [row] = await db
+    .select({ raw: enquiries.rawSubmission, corrections: enquiries.corrections })
+    .from(enquiries)
+    .where(eq(enquiries.id, enquiryId));
+  if (!row) return err("That enquiry no longer exists.", "not_found");
+
+  const now = readSubmissionFields(effectiveSubmission(row.raw, row.corrections));
+  const next: Record<string, string> = { ...(row.corrections ?? {}) };
+  const before: Record<string, string | null> = {};
+  const after: Record<string, string | null> = {};
+
+  for (const key of CORRECTABLE_FIELDS) {
+    if (!(key in fields)) continue;
+    let value = trimOrNull(fields[key]);
+    if (key === "name" && !value) {
+      return err("An enquiry needs a name.", "validation", [{ field: "name", message: "A name is required." }]);
+    }
+    if (key === "phone" && value) {
+      const digits = phoneDigits(value);
+      if (!digits) return err("That phone number does not have ten digits.", "validation", [{ field: "phone", message: "Ten digits." }]);
+      value = digits;
+    }
+    const current = key === "phone" ? (phoneDigits(now.phone) ?? now.phone) : now[key];
+    if ((current ?? null) === value) continue;
+    before[key] = now[key];
+    after[key] = value;
+    next[key] = value ?? "";
+  }
+
+  if (Object.keys(after).length === 0) return okVoid("Nothing changed.");
+
+  const effective = effectiveSubmission(row.raw, next);
+  await db.transaction(async (tx) => {
+    await tx
+      .update(enquiries)
+      .set({ corrections: next, searchText: buildEnquirySearchText(effective), updatedAt: new Date(), updatedById: user.id })
+      .where(eq(enquiries.id, enquiryId));
+    await tx.insert(enquiryActivity).values({
+      id: id("act"),
+      enquiryId,
+      kind: "details_corrected",
+      actorUserId: user.id,
+      note: Object.keys(after)
+        .map((k) => `${CORRECTION_LABEL[k as CorrectableField]}: ${before[k] ?? "—"} → ${after[k] ?? "—"}`)
+        .join("\n"),
+      meta: { before, after },
+    });
+  });
+  await audit(user, "enquiry.correct", enquiryId, before, after);
+  return okVoid("Details corrected.");
+}
+
+/* ------------------------------------------------------------- notes */
+
+type NoteRow = { id: string; kind: string; actorUserId: string | null; note: string | null };
+
+async function ownNote(enquiryId: string, activityId: string, user: User): Promise<Result<NoteRow>> {
+  const [row] = await db
+    .select({ id: enquiryActivity.id, kind: enquiryActivity.kind, actorUserId: enquiryActivity.actorUserId, note: enquiryActivity.note })
+    .from(enquiryActivity)
+    .where(and(eq(enquiryActivity.id, activityId), eq(enquiryActivity.enquiryId, enquiryId)));
+  if (!row || (row.kind !== "note" && row.kind !== "note_edited")) return err("That note no longer exists.", "not_found");
+  if (row.actorUserId !== user.id) return err("Only the person who wrote a note can change it.", "not_permitted");
+  return ok(row);
+}
+
+/**
+ * The author's question, asked before anything else — the delete action asks
+ * it ahead of the impact confirmation, the way every act's own check comes
+ * first. Null when this person may change this note.
+ */
+export async function noteRefusal(enquiryId: string, activityId: string): Promise<Err | null> {
+  const { user, error } = await requireEnquiriesAccess();
+  if (error) return error;
+  const found = await ownNote(enquiryId, activityId, user);
+  return found.ok ? null : found;
+}
+
+/**
+ * Editing your own note. The row keeps its place in the story and becomes
+ * `note_edited`; the words it said before are kept in its `meta.edits`, so an
+ * edit never quietly rewrites what somebody else may already have acted on.
+ */
+export async function editEnquiryNote(enquiryId: string, activityId: string, note: string): Promise<Result> {
+  const { user, error } = await requireEnquiriesAccess();
+  if (error) return error;
+  const text = note.trim();
+  if (!text) return err("Write something first — or delete the note.", "validation");
+  const found = await ownNote(enquiryId, activityId, user);
+  if (!found.ok) return found;
+  if (found.data.note === text) return okVoid("Nothing changed.");
+
+  const edit = JSON.stringify([{ at: new Date().toISOString(), previous: found.data.note }]);
+  await db
+    .update(enquiryActivity)
+    .set({
+      kind: "note_edited",
+      note: text,
+      meta: sql`jsonb_set(coalesce(${enquiryActivity.meta}, '{}'::jsonb), '{edits}', coalesce(${enquiryActivity.meta}->'edits', '[]'::jsonb) || ${edit}::jsonb)`,
+    })
+    .where(eq(enquiryActivity.id, activityId));
+  await audit(user, "enquiry.note.edit", activityId, { note: found.data.note }, { note: text, enquiryId }, "enquiry_activity");
+  return okVoid("Note updated.");
+}
+
+/**
+ * Deleting your own note. The words go; the fact that a note was written and
+ * removed stays in the story as `note_deleted`, so the trail never has a
+ * silent gap — and it still counts as the desk having done something about
+ * the enquiry, which it did. The text survives only in the audit row.
+ */
+export async function deleteEnquiryNote(enquiryId: string, activityId: string): Promise<Result> {
+  const { user, error } = await requireEnquiriesAccess();
+  if (error) return error;
+  const found = await ownNote(enquiryId, activityId, user);
+  if (!found.ok) return found;
+
+  await db
+    .update(enquiryActivity)
+    .set({ kind: "note_deleted", note: null, meta: { deletedAt: new Date().toISOString(), deletedById: user.id } })
+    .where(eq(enquiryActivity.id, activityId));
+  await audit(user, "enquiry.note.delete", activityId, { note: found.data.note }, { enquiryId }, "enquiry_activity");
+  return okVoid("Note deleted.");
+}
+
+/* --------------------------------------------------------- follow-ups */
+
+async function enquiryReminder(enquiryId: string, reminderId: string) {
+  const [r] = await db
+    .select({ id: reminders.id, status: reminders.status, dueDate: reminders.dueDate, note: reminders.note })
+    .from(reminders)
+    .where(and(eq(reminders.id, reminderId), eq(reminders.enquiryId, enquiryId)));
+  if (!r) return err("That follow-up is not on this enquiry.", "not_found");
+  if (r.status !== "pending") return err("That follow-up is already closed — only a pending one can be moved or cancelled.", "conflict");
+  return ok(r);
+}
+
+/**
+ * The refusal the reminder actions ask before the impact confirmation: the
+ * grant, then that the reminder is this enquiry's and still pending.
+ */
+export async function reminderRefusal(enquiryId: string, reminderId: string): Promise<Err | null> {
+  const { error } = await requireEnquiriesAccess();
+  if (error) return error;
+  const found = await enquiryReminder(enquiryId, reminderId);
+  return found.ok ? null : found;
+}
+
+/**
+ * Moving a follow-up, through the CRM's own `rescheduleReminder` — the same
+ * date check, working-day roll-forward and reschedule count every reminder
+ * gets. The CRM's book scope is skipped exactly as `createEnquiryReminder`
+ * skips it: this grant is the Enquiries app's, and the reminder was found
+ * through the enquiry it belongs to.
+ */
+export async function rescheduleEnquiryReminder(
+  enquiryId: string,
+  reminderId: string,
+  dueDate: string,
+  note?: string,
+): Promise<Result> {
+  const { user, error } = await requireEnquiriesAccess();
+  if (error) return error;
+  if (!dueDate) return err("Pick a date.", "validation");
+  const found = await enquiryReminder(enquiryId, reminderId);
+  if (!found.ok) return found;
+
+  const moved = await rescheduleSharedReminder(reminderId, dueDate, note, { skipCustomerScope: true });
+  if (!moved.ok) return moved;
+
+  const [after] = await db.select({ dueDate: reminders.dueDate, note: reminders.note }).from(reminders).where(eq(reminders.id, reminderId));
+  const to = after?.dueDate ?? dueDate;
+  await writeActivity(enquiryId, "reminder_rescheduled", user.id, `${found.data.dueDate} → ${to}`, {
+    reminderId,
+    from: found.data.dueDate,
+    to,
+  });
+  await audit(
+    user,
+    "enquiry.reminder.reschedule",
+    reminderId,
+    { dueDate: found.data.dueDate, note: found.data.note },
+    { dueDate: to, note: after?.note ?? found.data.note, enquiryId },
+    "reminder",
+  );
+  return moved;
+}
+
+/**
+ * Cancelling one, through the CRM's own `dismissReminder` — which asks
+ * `reminder.close` and audits `reminder.dismiss`, because a follow-up closed
+ * by hand takes a call off somebody's list, and the person whose list it is
+ * must not be the one who can clear it unchecked. That holds here too: an
+ * enquiry's follow-up sits on the same Call Log.
+ */
+export async function cancelEnquiryReminder(enquiryId: string, reminderId: string, reason: string): Promise<Result> {
+  const { user, error } = await requireEnquiriesAccess();
+  if (error) return error;
+  if (!reason.trim()) return err("Say why it is being cancelled.", "validation", [{ field: "reason", message: "A reason is required." }]);
+  const found = await enquiryReminder(enquiryId, reminderId);
+  if (!found.ok) return found;
+
+  const r = await dismissSharedReminder(reminderId, reason);
+  if (!r.ok) return r;
+  await writeActivity(enquiryId, "reminder_cancelled", user.id, reason.trim(), { reminderId, dueDate: found.data.dueDate });
+  return okVoid("Follow-up cancelled.");
+}
+
+/* --------------------------------------------------------------- spam */
+
+/**
+ * Spam is a stage, not a delete. The website retransmits until a submission
+ * is acknowledged and `createEnquiryFromWebsite` recognises a retransmission
+ * only by the row still being there — a deleted enquiry comes straight back
+ * as a new one. As spam it leaves the list, the counts and the Unassigned
+ * banner, keeps its activity, and "Not spam" (any other stage) brings it back.
+ *
+ * Refused once a customer is linked: somebody has decided a real person is
+ * behind it, and the follow-ups and orders that hang off that link are not
+ * junk. Close it instead.
+ */
+/**
+ * DELETE AN ENQUIRY — for junk nobody needs to see again, where spam (which
+ * keeps the row) is not enough. A manager's act. Refused where anything real
+ * hangs off it: a linked customer or lead, or a linked order — those have a
+ * history that must stay, and closing it is the answer there.
+ *
+ * Its activity goes with it (cascade), and its follow-up reminders are deleted
+ * rather than orphaned. Its website ref is kept in `enquiry_deletions`, so the
+ * website retransmitting the same submission cannot bring it back. The audit
+ * row keeps what was submitted.
+ */
+export async function deleteEnquiry(enquiryId: string, reason?: string): Promise<Result> {
+  const { user, error } = await requireEnquiriesAccess();
+  if (error) return error;
+  const level = await levelInApp(user, ENQUIRY_WORKSPACE as AppId);
+  if (level !== "manager" && level !== "admin") return err("Deleting an enquiry is an Enquiries manager's.", "not_permitted");
+  const [row] = await db.select().from(enquiries).where(eq(enquiries.id, enquiryId));
+  if (!row) return err("That enquiry no longer exists.", "not_found");
+  if (row.customerId) return err("A customer or lead is linked to this enquiry, so it stays on the record. Close it instead.", "rule_violation");
+  const [linked] = await db.select({ id: enquiryOrders.id }).from(enquiryOrders).where(eq(enquiryOrders.enquiryId, enquiryId)).limit(1);
+  if (linked) return err("An order is linked to this enquiry, so it stays on the record. Unlink it first, or close it.", "rule_violation");
+
+  await db.transaction(async (tx) => {
+    if (row.externalRef) {
+      await tx.insert(enquiryDeletions).values({ source: row.source, externalRef: row.externalRef, deletedById: user.id }).onConflictDoNothing();
+    }
+    await tx.delete(reminders).where(eq(reminders.enquiryId, enquiryId));
+    await tx.delete(enquiries).where(eq(enquiries.id, enquiryId));
+  });
+  await audit(user, "enquiry.delete", enquiryId, { stage: row.stage, source: row.source, submission: row.rawSubmission }, { deleted: true, reason: trimOrNull(reason) });
+  return okVoid("Deleted. If the website sends it again, it will not come back.");
+}
+
+export async function markEnquirySpam(enquiryId: string, reason?: string): Promise<Result> {
+  const { user, error } = await requireEnquiriesAccess();
+  if (error) return error;
+  const [row] = await db
+    .select({ stage: enquiries.stage, customerId: enquiries.customerId })
+    .from(enquiries)
+    .where(eq(enquiries.id, enquiryId));
+  if (!row) return err("That enquiry no longer exists.", "not_found");
+  if (row.stage === "spam") return okVoid("Already marked as spam.");
+  if (row.customerId) {
+    return err("A customer is linked to this enquiry, so it is not spam. Close it instead.", "rule_violation");
+  }
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(enquiries)
+      .set({ stage: "spam", updatedAt: new Date(), updatedById: user.id })
+      .where(eq(enquiries.id, enquiryId));
+    await tx.insert(enquiryActivity).values({
+      id: id("act"),
+      enquiryId,
+      kind: "marked_spam",
+      actorUserId: user.id,
+      note: trimOrNull(reason),
+      meta: { from: row.stage },
+    });
+  });
+  await audit(user, "enquiry.spam", enquiryId, { stage: row.stage }, { stage: "spam", reason: trimOrNull(reason) });
+  return okVoid("Marked as spam.");
+}
+
+/** The grant alone, before the impact confirmation — the order `unlinkOrderAction` asks in. */
+export async function enquiriesRefusal(): Promise<Err | null> {
+  const { error } = await requireEnquiriesAccess();
+  return error;
 }
