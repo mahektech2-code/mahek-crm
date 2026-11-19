@@ -183,7 +183,11 @@ manager, the way an ERP designation sets the ERP's. Taking Factory away takes
 the place with it. The seat writes `factory_team_defaults` — one person in
 charge and one operator per department, any number of helpers — which is what
 every new job starts with. `npm run factory:staff` does the same from a
-terminal, for a pilot.
+terminal, for a pilot — in one transaction that also rebuilds `users.role`
+(`rederiveAccountLevel`: a Production Head is a manager) and writes an
+`access.factory-staff` audit row with no actor, as `app:grant` does. Whoever a
+seat is taken from — by the script or by the Access dialog — gets an
+`access.factory-seat-displaced` row on their own trail naming who took it.
 
 **A PERSON MAY WORK SEVERAL DEPARTMENTS, and the phone switches between
 them.** The Department row is a set of checkboxes, not a dropdown: a loader

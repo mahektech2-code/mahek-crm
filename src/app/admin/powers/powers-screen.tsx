@@ -12,17 +12,19 @@ import { getApp } from "@/lib/apps";
 import { dayLabel } from "@/lib/module-since";
 import { powerById } from "@/lib/access-bulk";
 import { applyAccessTemplate, bulkPower, bulkScreen, deleteAccessTemplate, saveAccessTemplate, templateFromPerson, type BulkOutcome } from "@/lib/actions/access-bulk";
-import type { PowerOverview, ScreenOverview, TemplateRow } from "@/lib/services/access-overview-service";
+import type { PowerOverview, ScreenOverview, SeatGroup, SeatsOverview, TemplateRow } from "@/lib/services/access-overview-service";
 import type { Result } from "@/lib/result";
 
 /* ---------------------------------------------------------------------------
  * POWERS & SCREENS — access from the power's side.
  *
- * Three tabs. Powers: every special power of the ERP, HRMS and Tasks, who
+ * Four tabs. Powers: every special power of the ERP, HRMS and Tasks, who
  * holds it, who could, and the work waiting on it — a power with a queue and
  * no holder sorts to the top in red. Screens: every screen of every app in
- * use, and who holding the app cannot open it. Job templates: named shapes of
- * access across every app, stamped onto people.
+ * use, and who holding the app cannot open it. Roles & seats: who holds each
+ * Hire role, factory seat, godown and sales region — read-only, each changed
+ * where it is set. Job templates: named shapes of access across every app,
+ * stamped onto people.
  *
  * Every change here goes through the same save as the Access dialog, person
  * by person, and the result names who moved and who was skipped and why.
@@ -45,7 +47,19 @@ function NewMark({ since }: { since: string }) {
   );
 }
 
-export function PowersScreen({ tab, overview, templates, today }: { tab: string; overview: Overview; templates: TemplateRow[]; today: string }) {
+export function PowersScreen({
+  tab,
+  overview,
+  templates,
+  today,
+  seats,
+}: {
+  tab: string;
+  overview: Overview;
+  templates: TemplateRow[];
+  today: string;
+  seats: SeatsOverview | null;
+}) {
   const [outcome, setOutcome] = React.useState<{ title: string; result: BulkOutcome } | null>(null);
   const router = useRouter();
   const done = (title: string, result: BulkOutcome) => {
@@ -56,6 +70,7 @@ export function PowersScreen({ tab, overview, templates, today }: { tab: string;
     <div className="mt-5">
       {tab === "powers" ? <PowersTab powers={overview.powers} people={overview.people} today={today} onDone={done} /> : null}
       {tab === "screens" ? <ScreensTab screens={overview.screens} people={overview.people} today={today} onDone={done} /> : null}
+      {tab === "seats" && seats ? <SeatsTab seats={seats} /> : null}
       {tab === "templates" ? <TemplatesTab templates={templates} people={overview.people} onDone={done} /> : null}
       <OutcomeModal key={outcome?.title ?? "none"} outcome={outcome} onClose={() => setOutcome(null)} />
     </div>
@@ -217,6 +232,72 @@ function PowerCard({ p, today, onAdd, onRemove }: { p: PowerOverview; today: str
           </Button>
         </div>
       </div>
+    </Card>
+  );
+}
+
+/* ========================================================== roles & seats */
+
+const SEAT_SECTIONS: { key: keyof SeatsOverview; title: string; where: string; empty: string }[] = [
+  { key: "hire", title: "Hire roles", where: "Set on each person's Hire grant in the Access dialog. “By level” means no role was picked, so the level decides.", empty: "Nobody holds Hire." },
+  { key: "factory", title: "Factory seats", where: "Set with the person's factory place in the Access dialog, or npm run factory:staff. One in charge and one operator per department.", empty: "Nobody is on the factory floor." },
+  { key: "godowns", title: "ERP godown staff", where: "Set on each godown in the ERP's masters. A person's working location is chosen from the godowns they are on.", empty: "No godown has staff." },
+  { key: "regions", title: "Sales regions", where: "Set on the Sales Dashboard → People → Managers. A manager with no region sees every region.", empty: "Nobody oversees a region." },
+];
+
+function SeatsTab({ seats }: { seats: SeatsOverview }) {
+  return (
+    <div className="space-y-6">
+      <Callout tone="info">
+        <div className="text-[13px] text-body">Who holds each role and seat. Read-only here — each is changed where it is set, named under its heading.</div>
+      </Callout>
+      {SEAT_SECTIONS.map((sec) => (
+        <section key={sec.key}>
+          <h2 className="text-[15px] font-semibold text-ink">{sec.title}</h2>
+          <p className="mb-2 mt-0.5 text-[12px] text-muted">{sec.where}</p>
+          <SeatTable groups={seats[sec.key]} empty={sec.empty} />
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function SeatTable({ groups, empty }: { groups: SeatGroup[]; empty: string }) {
+  if (!groups.length) {
+    return (
+      <Card>
+        <EmptyState title={empty} />
+      </Card>
+    );
+  }
+  return (
+    <Card>
+      <table className="w-full text-[13px]">
+        <tbody>
+          {groups.map((g) => (
+            <tr key={g.key} className="border-b border-divider align-top last:border-0">
+              <td className="w-[220px] px-5 py-2.5">
+                <div className="font-medium text-ink">{g.label}</div>
+                {g.hint ? <div className="text-[12px] text-warn">{g.hint}</div> : null}
+              </td>
+              <td className="px-3 py-2.5">
+                {g.people.length ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {g.people.map((p) => (
+                      <Link key={`${g.key}-${p.userId}`} href={ADMIN.person(p.userId, "apps")} className="rounded-full border border-line bg-canvas px-2 py-0.5 text-body no-underline hover:border-line-strong">
+                        {p.name}
+                        {p.note ? <span className="text-muted"> · {p.note}</span> : null}
+                      </Link>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="text-muted">Nobody</span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </Card>
   );
 }

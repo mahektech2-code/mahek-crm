@@ -209,6 +209,8 @@ export type JobName =
   | "trash-lead-twins"
   /** Person ids (0353) filled from the names stored beside them, through the person directory. `--dry-run` first; never guesses, idempotent. */
   | "person-ids-backfill"
+  /** Every active, linked account that lacks HRMS gets it as an associate, with an audit row each. `--dry-run` first; idempotent. */
+  | "hrms-for-everyone"
   | "provision-team"
   | "backfill-timeline"
   /** Find the photographs and PDFs customers sent before the webhook kept them. */
@@ -1607,6 +1609,23 @@ export async function runJob(
             const counts = await backfillPersonIds({ dryRun: options.dryRun });
             const filled = counts.reduce((n, c) => n + c.filled, 0);
             return { recordsAffected: options.dryRun ? 0 : filled, detail: backfillReport(counts, !!options.dryRun) };
+          },
+          triggeredById,
+        ),
+      ];
+    case "hrms-for-everyone":
+      /* EVERYBODY HOLDS HRMS (the Access dialog's starting draft). Accounts made before that
+         rule get it here, at associate level; unlinked and inactive ones are counted, not guessed. */
+      return [
+        await run(
+          "hrms-for-everyone",
+          async () => {
+            const { hrmsForEveryone, hrmsForEveryoneReport } = await import("./services/hrms-for-everyone");
+            const r = await hrmsForEveryone({ dryRun: options.dryRun });
+            for (const p of r.granted) console.log(`${options.dryRun ? "would grant" : "granted"}: ${p.name}`);
+            for (const n of r.skipped.unlinked) console.log(`not linked to an HRMS record: ${n}`);
+            for (const n of r.skipped.inactiveRecord) console.log(`HRMS record not active: ${n}`);
+            return { recordsAffected: options.dryRun ? 0 : r.granted.length, detail: hrmsForEveryoneReport(r, !!options.dryRun) };
           },
           triggeredById,
         ),
