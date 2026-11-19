@@ -706,9 +706,22 @@ describe("the price desk's other removals say what they reach first", () => {
     assert.ok((await removeDiscountTerm(term.data.id, await confirmed("price-discount-term", term.data.id))).ok);
   });
 
-  test("deleting a document names every price read off it", async () => {
+  test("deleting a document names every price read off it, and takes its file off with it", async () => {
     const documentId = id("pld");
-    await db.insert(priceListDocuments).values({ id: documentId, fileHash: randomUUID(), filename: "Old list.pdf", parseStatus: "needs_review", uploadedById: manager.id });
+    const attachmentId = id("att");
+    await db.insert(attachments).values({
+      id: attachmentId,
+      filename: "Old list.pdf",
+      contentType: "application/pdf",
+      sizeBytes: 1024,
+      storedRef: "test/old-list",
+      contentHash: randomUUID(),
+      status: "available",
+      uploadedById: manager.id,
+      parentType: "price_list_document",
+      parentId: documentId,
+    });
+    await db.insert(priceListDocuments).values({ id: documentId, attachmentId, fileHash: randomUUID(), filename: "Old list.pdf", parseStatus: "needs_review", uploadedById: manager.id });
     await db.insert(priceListParseRows).values({
       id: id("plp"),
       documentId,
@@ -725,6 +738,11 @@ describe("the price desk's other removals say what they reach first", () => {
     assert.equal(!bare.ok && bare.code, "validation");
     assert.ok((await deleteDocument(documentId, await confirmed("price-document", documentId))).ok);
     assert.equal((await db.select().from(priceListParseRows).where(eq(priceListParseRows.documentId, documentId))).length, 0);
+    assert.equal(report.data.items.find((i) => i.label === "the uploaded file")?.effect, "deleted");
+    const [file] = await db.select().from(attachments).where(eq(attachments.id, attachmentId));
+    assert.equal(file.status, "removed", "the file is not left pointing at a document that is gone");
+    assert.equal(file.parentId, null);
+    assert.equal(file.removedParentId, null, "nothing to restore it onto, so no hold keeps it from the sweep");
   });
 
   test("a special-price request is the asker's to withdraw, and nobody else may even read what it reaches", async () => {

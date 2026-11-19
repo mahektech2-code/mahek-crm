@@ -1447,13 +1447,23 @@ export async function reopen(ctx: ErpContext, transportId: string, reason: strin
   if (refusal) return refusal;
   const direct = deliversDirect(t.transporter, await directNames());
   const stage = t.lrNo ? "Reached Destination Area" : direct ? "Out for Delivery" : "At transport";
+  let withdrawn: string[] = [];
   await db.transaction(async (tx) => {
     await tx.update(erpTransports).set({ materialStage: stage, trackStatus: t.lrNo || direct ? "Track" : "Don't Track", deliveredOn: null, receivedBy: null, deliveredById: null, deliveryProof: null, reminderDate: today(), updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpTransports.id, t.id));
     await addEvent(tx as unknown as typeof db, ctx, [t.id], "reopened", stage, why, false);
+    /* A "delivered" message still waiting to go would tell the customer the goods arrived.
+       It is withdrawn with the delivery — set to skipped, never deleted — and the trail says why. */
+    withdrawn = (
+      await tx
+        .update(erpTransportMessages)
+        .set({ status: "skipped", why: `Withdrawn — the delivery was reopened by ${ctx.user.name}: ${why}` })
+        .where(and(eq(erpTransportMessages.kind, "delivered"), sql`${t.id} = any(${erpTransportMessages.transportIds})`, inArray(erpTransportMessages.status, ["to_send", "failed"])))
+        .returning({ id: erpTransportMessages.id })
+    ).map((m) => m.id);
   });
-  await erpAudit(ctx, "erp.logistics.reopen", "erp_transport", t.id, { stage: CLOSED }, { stage, reason: why });
+  await erpAudit(ctx, "erp.logistics.reopen", "erp_transport", t.id, { stage: CLOSED }, { stage, reason: why, withdrawnMessages: withdrawn });
   await syncBookOrders([t.orderNo]);
-  return okVoid(`Order ${t.orderNo} reopened`);
+  return okVoid(`Order ${t.orderNo} reopened${withdrawn.length ? ` · ${withdrawn.length} unsent "delivered" message${withdrawn.length === 1 ? "" : "s"} withdrawn` : ""}`);
 }
 
 /* ---------------------------------------------------------- transporters */

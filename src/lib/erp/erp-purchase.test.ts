@@ -1032,17 +1032,25 @@ describe("Purchase it on the Quotation manager writes the purchase order", () =>
     assert.equal(kept.status, "Sent", "the PO stays for the material still on it");
     assert.deepEqual((await db.select().from(erpPoLines).where(eq(erpPoLines.poId, kept.id))).map((l) => l.rawMaterialId), ["rm_mek"]);
 
-    /* Deleting a row that holds a bought rate asks first — its PO stays, and the sheet stops showing it. A row
-       holding none is the spreadsheet's own, and Ctrl+Z on a paste deletes rows without asking anybody. */
+    /* Deleting a row that holds a bought rate whose PO is still open is refused — the PO would go on
+       receiving with nothing on the sheet saying where it was bought. Undo the purchase, and the row may go.
+       A row holding none is the spreadsheet's own, and Ctrl+Z on a paste deletes rows without asking anybody. */
     assert.equal(((await applyQuoteOps(a, [{ op: "deleteRow", rowId: "eqr_asianm" }])) as { error?: string }).error, UNCONFIRMED);
+    const refused = await impact("erp-quote-row", "eqr_asianm");
+    assert.ok((refused.report.blockers[0] ?? "").includes(`still open on this row (${poNo})`), JSON.stringify(refused.report));
+    const stillThere = await applyQuoteOps(a, [{ op: "deleteRow", rowId: "eqr_asianm", impact: refused.confirmation }]);
+    assert.ok(!stillThere.ok, "a row is not deleted from under its open PO");
+    assert.equal((await db.select().from(erpQuoteRows).where(sql`id = 'eqr_asianm' and deleted_at is null`)).length, 1);
+    const undoMek = await impact("erp-quote-purchase", "eqr_asianm:eqc_mekdrum");
+    assert.ok((await applyQuoteOps(a, [{ op: "cell", rowId: "eqr_asianm", columnId: "eqc_mekdrum", status: "ready", poNo: null, impact: undoMek.confirmation }])).ok);
+    assert.equal((await poOf(poNo)).status, "Cancelled", "its only line withdrawn, the PO is cancelled");
     const deleting = await impact("erp-quote-row", "eqr_asianm");
+    assert.deepEqual(deleting.report.blockers, []);
     assert.equal(deleting.report.confirmWord, "Asian Solvents");
-    assert.equal(labelled(deleting.report, /their purchase orders stay/)?.count, 1, JSON.stringify(deleting.report.items));
     assert.ok((await applyQuoteOps(a, [{ op: "deleteRow", rowId: "eqr_asianm", impact: deleting.confirmation }])).ok);
     assert.ok((await applyQuoteOps(a, [{ op: "deleteRow", rowId: "eqr_asianm2" }])).ok);
     const gone = await db.select().from(erpQuoteRows).where(sql`id in ('eqr_asianm', 'eqr_asianm2') and deleted_at is not null`);
     assert.equal(gone.length, 2);
-    assert.equal((await poOf(poNo)).status, "Sent", "deleting the row leaves its PO alone");
   });
 
   test("a row whose party is not a supplier is refused, and nothing is bought", async () => {

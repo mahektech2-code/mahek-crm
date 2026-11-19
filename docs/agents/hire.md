@@ -109,3 +109,14 @@ seeds the blueprints the first time Hire opens on an empty database. Everybody
 else gets Hire, and their role in it, on the Access screen.
 `npm run hire:seed -- --demo --reset`
 wipes Hire and loads the demo pipeline, development only.
+
+**WITHDRAWING A CANDIDATE CANCELS THE INTERVIEWS STILL BOOKED.** `changeStatus`
+"withdraw" calls `cancelBookedInterviews` (`services/schedule.ts`) inside its own
+transaction: every live run still `scheduled` or `in_progress` becomes `skipped`
+with outcome `not_applicable` — the status check has no `cancelled`, and
+`skipped` was written by nothing else — plus an `interview_cancelled` trail
+line, so it leaves the calendar, the Interviews list and the interviewer's
+scope. Each interviewer (not the person withdrawing) gets a bell. Answers
+already recorded stay, and scoring a skipped run is refused. An offer still
+stays as it stands. The `hire-withdraw` impact says "booked interviews
+cancelled" (it said "stays" before).
