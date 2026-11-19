@@ -453,17 +453,19 @@ describe("the Sales Manager screens are workspace-aware", () => {
   });
 
   it("the Sales Manager record's Edit stays inside the workspace, and is not a route another module guards", () => {
+    /* Edit is a modal opened in place: its load and save are server actions, which POST to the
+       URL the record was rendered at, so they resolve this workspace's seat scope and no other. */
     const record = readFileSync("src/components/sales-lead-pipeline/desk/record-screen.tsx", "utf8");
-    assert.match(record, /editHref=\{`\$\{links\.base\}\/\$\{lead\.id\}\/edit`\}/, "Edit points at the workspace's own edit page");
-    assert.doesNotMatch(record, /editHref=\{links\.record/, "not at /crm/leads/<id>, which crm.leads guards and redirects away from");
+    assert.doesNotMatch(record, /editHref/, "no link away from the record to edit it");
+    const header = readFileSync("src/components/sales-lead-pipeline/proto/record-parts.tsx", "utf8");
+    assert.match(header, /<EditLeadButton/, "the header opens the one lead edit modal");
+    assert.doesNotMatch(header, /href=\{editHref\}/);
 
-    assert.ok(existsSync("src/app/crm/leads/sales-manager/[id]/edit/page.tsx"), "the edit page exists");
-    /* No layout of its own: the module guard one folder up is what applies, and a second guard here
-       could only be a different module. */
+    /* The old page survives only as a redirect back to the workspace's own record. */
+    assert.ok(existsSync("src/app/crm/leads/sales-manager/[id]/edit/page.tsx"), "an old link still lands somewhere");
     assert.equal(existsSync("src/app/crm/leads/sales-manager/[id]/edit/layout.tsx"), false);
     const page = readFileSync("src/app/crm/leads/sales-manager/[id]/edit/page.tsx", "utf8");
-    assert.match(page, /pipelineLead\(id/, "the lead is read through the seat scope");
-    assert.match(page, /notFound\(\)/, "outside the book is a 404");
+    assert.match(page, /redirect\(`\/crm\/leads\/sales-manager\/\$\{id\}`\)/, "back to the record inside the workspace");
     assert.doesNotMatch(page, /requireModule\(.*"crm\.leads"/);
   });
 
