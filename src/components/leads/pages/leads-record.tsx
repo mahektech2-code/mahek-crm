@@ -453,7 +453,10 @@ export async function Body({
             }
           : null
       }
-      canEditBasics={workspace === "crm" && (await canOpenModule(user.id, "crm.sales-manager"))}
+      /* Anybody who works leads may correct this one's details — it is on their
+         screen, so it is in their scope. The owner and sales-manager boxes are
+         the Sales Manager workspace's alone; the modal's loader decides. */
+      canEditBasics={(await canLead(user, "lead.work")) && !dead}
       followUpDocs={followUpDocs}
       defaultNextDate={onOrAfterWorkingDay(addDays(day as BusinessDate, 2), {
         timezone: config["workingDay.timezone"],

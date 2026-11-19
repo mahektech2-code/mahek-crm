@@ -225,7 +225,7 @@ export default async function CredentialPage({ params }: { params: Promise<{ id:
                   </span>
                 </span>
                 {l.sole ? <Badge tone="danger">Only way in</Badge> : <Badge>{l.kind}</Badge>}
-                <LinkControls mode="remove" linkId={l.id} credentialId={c.id} />
+                <LinkControls mode="remove" linkId={l.id} credentialId={c.id} label={`${l.kind} · ${l.identity?.email ?? "a removed account"}`} sole={l.sole} />
               </div>
             ))}
             {d.dependants.map((x) => (

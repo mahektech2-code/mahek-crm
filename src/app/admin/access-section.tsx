@@ -52,6 +52,7 @@ import {
   endSessionsFor,
   sendPasswordResetFor,
   setUserActive,
+  offboardPerson,
 } from "@/lib/actions/people";
 import { mintImpersonationLink } from "@/lib/actions/impersonation";
 import type {
@@ -141,6 +142,9 @@ const TABS = [
   { key: "not-hrms", label: "Not linked to HRMS" },
   { key: "no-account", label: "In HRMS, no account" },
   { key: "disabled", label: "Disabled" },
+  /* HRMS says they have left and their sign-in still works: the list that
+     used to exist only as a pill on a row somebody had to notice. */
+  { key: "left", label: "Left, still enabled" },
 ] as const;
 type Tab = (typeof TABS)[number]["key"];
 
@@ -154,6 +158,9 @@ const FILTERS = [
 type Filter = (typeof FILTERS)[number]["key"] | "";
 
 const PAGE = 25;
+
+/** HRMS marks them as left, and the account can still sign in. */
+const leftButEnabled = (r: AccessRow) => r.active && r.employeeStatus === "inactive";
 
 const isPlatformAdminRow = (r: AccessRow) => r.grants.some((g) => g.app === "admin" && g.role === "admin");
 
@@ -257,6 +264,7 @@ export function AccessSection({
   const [managing, setManaging] = React.useState<AccessRow | null>(() => (manage ? (allRows.find((r) => r.userId === manage) ?? null) : null));
   /** Turning the sign-in itself off, or back on. */
   const [switching, setSwitching] = React.useState<AccessRow | null>(null);
+  const [offboarding, setOffboarding] = React.useState<AccessRow | null>(null);
   /** Saying which HRMS row this account is — see `EmployeeLinkDialog`. */
   const [linking, setLinking] = React.useState<AccessRow | null>(null);
   /** Renaming somebody — once, carried to HRMS and every customer. */
@@ -326,11 +334,13 @@ export function AccessSection({
     "not-hrms": rows.filter(needsHrmsLink).length,
     "no-account": view_.noAccount.length,
     disabled: rows.filter((r) => !r.active).length,
+    left: rows.filter(leftButEnabled).length,
   };
   const needle = q.trim().toLowerCase();
   const inView = rows
     .filter((r) => {
       if (tab === "disabled") return !r.active;
+      if (tab === "left") return leftButEnabled(r);
       if (tab === "admins") return isPlatformAdminRow(r);
       if (tab === "not-hrms") return needsHrmsLink(r);
       return true;
@@ -373,6 +383,7 @@ export function AccessSection({
         { label: "People", value: String(rows.length), sub: `${view_.inHrms} in HRMS` },
         { label: "Signed in today", value: String(view_.signedInToday), sub: `${view_.liveNow} now` },
         { label: "Disabled", value: String(tabCount.disabled) },
+        { label: "Left, still enabled", value: String(tabCount.left), sub: tabCount.left ? "offboard them" : undefined },
         { label: "Never signed in", value: String(rows.filter((r) => r.active && !view_.extras[r.userId]?.lastSignedIn).length) },
         {
           label: "Hats that clash",
@@ -659,6 +670,7 @@ export function AccessSection({
                               say={say}
                               onManage={() => setManaging(r)}
                               onSwitch={() => setSwitching(r)}
+                              onOffboard={() => setOffboarding(r)}
                               onOpen={() => onOpenUser(r.userId)}
                               onLinkEmployee={() => setLinking(r)}
                               onRename={() => setRenaming(r)}
@@ -766,6 +778,20 @@ export function AccessSection({
         the phone it shuts out and the book left with nobody working it; turning
         it back on takes nothing away, so it asks plainly.
       */}
+      {offboarding ? (
+        <ImpactDialog
+          key={`off-${offboarding.userId}`}
+          kind="admin-offboard"
+          id={offboarding.userId}
+          confirmLabel="Offboard"
+          onClose={() => setOffboarding(null)}
+          onConfirm={async (confirmation) => {
+            const r = await offboardPerson(offboarding.userId, confirmation);
+            if (r.ok) say(r);
+            return r;
+          }}
+        />
+      ) : null}
       {switching?.active ? (
         <ImpactDialog
           key={switching.userId}
@@ -1284,6 +1310,7 @@ function PersonMenu({
   say,
   onManage,
   onSwitch,
+  onOffboard,
   onOpen,
   onLinkEmployee,
   onRename,
@@ -1294,6 +1321,7 @@ function PersonMenu({
   say: (r: { ok: boolean; message?: string; error?: string }) => void;
   onManage: () => void;
   onSwitch: () => void;
+  onOffboard: () => void;
   onOpen: () => void;
   onLinkEmployee: () => void;
   onRename: () => void;
@@ -1313,6 +1341,16 @@ function PersonMenu({
           label: row.active ? "Disable this sign-in" : "Enable this sign-in",
           destructive: row.active,
           onSelect: onSwitch,
+        },
+        {
+          label: "Offboard — they have left…",
+          destructive: true,
+          disabled: !row.active && row.grants.length === 0,
+          title:
+            !row.active && row.grants.length === 0
+              ? "Already off, with nothing left to take away"
+              : "Turn the sign-in off and take every app, power, seat and assignment away — for somebody who has left, not somebody on leave",
+          onSelect: onOffboard,
         },
         { label: "Open their record", onSelect: onOpen },
         { label: "Rename", onSelect: onRename },

@@ -150,6 +150,7 @@ export const AUDIT_GROUPS = [
       "access.not_employee",
       "access.is_employee",
       "deactivate-user",
+      "offboard-user",
       "reactivate-user",
       "update-user",
       "send-password-reset",
@@ -608,6 +609,7 @@ const DESCRIBE: Record<string, Describer> = {
     changes: false,
   }),
   "payment.reallocate": (c) => ["moved a payment from", c.subject(), "onto different bills"],
+  "payment.corrected": (c) => ["corrected a payment from", c.subject(), "before it was decided"],
   "payment.matchedToBankEntry": (c) => ({
     says: ["matched a bank entry to a payment", c.subject() === "a customer" ? "" : "from", c.subject(""), "already reported, instead of recording it twice"],
     changes: false,
@@ -959,6 +961,7 @@ const DESCRIBE: Record<string, Describer> = {
   "access.is_employee": (c) => ({ says: ["cleared the not-an-employee mark on", c.user(c.e.entityId)], changes: false }),
   "person.renamed": (c) => ({ says: ["renamed", c.user(c.e.entityId), "from", strong(str(c.b.name) ?? ""), "to", strong(str(c.a.name) ?? "")], changes: false }),
   "deactivate-user": (c) => ({ says: ["switched off the sign-in of", c.user(c.e.entityId)], changes: false }),
+  "offboard-user": (c) => ({ says: ["offboarded", c.user(c.e.entityId), "— sign-in off and every grant removed"], changes: false }),
   "reactivate-user": (c) => ({ says: ["switched the sign-in of", c.user(c.e.entityId), "back on"], changes: false }),
   "update-user": (c) => ({ says: ["edited the account of", c.user(c.e.entityId)], changes: false }),
   "send-password-reset": (c) => ({ says: ["sent", c.user(c.e.entityId), "a password reset link"], changes: false }),
