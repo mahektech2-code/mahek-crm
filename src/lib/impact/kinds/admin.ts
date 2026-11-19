@@ -314,6 +314,16 @@ const STOPS: Record<SecretName, Felt> = {
     label: "turning feedback into GitHub issues, and closing fixed reports",
     note: "Feedback can no longer be sent to the developer or to Claude from the console, and fixed reports stop closing themselves after a deploy. Copy for developer still works.",
   },
+  "kapso.apiKey": {
+    app: "Studio",
+    label: "the WhatsApp Inbox",
+    note: "The Inbox cannot reach Kapso: it stops loading conversations and sending messages and posters, and says why. Messages already stored stay readable.",
+  },
+  "kapso.webhookSecret": {
+    app: "Studio",
+    label: "live updates in the WhatsApp Inbox",
+    note: "Every webhook from Kapso is refused until a new secret is set on both sides, so new messages and delivery ticks stop arriving live. Refreshing from Kapso still works.",
+  },
 };
 
 /** Each credential as the console names it. */
@@ -333,6 +343,8 @@ const TITLE: Record<SecretName, string> = {
   "website.cmsReadSecret": "the website content read secret",
   "website.cmsPublishSecret": "the website publish secret",
   "github.token": "the GitHub token",
+  "kapso.apiKey": "the Kapso key",
+  "kapso.webhookSecret": "the Kapso webhook secret",
 };
 
 function spare(): Felt {

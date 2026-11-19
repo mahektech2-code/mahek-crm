@@ -153,6 +153,8 @@ const LABELS: Record<SecretName, string> = {
   "website.cmsReadSecret": "The website content read secret",
   "website.cmsPublishSecret": "The website publish secret",
   "github.token": "The GitHub token",
+  "kapso.apiKey": "The Kapso key",
+  "kapso.webhookSecret": "The Kapso webhook secret",
 };
 
 /**
@@ -192,4 +194,7 @@ const USED_FROM: Record<SecretName, string> = {
     "The next publish tells the live site to refresh with this value, and preview links are signed with it — it must match CMS_PUBLISH_SECRET on the website.",
   "github.token":
     "Feedback can be sent to GitHub from the next report opened in the console, and the hourly check starts closing reports whose fix is live.",
+  "kapso.apiKey": "The Studio's WhatsApp Inbox checks the Kapso connection and loads conversations from the next time it is opened.",
+  "kapso.webhookSecret":
+    "The next webhook Kapso sends is accepted or refused based on this value — it must match the secret set on the Kapso webhook for the number.",
 };
