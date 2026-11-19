@@ -980,6 +980,12 @@ const DESCRIBE: Record<string, Describer> = {
   create: (c) => ({ says: ["created a MahekOne account for", c.user(c.e.entityId)], changes: false }),
   "set-app-access": (c) => ({ says: ["changed which apps", c.user(c.e.entityId), "can open"], note: accessWords(c.reason()), changes: false }),
   "set-role": (c) => ({ says: ["changed the level of", c.user(c.e.entityId)], changes: false }),
+  /* `setAccess` (or `npm run factory:staff`) gave a factory owner/operator seat to somebody else. */
+  "access.factory-seat-displaced": (c) => ({ says: ["moved", c.user(c.e.entityId), "off a factory crew seat"], note: c.reason(), changes: false }),
+  /* `npm run factory:staff` — a terminal put somebody on the floor. */
+  "access.factory-staff": (c) => ({ says: ["put", c.user(c.e.entityId), "on the factory floor from a terminal"], note: c.reason(), changes: false }),
+  /* `npm run jobs -- hrms-for-everyone` — the backfill that gives every active account HRMS. */
+  "access.hrms-for-everyone": (c) => ({ says: ["gave", c.user(c.e.entityId), "HRMS as an associate"], note: c.reason(), changes: false }),
   "issue-credential": (c) => ({ says: ["issued a sign-in password to", c.user(c.e.entityId)], note: null, changes: false }),
   "link-employee": (c) => ({ says: ["linked", c.user(c.e.entityId), "to their HR record"], changes: false }),
   "unlink-employee": (c) => ({ says: ["unlinked", c.user(c.e.entityId), "from their HR record"], changes: false }),

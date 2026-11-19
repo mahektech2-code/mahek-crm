@@ -34,7 +34,7 @@ import { ACCESS_REVOKE_KIND, accessRevokeKey } from "@/lib/impact/kinds/access-r
 import { ERP_POWERS } from "@/lib/erp/powers";
 import { HRMS_POWERS } from "@/lib/hrms/powers";
 import { TASK_POWERS } from "@/lib/tasks/permissions";
-import { HIRE_ROLES, ROLE_LABEL } from "@/lib/hire/roles";
+import { HIRE_ROLES, LEVEL_FOR_ROLE, ROLE_LABEL, type HireRole } from "@/lib/hire/roles";
 import { CREW_ROLES, cleanDepts, crewLabel, isProc, placeFromRow, placeProblem, placeWords, procsOf, type CrewRole, type FactoryDept, type FactoryPlace } from "@/lib/factory/departments";
 import type { Proc } from "@/lib/factory/types";
 import {
@@ -44,6 +44,7 @@ import {
   type LinkableEmployee,
 } from "@/lib/services/access-service";
 import { ADMIN } from "@/lib/admin-routes";
+import { notifyUsers } from "@/lib/notify";
 import { writeErpPowers as writeErpPowersIn, writeModules, type Tx } from "@/lib/services/access-writes";
 import { accessSnapshot, type AccessSnapshot } from "@/lib/services/access-snapshot";
 import { ConsoleNotConfirmedError } from "@/lib/console-confirm";
@@ -338,12 +339,31 @@ async function writeHrmsPowers(tx: Tx, userId: string, powers: string[], by: str
  * let the level decide. Taking Hire away takes the role with it, so a grant
  * given back later starts from the level rather than from a forgotten job.
  */
-function wantedHireRole(input: SetAccessInput, keepsHire: boolean, current: string | null): { next: string | null | undefined; error?: string } {
+/**
+ * The Hire role after this save. A role is held at ONE level (`LEVEL_FOR_ROLE`)
+ * — the dialog sets the level when a role is picked — and a role that does not
+ * fit the level being saved is refused here, because a server action is a URL:
+ * an HR Head at associate level would be an HR Head the level checks never see.
+ * Checked only where the role or Hire's level is moving, so an old mismatch does
+ * not block an unrelated save.
+ */
+function wantedHireRole(
+  input: SetAccessInput,
+  keepsHire: boolean,
+  current: string | null,
+  level?: { now: string | undefined; moving: boolean },
+): { next: string | null | undefined; error?: string } {
   if (!keepsHire) return { next: current ? null : undefined };
-  if (input.hireRole === undefined) return { next: undefined };
-  const role = input.hireRole || null;
+  const role = input.hireRole === undefined ? current : input.hireRole || null;
   if (role && !(HIRE_ROLES as readonly string[]).includes(role)) return { next: undefined, error: "That is not a Hire role." };
-  return { next: role === current ? undefined : role };
+  const next = input.hireRole === undefined || role === current ? undefined : role;
+  if (role && level && (next !== undefined || level.moving)) {
+    const fits = LEVEL_FOR_ROLE[role as HireRole];
+    if (fits !== (level.now ?? "associate")) {
+      return { next: undefined, error: `${hireRoleWord(role)} is held at ${fits} level in Hire, not ${level.now ?? "associate"}. Pick the role again, or the level that goes with it.` };
+    }
+  }
+  return { next };
 }
 
 async function writeHireRole(tx: Tx, userId: string, role: string | null, by: string) {
@@ -404,12 +424,13 @@ function wantedFactoryPlace(input: SetAccessInput, keepsFactory: boolean, curren
  * department — a new one in that seat takes it — and any number of helpers.
  * The PIN on the staff row is theirs and is never touched here.
  */
-async function writeFactoryPlace(tx: Tx, userId: string, p: FactoryPlace | null) {
+async function writeFactoryPlace(tx: Tx, userId: string, p: FactoryPlace | null): Promise<Displaced[]> {
   {
+    const displaced: Displaced[] = [];
     await tx.execute(sql`delete from factory_team_defaults where user_id = ${userId}`);
     if (!p) {
       await tx.execute(sql`delete from factory_staff where user_id = ${userId}`);
-      return;
+      return displaced;
     }
     const depts = cleanDepts(p.depts);
     const seats = Object.entries(p.crews).filter((e): e is [Proc, CrewRole] => !!e[1] && isProc(e[0]));
@@ -420,9 +441,25 @@ async function writeFactoryPlace(tx: Tx, userId: string, p: FactoryPlace | null)
       on conflict (user_id) do update set area = excluded.area, areas = excluded.areas, role_label = excluded.role_label,
         badge_code = excluded.badge_code, hr_confirmed = excluded.hr_confirmed, updated_at = now()`);
     for (const [proc, crew] of seats) {
-      if (crew === "owner" || crew === "operator") await tx.execute(sql`delete from factory_team_defaults where proc = ${proc} and role = ${crew}`);
+      if (crew === "owner" || crew === "operator") {
+        /* One person per seat: whoever held it is moved off — and named, so their own trail says so. */
+        const gone = (await tx.execute(sql`
+          delete from factory_team_defaults where proc = ${proc} and role = ${crew} and user_id <> ${userId}
+          returning user_id as "userId"`)) as unknown as { userId: string }[];
+        for (const g of gone) displaced.push({ userId: g.userId, proc, crew });
+      }
       await tx.execute(sql`insert into factory_team_defaults (proc, role, user_id) values (${proc}, ${crew}, ${userId}) on conflict do nothing`);
     }
+    return displaced;
+  }
+}
+
+type Displaced = { userId: string; proc: Proc; crew: CrewRole };
+
+/** An audit row on each person a factory seat was taken from: their trail would otherwise never say why they left it. */
+async function auditDisplaced(actorId: string, takenBy: string, displaced: Displaced[]) {
+  for (const d of displaced) {
+    await audit(actorId, "access.factory-seat-displaced", d.userId, `${crewLabel(d.proc, d.crew)} seat given to ${takenBy}`);
   }
 }
 
@@ -610,7 +647,7 @@ export async function setAccess(
 
     const newDesignation = await wantedDesignation(input, wanted.has("erp"), null);
     if (newDesignation.error) return fieldErr("erpDesignation", newDesignation.error);
-    const newHireRole = wantedHireRole(input, wanted.has("hire"), null);
+    const newHireRole = wantedHireRole(input, wanted.has("hire"), null, { now: wantedRoles.get("hire"), moving: true });
     if (newHireRole.error) return fieldErr("hireRole", newHireRole.error);
     const newPlace = wantedFactoryPlace(input, wanted.has("factory"), null, wantedRoles.get("factory") ?? "associate");
     if (newPlace.error) return fieldErr("factoryPlace", newPlace.error);
@@ -641,6 +678,7 @@ export async function setAccess(
     const newHrmsPowers = wantedHrmsPowers(input, wanted.has("hrms"), []);
     const newTaskPowers = wantedTaskPowers(input, wanted.has("tasks"), []);
 
+    let createDisplaced: Displaced[] = [];
     class SetUpMeanwhile extends Error {}
     try {
       await db.transaction(async (tx) => {
@@ -697,7 +735,7 @@ export async function setAccess(
         if (newTaskPowers?.length) await writeTaskPowers(tx, userId!, newTaskPowers, me.id);
         if (newDesignation.next) await writeDesignation(tx, userId!, newDesignation.next, me.id);
         if (newHireRole.next) await writeHireRole(tx, userId!, newHireRole.next, me.id);
-        if (newPlace.next) await writeFactoryPlace(tx, userId!, newPlace.next);
+        if (newPlace.next) createDisplaced = await writeFactoryPlace(tx, userId!, newPlace.next);
       });
     } catch (e) {
       if (e instanceof SetUpMeanwhile) {
@@ -725,6 +763,8 @@ export async function setAccess(
         .join("; "),
       { before: null, after: await accessSnapshot(userId!) },
     );
+    /* After the commit: whoever the new seat was taken from is told on their own trail. */
+    await auditDisplaced(me.id, employee.name, createDisplaced);
     refresh();
 
     return ok(
@@ -897,7 +937,10 @@ export async function setAccess(
   if (designation.error) return fieldErr("erpDesignation", designation.error);
 
   const [currentHireRow] = await db.select({ role: hireUserRoles.role }).from(hireUserRoles).where(eq(hireUserRoles.userId, userId)).limit(1);
-  const hireRole = wantedHireRole(input, wanted.has("hire"), currentHireRow?.role ?? null);
+  const hireRole = wantedHireRole(input, wanted.has("hire"), currentHireRow?.role ?? null, {
+    now: wantedRoles.get("hire"),
+    moving: granted.includes("hire") || releveled.includes("hire"),
+  });
   if (hireRole.error) return fieldErr("hireRole", hireRole.error);
 
   const placeBefore = await currentFactoryPlace(userId);
@@ -929,6 +972,7 @@ export async function setAccess(
   }
 
   const accessBefore = await accessSnapshot(userId);
+  let editDisplaced: Displaced[] = [];
   let accessAfter: AccessSnapshot | null = null;
   await db.transaction(async (tx) => {
     if (revoked.length) {
@@ -995,7 +1039,7 @@ export async function setAccess(
     if (taskPowers) await writeTaskPowers(tx, userId!, taskPowers, me.id);
     if (designation.next !== undefined) await writeDesignation(tx, userId!, designation.next, me.id);
     if (hireRole.next !== undefined) await writeHireRole(tx, userId!, hireRole.next, me.id);
-    if (place.next !== undefined) await writeFactoryPlace(tx, userId!, place.next);
+    if (place.next !== undefined) editDisplaced = await writeFactoryPlace(tx, userId!, place.next);
     accessAfter = await accessSnapshot(userId!, tx);
   });
 
@@ -1044,6 +1088,7 @@ export async function setAccess(
     [detail, powerDetail, hrmsPowerDetail, taskPowerDetail, designationDetail, hireRoleDetail, placeDetail].filter(Boolean).join("; "),
     accessAfter ? { before: accessBefore, after: accessAfter } : undefined,
   );
+  await auditDisplaced(me.id, account.name, editDisplaced);
   refresh();
 
   const said = [
@@ -1070,6 +1115,28 @@ export async function setAccess(
     taskPowers && wanted.has("tasks") ? `holds ${taskPowers.length} Tasks permission${taskPowers.length === 1 ? "" : "s"}` : "",
     designation.next ? `is ${designation.name} in the ERP` : designation.next === null && wanted.has("erp") ? "holds no ERP designation" : "",
   ].filter(Boolean);
+
+  /* THE PERSON IS TOLD. One bell, in the words the save itself is said in, the way a designation
+     edit tells everybody it moved. Not for somebody changing their own access, and not for a
+     new account — that one is set up and handed a password on the next step. */
+  if (userId !== me.id) {
+    const told = [
+      ...said,
+      hireRole.next !== undefined && wanted.has("hire") ? `is ${hireRoleWord(hireRole.next)} in Hire` : "",
+      place.next !== undefined && wanted.has("factory") ? `factory place: ${factoryPlaceWord(place.next)}` : "",
+    ].filter(Boolean);
+    if (told.length) {
+      await notifyUsers([
+        {
+          userId,
+          title: "Your MahekOne access changed",
+          body: `Your account ${told.join(" · ")}. Changed by ${me.name}.`,
+          general: true,
+          href: "/apps",
+        },
+      ]);
+    }
+  }
 
   return ok(
     { userId, created: false, granted, revoked, changed: [...changed, ...releveled.filter((a) => !changed.includes(a))] },

@@ -466,3 +466,34 @@ to somebody the template gives that app. People & access's selection bar can
 app's name is typed — checked on the server — and each person is then saved
 through `setAccess` with their own impact confirmation read for them. Never the
 Admin Console, never yourself.
+
+**EVERYBODY HOLDS HRMS, AS AN ASSOCIATE — and `hrms-for-everyone` fills the
+gap.** The Access dialog starts every person with HRMS ticked (`startingDraft`
+in `app/admin/access-section.tsx`). Accounts set up before that rule are given
+it by `npm run jobs -- hrms-for-everyone` (`--dry-run` lists and writes
+nothing): every ACTIVE account without HRMS, at associate level, its default
+screens, an `access.hrms-for-everyone` audit row each (no actor — a terminal).
+It skips, and counts, accounts linked to no HRMS record (`setAccess` refuses
+HRMS there too — link them first), accounts marked not an employee, and those
+whose HRMS record is not active. Idempotent: a held HRMS, at any level, is
+never touched. Not scheduled — run by hand after a dry run.
+
+**A PERSON IS TOLD WHEN THEIR ACCESS CHANGES.** `setAccess` rings one general
+bell ("Your MahekOne access changed", to `/apps`) on an existing account, in the
+words the save is said in plus a Hire role or factory place that moved, naming
+who changed it. Not for a save that changed nothing, not for somebody saving
+their own access, and not for a brand-new account (that one gets a password on
+the next step).
+
+**A HIRE ROLE IS HELD AT ITS LEVEL, ON THE SERVER TOO.** `setAccess` refuses a
+Hire role whose `LEVEL_FOR_ROLE` is not the Hire level being saved (an HR Head
+at associate level would be an HR Head the level checks never see). Checked
+only when the role or Hire's level moves, so an old mismatch does not block an
+unrelated save.
+
+**POWERS & SCREENS → ROLES & SEATS** is read-only: who holds each Hire role
+(stored, or "by level"), each factory department's crew seats (and who works
+there with no seat, and a department with no one in charge or operator), each
+ERP godown's staff, and each Sales Dashboard oversight region. Active accounts
+only. `seatsOverview()` in `access-overview-service.ts`; each kind is changed
+where it is set, named under its heading.
