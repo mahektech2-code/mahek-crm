@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Badge, Button, cx } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
+import { ConfirmDialog } from "@/components/ui/overlays";
 import { archiveDesign, restoreDesign } from "@/lib/actions/studio";
 import type { LibraryItem } from "@/lib/studio/library";
 import { OccasionChip } from "./parts";
@@ -20,6 +21,7 @@ export function LibraryTile({ item, canManage, dim = false }: { item: LibraryIte
   const router = useRouter();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
+  const [confirmArchive, setConfirmArchive] = useState(false);
   const run = async (action: (id: string) => ReturnType<typeof archiveDesign>) => {
     setBusy(true);
     const r = await toast.run(action(item.id));
@@ -54,13 +56,22 @@ export function LibraryTile({ item, canManage, dim = false }: { item: LibraryIte
                 {busy ? "Restoring…" : "Restore"}
               </Button>
             ) : (
-              <Button size="sm" variant="ghost" onClick={() => run(archiveDesign)} disabled={busy} data-testid={`archive-${item.id}`}>
+              <Button size="sm" variant="ghost" onClick={() => setConfirmArchive(true)} disabled={busy} data-testid={`archive-${item.id}`}>
                 {busy ? "Archiving…" : "Archive"}
               </Button>
             )}
           </div>
         ) : null}
       </div>
+      <ConfirmDialog
+        open={confirmArchive}
+        title={`Archive “${item.name}”?`}
+        body="It leaves the library, so nobody can make a new poster from it. Posters already made from it are unchanged, and it can be restored later."
+        confirmLabel="Archive"
+        cancelLabel="Keep it"
+        onConfirm={() => run(archiveDesign)}
+        onClose={() => setConfirmArchive(false)}
+      />
     </div>
   );
 }

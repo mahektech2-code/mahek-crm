@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Callout, Card, Checkbox, EmptyState, Field, Input, Select, Td, Textarea, Th } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
+import { ConfirmDialog } from "@/components/ui/overlays";
 import { stamp } from "@/lib/format";
 import {
   BANNER_SCREENS,
@@ -42,6 +43,7 @@ const ROLES = [
 
 export function MbosControlSection({ rows }: { rows: ControlRow[] }) {
   const [editing, setEditing] = React.useState<{ row: ControlRow | null; n: number } | null>(null);
+  const [removing, setRemoving] = React.useState<ControlRow | null>(null);
   const router = useRouter();
   const { push } = useToast();
   const [busy, setBusy] = React.useState<string | null>(null);
@@ -121,7 +123,7 @@ export function MbosControlSection({ rows }: { rows: ControlRow[] }) {
                       <Button size="sm" disabled={busy === r.key} onClick={() => act(r.key, () => setRemoteItemEnabled(r.key, !r.enabled))}>
                         {r.enabled ? "Switch off" : "Switch on"}
                       </Button>
-                      <Button size="sm" variant="danger" disabled={busy === r.key} onClick={() => act(r.key, () => deleteRemoteItem(r.key))}>
+                      <Button size="sm" variant="danger" disabled={busy === r.key} onClick={() => setRemoving(r)}>
                         Remove
                       </Button>
                     </div>
@@ -133,6 +135,20 @@ export function MbosControlSection({ rows }: { rows: ControlRow[] }) {
         )}
       </Card>
 
+      <ConfirmDialog
+        key={removing?.key ?? "none"}
+        open={removing !== null}
+        title="Remove this remote-control item?"
+        body={removing ? `${describe(removing)}. Phones go back to what is built into the app on their next sync. Switching it off instead keeps it here to switch back on.` : ""}
+        confirmLabel="Remove"
+        cancelLabel="Keep it"
+        destructive
+        onConfirm={async () => {
+          if (!removing) return;
+          await act(removing.key, () => deleteRemoteItem(removing.key));
+        }}
+        onClose={() => setRemoving(null)}
+      />
       <Preview />
     </div>
   );

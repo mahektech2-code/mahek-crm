@@ -74,7 +74,7 @@ export const inboxScreen: ScreenModule = {
           x.i.status === "New"
             ? [
                 { id: "review", l: "Accept the draft", primary: true, ai: true, loadsForm: true, why: d.lines?.length ? "" : "Nothing in this message could be drafted" },
-                { id: "notOrder", l: "Not an order" },
+                { id: "notOrder", l: "Not an order", confirm: "Mark this message as not an order? It leaves the New list and nothing is drafted from it." },
                 { id: "duplicate", l: "Duplicate", confirm: "Mark this message as a duplicate of an order already taken?" },
               ]
             : [];
