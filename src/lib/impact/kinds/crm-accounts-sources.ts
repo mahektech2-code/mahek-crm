@@ -26,6 +26,10 @@ export const CRM_ACCOUNTS_SOURCES: Record<string, () => Promise<ImpactSource>> =
   "enquiry-note-delete": () => import("./enquiries").then((m) => m.enquiryNoteImpact),
   /** `cancelEnquiryReminderAction` — an enquiry's follow-up dismissed, through the Enquiries grant. */
   "enquiry-reminder-cancel": () => import("./enquiries").then((m) => m.enquiryReminderImpact),
+  /** `cancelPromiseAction` — by the follow-up attempt carrying the promise. */
+  "crm-payment-promise-cancel": () => import("./crm-records").then((m) => m.promiseCancelImpact),
+  /** `withdrawComplaintAction` — a complaint closed as raised by mistake or twice. */
+  "crm-complaint-withdraw": () => import("./crm-records").then((m) => m.complaintWithdrawImpact),
   /** `clearManager` — an employee's reporting line, which the CRM reads for the sales manager seat. */
   "crm-reporting-line": () => import("./crm-customers").then((m) => m.reportingLineImpact),
 

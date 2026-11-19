@@ -67,6 +67,8 @@ const files = [
   // An issued credit note cancelled; a manual payout corrected while unpaid.
   "src/lib/accounts-corrections.test.ts",
   "src/lib/order-decisions-impact.test.ts",
+  // Correcting a promise, complaint, reminder or opportunity; cancelling and withdrawing.
+  "src/lib/crm-edit-actions.test.ts",
   // Adding a customer from Accounts, and it reaching every app on its own.
   "src/lib/customer-create.test.ts",
   // Converting a lead straight to a customer from Accounts — the bypass.

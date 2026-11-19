@@ -349,3 +349,23 @@ Reversing the same receipt from the customer statement cancels the credit note
 too (`reverseReceipt` flips the complaint), so the two doors cannot disagree. A
 cancelled request is finished — the receipt key is the complaint's, so a new
 credit note is a new request.
+
+**A promise is corrected or cancelled, never deleted — and the stage is not
+on either form.** A promise is a `follow_up_attempts` row carrying an amount
+and a date, and the attempt is a call that happened. EDIT (`editPromise`)
+rewrites the amount, date and note and moves the pending `payment_promise`
+chase reminder to the working day after the new date, without touching its
+`rescheduleCount`. CANCEL (`cancelPromise`) sets `promise_cancelled_at`, by
+and reason; every read of "the live promise" — the worklist, the "has a
+promise" tab, the cadence, promises kept, the panel, the WhatsApp merge field
+— asks `promise_cancelled_at is null`, and the chase reminder is dismissed
+with the reason. Both end in `recomputeFollowUpState`: the stage is derived,
+so a promise changes it only by being re-read. Cancelling asks
+`reminder.close`, the capability dismissing the reminder itself asks, and
+goes through the `crm-payment-promise-cancel` impact dialog; editing asks
+what rescheduling asks. The EOD "promises taken" count and value LEAVE OUT a
+cancelled one (owner's decision, Nov 2026); the follow-up call itself still
+counts. The chase is
+found by `follow_up_attempts.reminder_id`, which the collections panel now
+fills; older panel promises are matched by the system reminder's
+"promised for <date>" note.
