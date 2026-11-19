@@ -4,7 +4,9 @@ import { revalidatePath } from "next/cache";
 import { err, type Result } from "@/lib/result";
 import { HireNotPermitted, requireHireCap } from "../access";
 import type { HireCap } from "../roles";
-import { issueOffer, recordResponse, saveOffer, updateTracking, type OfferInput, type ResponseInput } from "../services/offers";
+import { issueOffer, recordResponse, saveOffer, updateTracking, withdrawOffer, type OfferInput, type ResponseInput } from "../services/offers";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 import { confirmFields, setDocumentStatus, setItem, unmask, uploadDocument, type ItemKey } from "../services/onboarding";
 import { provision, type Provisioned } from "../services/provision";
 
@@ -33,6 +35,15 @@ export async function issueOfferAction(applicationId: string) {
 
 export async function offerResponseAction(applicationId: string, input: ResponseInput) {
   return guarded("offer", (ctx) => recordResponse(ctx, applicationId, input));
+}
+
+/** Rescind an issued or accepted offer — after the impact modal, with a reason kept on the record. */
+export async function withdrawOfferAction(applicationId: string, reason: string, confirmation?: ImpactConfirmation) {
+  return guarded("offer", async (ctx) => {
+    const refusal = await confirmImpact("hire-offer-withdraw", applicationId, confirmation);
+    if (refusal) return refusal;
+    return withdrawOffer(ctx, applicationId, reason);
+  });
 }
 
 export async function offerTrackingAction(applicationId: string, patch: { courierStatus?: string; backgroundCheck?: string }) {

@@ -11,6 +11,8 @@ export const ADMIN_SITE_SOURCES: Record<string, () => Promise<ImpactSource>> = {
   "admin-catalogue-alias": () => import("./admin").then((m) => m.aliasImpact),
   "admin-sku-retire": () => import("./admin").then((m) => m.skuRetireImpact),
   "admin-user-disable": () => import("./admin").then((m) => m.userDisableImpact),
+  /** Somebody who has left: the sign-in, and every grant, seat and assignment with it. */
+  "admin-offboard": () => import("./admin").then((m) => m.offboardImpact),
   "admin-secret": () => import("./admin").then((m) => m.secretImpact),
   /** `setAccess` taking apps away — the id is `accessRevokeKey(user, apps)`. */
   [ACCESS_REVOKE_KIND]: () => import("./admin").then((m) => m.accessRevokeImpact),
@@ -37,4 +39,7 @@ export const ADMIN_SITE_SOURCES: Record<string, () => Promise<ImpactSource>> = {
   "site-assignment": () => import("./website-cms").then((m) => m.assignmentImpact),
   "site-approval-revoke": () => import("./website-cms").then((m) => m.approvalRevokeImpact),
   "site-request-withdraw": () => import("./website-cms").then((m) => m.requestWithdrawImpact),
+
+  /* Tasks: a task deleted by whoever gave it. */
+  "task-delete": () => import("./tasks").then((m) => m.taskDeleteImpact),
 };
