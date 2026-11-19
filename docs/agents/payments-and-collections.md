@@ -327,8 +327,9 @@ with the reason. Both end in `recomputeFollowUpState`: the stage is derived,
 so a promise changes it only by being re-read. Cancelling asks
 `reminder.close`, the capability dismissing the reminder itself asks, and
 goes through the `crm-payment-promise-cancel` impact dialog; editing asks
-what rescheduling asks. The EOD counts of promises taken still count a
-cancelled one, because the call that took it still happened. The chase is
+what rescheduling asks. The EOD "promises taken" count and value LEAVE OUT a
+cancelled one (owner's decision, Nov 2026); the follow-up call itself still
+counts. The chase is
 found by `follow_up_attempts.reminder_id`, which the collections panel now
 fills; older panel promises are matched by the system reminder's
 "promised for <date>" note.

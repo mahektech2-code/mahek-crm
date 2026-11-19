@@ -170,6 +170,20 @@ test("cancelling a promise: refused to a telecaller, refused unconfirmed, then d
   assert.equal((await editPromiseAction({ attemptId: attempt, amount: "5", promisedBy: TODAY })).ok, false, "nor edited");
 });
 
+test("a cancelled promise drops out of the end-of-day promises taken, count and value", async () => {
+  const { eodMetricsForRange } = await import("@/lib/services/eod-service");
+  const day = { from: TODAY, to: TODAY } as Parameters<typeof eodMetricsForRange>[1];
+  const { attempt } = await promise(caller.id, 7_000_00);
+  const before = await eodMetricsForRange(caller.id, day);
+  setTestUser(manager);
+  const { confirmation } = await confirm("crm-payment-promise-cancel", attempt);
+  assert.ok((await cancelPromiseAction(attempt, "Said by mistake", confirmation)).ok);
+  const after = await eodMetricsForRange(caller.id, day);
+  assert.equal(after.promisesCount, before.promisesCount - 1);
+  assert.equal(Number(after.promisesValue), Number(before.promisesValue) - 7_000_00);
+  assert.equal(after.followUps, before.followUps, "the call itself still counts");
+});
+
 test("the worklist never offers a cancelled promise as the live one", async () => {
   setTestUser(manager);
   const rows = await getFollowUpWorklist();
