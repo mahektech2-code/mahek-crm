@@ -285,7 +285,7 @@ describe("Hire core", () => {
 
   test("a booked interview is cancelled with a reason: status and trail, the candidate told as recorded, the interviewer belled", async () => {
     const ctx = await as(recruiter);
-    const r = await createApplication(ctx, { fullName: "Kiran Desai", phone: "98200 77441", blueprintId: SE, consent: true, location: "Pune" });
+    const r = await createApplication(ctx, { fullName: "Kiran Desai", phone: "98200 77452", blueprintId: SE, consent: true, location: "Pune" });
     assert.ok(r.ok, !r.ok ? r.error : "");
     const appId = r.data.applicationId;
     const execId = `hex_${randomUUID().slice(0, 12)}`;
