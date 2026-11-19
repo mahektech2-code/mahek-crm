@@ -16,9 +16,10 @@ import {
   reschedulePayoutAction,
   updatePayoutNotesAction,
 } from "@/lib/actions/vendor-payouts";
-import { addDays, daysFrom, moveRefusal, paymentDayOnOrAfter, WEEKDAY_SHORT, weekdayOf } from "@/lib/engines/vendor-payouts";
+import { addDays, daysFrom, moveRefusal, paymentDayOnOrAfter, payoutEditRefusal, WEEKDAY_SHORT, weekdayOf } from "@/lib/engines/vendor-payouts";
 import { longDate, money, parseRupees, rupeesFromPaise, shortDate } from "@/lib/format";
-import type { PayoutView } from "@/lib/services/vendor-payout-service";
+import type { PayoutSupplier, PayoutView } from "@/lib/services/vendor-payout-service";
+import { EditPayoutModal } from "./edit-payout-modal";
 import { blankInvoice, draftToInput, InvoiceFields, sourceWords, StatusPill, toneOf, type InvoiceDraft } from "./payout-parts";
 
 /* ---------------------------------------------------------------------------
@@ -28,6 +29,7 @@ import { blankInvoice, draftToInput, InvoiceFields, sourceWords, StatusPill, ton
 
 export function PayoutDrawer({
   payout,
+  suppliers,
   today,
   days,
   modes,
@@ -38,6 +40,8 @@ export function PayoutDrawer({
   onChanged,
 }: {
   payout: PayoutView | null;
+  /** For Edit: the vendors a manual payable can be to. */
+  suppliers: PayoutSupplier[];
   today: string;
   days: Set<number>;
   modes: string[];
@@ -54,6 +58,7 @@ export function PayoutDrawer({
         <PayoutBody
           key={payout.id}
           p={payout}
+          suppliers={suppliers}
           today={today}
           days={days}
           modes={modes}
@@ -70,6 +75,7 @@ export function PayoutDrawer({
 
 function PayoutBody({
   p,
+  suppliers,
   today,
   days,
   modes,
@@ -80,6 +86,7 @@ function PayoutBody({
   onChanged,
 }: {
   p: PayoutView;
+  suppliers: PayoutSupplier[];
   today: string;
   days: Set<number>;
   modes: string[];
@@ -93,7 +100,9 @@ function PayoutBody({
   const tone = toneOf(p, today);
   const live = p.status === "open" || p.status === "on_hold";
   const [busy, setBusy] = React.useState(false);
-  const [dialog, setDialog] = React.useState<null | "paid" | "hold" | "cancel" | "reopen">(null);
+  const [dialog, setDialog] = React.useState<null | "paid" | "hold" | "cancel" | "reopen" | "edit">(null);
+  /* Why Edit is off, in the service's own words — the register's payable, a paid one, a cancelled one. */
+  const editWhy = payoutEditRefusal(p);
   const [notes, setNotes] = React.useState(p.notes ?? "");
   const [adding, setAdding] = React.useState<InvoiceDraft | null>(null);
   const [moveTo, setMoveTo] = React.useState(p.payOn);
@@ -339,6 +348,17 @@ function PayoutBody({
       </div>
 
       <div className="flex flex-none flex-wrap items-center justify-end gap-2 border-t border-line px-5 py-3">
+        {canEdit ? (
+          <Button
+            variant="ghost"
+            className="mr-auto"
+            disabled={busy || !!editWhy}
+            title={editWhy ?? "Correct the vendor, description, reference or amount"}
+            onClick={() => setDialog("edit")}
+          >
+            Edit
+          </Button>
+        ) : null}
         {p.source === "manual" && live && canSettle ? (
           <Button variant="ghost" disabled={busy} onClick={() => setDialog("cancel")}>
             Cancel payable
@@ -371,6 +391,18 @@ function PayoutBody({
         ) : null}
       </div>
 
+      {dialog === "edit" ? (
+        <EditPayoutModal
+          key={p.id}
+          payout={p}
+          suppliers={suppliers}
+          onClose={() => setDialog(null)}
+          onSaved={() => {
+            setDialog(null);
+            onChanged();
+          }}
+        />
+      ) : null}
       {dialog === "paid" ? (
         <PaidDialog
           p={p}

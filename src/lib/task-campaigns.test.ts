@@ -16,17 +16,31 @@
 import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appAccess, customerContacts, customers, mbosDevices, mbosTasks, users } from "@/db/schema";
+import {
+  appAccess,
+  auditLog,
+  customerContacts,
+  customers,
+  mbosCourses,
+  mbosDevices,
+  mbosTaskCampaigns,
+  mbosTasks,
+  notifications,
+  users,
+} from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { impactReport } from "@/lib/impact/registry";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import {
   assignTaskCampaign,
   closeTaskCampaign,
+  editCourse,
+  editTaskCampaign,
   previewTaskAudience,
+  publishCourse,
 } from "@/lib/actions/sales";
 import { ingestSyncBatch } from "@/lib/actions/mbos";
 import { buildBootstrap, type MbosPrincipal } from "@/lib/services/mbos-service";
@@ -375,5 +389,101 @@ describe("questions linked to the customer record", () => {
     assert.equal(t.status, "done");
     assert.equal(t.completedVia, "record");
     assert.deepEqual(t.responses, { bday: { day: 9, month: 11 } });
+  });
+});
+
+describe("correcting what went out", () => {
+  test("an assignment's edit reaches its open tasks, leaves the answered one, and tells whoever's date moved", async () => {
+    const saved = await assign({ shops: { kind: "list", customerIds: shops }, assignees: { kind: "carrier" } }, 3);
+    assert.ok(saved.ok, JSON.stringify(saved));
+    const { campaignId } = saved.data;
+    const rows = await db.select().from(mbosTasks).where(eq(mbosTasks.campaignId, campaignId));
+    const answered = rows.find((r) => r.assignedToUserId === seema.id)!;
+    await db.update(mbosTasks).set({ status: "done" }).where(eq(mbosTasks.id, answered.id));
+    await db.delete(notifications);
+
+    setTestUser(rahul);
+    const refused = await editTaskCampaign({ campaignId, title: "Rahul's own title", priority: "low", dueDate: DUE });
+    assert.equal(refused.ok, false, "a salesman may not edit an assignment");
+
+    setTestUser(manager);
+    assert.equal((await editTaskCampaign({ campaignId, title: "x", priority: "low", dueDate: DUE })).ok, false, "a real title is needed");
+    const moved = addDays(DUE, 4);
+    const r = await editTaskCampaign({ campaignId, title: "Birthday check only", description: "Skip stock", priority: "high", dueDate: moved });
+    assert.ok(r.ok, r.ok ? "" : r.error);
+    assert.equal(r.data.updatedTasks, 2, "Rahul's two open tasks");
+
+    const after = await db.select().from(mbosTasks).where(eq(mbosTasks.campaignId, campaignId));
+    for (const t of after) {
+      if (t.id === answered.id) {
+        assert.equal(t.title, "Birthday and stock check", "the answered task keeps the question it was answered under");
+        assert.equal(t.dueDate, DUE);
+      } else {
+        assert.equal(t.title, "Birthday check only");
+        assert.equal(t.dueDate, moved);
+        assert.equal(t.priority, "high");
+      }
+    }
+    const [head] = await db.select().from(mbosTaskCampaigns).where(eq(mbosTaskCampaigns.id, campaignId));
+    assert.equal(head.title, "Birthday check only");
+    const bells = await db.select().from(notifications).where(eq(notifications.userId, rahul.id));
+    assert.equal(bells.length, 1, "one bell for Rahul, not one per task");
+    assert.equal(
+      (await db.select().from(notifications).where(eq(notifications.userId, seema.id))).length,
+      0,
+      "nothing for Seema, who has answered",
+    );
+    const audits = await db
+      .select()
+      .from(auditLog)
+      .where(and(eq(auditLog.action, "mbos.task.campaignEdited"), eq(auditLog.entityId, campaignId)));
+    assert.equal(audits.length, 1);
+  });
+
+  test("a withdrawn assignment is not edited", async () => {
+    const saved = await assign({ shops: { kind: "list", customerIds: shops }, assignees: { kind: "carrier" } }, 3);
+    assert.ok(saved.ok);
+    const report = await impactReport("sales-task-campaign-withdraw", saved.data.campaignId);
+    assert.ok(report.ok);
+    await closeTaskCampaign(saved.data.campaignId, { typed: report.data.confirmWord, fingerprint: report.data.fingerprint });
+    const r = await editTaskCampaign({ campaignId: saved.data.campaignId, title: "Too late", priority: "low", dueDate: DUE });
+    assert.equal(r.ok, false);
+  });
+
+  test("a course is corrected under the same rules it was published by, and progress is not touched", async () => {
+    const published = await publishCourse({ title: "Damage complaints", mandatory: false });
+    assert.ok(published.ok, published.ok ? "" : published.error);
+    const courseId = published.data.id;
+    await db.update(mbosCourses).set({ passMarkPercent: 60 }).where(eq(mbosCourses.id, courseId));
+
+    setTestUser(rahul);
+    assert.equal((await editCourse({ courseId, title: "Mine", mandatory: false })).ok, false, "a salesman may not edit a course");
+
+    setTestUser(manager);
+    assert.equal(
+      (await editCourse({ courseId, title: "Damage complaints", mandatory: false, dueDate: DUE })).ok,
+      false,
+      "a deadline needs a compulsory course",
+    );
+    assert.equal((await editCourse({ courseId, title: "  ", mandatory: true })).ok, false, "a title is needed");
+    const r = await editCourse({
+      courseId,
+      title: "Handling damage complaints",
+      category: "Service",
+      durationMinutes: 25,
+      mandatory: true,
+      dueDate: DUE,
+    });
+    assert.ok(r.ok, r.ok ? "" : r.error);
+    const [c] = await db.select().from(mbosCourses).where(eq(mbosCourses.id, courseId));
+    assert.equal(c.title, "Handling damage complaints");
+    assert.equal(c.mandatory, true);
+    assert.equal(c.dueDate, DUE);
+    assert.equal(c.passMarkPercent, 60, "a pass mark the form does not ask about is kept");
+    const audits = await db
+      .select()
+      .from(auditLog)
+      .where(and(eq(auditLog.action, "mbos.course.edit"), eq(auditLog.entityId, courseId)));
+    assert.equal(audits.length, 1);
   });
 });

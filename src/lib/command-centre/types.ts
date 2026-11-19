@@ -242,7 +242,8 @@ export type RecordView = {
   title: string;
   sub: string;
   fields: Fact[];
-  timeline: { what: string; when: string }[];
+  /** `note` marks a Command Centre note, and whether the viewer wrote it (and so may edit or delete it). */
+  timeline: { what: string; when: string; note?: { id: string; mine: boolean } }[];
   audit: { what: string; who: string }[];
   acts: ActSpec[];
   /** Where the full working screen for this record lives, if anywhere. */

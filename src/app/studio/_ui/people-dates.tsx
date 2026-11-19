@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Card, Field, Input, Select, Textarea } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
-import { ConfirmDialog } from "@/components/ui/overlays";
+import { ConfirmDialog, RowMenu } from "@/components/ui/overlays";
 import { deletePersonDate, savePersonDate } from "@/lib/actions/studio";
 
 /* ---------------------------------------------------------------------------
@@ -147,16 +147,12 @@ export function PeopleDatesList({ items }: { items: PersonDateView[] }) {
                   {p.note ? ` · ${p.note}` : ""}
                 </div>
               </div>
-              <Button size="sm" variant="ghost" onClick={() => setEditing(p.id)}>
-                Edit
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setDeleting(p)}
-              >
-                Delete
-              </Button>
+              <RowMenu
+                items={[
+                  { label: "Edit", onSelect: () => setEditing(p.id) },
+                  { label: "Delete…", onSelect: () => setDeleting(p), destructive: true },
+                ]}
+              />
             </div>
           )}
         </li>

@@ -120,3 +120,18 @@ gate's or the rejection queue's decision. A hired person is refused (leaving is
 HRMS's). The UI is "Withdraw offer" on the offer panel, a `ReasonButton` with
 the `hire-offer-withdraw` impact modal (id = the application), and the action
 asks `confirmImpact` before the service writes.
+
+**ONLY A DRAFT THAT WAS NEVER PUBLISHED IS EVER DELETED.** Blueprint editor →
+Delete draft (`deleteDraftBlueprint`, impact `hire-blueprint-draft`) removes a
+`draft` row with no `published_at` and no applications; a published or retired
+version is refused — edit it as a new version. The trail keeps
+`blueprint_draft_deleted` with the title and version.
+
+**A CANCELLED INTERVIEW IS A STATUS AND A TRAIL LINE, NEVER A DELETE.**
+Calendar → Booked this week → Cancel (`cancelBooking`, needs `addCandidate`)
+takes a `scheduled` execution back to `not_started` with no time or
+interviewer, so the candidate is on To schedule again; `interview_cancelled`
+keeps the booking as it stood and the reason (10+ characters). The interviewer
+is belled; the candidate is told through `recordMessage` — an email sent from
+here, or a WhatsApp/SMS/call recorded `logged` — never while do-not-contact.
+Started or completed interviews are refused.

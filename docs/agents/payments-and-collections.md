@@ -328,4 +328,24 @@ where `payments.allowOnAccountRemainder` refuses it) — "settle these bills"
 would refuse a smaller figure outright, which is the usual correction. Before
 this, a mistyped figure had to be rejected ("never arrived") and recorded again,
 which tells the customer's statement something untrue. It is the Correct button
-in the Accounts review drawer.
+in the Accounts review drawer, and in the CRM customer record's Ledger tab for
+the person who recorded it: `/api/customer-statement` returns `mine`, their own
+`reported` claims for that customer (`myReportedReceipts`, read after the
+statement so scope has answered), and the tab lists them above the statement
+with Correct, which opens the same `CorrectReceiptDialog`. Held claims are not
+listed there — they are Accounts' by then.
+
+**AN ISSUED CREDIT NOTE IS CANCELLED, NEVER DELETED.** It is a confirmed
+`Adjustment` receipt keyed `creditnote:<complaint id>`, so taking it back is
+what taking any confirmed receipt back is: `cancelCreditNote` marks the receipt
+`reversed` with the reason, the bills are rebuilt from the confirmed money left,
+and the complaint's `cn_status` becomes `cancelled` (0360) — not `requested`,
+which would put an answered request back on the queue, and not `rejected`,
+which says it was never granted. The reason is appended to the complaint where
+the telecaller reads it. Accounts → Credit notes lists the issued ones under the
+queue; Cancel asks the reason, then the impact modal
+(`accounts-creditnote-cancel`), then writes, under `creditnote.issue`.
+Reversing the same receipt from the customer statement cancels the credit note
+too (`reverseReceipt` flips the complaint), so the two doors cannot disagree. A
+cancelled request is finished — the receipt key is the complaint's, so a new
+credit note is a new request.

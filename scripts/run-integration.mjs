@@ -64,6 +64,8 @@ const files = [
   "src/lib/tasks/permissions.integration.test.ts",
   "src/lib/tasks/lists.integration.test.ts",
   "src/lib/crm-accounts-impact.test.ts",
+  // An issued credit note cancelled; a manual payout corrected while unpaid.
+  "src/lib/accounts-corrections.test.ts",
   // Adding a customer from Accounts, and it reaching every app on its own.
   "src/lib/customer-create.test.ts",
   // Converting a lead straight to a customer from Accounts — the bypass.
@@ -184,6 +186,8 @@ const files = [
   "src/lib/performance.test.ts",
   "src/lib/owner-dashboard.test.ts",
   "src/lib/founder-dashboard.test.ts",
+  // HQ notes: edited and deleted by their author only, the audit log never rewritten.
+  "src/lib/founder-notes.test.ts",
   "src/lib/expense-policy.test.ts",
   "src/lib/travel-on-visit.test.ts",
   // An expense and every file behind it: several per claim, one that uploaded

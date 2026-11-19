@@ -21,6 +21,12 @@ import type { PaymentDetail } from "./queue-types";
  * What may be corrected, and by whom, is `correctReceipt` on the server.
  * ------------------------------------------------------------------------- */
 
+/** What the dialog reads of a claim — the Accounts queue detail carries it, and so does the CRM Ledger tab. */
+export type CorrectableReceipt = Pick<
+  PaymentDetail,
+  "receivedAt" | "mode" | "reference" | "instrumentDate" | "note" | "reportedAt" | "correct"
+>;
+
 export function CorrectReceiptDialog({
   receiptId,
   detail,
@@ -31,7 +37,7 @@ export function CorrectReceiptDialog({
   onDone,
 }: {
   receiptId: string;
-  detail: PaymentDetail;
+  detail: CorrectableReceipt;
   amount: number;
   customerName: string;
   run: <T extends { ok: boolean; message?: string; error?: string }>(p: Promise<T>) => Promise<T>;
