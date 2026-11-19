@@ -404,3 +404,20 @@ are the `salesAsk.*` ones. The ERP keeps its own engine — tools that call each
 screen's loader, `lib/erp/ai-ask.ts` — behind `/api/erp/ask`, which speaks the
 same stream and adds the records it read as links. The next app is an
 endpoint that streams those events and an `AskSetup` in `ask-setups.ts`.
+
+**THE DOORS ROUND THE CONSOLE ARE SHUT (Nov 2026).** Three places granted apps
+without a platform administrator, and each now defers to one:
+- **Locker's own access screen** (`setLockerModules`) changes the screens of
+  somebody who already holds the Locker, and takes it away; GIVING the app to
+  somebody new needs `isPlatformAdmin`. Every change is also written to
+  `audit_log` as `locker.access.changed`, so the person's Audit tab sees it.
+- **Hire's provisioning** refuses a blueprint that grants `NEVER_PROVISIONED`
+  (`lib/apps.ts`: admin, founder, hire) on the server, as a blocker — the
+  blueprint editor hiding them was the only guard before.
+- **`hire:deploy`** gives each platform admin Hire ONCE: the `installed` line
+  on `hire_audit` is its memory, so Hire taken away on the console stays away
+  through later deploys.
+And **a template never carries platform Admin** (`grantsPlatformAdmin`, refused
+on save and on apply): it is given one person at a time on their Manage page.
+Bulk take-away on Powers has a review step naming the people, and designation
+Sync names who it brings up before it runs.

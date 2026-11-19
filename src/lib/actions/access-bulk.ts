@@ -11,7 +11,7 @@ import { err, fieldErr, ok, okVoid, type Result } from "@/lib/result";
 import { ADMIN } from "@/lib/admin-routes";
 import { listAccess } from "@/lib/services/access-service";
 import { getErpDesignation } from "@/lib/services/erp-designation-service";
-import { applyChange, cleanShape, powerById, shapeFromRow, type AccessTemplateShape, type BulkChange } from "@/lib/access-bulk";
+import { applyChange, cleanShape, grantsPlatformAdmin, PLATFORM_ADMIN_IN_TEMPLATE, powerById, shapeFromRow, type AccessTemplateShape, type BulkChange } from "@/lib/access-bulk";
 import { setAccess } from "./access";
 
 /* ---------------------------------------------------------------------------
@@ -153,6 +153,7 @@ export async function saveAccessTemplate(input: TemplateInput): Promise<Result<{
   if (name.length > 60) return fieldErr("name", "Keep the name under 60 characters.");
   const shape = cleanShape(input.shape);
   if (!shape.apps.length) return fieldErr("shape", "A template has to give at least one app.");
+  if (grantsPlatformAdmin(shape)) return fieldErr("shape", PLATFORM_ADMIN_IN_TEMPLATE);
   const clash = await db
     .select({ id: accessTemplates.id })
     .from(accessTemplates)
@@ -210,5 +211,7 @@ export async function applyAccessTemplate(input: { templateId: string; userIds: 
   const [t] = await db.select().from(accessTemplates).where(eq(accessTemplates.id, input.templateId)).limit(1);
   if (!t) return err("That template no longer exists.", "not_found");
   const shape = cleanShape(t.shape);
+  /* A template saved before this rule may still carry it. */
+  if (grantsPlatformAdmin(shape)) return err(PLATFORM_ADMIN_IN_TEMPLATE, "not_permitted");
   return run(input.userIds, () => ({ kind: "template", shape }), `apply template ${t.name}`);
 }

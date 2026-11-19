@@ -99,12 +99,20 @@ export async function seedHireBlueprints(actorId: string | null = null): Promise
   return { created };
 }
 
-/** Hire for every active platform administrator who lacks it, as Admin. */
+/**
+ * Hire for every active platform administrator who lacks it, as Admin —
+ * ONCE per person. This runs on every deploy, and it used to hand Hire back
+ * to anybody who lacked it, so a platform admin whose Hire was taken away on
+ * the console had it again after the next release. The `installed` line it
+ * writes on Hire's own trail is the memory: somebody who was given it here
+ * before is not given it again.
+ */
 export async function grantHireToPlatformAdmins(): Promise<{ granted: string[] }> {
   const rows = (await db.execute(sql`
     select u.id, u.name from users u
     where u.active and exists (select 1 from app_access g where g.user_id = u.id and g.app = 'admin' and g.role = 'admin')
-      and not exists (select 1 from app_access h where h.user_id = u.id and h.app = 'hire')`)) as unknown as { id: string; name: string }[];
+      and not exists (select 1 from app_access h where h.user_id = u.id and h.app = 'hire')
+      and not exists (select 1 from hire_audit t where t.entity_type = 'hire_role' and t.entity_id = u.id and t.event_type = 'installed')`)) as unknown as { id: string; name: string }[];
   for (const u of rows) {
     await db.transaction(async (tx) => {
       await grantAppWithDefaultModules(tx, { userId: u.id, app: "hire", grantedById: null, level: "admin" });
