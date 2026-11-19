@@ -59,6 +59,7 @@ export function ReviewDrawer({
   run,
   onClose,
   onDecided,
+  onEditOrder,
 }: {
   kind: QueueKind;
   row: QueueRow;
@@ -66,6 +67,8 @@ export function ReviewDrawer({
   run: ReturnType<typeof useToast>["run"];
   onClose: () => void;
   onDecided: () => void;
+  /** Accounts' Edit order for this order (Option A) — given only where its lines can be edited. */
+  onEditOrder?: () => void;
 }) {
   const copy = QUEUE_COPY[kind];
   const [detail, setDetail] = React.useState<QueueDetail | null>(null);
@@ -335,6 +338,12 @@ export function ReviewDrawer({
                 onClick={() => openReason("hold")}
               >
                 Hold
+              </Button>
+            ) : null}
+
+            {kind === "orders" && onEditOrder ? (
+              <Button variant="secondary" disabled={busy} title="Change the products, cans, rates or discounts — it stays here to approve" onClick={onEditOrder}>
+                Edit order
               </Button>
             ) : null}
 

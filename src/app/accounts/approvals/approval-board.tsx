@@ -13,14 +13,16 @@ import { money, moneyShort } from "@/lib/format";
 import { ACCOUNTS_HOLD_REASONS, HOLD_CUSTOMER_TEXT } from "@/lib/erp/engines/order-hub";
 import type { ApprovalBoardRow } from "@/lib/services/order-approval-service";
 import { ReviewDrawer } from "../review-drawer";
+import { EditOrderDialog } from "./edit-order-dialog";
 import type { QueueRow } from "../queue-types";
 
 /* ---------------------------------------------------------------------------
  * ORDER APPROVALS, drawn as the mockup: figure cards, then each order with its
  * order number and TO, the party and its instructions, this order, what the
  * party owes, the credit limit this order would use, what is overdue, how long
- * it has waited — and Approve, Hold and ⋯ (Edit order, Decline…, Open order,
- * Customer account). Approve, Hold and Decline are the service's own actions.
+ * it has waited — and Approve, Edit order, Hold and ⋯ (Decline…, Open order,
+ * Customer account). Approve, Hold and Decline are the service's own actions;
+ * Edit order is Accounts' own, in place, and needs no ERP grant (Option A).
  * ------------------------------------------------------------------------- */
 
 function waitWords(h: number): string {
@@ -34,7 +36,6 @@ export function ApprovalBoard({
   queueRows,
   canDecide,
   staleHours,
-  erpOrdersHref,
   title = "Order approvals",
   subtitle = "Orders that reached Accounts without a TO",
 }: {
@@ -42,8 +43,6 @@ export function ApprovalBoard({
   queueRows: QueueRow[];
   canDecide: boolean;
   staleHours: number;
-  /** The ERP's Orders list, where a held order's dispatch details are edited — null where this person has no ERP. */
-  erpOrdersHref: string | null;
   title?: string;
   subtitle?: string;
 }) {
@@ -52,6 +51,7 @@ export function ApprovalBoard({
   const [openId, setOpenId] = React.useState<string | null>(null);
   const [holding, setHolding] = React.useState<ApprovalBoardRow | null>(null);
   const [declining, setDeclining] = React.useState<ApprovalBoardRow | null>(null);
+  const [editingId, setEditingId] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState<string | null>(null);
   const open = queueRows.find((q) => q.id === openId) ?? null;
 
@@ -104,7 +104,7 @@ export function ApprovalBoard({
               <col style={{ width: 170 }} />
               <col style={{ width: 150 }} />
               <col style={{ width: 80 }} />
-              <col style={{ width: 200 }} />
+              <col style={{ width: 280 }} />
             </colgroup>
             <thead>
               <tr className="border-b border-line bg-canvas text-left text-xs font-medium tracking-label text-muted uppercase">
@@ -126,7 +126,6 @@ export function ApprovalBoard({
                 const nearLimit = !overLimit && share >= 90;
                 const late = r.pastDeadline || r.waitingHours >= staleHours;
                 const items: MenuItem[] = [
-                  ...(erpOrdersHref && r.orderNo ? [{ label: "Edit order", onSelect: () => router.push(`${erpOrdersHref}${erpOrdersHref.includes("?") ? "&" : "?"}fl=${encodeURIComponent(`Order ${r.orderNo}`)}`) }] : []),
                   { label: "Decline…", destructive: true, disabled: !canDecide, onSelect: () => setDeclining(r) },
                   { label: r.orderNo ? `Open order ${r.orderNo}` : "Open order", onSelect: () => setOpenId(r.orderId) },
                   { label: "Customer account", onSelect: () => router.push(`/accounts/ledger?customer=${r.customerId}`) },
@@ -174,6 +173,9 @@ export function ApprovalBoard({
                         <Button size="sm" variant="success" disabled={!canDecide || busy === r.orderId} title={canDecide ? undefined : "Only the accounts team approves an order"} onClick={() => approve(r)}>
                           Approve
                         </Button>
+                        <Button size="sm" disabled={!canDecide || !r.orderNo} title={editWhy(canDecide, r)} onClick={() => setEditingId(r.orderId)}>
+                          Edit order
+                        </Button>
                         <Button size="sm" disabled={!canDecide || !r.holdable} title={!r.holdable ? "Only an order made through the Order Hub is held here" : undefined} onClick={() => setHolding(r)}>
                           Hold
                         </Button>
@@ -189,7 +191,7 @@ export function ApprovalBoard({
       ) : (
         <div className="rounded-card border border-line bg-surface px-5 py-10 text-center text-sm text-muted">Nothing waiting.</div>
       )}
-      <p className="mt-3 text-meta text-muted">Approve → MRP check, and the customer gets &ldquo;Order confirmed&rdquo;. Hold → To Hold. ⋯ has Edit order and Decline.</p>
+      <p className="mt-3 text-meta text-muted">Approve → MRP check, and the customer gets &ldquo;Order confirmed&rdquo;. Edit order changes the lines and keeps it here. Hold → To Hold. ⋯ has Decline.</p>
 
       {open ? (
         <ReviewDrawer
@@ -198,8 +200,24 @@ export function ApprovalBoard({
           row={open}
           canDecide={canDecide}
           run={run}
+          onEditOrder={(() => {
+            const b = rows.find((x) => x.orderId === open.id);
+            return b && canDecide && b.orderNo ? () => setEditingId(b.orderId) : undefined;
+          })()}
           onClose={() => setOpenId(null)}
           onDecided={() => {
+            setOpenId(null);
+            router.refresh();
+          }}
+        />
+      ) : null}
+      {editingId ? (
+        <EditOrderDialog
+          key={editingId}
+          orderId={editingId}
+          onClose={() => setEditingId(null)}
+          onSaved={() => {
+            setEditingId(null);
             setOpenId(null);
             router.refresh();
           }}
@@ -209,6 +227,13 @@ export function ApprovalBoard({
       {declining ? <DeclineDialog key={declining.orderId} row={declining} onClose={() => setDeclining(null)} /> : null}
     </div>
   );
+}
+
+/** Why Edit order is off on a row, or nothing when it is on. */
+function editWhy(canDecide: boolean, r: ApprovalBoardRow): string | undefined {
+  if (!canDecide) return "Only the accounts team edits an order while approving it";
+  if (!r.orderNo) return "This order has no order number, so it has no lines to edit here. Approve or decline it.";
+  return "Change the products, cans, rates or discounts — it stays here to approve";
 }
 
 function HoldDialog({ row, onClose }: { row: ApprovalBoardRow; onClose: () => void }) {

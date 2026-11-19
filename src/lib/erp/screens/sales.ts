@@ -88,7 +88,7 @@ import { bindInvoiceFile, closeHold, holdSentences, invoiceFileFor, invoiceFiles
 import { reasonByLabel } from "../engines/order-tracking";
 import { loadCustomers, partyStatus, type CustomerRow } from "./masters";
 import { gateRefusal, lineCleared } from "../engines/order-hub";
-import { createIntake, describeDuplicate, DuplicateFoundError, editIntake, type Intake, type IntakeLine } from "../order-hub";
+import { approvalLinesRefusal, createIntake, describeDuplicate, DuplicateFoundError, editIntake, type Intake, type IntakeLine } from "../order-hub";
 import { confirmImpact } from "@/lib/impact/registry";
 import { impactBatchKey } from "@/lib/impact/batch-key";
 import { readConfirmation } from "@/lib/impact/types";
@@ -2505,21 +2505,45 @@ async function saveEditOrder(ctx: ErpContext, h: Record<string, string>, ls: Rec
     }
     parsed.push({ i, was: same ? was : null, sku, qty, rate, discount, remark: text(v.remark), price });
   }
+  const shared = { billingCustomerId: billing.id, deliveryCustomerId: delivery.id, transporter: carrier.name ?? delivery.p?.transporter ?? null, dispatchOn: text(h.dispatchOn) };
+  const done = await writeOrderEdit(no, all, head, parsed, shared, ctx.user.id, " · Taken off by the Production Head");
+  await erpAudit(ctx, "erp.order.editWhole", "erp_order", String(no), { lines: all.length }, { lines: parsed.length, removed: done.removed, returnedBoxes: done.returned, backToUnderProcess: done.short });
+  await syncBookOrders([no]);
+  return okVoid(editSavedWords(no, done));
+}
+
+/** What an edit gave back, in the toast's words. */
+function editSavedWords(no: number, done: { returned: number; short: number }): string {
+  const { returned, short } = done;
+  return [`Order ${no} saved`, returned ? `${returned} scanned box${returned === 1 ? "" : "es"} back on the shelf` : "", short ? `${short} line${short === 1 ? "" : "s"} back to Under Process (not enough stock)` : ""].filter(Boolean).join(" · ");
+}
+
+type EditedLine = { was: OrderLine | null; sku: Sku; qty: number; rate: number | null; discount: number | null; remark: string | null; price: PriceDecision | null };
+type EditShared = { billingCustomerId: string; deliveryCustomerId: string; transporter: string | null; dispatchOn: string | null };
+
+/**
+ * THE WRITE HALF OF AN ORDER EDIT, whoever is editing: lines taken off are
+ * cancelled and give their lots and boxes back, kept lines are rewritten, new
+ * ones are added under the same order number, every line follows the shared
+ * header, and a Ready line the shelf can no longer cover goes back to Under
+ * Process. The caller has already decided what the lines may be, audits, and
+ * rewrites the book (`syncBookOrders`).
+ */
+async function writeOrderEdit(no: number, all: OrderLine[], head: OrderLine, parsed: EditedLine[], shared: EditShared, userId: string, takenOffNote: string): Promise<{ returned: number; removed: number; short: number }> {
   const keptIds = new Set(parsed.filter((p) => p.was).map((p) => p.was!.o.id));
   const removed = all.filter((l) => !keptIds.has(l.o.id));
-  const shared = { billingCustomerId: billing.id, deliveryCustomerId: delivery.id, transporter: carrier.name ?? delivery.p?.transporter ?? null, dispatchOn: text(h.dispatchOn) };
   let returned = 0;
   await db.transaction(async (tx) => {
     for (const l of removed) {
-      returned += await releaseLine(tx, l, ctx.user.id, "Line taken off");
+      returned += await releaseLine(tx, l, userId, "Line taken off");
       await tx
         .update(erpOrders)
-        .set({ status: "Cancel", remark: sql`trim(both ' ' from coalesce(${erpOrders.remark}, '') || ' · Taken off by the Production Head')`, updatedAt: new Date(), updatedById: ctx.user.id })
+        .set({ status: "Cancel", remark: sql`trim(both ' ' from coalesce(${erpOrders.remark}, '') || ${takenOffNote})`, updatedAt: new Date(), updatedById: userId })
         .where(eq(erpOrders.id, l.o.id));
     }
     for (const p of parsed) {
       if (p.was) {
-        if (p.qty < p.was.o.qtyCans && (p.was.allocations > 0 || p.was.allocated > 0)) returned += await releaseLine(tx, p.was, ctx.user.id, "Cans lowered");
+        if (p.qty < p.was.o.qtyCans && (p.was.allocations > 0 || p.was.allocated > 0)) returned += await releaseLine(tx, p.was, userId, "Cans lowered");
         await tx
           .update(erpOrders)
           .set({
@@ -2530,7 +2554,7 @@ async function saveEditOrder(ctx: ErpContext, h: Record<string, string>, ls: Rec
             ...(p.price ? { listRatePaise: p.price.listRatePaise, rateSetById: p.price.rateSetById, rateSetAt: p.price.rateSetAt, discountAuthorisedById: p.price.discountAuthorisedById } : {}),
             remark: p.remark,
             updatedAt: new Date(),
-            updatedById: ctx.user.id,
+            updatedById: userId,
           })
           .where(eq(erpOrders.id, p.was.o.id));
       } else {
@@ -2562,23 +2586,112 @@ async function saveEditOrder(ctx: ErpContext, h: Record<string, string>, ls: Rec
           productionCheck: head.o.productionCheck,
           productionCheckedById: head.o.productionCheckedById,
           productionCheckedAt: head.o.productionCheckedAt,
-          createdById: ctx.user.id,
-          updatedById: ctx.user.id,
+          createdById: userId,
+          updatedById: userId,
         });
       }
     }
     /* Every other line of the order follows the parties, transporter and dispatch day. */
-    await tx.update(erpOrders).set({ ...shared, updatedAt: new Date(), updatedById: ctx.user.id }).where(and(eq(erpOrders.orderNo, no), sql`${erpOrders.status} <> 'Cancel'`));
+    await tx.update(erpOrders).set({ ...shared, updatedAt: new Date(), updatedById: userId }).where(and(eq(erpOrders.orderNo, no), sql`${erpOrders.status} <> 'Cancel'`));
   });
   /* A Ready line the shelf can no longer cover goes back to Under Process. */
   const after = (await orderLines({ orderNos: [no] })).filter((l) => l.o.status === "Ready" && !l.dispatched);
   const short = await stockShortfalls(after.map((l) => ({ l, need: stillToAllocate(l) })));
-  if (short.size) await db.update(erpOrders).set({ status: "Under Process", updatedAt: new Date(), updatedById: ctx.user.id }).where(inArray(erpOrders.id, [...short.keys()]));
-  await erpAudit(ctx, "erp.order.editWhole", "erp_order", String(no), { lines: all.length }, { lines: parsed.length, removed: removed.length, returnedBoxes: returned, backToUnderProcess: short.size });
-  await syncBookOrders([no]);
-  return okVoid(
-    [`Order ${no} saved`, returned ? `${returned} scanned box${returned === 1 ? "" : "es"} back on the shelf` : "", short.size ? `${short.size} line${short.size === 1 ? "" : "s"} back to Under Process (not enough stock)` : ""].filter(Boolean).join(" · "),
-  );
+  if (short.size) await db.update(erpOrders).set({ status: "Under Process", updatedAt: new Date(), updatedById: userId }).where(inArray(erpOrders.id, [...short.keys()]));
+  return { returned, removed: removed.length, short: short.size };
+}
+
+/* ------------------------------------------- Accounts edit while approving */
+
+/** One line as Accounts may leave it, against the line it was (null for a line they added). */
+export type AccountsOrderLine = { lineId: string | null; skuId: string; qtyCans: number; ratePaise: number | null; discountBp: number | null };
+
+/** A numbered order's lines as Accounts see them to edit, with the parts they may not change. */
+export type AccountsOrderEdit = {
+  orderNo: number;
+  billing: string;
+  delivery: string;
+  godown: string;
+  lines: (AccountsOrderLine & { lineId: string; name: string })[];
+};
+
+async function openLinesOf(no: number): Promise<Result<OrderLine[]>> {
+  const all = (await orderLines({ orderNos: [no] })).filter((l) => l.o.status !== "Cancel");
+  if (!all.length) return err(`Order ${no} is cancelled.`, "rule_violation");
+  if (all.some((l) => l.inDetails || l.dispatched)) return err(`Order ${no} is billed, so it can no longer be changed.`, "rule_violation");
+  return { ok: true, data: all };
+}
+
+/** The lines of order `no` for Accounts' edit — refused once it is cancelled or billed. Callers check who is asking. */
+export async function orderForAccountsEdit(no: number): Promise<Result<AccountsOrderEdit>> {
+  const got = await openLinesOf(no);
+  if (!got.ok) return got;
+  const head = got.data[0];
+  return {
+    ok: true,
+    data: {
+      orderNo: no,
+      billing: head.billing.name,
+      delivery: head.delivery.name,
+      godown: head.godown,
+      lines: got.data.map((l) => ({ lineId: l.o.id, skuId: l.sku.id, name: l.sku.name, qtyCans: l.o.qtyCans, ratePaise: l.o.ratePaise ?? null, discountBp: l.o.discountBp ?? null })),
+    },
+  };
+}
+
+/**
+ * ACCOUNTS CHANGE A NUMBERED ORDER'S LINES while it waits for their approval
+ * (Option A): product, cans, rate, discount, a line added or taken off. The
+ * billing and delivery parties, the godown, the transporter and the dispatch
+ * day are NOT theirs and are carried over from the order as it stands, so no
+ * input can move them. The rate Accounts type is the decision — there is no
+ * ERP price authority to ask, exactly as approving a TO with changed lines.
+ * Writes through `writeOrderEdit`, the Production Head's own write. The caller
+ * checks the person, that the order is still waiting for Accounts, audits and
+ * syncs the book.
+ */
+export async function editOrderLinesByAccounts(userId: string, no: number, input: AccountsOrderLine[]): Promise<Result<{ message: string; before: AccountsOrderLine[]; after: AccountsOrderLine[] }>> {
+  const got = await openLinesOf(no);
+  if (!got.ok) return got;
+  const all = got.data;
+  const head = all[0];
+  const refusal = approvalLinesRefusal(input, { rateRequired: false });
+  if (refusal) return refusal.index < 0 ? err(refusal.message, "validation") : fieldErr(`l${refusal.index}.${refusal.field}`, refusal.message);
+  const [skus, prices] = await Promise.all([skuCatalogue(), priceBook([head.billing.id])]);
+  const byId = new Map(all.map((l) => [l.o.id, l]));
+  const parsed: EditedLine[] = [];
+  for (let i = 0; i < input.length; i++) {
+    const v = input[i];
+    const was = v.lineId ? (byId.get(v.lineId) ?? null) : null;
+    if (v.lineId && !was) return err("A line on this order changed while it was open. Close it and open the order again.", "conflict");
+    const sku = skus.get(v.skuId);
+    if (!sku) return fieldErr(`l${i}.skuId`, "Pick the product");
+    if (!boxQuantity(v.qtyCans, sku.cpb, !isBoxed(sku)).valid) return fieldErr(`l${i}.qtyCans`, `Cans must make whole boxes of ${sku.cpb}`);
+    const same = !!was && was.sku.id === sku.id;
+    const rateMoved = !same || v.ratePaise !== (was!.o.ratePaise ?? null);
+    const discMoved = !same || (v.discountBp ?? null) !== (was!.o.discountBp ?? null);
+    const price: PriceDecision | null =
+      rateMoved || discMoved
+        ? {
+            listRatePaise: prices.rateOf(head.billing.id, sku, head.o.orderDate, v.qtyCans),
+            rateSetById: rateMoved ? userId : (was!.o.rateSetById ?? null),
+            rateSetAt: rateMoved ? new Date() : (was!.o.rateSetAt ?? null),
+            discountAuthorisedById: discMoved && v.discountBp ? userId : same ? (was!.o.discountAuthorisedById ?? null) : null,
+          }
+        : null;
+    parsed.push({ was: same ? was : null, sku, qty: v.qtyCans, rate: v.ratePaise, discount: v.discountBp, remark: was?.o.remark ?? null, price });
+  }
+  /* The header as it stands: Accounts change the lines and nothing else. */
+  const shared: EditShared = { billingCustomerId: head.o.billingCustomerId, deliveryCustomerId: head.o.deliveryCustomerId, transporter: head.o.transporter ?? null, dispatchOn: head.o.dispatchOn ?? null };
+  const done = await writeOrderEdit(no, all, head, parsed, shared, userId, " · Taken off by Accounts");
+  return {
+    ok: true,
+    data: {
+      message: editSavedWords(no, done),
+      before: all.map((l) => ({ lineId: l.o.id, skuId: l.sku.id, qtyCans: l.o.qtyCans, ratePaise: l.o.ratePaise ?? null, discountBp: l.o.discountBp ?? null })),
+      after: input,
+    },
+  };
 }
 
 async function saveEdit(ctx: ErpContext, h: Record<string, string>, id?: string): Promise<Result<unknown>> {

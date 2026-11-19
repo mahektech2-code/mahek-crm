@@ -6,7 +6,8 @@ import { auditLog, products } from "@/db/schema";
 import { requireCapability } from "../access-control";
 import { err, type Result } from "../result";
 import { ACCOUNTS_HOLD_REASONS } from "../erp/engines/order-hub";
-import { approveIntake, declineIntake, holdIntake, releaseIntake, sendBackIntake, intakeById, type ApprovalLine } from "../erp/order-hub";
+import { approveIntake, declineIntake, holdIntake, releaseIntake, saveIntakeLinesByAccounts, sendBackIntake, intakeById, type ApprovalLine } from "../erp/order-hub";
+import { listUserApps } from "../access";
 
 /* ---------------------------------------------------------------------------
  * ACCOUNTS APPROVE TOs (Option A). Every order is a TO until Accounts approve
@@ -249,6 +250,27 @@ export async function approveTo(id: string, lines: ApprovalLine[] | null): Promi
   const ctx = await requireCapability("order.approve");
   const r = await approveIntake(ctx.user.id, id, lines);
   if (r.ok) await audit(id, "order.to.approve", { orderNo: r.data.orderNo, toNo: r.data.toNo, edited: !!lines });
+  return r;
+}
+
+/**
+ * Accounts save a TO's lines without deciding it — a rate filled in, cans put
+ * right — and it stays waiting for them. Lines only; the parties and godown
+ * cannot be sent. Asked as Accounts: the app and `order.approve`.
+ */
+export async function saveToLines(id: string, lines: ApprovalLine[]): Promise<Result<{ toNo: number }>> {
+  const ctx = await requireCapability("order.approve");
+  if (!(await listUserApps(ctx.user.id)).includes("accounts")) return err("Only the Accounts team edits an order while approving it.", "not_permitted");
+  const before = await intakeById(id);
+  const r = await saveIntakeLinesByAccounts(ctx.user.id, id, lines);
+  if (r.ok) {
+    await audit(id, "order.to.accountsEdit", {
+      toNo: r.data.toNo,
+      before: before?.lines.map((l) => ({ skuId: l.skuId, qtyCans: l.qtyCans, ratePaise: l.ratePaise == null ? null : Number(l.ratePaise), discountBp: l.discountBp })) ?? null,
+      lines,
+    });
+    return { ...r, message: `TO-${r.data.toNo} saved · still waiting for your approval` };
+  }
   return r;
 }
 

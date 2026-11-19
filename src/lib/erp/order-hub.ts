@@ -620,17 +620,60 @@ async function tellTaker(intake: Intake, byUserId: string, title: string, body: 
 export type ApprovalLine = { skuId: string; qtyCans: number; ratePaise: number | null; discountBp: number | null };
 
 /** Why a set of lines cannot be approved, or null. */
-export function approvalLinesRefusal(lines: ApprovalLine[]): { index: number; field: "skuId" | "qtyCans" | "ratePaise" | "discountBp"; message: string } | { index: -1; field: "lines"; message: string } | null {
+export function approvalLinesRefusal(lines: ApprovalLine[], opts: { rateRequired?: boolean } = {}): { index: number; field: "skuId" | "qtyCans" | "ratePaise" | "discountBp"; message: string } | { index: -1; field: "lines"; message: string } | null {
   if (!lines.length) return { index: -1, field: "lines", message: "An order needs at least one line." };
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i];
     if (!l.skuId) return { index: i, field: "skuId", message: "Pick the product" };
     if (!Number.isInteger(l.qtyCans) || l.qtyCans <= 0) return { index: i, field: "qtyCans", message: "Cans must be a whole number above 0" };
-    if (l.ratePaise == null) return { index: i, field: "ratePaise", message: "No rate - add it to approve" };
+    /* Saving an edit may leave a rate for later; approving may not. */
+    if (l.ratePaise == null) {
+      if (opts.rateRequired === false) continue;
+      return { index: i, field: "ratePaise", message: "No rate - add it to approve" };
+    }
     if (!Number.isFinite(l.ratePaise) || l.ratePaise < 0) return { index: i, field: "ratePaise", message: "The rate cannot be below 0" };
     if (l.discountBp != null && (l.discountBp < 0 || l.discountBp > 10000)) return { index: i, field: "discountBp", message: "Discount must be between 0 and 100" };
   }
   return null;
+}
+
+/**
+ * Accounts' lines as TO lines, keeping who set a rate or a discount that did
+ * not move and naming Accounts on the ones that did.
+ */
+function accountsIntakeLines(userId: string, was: IntakeLine[], edited: ApprovalLine[]): IntakeLineInput[] {
+  return edited.map((l, i) => {
+    /* The line it was, to keep who set a rate that did not move. */
+    const before = (was[i]?.skuId === l.skuId ? was[i] : was.find((x) => x.skuId === l.skuId)) ?? null;
+    const rateMoved = !before || before.ratePaise !== l.ratePaise;
+    const discMoved = !before || (before.discountBp ?? null) !== (l.discountBp ?? null);
+    return {
+      skuId: l.skuId,
+      qtyCans: l.qtyCans,
+      ratePaise: l.ratePaise,
+      discountBp: l.discountBp,
+      listRatePaise: before?.listRatePaise ?? null,
+      rateSetById: rateMoved ? userId : (before?.rateSetById ?? null),
+      rateSetAt: rateMoved ? new Date() : (before?.rateSetAt ?? null),
+      discountAuthorisedById: discMoved && l.discountBp ? userId : (before?.discountAuthorisedById ?? null),
+      remark: before?.remark ?? null,
+    };
+  });
+}
+
+/**
+ * ACCOUNTS SAVE A TO'S LINES WITHOUT DECIDING IT — a rate filled in, cans
+ * corrected — while it waits for them. Lines only: the parties and the godown
+ * are the taker's, so a wrong one is sent back. A line may still lack a rate;
+ * approving is what insists on one.
+ */
+export async function saveIntakeLinesByAccounts(userId: string, id: string, edited: ApprovalLine[]): Promise<Result<{ toNo: number }>> {
+  const got = await intakeById(id);
+  if (!got) return err("That TO no longer exists.", "not_found");
+  if (got.intake.status !== "open") return err(got.intake.status === "verified" ? `TO-${got.intake.toNo} is already approved as order ${got.intake.orderNo}.` : `TO-${got.intake.toNo} is not waiting for Accounts.`, "conflict");
+  const refusal = approvalLinesRefusal(edited, { rateRequired: false });
+  if (refusal) return refusal.index < 0 ? err(refusal.message, "validation") : fieldErr(`l${refusal.index}.${refusal.field}`, refusal.message);
+  return editIntake(userId, id, {}, accountsIntakeLines(userId, got.lines, edited));
 }
 
 /**
@@ -647,26 +690,17 @@ export async function approveIntake(userId: string, id: string, edited: Approval
   if (intake.status !== "open") return err(intake.status === "verified" ? `TO-${intake.toNo} is already approved as order ${intake.orderNo}.` : `TO-${intake.toNo} is not waiting for Accounts.`, "conflict");
   if (!intake.godownId) return err(`TO-${intake.toNo} has no godown. Send it back so the godown is picked.`, "rule_violation");
   const lines: IntakeLine[] = edited
-    ? edited.map((l, i) => {
-        /* The line it was, to keep who set a rate that did not move. */
-        const before = (got.lines[i]?.skuId === l.skuId ? got.lines[i] : got.lines.find((x) => x.skuId === l.skuId)) ?? null;
-        const rateMoved = !before || before.ratePaise !== l.ratePaise;
-        const discMoved = !before || (before.discountBp ?? null) !== (l.discountBp ?? null);
-        return {
-          id: erpId("toln"),
-          intakeId: id,
-          position: i,
-          skuId: l.skuId,
-          qtyCans: l.qtyCans,
-          ratePaise: l.ratePaise,
-          discountBp: l.discountBp,
-          listRatePaise: before?.listRatePaise ?? null,
-          rateSetById: rateMoved ? userId : (before?.rateSetById ?? null),
-          rateSetAt: rateMoved ? new Date() : (before?.rateSetAt ?? null),
-          discountAuthorisedById: discMoved && l.discountBp ? userId : (before?.discountAuthorisedById ?? null),
-          remark: before?.remark ?? null,
-        };
-      })
+    ? accountsIntakeLines(userId, got.lines, edited).map((l, i) => ({
+        id: erpId("toln"),
+        intakeId: id,
+        position: i,
+        ...l,
+        listRatePaise: l.listRatePaise ?? null,
+        rateSetById: l.rateSetById ?? null,
+        rateSetAt: l.rateSetAt ?? null,
+        discountAuthorisedById: l.discountAuthorisedById ?? null,
+        remark: l.remark ?? null,
+      }))
     : got.lines;
   const refusal = approvalLinesRefusal(lines.map((l) => ({ skuId: l.skuId, qtyCans: l.qtyCans, ratePaise: l.ratePaise == null ? null : Number(l.ratePaise), discountBp: l.discountBp })));
   if (refusal) return refusal.index < 0 ? err(refusal.message, "validation") : fieldErr(`l${refusal.index}.${refusal.field}`, refusal.message);

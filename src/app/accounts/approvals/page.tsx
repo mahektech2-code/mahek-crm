@@ -5,9 +5,6 @@ import { approvalBoard, pendingOrders } from "@/lib/services/order-approval-serv
 import { ApprovalBoard } from "./approval-board";
 import { accountsTos } from "@/lib/services/to-approval-service";
 import { ToApprovals } from "./to-approvals";
-import { erpLink } from "@/lib/erp/registry";
-import { requireUser } from "@/lib/auth";
-import { listUserApps } from "@/lib/access";
 import type { QueueRow } from "../queue-types";
 
 export const metadata = { title: "Order approvals — Accounts — MahekOne" };
@@ -15,13 +12,11 @@ export const metadata = { title: "Order approvals — Accounts — MahekOne" };
 export default async function Page() {
   // App access is gated by the layout. This decides only whether the buttons
   // are live: seeing the queue and deciding on it are different things.
-  const user = await requireUser();
-  const [{ allowed }, orders, config, board, apps, tos] = await Promise.all([
+  const [{ allowed }, orders, config, board, tos] = await Promise.all([
     checkCapability("order.approve"),
     pendingOrders(),
     getConfig(),
     approvalBoard(),
-    listUserApps(user.id),
     accountsTos(),
   ]);
 
@@ -75,7 +70,6 @@ export default async function Page() {
           queueRows={rows}
           canDecide={allowed}
           staleHours={config["payments.confirmationAgeWarningHours"]}
-          erpOrdersHref={apps.includes("erp") ? erpLink("orders") : null}
         />
       ) : null}
     </>
