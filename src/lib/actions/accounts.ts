@@ -3,11 +3,14 @@
 import { revalidatePath } from "next/cache";
 import { requireCapability } from "@/lib/access-control";
 import {
+  cancelCreditNote,
   issueCreditNote,
   refuseCreditNote,
 } from "@/lib/services/credit-note-service";
 import { applyOnAccount } from "@/lib/services/on-account-service";
-import { fromThrown, type Result } from "@/lib/result";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
+import { err, fromThrown, type Result } from "@/lib/result";
 
 /* ---------------------------------------------------------------------------
  * Writes for the Accounts app's own screens.
@@ -47,6 +50,33 @@ export async function refuseCreditNoteAction(
 ): Promise<Result> {
   try {
     const result = await refuseCreditNote(complaintId, reason);
+    if (result.ok) refreshAccounts();
+    return result;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * Take an issued credit note back. The capability first, then the reason —
+ * asked before the impact modal, as every reasoned cancel is — then the
+ * confirmation against what the person was shown, then the write.
+ */
+export async function cancelCreditNoteAction(
+  complaintId: string,
+  reason: string,
+  confirmation?: ImpactConfirmation,
+): Promise<Result> {
+  try {
+    await requireCapability("creditnote.issue");
+    if (!reason.trim()) {
+      return err("Say why the credit note is being cancelled.", "validation", [
+        { field: "reason", message: "A reason is required." },
+      ]);
+    }
+    const refused = await confirmImpact("accounts-creditnote-cancel", complaintId, confirmation);
+    if (refused) return refused;
+    const result = await cancelCreditNote(complaintId, reason);
     if (result.ok) refreshAccounts();
     return result;
   } catch (e) {

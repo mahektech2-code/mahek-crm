@@ -4,6 +4,7 @@ import { useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Card, Textarea } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
+import { ConfirmDialog } from "@/components/ui/overlays";
 import { recordShare, removePoster } from "@/lib/actions/studio";
 
 /* ---------------------------------------------------------------------------
@@ -32,6 +33,7 @@ export function PosterActions(props: {
   const toast = useToast();
   const [caption, setCaption] = useState(props.caption ?? "");
   const [busy, setBusy] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
   /* Whether the phone has a share sheet is a fact about the browser, not the
      server: read it after hydration so the two first renders agree. */
   const canShareFiles = useSyncExternalStore(
@@ -112,13 +114,23 @@ export function PosterActions(props: {
           <Button
             size="sm"
             variant="ghost"
-            onClick={async () => {
-              const res = await toast.run(removePoster(props.posterId));
-              if (res.ok) router.push("/studio/posters");
-            }}
+            onClick={() => setConfirmRemove(true)}
           >
             Remove from my posters
           </Button>
+          <ConfirmDialog
+            open={confirmRemove}
+            title="Remove this poster?"
+            body="It leaves your posters list. Copies already downloaded or sent on WhatsApp are not affected."
+            confirmLabel="Remove"
+            cancelLabel="Keep it"
+            destructive
+            onConfirm={async () => {
+              const res = await toast.run(removePoster(props.posterId));
+              if (res.ok) router.push("/studio/posters");
+            }}
+            onClose={() => setConfirmRemove(false)}
+          />
         </div>
       ) : null}
     </Card>

@@ -42,6 +42,8 @@ export const CRM_ACCOUNTS_SOURCES: Record<string, () => Promise<ImpactSource>> =
 
   /** `reverseReceiptAction` — a confirmed payment taken back. */
   "accounts-receipt-reverse": () => import("./accounts").then((m) => m.receiptReverseImpact),
+  /** `cancelCreditNoteAction` — an issued credit note taken back, by the complaint's id. */
+  "accounts-creditnote-cancel": () => import("./accounts").then((m) => m.creditNoteCancelImpact),
   /** `bankReverseForReturn` — the id is `impactPair(lineId, receiptId)`. */
   "accounts-bank-return": () => import("./accounts").then((m) => m.bankReturnImpact),
   /** `bankUndo` — a bank line's match undone. */

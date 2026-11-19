@@ -183,3 +183,13 @@ ways, so it stays one entry in the Command Centre's sidebar; filters narrow the
 LINES before anything is added up. Columns, saved views, the focus list and the
 Overview panels are remembered per browser and move no figure. A period of more
 than `MARGIN_LINE_CAP` lines is refused in words.
+
+**An HQ note is an audit row, so editing or deleting one APPENDS.** "Add a note"
+writes `founder.note` into `audit_log`, and the log is append-only. The author —
+and only the author — may correct a note (`founder.note_edit`, naming it by
+`noteId`) or delete it (`founder.note_delete`); `notesFor` folds them, showing
+the newest text with "edited" and dropping deleted ones, while the original row
+and every change stay in the log. `lib/command-centre/notes.ts` holds the guard
+(own note, and `requireNoteIn` for where it sits); the record drawer offers Edit
+and Delete only on notes `notesFor` marks `mine`. `auditFor` leaves all three
+codes out of "Who changed what" — notes are the timeline, not the history.

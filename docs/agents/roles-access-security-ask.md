@@ -404,3 +404,36 @@ are the `salesAsk.*` ones. The ERP keeps its own engine — tools that call each
 screen's loader, `lib/erp/ai-ask.ts` — behind `/api/erp/ask`, which speaks the
 same stream and adds the records it read as links. The next app is an
 endpoint that streams those events and an `AskSetup` in `ask-setups.ts`.
+
+**AN ACCESS SAVE IS ONE TRANSACTION, AND ITS AUDIT ROW IS A PICTURE.**
+`setAccess` (new person and edit alike) writes the apps, levels, screens, ERP /
+HRMS / Tasks powers, ERP designation, Hire role and factory place inside ONE
+transaction — the powers and the rest used to be written one by one after it,
+so a refusal half way left the new apps beside the old powers. Its
+`set-app-access` / `create-user` audit row carries `accessSnapshot()`
+(`lib/services/access-snapshot.ts`) as `beforeState.access` and
+`afterState.access` beside the old `detail` sentence: what the person held
+either side, sorted so two equal pictures compare equal. That is what answers
+"what did she hold on the 1st" and what a future restore reads.
+
+**A LEAVER IS OFFBOARDED, NOT ONLY DISABLED.** Disabling stays the sign-in
+alone (leave comes back to what it left). `offboardPerson` (lib/actions/people.ts)
+is for somebody who has LEFT: one transaction turns the sign-in off, ends the
+sessions and removes every grant — apps and screens, ERP / HRMS / Tasks powers,
+ERP designation, Hire role, factory place and crew seats, godown staff,
+territories and regions — and revokes website assignments (kept on the record).
+It goes through the `admin-offboard` impact modal, which also names the
+customers still in their book, and its `offboard-user` audit row carries the
+access picture they held. People & access has a **Left, still enabled** tab and
+tile: HRMS says they left (`employeeStatus` inactive) and the account still
+signs in. Never yourself; never the last platform administrator.
+
+**THE PERSON PAGE NAMES EVERY SCOPE SET ELSEWHERE.** Its "Set elsewhere" card
+(`person-access-extras-service.ts`) now also reads the Sales Dashboard's
+oversight regions and working places, and live website assignments. A person
+whose manager-level grant in the CRM, the Sales Dashboard or Founder makes
+regions decide what they see (`managerScope`), and who has none, gets a warning
+line: no region means the WHOLE COUNTRY, and that used to be invisible. ERP
+godown staff are offered and saved under a label that names one person (the
+name, or name with email where two share it) and mapped to the id — matching on
+names gave a godown to every namesake.

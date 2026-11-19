@@ -114,3 +114,14 @@ one file under attachment parent `vendor_payout_invoice`, uploaded through
 past the 1 MB action body) and readable by whoever holds the screen. Planning,
 holding and adding are `payment.record`; marking paid, undoing it and cancelling
 are `payment.confirm`, the Accounts manager's, as confirming a receipt is.
+
+**A MANUAL PAYABLE IS CORRECTED, A PURCHASE PAYABLE IS NOT.** Edit in the
+payout drawer (`editManualPayout`, `payment.record`, audited `payout.edit` with
+both pictures) changes the vendor, description, reference and amount of a
+manual payout while it is open or on hold. `payoutEditRefusal`
+(`engines/vendor-payouts.ts`) is the one sentence the drawer's disabled button
+and the service both use: a purchase payout's vendor and amount are the
+register's and the sync writes them back, so it is corrected in the ERP; a paid
+one is a record (Undo paid first); a cancelled one is a record. A payee changed
+away from the PO's supplier takes the PO off. Dates are not in the edit — the
+payment day moves on the calendar.

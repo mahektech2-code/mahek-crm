@@ -467,6 +467,8 @@ export const creditNoteStatusEnum = pgEnum("credit_note_status", [
   "approved",
   "rejected",
   "issued",
+  /* Issued, then taken back: its receipt is reversed, never deleted (0360). */
+  "cancelled",
 ]);
 
 export const messageStatusEnum = pgEnum("message_status", [

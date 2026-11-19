@@ -376,3 +376,150 @@ async function applyToLedger(customerId: string): Promise<void> {
   await recomputeOutstanding(customerId);
   await recomputeFollowUpState(customerId);
 }
+
+/* ---------------------------------------------------------------------------
+ * TAKING AN ISSUED CREDIT NOTE BACK.
+ *
+ * An issued credit note IS a confirmed Adjustment receipt, so the honest way
+ * back is the one every confirmed receipt has: the receipt is marked
+ * `reversed` with the reason (never deleted — it stays on the statement,
+ * struck through), and the bills are rebuilt from the confirmed money left.
+ * The complaint says `cancelled`, its own status: "requested" would put an
+ * answered request back on the queue, and "rejected" would tell the telecaller
+ * it was never granted. A cancelled request is finished — the receipt's
+ * idempotency key is the complaint's, so a new credit note is a new request.
+ * ------------------------------------------------------------------------- */
+
+/** The receipt an issued credit note wrote — keyed by the complaint, as `issueCreditNote` keys it. */
+export const creditNoteReceiptKey = (complaintId: string) => `creditnote:${complaintId}`;
+
+export type IssuedCreditNote = {
+  complaintId: string;
+  customerId: string;
+  customerName: string;
+  amount: number;
+  reference: string | null;
+  billNo: string | null;
+  categoryLabel: string;
+  description: string;
+  issuedAt: Date | null;
+  issuedByName: string | null;
+};
+
+/**
+ * Credit notes issued and still standing, newest first. Bounded by `limit`:
+ * the screen pages what it is given, and a cancel is done to a recent note far
+ * more often than to one from two years ago.
+ */
+export async function issuedCreditNotes(limit = 200): Promise<IssuedCreditNote[]> {
+  await requireCapability("payment.record");
+  const rows = await db.execute<{
+    complaintId: string;
+    customerId: string;
+    customerName: string;
+    amount: string;
+    reference: string | null;
+    billNo: string | null;
+    category: string;
+    description: string;
+    issuedAt: string | null;
+    issuedByName: string | null;
+  }>(sql`
+    select c.id as "complaintId", c.customer_id as "customerId", cu.name as "customerName",
+           coalesce(c.cn_amount, r.amount, 0) as amount, c.cn_reference as reference,
+           b.bill_no as "billNo", c.category::text as category, c.description,
+           r.confirmed_at as "issuedAt", u.name as "issuedByName"
+      from complaints c
+      join customers cu on cu.id = c.customer_id
+      left join bills b on b.id = c.bill_id
+      left join payment_receipts r on r.idempotency_key = 'creditnote:' || c.id
+      left join users u on u.id = r.confirmed_by_id
+     where c.cn_status = 'issued'
+     order by r.confirmed_at desc nulls last, c.updated_at desc
+     limit ${limit}`);
+  return rows.map((r) => ({
+    complaintId: r.complaintId,
+    customerId: r.customerId,
+    customerName: r.customerName,
+    amount: Number(r.amount),
+    reference: r.reference,
+    billNo: r.billNo,
+    categoryLabel: categoryLabel(r.category),
+    description: r.description,
+    issuedAt: r.issuedAt ? new Date(r.issuedAt) : null,
+    issuedByName: r.issuedByName,
+  }));
+}
+
+/** Why an issued credit note cannot be cancelled as it stands — the impact modal and the act say one thing. */
+export function creditNoteCancelBlockers(cnStatus: string | null, receiptStatus: string | null): string[] {
+  const status = cnStatus ?? "requested";
+  if (status === "cancelled") return ["That credit note has already been cancelled."];
+  if (status !== "issued")
+    return ["Only an issued credit note can be cancelled. Refuse the request instead — nothing has come off the bill yet."];
+  if (receiptStatus === null) return ["The receipt this credit note wrote cannot be found, so there is nothing to take back."];
+  if (receiptStatus !== "confirmed") return ["Its receipt no longer counts — it has already been taken back on the statement."];
+  return [];
+}
+
+/** Cancel one. The caller confirms the impact first; this checks the capability and the state again. */
+export async function cancelCreditNote(complaintId: string, reason: string): Promise<Result> {
+  const ctx = await requireCapability("creditnote.issue");
+
+  if (!reason.trim()) {
+    return err("Say why the credit note is being cancelled.", "validation", [
+      { field: "reason", message: "A reason is required." },
+    ]);
+  }
+
+  const [row] = await db.select().from(complaints).where(eq(complaints.id, complaintId));
+  if (!row) return err("That credit note no longer exists.", "not_found");
+  if (row.cnStatus === "cancelled") return okVoid("Already cancelled");
+  const [receipt] = await db
+    .select()
+    .from(paymentReceipts)
+    .where(eq(paymentReceipts.idempotencyKey, creditNoteReceiptKey(complaintId)));
+  const blocked = creditNoteCancelBlockers(row.cnStatus, receipt?.status ?? null);
+  if (blocked.length || !receipt) return err(blocked[0] ?? "Nothing to cancel.", "rule_violation");
+
+  const now = new Date();
+  const why = reason.trim();
+  await db.transaction(async (tx) => {
+    await tx
+      .update(paymentReceipts)
+      .set({ status: "reversed", rejectReason: `Credit note cancelled: ${why}`, updatedById: ctx.user.id, updatedAt: now })
+      .where(eq(paymentReceipts.id, receipt.id));
+
+    await tx
+      .update(complaints)
+      .set({
+        cnStatus: "cancelled",
+        // The telecaller reads the complaint, so the reason goes where they look.
+        resolutionNotes: [row.resolutionNotes, `Credit note cancelled: ${why}`].filter(Boolean).join("\n"),
+        updatedById: ctx.user.id,
+        updatedAt: now,
+      })
+      .where(eq(complaints.id, complaintId));
+
+    await tx.insert(auditLog).values({
+      id: id("aud"),
+      actorId: ctx.user.id,
+      actorRole: ctx.authorisedBy,
+      actorApp: ctx.authorisedIn,
+      action: "creditnote.cancel",
+      entityType: "complaint",
+      entityId: complaintId,
+      beforeState: { cnStatus: "issued", receiptStatus: "confirmed" } as never,
+      afterState: {
+        cnStatus: "cancelled",
+        receiptStatus: "reversed",
+        receiptId: receipt.id,
+        amount: Number(receipt.amount),
+        reason: why,
+      } as never,
+    });
+  });
+
+  await applyToLedger(row.customerId);
+  return okVoid(`${rupees(Number(receipt.amount))} credit note cancelled — the bill is owed again`);
+}

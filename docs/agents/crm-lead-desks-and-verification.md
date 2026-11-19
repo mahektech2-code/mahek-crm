@@ -422,3 +422,15 @@ of `lead.verify` (candidates are filtered to it — `users.role = 'manager'` alo
 includes an Accounts-only manager), and never falls back to the Telecaller being
 verified; with no manager available the conversion is refused and the lead stays a
 Suspect.
+
+**ONE LEAD EDIT, A MODAL, WHEREVER THE LEAD IS OPEN.** `components/leads/record/lead-edit-dialog.tsx`
+is mounted on the unified record (CRM and Sales Dashboard, under More actions),
+the pipeline record and the Sales Manager desk. Anybody holding `lead.work` with
+the lead in scope may correct its name, city, contact, phone and product; the
+owner and sales-manager boxes appear, and are accepted by `editLeadBasics`, only
+inside the CRM Sales Manager workspace with its module (`maySetSeats`) —
+everywhere else moving a lead stays Reassign's. `loadLeadEditForm` reads the
+form under the same rule the save asks. The old `/crm/leads/sales-manager/[id]/edit`
+page is only a redirect back to the record. Before this the edit was that page
+alone, so a lead's own salesman or telecaller could not fix a misspelt shop
+name, and the pipeline's Edit button linked back to the record it was on.
