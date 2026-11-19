@@ -181,7 +181,7 @@ test("a cancelled promise drops out of the end-of-day promises taken, count and 
   const after = await eodMetricsForRange(caller.id, day);
   assert.equal(after.promisesCount, before.promisesCount - 1);
   assert.equal(Number(after.promisesValue), Number(before.promisesValue) - 7_000_00);
-  assert.equal(after.followUps, before.followUps, "the call itself still counts");
+  assert.equal(after.followUpsMade, before.followUpsMade, "the call itself still counts");
 });
 
 test("the worklist never offers a cancelled promise as the live one", async () => {
