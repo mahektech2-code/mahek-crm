@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireCapability } from "@/lib/access-control";
+import { getConfig } from "@/lib/config/store";
+import { today } from "@/lib/recompute";
 import { orderLines, pendingOrders } from "@/lib/services/order-approval-service";
 import { openBillsFor, pendingReceipts } from "@/lib/services/receipt-service";
 import { pendingCreditNotes } from "@/lib/services/credit-note-service";
@@ -90,6 +92,12 @@ export async function GET(request: Request) {
       holdReason: receipt.holdReason,
       heldDays: receipt.heldDays,
       holdStale: receipt.holdStale,
+      /* What the Correct dialog offers — the same lists the record form reads. */
+      correct: await getConfig().then(async (c) => ({
+        modes: c["payments.modes"],
+        datedModes: c["payments.datedModes"],
+        today: await today(),
+      })),
       openBills: open.map((b) => ({
         id: b.id,
         billNo: b.billNo,

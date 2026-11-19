@@ -251,6 +251,99 @@ export const userDisableImpact: ImpactSource = {
   },
 };
 
+/* --------------------------------------------------- somebody who has left */
+
+/**
+ * `admin-offboard` — `offboardPerson`. Everything disabling does, and then
+ * the access itself: every app, screen, power and seat goes, because the
+ * person has LEFT rather than gone on leave. What they did stays — calls,
+ * orders, audit — and so does their book, which is the part somebody has to
+ * act on next, so it is named.
+ */
+export const offboardImpact: ImpactSource = {
+  async authorize() {
+    await requirePlatformAdminUser();
+  },
+  async report(id) {
+    const [person] = await db.select({ name: users.name, active: users.active }).from(users).where(eq(users.id, id));
+    if (!person) return null;
+    const me = await requireUser();
+    const [[c], grants, book, admins] = await Promise.all([
+      db.execute<{ sessions: number; devices: number; powers: number; seats: number; godowns: number; places: number; website: number }>(sql`
+        select (select count(*)::int from sessions where user_id = ${id}) as sessions,
+               (select count(*)::int from mbos_devices where user_id = ${id} and active) as devices,
+               (select count(*)::int from erp_user_powers where user_id = ${id})
+             + (select count(*)::int from hrms_user_powers where user_id = ${id})
+             + (select count(*)::int from task_user_powers where user_id = ${id}) as powers,
+               (select count(*)::int from hire_user_roles where user_id = ${id})
+             + (select count(*)::int from erp_user_designations where user_id = ${id})
+             + (select count(*)::int from factory_staff where user_id = ${id}) as seats,
+               (select count(*)::int from erp_godown_staff where user_id = ${id}) as godowns,
+               (select count(*)::int from mbos_user_territories where user_id = ${id}) as places,
+               (select count(*)::int from website_assignment where employee_id = ${id} and revoked_at is null) as website`),
+      db.select({ app: appAccess.app }).from(appAccess).where(eq(appAccess.userId, id)),
+      db.execute<{ name: string; n: number }>(sql`
+        select customers.name, count(*) over ()::int as n
+          from customers
+         where (${ASSIGNED_TO_SQL}) = ${id} and customers.status <> 'deactivated'
+         order by customers.name
+         limit 5`),
+      db
+        .select({ id: users.id })
+        .from(appAccess)
+        .innerJoin(users, eq(users.id, appAccess.userId))
+        .where(and(eq(appAccess.app, "admin"), eq(appAccess.role, "admin"), eq(users.active, true))),
+    ]);
+    const blockers: string[] = [];
+    if (id === me.id) blockers.push("You cannot offboard yourself.");
+    else if (grants.some((g) => g.app === "admin") && !admins.some((a) => a.id !== id)) {
+      blockers.push(`${person.name} is the only platform administrator, so they cannot be offboarded.`);
+    }
+    const n = (v: unknown) => Number(v ?? 0);
+    const bookCount = n(book[0]?.n);
+    const items: ImpactItem[] = [
+      { app: "Admin Console", label: "sign-in", effect: "changed", count: person.active ? 1 : 0, note: "Turned off." },
+      { app: "Admin Console", label: n(c?.sessions) === 1 ? "open sign-in" : "open sign-ins", effect: "deleted", count: n(c?.sessions), note: "Ended at once." },
+      {
+        app: "MahekOne",
+        label: grants.length === 1 ? "app they hold" : "apps they hold",
+        effect: "deleted",
+        count: grants.length,
+        examples: grants.slice(0, 5).map((g) => getApp(g.app)?.name ?? g.app),
+        note: "With every screen narrowing on them. Enabling the account again later opens nothing until access is given afresh.",
+      },
+      { app: "ERP · HRMS · Tasks", label: "powers held by name", effect: "deleted", count: n(c?.powers) },
+      { app: "ERP · Hire · Factory", label: "designation, Hire role or factory seat", effect: "deleted", count: n(c?.seats) },
+      { app: "ERP", label: n(c?.godowns) === 1 ? "godown they were staff at" : "godowns they were staff at", effect: "unlinked", count: n(c?.godowns) },
+      { app: "Sales Dashboard", label: n(c?.places) === 1 ? "territory or region named on them" : "territories and regions named on them", effect: "deleted", count: n(c?.places) },
+      { app: "Website", label: n(c?.website) === 1 ? "website assignment" : "website assignments", effect: "deleted", count: n(c?.website), note: "Revoked, and kept on the record." },
+      {
+        app: "MBOS handsets",
+        label: n(c?.devices) === 1 ? "phone bound to them" : "phones bound to them",
+        effect: "phones",
+        count: n(c?.devices),
+        note: "Its next sync is refused because the account is closed.",
+      },
+      {
+        app: "CRM",
+        label: bookCount === 1 ? "customer still in their book" : "customers still in their book",
+        effect: "kept",
+        count: bookCount,
+        examples: book.map((b) => b.name),
+        note: "Move them to somebody else — until then nobody is chased to call them.",
+      },
+      { app: "MahekOne", label: "record of their work — calls, orders, audit trail", effect: "kept", count: 1, note: "What they did stays, under their name." },
+    ];
+    return {
+      title: person.name,
+      verb: "Offboard",
+      confirmWord: typeable(person.name, "OFFBOARD"),
+      items: items.filter((i) => i.count > 0 || i.effect === "kept"),
+      blockers,
+    };
+  },
+};
+
 /* --------------------------------------------------------- a key cleared */
 
 type Felt = { app: string; label: string; note: string };

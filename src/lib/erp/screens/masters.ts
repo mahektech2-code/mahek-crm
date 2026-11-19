@@ -1319,7 +1319,9 @@ const godowns: ScreenModule = {
                 },
               },
               { id: "edit", l: "Edit", why, loadsForm: true },
-              { id: "toggle", l: g.status === "active" ? "Retire" : "Restore", why },
+              g.status === "active"
+                ? { id: "toggle", l: "Retire", why, impact: { kind: "erp-godown-retire", id: g.id } }
+                : { id: "toggle", l: "Restore", why },
             ];
         return {
           id: g.id,
@@ -1368,11 +1370,16 @@ const godowns: ScreenModule = {
     },
   },
   actions: {
-    async toggle(ctx, id) {
+    async toggle(ctx, id, v) {
       if (!ctx.powers.has("employeeAdmin")) return err("Only an ERP administrator changes a godown's status.", "not_permitted");
       const [g] = await db.select().from(erpGodowns).where(eq(erpGodowns.id, id));
       if (!g || g.reserved) return err("That godown cannot be changed.", "rule_violation");
       const status = g.status === "active" ? "inactive" : "active";
+      /* Retiring shows who works there and what still leaves from it first; restoring is harmless. */
+      if (status === "inactive") {
+        const refusal = await confirmImpact("erp-godown-retire", id, readConfirmation(v));
+        if (refusal) return refusal;
+      }
       await db.update(erpGodowns).set({ status, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpGodowns.id, id));
       await erpAudit(ctx, "erp.godown.status", "erp_godown", id, { status: g.status }, { status });
       return okVoid(status === "active" ? `${g.name} restored` : `${g.name} retired`);
