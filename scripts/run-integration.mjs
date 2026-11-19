@@ -184,6 +184,8 @@ const files = [
   "src/lib/performance.test.ts",
   "src/lib/owner-dashboard.test.ts",
   "src/lib/founder-dashboard.test.ts",
+  // HQ notes: edited and deleted by their author only, the audit log never rewritten.
+  "src/lib/founder-notes.test.ts",
   "src/lib/expense-policy.test.ts",
   "src/lib/travel-on-visit.test.ts",
   // An expense and every file behind it: several per claim, one that uploaded
