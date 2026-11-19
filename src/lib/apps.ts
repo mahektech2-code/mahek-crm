@@ -363,3 +363,12 @@ export function webApps(ids: readonly AppId[]): AppDefinition[] {
 export function wordmark(app: AppDefinition): string {
   return `MAHEK ${app.id === "crm" ? "CRM" : app.initials}`;
 }
+
+/**
+ * Apps a hire is NEVER given by Hire's provisioning, whatever a blueprint
+ * says: the platform's own console, the owner's desk and Hire itself. They
+ * are a platform administrator's to grant, on the Admin Console. The
+ * blueprint editor hides them and `provision` refuses them on the server —
+ * a blueprint is data, and a hidden checkbox is not a rule.
+ */
+export const NEVER_PROVISIONED: readonly AppId[] = ["admin", "founder", "hire"];

@@ -352,8 +352,14 @@ describe("dispatch opens the transport record (§18)", () => {
     const reopening = await confirmed("erp-delivery-reopen", t.id);
     assert.equal(reopening.report.confirmWord, String(t.orderNo));
     assert.ok(reopening.report.items.some((i) => i.label === "delivery record cleared" && /received by Ramesh/.test(i.note ?? "")), JSON.stringify(reopening.report.items));
-    assert.ok(reopening.report.items.some((i) => i.effect === "kept" && /still waiting to be sent/.test(i.label)), "the delivered message nobody sent still says delivered");
+    assert.ok(reopening.report.items.some((i) => i.effect === "changed" && /still waiting to be sent/.test(i.label)), "the delivered message nobody sent is withdrawn with the delivery");
+    const waitingBefore = (await roadMessages()).filter((m) => m.kind === "delivered" && m.status === "to_send");
+    assert.ok(waitingBefore.length, "the delivered message is waiting to be sent");
     assert.ok((await L.reopen(ctx, t.id, "party says short", reopening.confirmation)).ok);
+    for (const m of (await roadMessages()).filter((x) => waitingBefore.some((w) => w.id === x.id))) {
+      assert.equal(m.status, "skipped", "a reopened delivery does not leave a queued \"delivered\" message behind");
+      assert.match(m.why ?? "", /reopened.*party says short/);
+    }
     [c] = await L.consignments({ ids: [t.id] });
     assert.equal(c.phase, "onRoad");
     assert.ok((await L.detachLr(ctx, t.id, "wrong bill")).ok);

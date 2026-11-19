@@ -4,8 +4,16 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/toast";
 import { ImpactDialog } from "@/components/ui/impact-dialog";
-import { shortDate } from "@/lib/format";
+import { Modal } from "@/components/ui/modal";
 import {
+  Button as UiButton,
+  Checkbox,
+  Field,
+  Input,
+} from "@/components/ui/primitives";
+import { cleanWhole, shortDate } from "@/lib/format";
+import {
+  editCourse,
   publishCourse,
   setCoursePublished,
 } from "@/lib/actions/sales";
@@ -63,6 +71,7 @@ export function KnowledgeScreen({ rows }: { rows: CourseRow[] }) {
   /* Withdrawing goes through the impact modal: every handset it leaves, and
      the progress people keep. Publishing again asks nothing. */
   const [withdrawing, setWithdrawing] = React.useState<CourseRow | null>(null);
+  const [editing, setEditing] = React.useState<CourseRow | null>(null);
 
   async function choose(chosen: File | undefined) {
     if (!chosen) return;
@@ -165,6 +174,19 @@ export function KnowledgeScreen({ rows }: { rows: CourseRow[] }) {
               router.refresh();
             }
             return result;
+          }}
+        />
+      ) : null}
+
+      {editing ? (
+        <EditCourseModal
+          key={editing.id}
+          course={editing}
+          onClose={() => setEditing(null)}
+          onSaved={(message) => {
+            setEditing(null);
+            toast.push(message);
+            router.refresh();
           }}
         />
       ) : null}
@@ -296,7 +318,7 @@ export function KnowledgeScreen({ rows }: { rows: CourseRow[] }) {
           />
 
           <Table
-            minWidth={1140}
+            minWidth={1210}
             head={
               <>
                 <HeadCell width={320}>Course</HeadCell>
@@ -305,7 +327,7 @@ export function KnowledgeScreen({ rows }: { rows: CourseRow[] }) {
                 <HeadCell width={140}>By</HeadCell>
                 <HeadCell width={180}>Done</HeadCell>
                 <HeadCell width={130}>State</HeadCell>
-                <HeadCell align="right" width={130} />
+                <HeadCell align="right" width={200} />
               </>
             }
           >
@@ -351,6 +373,14 @@ export function KnowledgeScreen({ rows }: { rows: CourseRow[] }) {
                 <Cell align="right">
                   <Button
                     size="sm"
+                    disabled={busy}
+                    title="Correct the title, kind, length or deadline. Progress already recorded stands."
+                    onClick={() => setEditing(c)}
+                  >
+                    Edit
+                  </Button>{" "}
+                  <Button
+                    size="sm"
                     tone={c.active ? "danger" : "default"}
                     disabled={busy}
                     title={
@@ -369,5 +399,107 @@ export function KnowledgeScreen({ rows }: { rows: CourseRow[] }) {
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * Correcting a course already out there. The file is not on this form — new
+ * material is a new course — and what the field already did is not touched:
+ * the modal says so, because "edit" can sound like it rewrites history.
+ */
+function EditCourseModal({
+  course,
+  onClose,
+  onSaved,
+}: {
+  course: CourseRow;
+  onClose: () => void;
+  onSaved: (message: string) => void;
+}) {
+  const [title, setTitle] = React.useState(course.title);
+  const [category, setCategory] = React.useState(course.category ?? "");
+  const [minutes, setMinutes] = React.useState(course.durationMinutes ? String(course.durationMinutes) : "");
+  const [mandatory, setMandatory] = React.useState(course.mandatory);
+  const [dueDate, setDueDate] = React.useState(course.dueDate ?? "");
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  async function save() {
+    setBusy(true);
+    setError(null);
+    try {
+      const n = minutes.trim() ? Number.parseInt(minutes, 10) : null;
+      const r = await editCourse({
+        courseId: course.id,
+        title,
+        category,
+        durationMinutes: n,
+        mandatory,
+        dueDate: mandatory && dueDate ? dueDate : null,
+      });
+      if (!r.ok) return setError(r.error);
+      onSaved(r.message ?? "Saved.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Edit course"
+      footer={
+        <>
+          <UiButton variant="secondary" onClick={onClose}>
+            Cancel
+          </UiButton>
+          <UiButton
+            variant="primary"
+            disabled={busy || !title.trim()}
+            title={title.trim() ? undefined : "A course needs a title."}
+            onClick={() => void save()}
+          >
+            Save changes
+          </UiButton>
+        </>
+      }
+    >
+      <Field label="Title" required>
+        <Input value={title} onChange={(e) => setTitle(e.target.value)} />
+      </Field>
+      <div className="mt-3 grid grid-cols-2 gap-3">
+        <Field label="Kind" optional>
+          <Input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Product, Selling, Safety" />
+        </Field>
+        <Field label="Minutes" optional>
+          <Input
+            inputMode="numeric"
+            value={minutes}
+            onChange={(e) => setMinutes(cleanWhole(e.target.value))}
+            placeholder="20"
+          />
+        </Field>
+      </div>
+      <div className="mt-3 grid grid-cols-2 items-end gap-3">
+        <Checkbox label="Compulsory" checked={mandatory} onChange={(e) => setMandatory(e.target.checked)} />
+        <Field label="Finished by" optional>
+          <Input
+            type="date"
+            value={dueDate}
+            disabled={!mandatory}
+            title={mandatory ? "The day it has to be finished by." : "A deadline only means something on a compulsory course."}
+            onChange={(e) => setDueDate(e.target.value)}
+          />
+        </Field>
+      </div>
+      <p className="mt-3 text-[13px] text-muted">
+        {course.active
+          ? "The field sees the change on their next sync. "
+          : "It is withdrawn, so no phone shows it until it is published again. "}
+        Who has finished it stays as it is — {course.completed} of {course.team} have.
+      </p>
+      {error ? <p className="mt-2 text-[13px] text-danger">{error}</p> : null}
+    </Modal>
   );
 }

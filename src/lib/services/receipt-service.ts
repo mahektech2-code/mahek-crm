@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { auditLog, bills, customers, paymentReceipts, payments } from "@/db/schema";
+import { auditLog, bills, complaints, customers, paymentReceipts, payments } from "@/db/schema";
 import {
   assertCustomerInScope,
   canFor,
@@ -1381,6 +1381,57 @@ export async function correctReceipt(
   return ok({ receiptId }, `Corrected: ${changed.map((k) => words[k]).join(", ")}.`);
 }
 
+export type MyReportedReceipt = {
+  receiptId: string;
+  amount: number;
+  receivedAt: string;
+  mode: string;
+  reference: string | null;
+  instrumentDate: string | null;
+  note: string | null;
+  reportedAt: string;
+};
+
+/**
+ * The claims THIS person recorded for one customer that Accounts have not
+ * looked at yet — the ones `correctReceipt` lets them fix themselves. Held
+ * ones are left out on purpose: once Accounts hold it they are the ones
+ * looking. The caller has already been through the customer's scope.
+ */
+export async function myReportedReceipts(
+  customerId: string,
+  userId: string,
+): Promise<{ receipts: MyReportedReceipt[]; correct: { modes: string[]; datedModes: string[]; today: string } }> {
+  const [rows, config, day] = await Promise.all([
+    db
+      .select()
+      .from(paymentReceipts)
+      .where(
+        and(
+          eq(paymentReceipts.customerId, customerId),
+          eq(paymentReceipts.reportedById, userId),
+          eq(paymentReceipts.status, "reported"),
+        ),
+      )
+      .orderBy(desc(paymentReceipts.createdAt)),
+    getConfig(),
+    today(),
+  ]);
+  return {
+    receipts: rows.map((r) => ({
+      receiptId: r.id,
+      amount: Number(r.amount),
+      receivedAt: String(r.receivedAt),
+      mode: r.mode,
+      reference: r.reference,
+      instrumentDate: (r.instrumentDate as string | null) ?? null,
+      note: r.note,
+      reportedAt: r.createdAt.toISOString(),
+    })),
+    correct: { modes: config["payments.modes"], datedModes: config["payments.datedModes"], today: day },
+  };
+}
+
 export async function rejectReceipt(
   receiptId: string,
   reason: string,
@@ -1552,6 +1603,22 @@ export async function reverseReceipt(
         amount: Number(receipt.amount),
       } as never,
     });
+
+    /* A credit note's receipt reversed on the statement IS the credit note
+       cancelled — the complaint must not go on saying "issued" over money
+       that no longer counts. `cancelCreditNote` is the same act from the
+       Credit notes screen. */
+    if (receipt.idempotencyKey.startsWith("creditnote:")) {
+      await tx
+        .update(complaints)
+        .set({ cnStatus: "cancelled", updatedById: ctx.user.id, updatedAt: new Date() })
+        .where(
+          and(
+            eq(complaints.id, receipt.idempotencyKey.slice("creditnote:".length)),
+            eq(complaints.cnStatus, "issued"),
+          ),
+        );
+    }
   });
 
   // Giving the money back to the bills it settled is a rebuild, never a

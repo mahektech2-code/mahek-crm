@@ -10,7 +10,7 @@ import { stageByKey } from "../blueprint-types";
 import { canMove } from "../engines/gating";
 import { hireTrail, currentExecution, getApplication, moveApplication, stageOutcome } from "../services/core";
 import { createApplication, screenIn, type NewCandidateInput } from "../services/pipeline";
-import { bookInterview, suggestSlots, type Slot } from "../services/schedule";
+import { bookInterview, cancelBooking, suggestSlots, type CancelTell, type Slot } from "../services/schedule";
 
 /* ---------------------------------------------------------------------------
  * The pipeline's writes: moving a card, overriding a gate, adding a
@@ -169,6 +169,25 @@ export async function scheduleInterview(input: { applicationId: string; intervie
   if (r.ok) {
     revalidatePath("/hire/calendar");
     revalidatePath("/hire/tasks");
+  }
+  return r;
+}
+
+/** Cancel a booked interview, with a reason, telling the interviewer and (as chosen) the candidate. */
+export async function cancelInterview(input: { applicationId: string; execId: string; reason: string; tell: CancelTell; message: string }): Promise<Result> {
+  let ctx;
+  try {
+    ctx = await requireHireCap("addCandidate");
+  } catch (e) {
+    return refused(e);
+  }
+  const b = await getApplication(ctx, input.applicationId);
+  if (!b) return err("That candidate is not on your list.", "not_found");
+  const r = await cancelBooking(ctx, b, input.execId, input);
+  if (r.ok) {
+    revalidatePath("/hire/calendar");
+    revalidatePath("/hire/tasks");
+    revalidatePath("/hire/interviews");
   }
   return r;
 }

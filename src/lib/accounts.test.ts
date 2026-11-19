@@ -31,6 +31,7 @@ import {
   users,
 } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
+import { correctReceiptAction } from "@/lib/actions/payments";
 import { NotPermittedError } from "@/lib/access-control";
 import { invalidateConfig, seedConfig, updateSetting } from "@/lib/config/store";
 import { addDays } from "@/lib/business-date";
@@ -61,6 +62,7 @@ import {
   confirmReceipt,
   correctReceipt,
   holdReceipt,
+  myReportedReceipts,
   customerLedger,
   openBillsFor,
   paymentSearch,
@@ -833,6 +835,32 @@ describe("Correcting a claim before it is decided", () => {
     const late = await correctReceipt(receiptId, { amount: 3_000_00 }, "Too late for this.");
     assert.equal(late.ok, false);
     assert.equal(late.ok ? "" : late.code, "conflict");
+  });
+
+  test("the CRM Ledger tab lists only the viewer's own claims still waiting, and Correct from there writes", async () => {
+    const customer = await makeCustomer();
+    await makeBill(customer.id, 10_000_00);
+    const waiting = await claim(customer.id, 2_000_00);
+    const held = await claim(customer.id, 1_000_00);
+    setTestUser(deepa);
+    assert.ok((await holdReceipt(held, "Looking for it in the statement.")).ok);
+    const other = await makeUser("Rakesh Three", "associate");
+
+    const mine = await myReportedReceipts(customer.id, priya.id);
+    assert.deepEqual(mine.receipts.map((r) => r.receiptId), [waiting], "held ones are Accounts' now");
+    assert.ok(mine.correct.modes.includes("Bank transfer"));
+    assert.deepEqual((await myReportedReceipts(customer.id, other.id)).receipts, [], "nobody else's claims");
+
+    setTestUser(priya);
+    const r = await correctReceiptAction(waiting, { amount: 2_500_00 }, "Customer sent 2,500.");
+    assert.ok(r.ok || /static generation store/.test(r.error), r.ok ? "" : r.error);
+    const [receipt] = await db.select().from(paymentReceipts).where(eq(paymentReceipts.id, waiting));
+    assert.equal(Number(receipt.amount), 2_500_00);
+
+    setTestUser(other);
+    const refused = await correctReceiptAction(waiting, { amount: 1_00 }, "Not mine to change.");
+    assert.equal(refused.ok, false);
+    assert.ok(!refused.ok && !/static generation store/.test(refused.error));
   });
 });
 

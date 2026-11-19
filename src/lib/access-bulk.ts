@@ -213,6 +213,20 @@ export function cleanShape(raw: unknown): AccessTemplateShape {
   };
 }
 
+/**
+ * Whether a template would make somebody a PLATFORM ADMINISTRATOR — Admin on
+ * the Admin Console, the one hat that changes everybody else's access. A
+ * template stamps onto many people at once, so it never carries that: it is
+ * given one person at a time, on their own Manage page, where the review
+ * names it.
+ */
+export function grantsPlatformAdmin(shape: AccessTemplateShape): boolean {
+  return shape.apps.some((a) => a.app === "admin" && a.role === "admin");
+}
+
+export const PLATFORM_ADMIN_IN_TEMPLATE =
+  "A template cannot make somebody a platform administrator. Give that one person at a time, on their own Manage page — and take Admin Console at admin out of this template.";
+
 /* ------------------------------------------------------------ the change */
 
 export type BulkChange =

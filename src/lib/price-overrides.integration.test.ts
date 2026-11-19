@@ -35,6 +35,7 @@ import { cancelOverride, createOverride, endOverride, extendOverride, requestCon
 import { ratesForCustomer } from "@/lib/services/price-list-service";
 import { remindEndingOverrides, shopPricesView, syncAllOverrides, syncShopOverrides } from "@/lib/services/price-override-service";
 import { testPhone } from "@/lib/test-phone";
+import { impactReport } from "@/lib/impact/registry";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -272,8 +273,13 @@ describe("ending one override", () => {
     assert.equal(row.validTo, addDays(TODAY, 60));
     assert.equal(row.remindedAt, null);
 
-    const cancelled = await cancelOverride(made.data.id, "Entered on the wrong shop");
-    assert.ok(cancelled.ok);
+    const bare = await cancelOverride(made.data.id, "Entered on the wrong shop");
+    assert.equal(bare.ok, false, "refused without the impact modal's confirmation");
+    const report = await impactReport("pricing-override-cancel", made.data.id);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    assert.ok(report.data.items.some((i) => /agreed list/.test(i.label)), "a live one says the agreed list changes");
+    const cancelled = await cancelOverride(made.data.id, "Entered on the wrong shop", { typed: report.data.confirmWord, fingerprint: report.data.fingerprint });
+    assert.ok(cancelled.ok, cancelled.ok ? "" : cancelled.error);
     assert.equal(await incl(shop.id, nano20.id, TODAY), 228_600);
     const refused = await createOverride({ customerId: shop.id, productId: nano20.id, rateInclGstPaise: 0, validFrom: TODAY, validTo: null, minCansPerMonth: null, note: "" });
     assert.equal(refused.ok, false);
