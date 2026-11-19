@@ -624,6 +624,7 @@ const DESCRIBE: Record<string, Describer> = {
     says: ["put a payment of", strong(rupees(c.a.amount) ?? "an amount"), "from", c.subject(), "on hold while it is checked"],
     changes: false,
   }),
+  "locker.access.changed": (c) => ["changed the Locker access of", c.subject()],
   "payment.reallocate": (c) => ["moved a payment from", c.subject(), "onto different bills"],
   "payment.corrected": (c) => ["corrected a payment from", c.subject(), "before it was decided"],
   "payment.matchedToBankEntry": (c) => ({

@@ -437,3 +437,20 @@ line: no region means the WHOLE COUNTRY, and that used to be invisible. ERP
 godown staff are offered and saved under a label that names one person (the
 name, or name with email where two share it) and mapped to the id — matching on
 names gave a godown to every namesake.
+
+**THE DOORS ROUND THE CONSOLE ARE SHUT (Nov 2026).** Three places granted apps
+without a platform administrator, and each now defers to one:
+- **Locker's own access screen** (`setLockerModules`) changes the screens of
+  somebody who already holds the Locker, and takes it away; GIVING the app to
+  somebody new needs `isPlatformAdmin`. Every change is also written to
+  `audit_log` as `locker.access.changed`, so the person's Audit tab sees it.
+- **Hire's provisioning** refuses a blueprint that grants `NEVER_PROVISIONED`
+  (`lib/apps.ts`: admin, founder, hire) on the server, as a blocker — the
+  blueprint editor hiding them was the only guard before.
+- **`hire:deploy`** gives each platform admin Hire ONCE: the `installed` line
+  on `hire_audit` is its memory, so Hire taken away on the console stays away
+  through later deploys.
+And **a template never carries platform Admin** (`grantsPlatformAdmin`, refused
+on save and on apply): it is given one person at a time on their Manage page.
+Bulk take-away on Powers has a review step naming the people, and designation
+Sync names who it brings up before it runs.

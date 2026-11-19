@@ -4,6 +4,7 @@ import { and, eq, gte, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appAccess,
+  auditLog,
   appModuleAccess,
   lockerAssetTypes,
   lockerAssets,
@@ -27,6 +28,7 @@ import { notifyUsers } from "@/lib/notify";
 import { err, ok, type Result } from "@/lib/result";
 import { writeModules } from "@/lib/services/access-writes";
 import { lockerAccess } from "./access";
+import { isPlatformAdmin } from "@/lib/access-control";
 import { lockerAuditTx } from "./audit";
 import { confirmImpact } from "@/lib/impact/registry";
 import type { ImpactConfirmation } from "@/lib/impact/types";
@@ -287,6 +289,15 @@ export async function setLockerModules(actor: User, userId: string, modules: str
   const [person] = await db.select({ name: users.name }).from(users).where(eq(users.id, userId)).limit(1);
   if (!person) return err("Nobody was chosen.", "not_found");
   const before = await holdersByUser(userId);
+  /* GIVING SOMEBODY THE LOCKER APP is granting an app, and only a platform
+     administrator does that (`docs/agents/roles-access-security-ask.md`). This
+     screen kept its own door: anybody holding Admin › Access could hand the
+     vault to anybody. Changing the screens of somebody who already holds it,
+     and taking it away, stay here. */
+  const [already] = await db.select({ id: appAccess.id }).from(appAccess).where(and(eq(appAccess.userId, userId), eq(appAccess.app, "locker"))).limit(1);
+  if (!already && wanted.length && !(await isPlatformAdmin(actor))) {
+    return err("Giving somebody the Locker is a platform administrator's — ask one on the Admin Console's People & access.", "not_permitted");
+  }
   /* A reviewer without Admin › Access may only TAKE AWAY — what a review
      decides. The action takes any person and any list, so without this a
      reviewer could hand themselves Admin › Access and the vault. */
@@ -317,6 +328,17 @@ export async function setLockerModules(actor: User, userId: string, modules: str
       reason: why || null,
       detail: { added, removed },
       security: true,
+    });
+    /* And on the console's own audit, where every other access change is —
+       the person's Audit tab used to miss everything decided in here. */
+    await tx.insert(auditLog).values({
+      id: nid("aud"),
+      actorId: actor.id,
+      action: "locker.access.changed",
+      entityType: "user",
+      entityId: userId,
+      beforeState: { modules: before } as never,
+      afterState: { modules: wanted, added, removed, reason: why || null } as never,
     });
   });
   /* A8: a permission change is notified — to the person, and to another admin. */

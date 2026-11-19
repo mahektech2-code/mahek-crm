@@ -166,6 +166,13 @@ describe("Hire core", () => {
     assert.equal(ctx.role, "admin");
     const again = await installHire();
     assert.deepEqual(again, { blueprints: [], admins: [] });
+
+    /* Taken away on the console, it stays away: the next deploy does not give it back. */
+    await db.delete(appAccess).where(sql`${appAccess.userId} = ${admin.id} and ${appAccess.app} = 'hire'`);
+    const deploy = await installHire();
+    assert.deepEqual(deploy.admins, [], "a platform admin given Hire once is not given it again");
+    const still = await db.select().from(appAccess).where(sql`${appAccess.userId} = ${admin.id} and ${appAccess.app} = 'hire'`);
+    assert.equal(still.length, 0);
   });
 
   test("with AI switched off, a task takes its manual path and is still logged", async () => {
