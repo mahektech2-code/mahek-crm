@@ -598,6 +598,7 @@ const DESCRIBE: Record<string, Describer> = {
   }),
   "payout.reopen": (c) => ({ says: ["reopened a paid payout to", strong(str(c.a.payee) ?? "a vendor")], changes: false }),
   "payout.cancel": (c) => ({ says: ["cancelled the payout to", strong(str(c.a.payee) ?? "a vendor")], changes: false }),
+  "payout.edit": (c) => ["corrected the payout to", strong(str(c.a.payee) ?? "a vendor"), "—", strong(rupees(c.a.amount) ?? "an amount")],
   "payout.note": (c) => ({ says: ["changed the note on the payout to", strong(str(c.a.payee) ?? "a vendor")], changes: false }),
   "payout.invoice.add": (c) => ({
     says: ["added", strong(str(c.a.kind) ?? "an invoice"), "to the payout to", strong(str(c.a.payee) ?? "a vendor")],
@@ -644,6 +645,10 @@ const DESCRIBE: Record<string, Describer> = {
     changes: false,
   }),
   "creditnote.refuse": (c) => ({ says: ["refused a credit note request from", c.subject()], changes: false }),
+  "creditnote.cancel": (c) => ({
+    says: ["cancelled the", strong(rupees(c.a.amount) ?? "issued"), "credit note to", c.subject(), "— the bill is owed again:", str(c.a.reason) ?? ""],
+    changes: false,
+  }),
   "followup.log": (c) => ({
     says: [
       "logged a payment follow-up with",

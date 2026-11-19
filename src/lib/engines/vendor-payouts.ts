@@ -250,3 +250,16 @@ export function dateRange(from: string, count: number): string[] {
 export function weekStart(iso: string): string {
   return addDays(iso, 1 - weekdayOf(iso));
 }
+
+/**
+ * Why a payout's payee and amount cannot be changed as it stands, or null.
+ * Pure, so the drawer's disabled Edit says the same sentence the service
+ * refuses in.
+ */
+export function payoutEditRefusal(p: { source: string; status: string }): string | null {
+  if (p.source !== "manual")
+    return "A purchase payable's vendor and amount come from the purchase register, and the sync writes them back — correct the purchase in the ERP instead.";
+  if (p.status === "paid") return "It has been paid — the payment record is what was paid. Undo paid first if the payable itself was wrong.";
+  if (p.status === "cancelled") return "A cancelled payable is a record, not a payable — add a new one instead.";
+  return null;
+}
