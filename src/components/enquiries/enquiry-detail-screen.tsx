@@ -51,6 +51,7 @@ import {
   deleteEnquiryNoteAction,
   cancelEnquiryReminderAction,
   markEnquirySpamAction,
+  deleteEnquiryAction,
 } from "@/lib/actions/enquiries";
 import {
   EditDetailsDialog,
@@ -75,6 +76,7 @@ export function EnquiryDetailScreen({
   deskAccess,
   viewerId,
   canCloseReminders,
+  canDelete,
 }: {
   enquiry: EnquiryDetail;
   submission: EnquirySubmissionFields;
@@ -87,11 +89,14 @@ export function EnquiryDetailScreen({
   viewerId: string;
   /** `reminder.close`, which cancelling a follow-up asks, as it does in the CRM. */
   canCloseReminders: boolean;
+  /** An Enquiries manager may delete one outright; `deleteEnquiry` asks again. */
+  canDelete: boolean;
 }) {
   const [tab, setTab] = React.useState<Tab>("overview");
   /* Each dialog keyed by when it opened, so it mounts with today's values. */
   const [editing, setEditing] = React.useState(0);
   const [spamming, setSpamming] = React.useState(0);
+  const [deleting, setDeleting] = React.useState(0);
   const router = useRouter();
   const { run } = useToast();
 
@@ -148,11 +153,39 @@ export function EnquiryDetailScreen({
               Mark as spam
             </Button>
           )}
+          {canDelete ? (
+            <Button
+              size="sm"
+              variant="dangerOutline"
+              onClick={() => setDeleting(Date.now())}
+              disabled={!!enquiry.customerId}
+              title={enquiry.customerId ? "A customer or lead is linked, so it stays on the record — close it instead" : "Delete it for good. If the website sends it again it will not come back."}
+            >
+              Delete
+            </Button>
+          ) : null}
         </div>
       </div>
 
       {editing ? (
         <EditDetailsDialog key={editing} enquiryId={enquiry.id} current={submission} onClose={() => setEditing(0)} />
+      ) : null}
+      {deleting ? (
+        <ReasonThenImpact
+          key={deleting}
+          title="Delete this enquiry"
+          sub="For junk nobody needs to see again. It is gone from every list and search, and its follow-ups leave the Call Log. The website sending it again will not bring it back."
+          reasonLabel="Why (kept in the audit)"
+          reasonRequired={false}
+          impact={{ kind: "enquiry-delete", id: enquiry.id }}
+          confirmLabel="Delete"
+          onClose={() => setDeleting(0)}
+          onConfirm={async (reason, confirmation) => {
+            const r = await deleteEnquiryAction(enquiry.id, reason, confirmation);
+            if (r.ok) router.push("/enquiries/list");
+            return r;
+          }}
+        />
       ) : null}
       {spamming ? (
         <ReasonThenImpact

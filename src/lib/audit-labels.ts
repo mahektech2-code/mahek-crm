@@ -367,6 +367,7 @@ const DESCRIBE: Record<string, Describer> = {
   "enquiry.note.delete": () => ({ says: ["deleted their note on an enquiry"], changes: false }),
   "enquiry.reminder.reschedule": () => ["moved an enquiry's follow-up"],
   "enquiry.spam": () => ({ says: ["marked an enquiry as spam"], changes: false }),
+  "enquiry.delete": () => ({ says: ["deleted an enquiry"], changes: false }),
   "enquiry.unspam": () => ({ says: ["brought an enquiry back from spam"], changes: false }),
   "website.review.expired": () => ["let an approval to publish website changes expire"],
   "website.review.stale": () => ["voided an approval because the content changed after it was submitted"],

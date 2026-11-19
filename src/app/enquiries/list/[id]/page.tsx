@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { canOpenModule, requireModule } from "@/lib/access";
-import { canFor } from "@/lib/access-control";
+import { canFor, levelInApp } from "@/lib/access-control";
 import { DESK_MODULE } from "@/lib/services/lead-desk-assignment-service";
 import {
   getEnquiry,
@@ -42,12 +42,13 @@ export default async function EnquiryDetailPage({
   const fields = readSubmissionFields(enquiry.submission);
   const phone = enquiry.customerPhone ?? fields.phone;
 
-  const [team, duplicates, orderCandidates, deskAccess, canCloseReminders] = await Promise.all([
+  const [team, duplicates, orderCandidates, deskAccess, canCloseReminders, level] = await Promise.all([
     assignableUsers(),
     findPossibleDuplicateEnquiries(id, phone),
     ordersForLinking(id),
     canOpenModule(user.id, DESK_MODULE),
     canFor(user, "reminder.close"),
+    levelInApp(user, "enquiries"),
   ]);
 
   return (
@@ -60,6 +61,7 @@ export default async function EnquiryDetailPage({
       deskAccess={deskAccess}
       viewerId={user.id}
       canCloseReminders={canCloseReminders}
+      canDelete={level === "manager" || level === "admin"}
     />
   );
 }

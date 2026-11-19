@@ -37,6 +37,7 @@ import {
   deleteEnquiryNoteAction,
   editEnquiryNoteAction,
   markEnquirySpamAction,
+  deleteEnquiryAction,
   rescheduleEnquiryReminderAction,
 } from "@/lib/actions/enquiries";
 import { testPhone } from "@/lib/test-phone";
@@ -91,7 +92,7 @@ before(() => {
 
 beforeEach(async () => {
   await db.execute(sql`
-    truncate table enquiry_orders, enquiry_activity, enquiries, reminders, audit_log,
+    truncate table enquiry_deletions, enquiry_orders, enquiry_activity, enquiries, reminders, audit_log,
       orders, app_access, customers, users, app_settings
     restart identity cascade
   `);
@@ -291,7 +292,7 @@ describe("an enquiry's follow-up", () => {
     assert.equal(noPower.ok, false);
     assert.equal(!noPower.ok && noPower.code, "not_permitted");
 
-    const manager = await makeUser("Crm Manager", "manager", ["crm", "enquiries"]);
+    const manager = await makeUser("Enquiries Manager", "manager", ["enquiries"]);
     setTestUser(manager);
     const bare = await cancelEnquiryReminderAction(enquiryId, reminderId, "Customer bought elsewhere");
     assert.equal(bare.ok, false, "refused without a confirmation");
@@ -364,5 +365,44 @@ describe("marking an enquiry as spam", () => {
     assert.ok(report.ok && report.data.blockers.length === 1);
     const r = await markEnquirySpamAction(enquiryId, "x", { typed: report.ok ? report.data.confirmWord : "", fingerprint: report.ok ? report.data.fingerprint : "" });
     assert.equal(!r.ok && r.code, "rule_violation");
+  });
+});
+
+describe("deleting an enquiry", () => {
+  test("is a manager's, asks first, and a resend of the same submission does not bring it back", async () => {
+    const ref = randomUUID();
+    const sent = { sourceForm: "QUOTE", externalRef: ref, receivedAt: new Date(), submission: { first_name: "Junk", last_name: "Bot", mobile: "+91 98200 11009", enquiry: "buy crypto" } };
+    const { id: enquiryId } = await createEnquiryFromWebsite(sent);
+    await createEnquiryReminder({ enquiryId, dueDate: addDays(new Date().toISOString().slice(0, 10), 2), note: "Call", type: "call_back", assignedUserId: desk.id });
+
+    setTestUser(desk);
+    const confirmation = await confirmationFor("enquiry-delete", enquiryId);
+    const associate = await deleteEnquiryAction(enquiryId, "junk", confirmation);
+    assert.equal(associate.ok, false, "an associate cannot delete");
+
+    const manager = await makeUser("Enquiries Boss", "manager", ["enquiries"]);
+    setTestUser(manager);
+    assert.equal((await deleteEnquiryAction(enquiryId, "junk")).ok, false, "refused without the confirmation");
+    const r = await deleteEnquiryAction(enquiryId, "junk", await confirmationFor("enquiry-delete", enquiryId));
+    assert.ok(r.ok, r.ok ? "" : r.error);
+    assert.equal((await db.select().from(enquiries).where(eq(enquiries.id, enquiryId))).length, 0);
+    assert.equal((await db.select().from(reminders).where(eq(reminders.enquiryId, enquiryId))).length, 0, "its follow-ups go, not orphaned");
+    assert.equal((await audits("enquiry.delete")).length, 1);
+
+    const again = await createEnquiryFromWebsite(sent);
+    assert.equal(again.duplicate, true, "the website resending it is acknowledged");
+    assert.equal((await db.select().from(enquiries)).length, 0, "and nothing is stored again");
+  });
+
+  test("is refused while a customer is linked", async () => {
+    const enquiryId = await websiteEnquiry();
+    const [customer] = await db.insert(customers).values({ id: id("cus"), name: "Real Shop", kind: "customer", phone: testPhone(), city: "Pune" } as never).returning();
+    assert.ok((await linkCustomer(enquiryId, customer.id)).ok);
+    const manager = await makeUser("Enquiries Head", "manager", ["enquiries"]);
+    setTestUser(manager);
+    const report = await impactReport("enquiry-delete", enquiryId);
+    assert.ok(report.ok && report.data.blockers.length > 0);
+    const r = await deleteEnquiryAction(enquiryId, "x", { typed: report.ok ? report.data.confirmWord : "", fingerprint: report.ok ? report.data.fingerprint : "" });
+    assert.equal(r.ok, false);
   });
 });

@@ -8,6 +8,7 @@ import {
   customers,
   enquiries,
   enquiryActivity,
+  enquiryDeletions,
   enquiryOrders,
   orders,
   reminders,
@@ -16,6 +17,7 @@ import {
 
 import { requireUser } from "@/lib/auth";
 import { listUserApps } from "@/lib/access";
+import { levelInApp } from "@/lib/access-control";
 import { monthKey, monthWindowSql } from "@/lib/business-date";
 import { today } from "@/lib/recompute";
 import type { AppId } from "@/lib/apps";
@@ -168,6 +170,12 @@ export async function createEnquiryFromWebsite(
     .from(enquiries)
     .where(and(eq(enquiries.source, ENQUIRY_SOURCE_WEBSITE), eq(enquiries.externalRef, input.externalRef)));
   if (existing) return { id: existing.id, duplicate: true };
+  /* Deleted on purpose: a resend of it is acknowledged and dropped, not stored again. */
+  const [gone] = await db
+    .select({ ref: enquiryDeletions.externalRef })
+    .from(enquiryDeletions)
+    .where(and(eq(enquiryDeletions.source, ENQUIRY_SOURCE_WEBSITE), eq(enquiryDeletions.externalRef, input.externalRef)));
+  if (gone) return { id: "deleted", duplicate: true };
 
   const enquiryId = id("enq");
   try {
@@ -1602,6 +1610,39 @@ export async function cancelEnquiryReminder(enquiryId: string, reminderId: strin
  * behind it, and the follow-ups and orders that hang off that link are not
  * junk. Close it instead.
  */
+/**
+ * DELETE AN ENQUIRY — for junk nobody needs to see again, where spam (which
+ * keeps the row) is not enough. A manager's act. Refused where anything real
+ * hangs off it: a linked customer or lead, or a linked order — those have a
+ * history that must stay, and closing it is the answer there.
+ *
+ * Its activity goes with it (cascade), and its follow-up reminders are deleted
+ * rather than orphaned. Its website ref is kept in `enquiry_deletions`, so the
+ * website retransmitting the same submission cannot bring it back. The audit
+ * row keeps what was submitted.
+ */
+export async function deleteEnquiry(enquiryId: string, reason?: string): Promise<Result> {
+  const { user, error } = await requireEnquiriesAccess();
+  if (error) return error;
+  const level = await levelInApp(user, ENQUIRY_WORKSPACE as AppId);
+  if (level !== "manager" && level !== "admin") return err("Deleting an enquiry is an Enquiries manager's.", "not_permitted");
+  const [row] = await db.select().from(enquiries).where(eq(enquiries.id, enquiryId));
+  if (!row) return err("That enquiry no longer exists.", "not_found");
+  if (row.customerId) return err("A customer or lead is linked to this enquiry, so it stays on the record. Close it instead.", "rule_violation");
+  const [linked] = await db.select({ id: enquiryOrders.id }).from(enquiryOrders).where(eq(enquiryOrders.enquiryId, enquiryId)).limit(1);
+  if (linked) return err("An order is linked to this enquiry, so it stays on the record. Unlink it first, or close it.", "rule_violation");
+
+  await db.transaction(async (tx) => {
+    if (row.externalRef) {
+      await tx.insert(enquiryDeletions).values({ source: row.source, externalRef: row.externalRef, deletedById: user.id }).onConflictDoNothing();
+    }
+    await tx.delete(reminders).where(eq(reminders.enquiryId, enquiryId));
+    await tx.delete(enquiries).where(eq(enquiries.id, enquiryId));
+  });
+  await audit(user, "enquiry.delete", enquiryId, { stage: row.stage, source: row.source, submission: row.rawSubmission }, { deleted: true, reason: trimOrNull(reason) });
+  return okVoid("Deleted. If the website sends it again, it will not come back.");
+}
+
 export async function markEnquirySpam(enquiryId: string, reason?: string): Promise<Result> {
   const { user, error } = await requireEnquiriesAccess();
   if (error) return error;

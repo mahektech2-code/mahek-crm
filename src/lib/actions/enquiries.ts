@@ -19,6 +19,7 @@ import {
   rescheduleEnquiryReminder,
   cancelEnquiryReminder,
   markEnquirySpam,
+  deleteEnquiry,
   noteRefusal,
   reminderRefusal,
   enquiriesRefusal,
@@ -318,6 +319,28 @@ export async function cancelEnquiryReminderAction(
     if (unconfirmed) return unconfirmed;
     const r = await cancelEnquiryReminder(enquiryId, reminderId, reason);
     refresh(enquiryId);
+    return r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+export async function deleteEnquiryAction(
+  enquiryId: string,
+  reason: string | undefined,
+  confirmation?: ImpactConfirmation,
+): Promise<Result> {
+  try {
+    const refused = await enquiriesRefusal();
+    if (refused) return refused;
+    const unconfirmed = await confirmImpact("enquiry-delete", enquiryId, confirmation);
+    if (unconfirmed) return unconfirmed;
+    const r = await deleteEnquiry(enquiryId, typeof reason === "string" ? reason : undefined);
+    try {
+      revalidatePath("/enquiries", "layout");
+    } catch {
+      /* outside a request */
+    }
     return r;
   } catch (e) {
     return fromThrown(e);

@@ -93,9 +93,14 @@ reader (the list, the record, the lead prefill, HQ's SQL through
 after. An enquiry typed in by hand (`createManualEnquiry`) is `source` anything
 but `website` — that source is the ingest door's alone and the only one
 `leadConvertibility` lets become a lead, so a manual enquiry cannot be turned
-into one yet. There is NO hard delete: the website retransmits until
-acknowledged and `createEnquiryFromWebsite` recognises a retransmission only by
-the row still existing, so a deleted junk enquiry comes straight back. `spam`
+into one yet. An Enquiries MANAGER can also DELETE one outright
+(`deleteEnquiry`, the `enquiry-delete` impact dialog) — refused while a customer,
+lead or order is linked. The website retransmits until acknowledged and
+`createEnquiryFromWebsite` used to recognise a retransmission only by the row
+still existing, so deleting keeps the (source, external ref) in
+`enquiry_deletions` and a resend is acknowledged as a duplicate and dropped;
+its follow-up reminders are deleted with it and the audit row keeps the
+submission. `spam`
 leaves All, every count and the Unassigned banner, shows only under its own
 tab, is refused by `changeStage` (it goes through `markEnquirySpam` and the
 `enquiry-spam` impact dialog) and is blocked once a customer is linked; any
@@ -103,9 +108,9 @@ other stage brings it back ("Not spam"). Notes are edited and deleted only by
 their author — an edit keeps the previous words in `meta.edits`, a delete leaves
 a `note_deleted` line with the text only in the audit row. A follow-up is moved
 through the CRM's own `rescheduleReminder` (`skipCustomerScope`, as creating one
-is) and cancelled through `dismissReminder`, so cancelling still needs
-`reminder.close` — which no Enquiries level carries: only a CRM manager or an
-admin can cancel an enquiry's follow-up.
+is) and cancelled through `dismissReminder`, so cancelling needs
+`reminder.close` — which an Enquiries MANAGER carries (owner's decision, Nov
+2026), as a CRM manager does; an Enquiries associate cannot.
 
 **AN UNOWNED LEAD IS ON NO TELECALLER'S DESK, so it is said out loud.** An
 associate's scope is their own book and `owner_id` is the assignment, so a lead

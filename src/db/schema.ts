@@ -10683,6 +10683,24 @@ export const enquiryActivity = pgTable(
  * enquiry and an order are each real independently of whether the other
  * still exists.
  */
+/**
+ * WHAT WAS DELETED, SO IT STAYS DELETED. The website retransmits a submission
+ * until it is acknowledged, and `createEnquiryFromWebsite` recognises a resend
+ * by its (source, external ref). A deleted enquiry takes that row with it, so
+ * the ref is kept here and a resend is answered "already received" instead of
+ * arriving again as new. Nothing else about the enquiry is kept.
+ */
+export const enquiryDeletions = pgTable(
+  "enquiry_deletions",
+  {
+    source: text("source").notNull(),
+    externalRef: text("external_ref").notNull(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }).notNull().defaultNow(),
+    deletedById: text("deleted_by_id").references(() => users.id),
+  },
+  (t) => [primaryKey({ name: "enquiry_deletions_pk", columns: [t.source, t.externalRef] })],
+);
+
 export const enquiryOrders = pgTable(
   "enquiry_orders",
   {

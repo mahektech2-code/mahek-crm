@@ -21,6 +21,7 @@ export const CRM_ACCOUNTS_SOURCES: Record<string, () => Promise<ImpactSource>> =
   "crm-enquiry-order": () => import("./crm-customers").then((m) => m.enquiryOrderImpact),
   /** `markEnquirySpamAction` — an enquiry off the list and the counts (a stage, not a delete). */
   "enquiry-spam": () => import("./enquiries").then((m) => m.enquirySpamImpact),
+  "enquiry-delete": () => import("./enquiries").then((m) => m.enquiryDeleteImpact),
   /** `deleteEnquiryNoteAction` — by the note's activity id. */
   "enquiry-note-delete": () => import("./enquiries").then((m) => m.enquiryNoteImpact),
   /** `cancelEnquiryReminderAction` — an enquiry's follow-up dismissed, through the Enquiries grant. */

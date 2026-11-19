@@ -76,7 +76,7 @@ export const enquirySpamImpact: ImpactSource = {
           label: "submission itself",
           effect: "kept",
           count: 1,
-          note: "Nothing is deleted. A deleted enquiry would come straight back when the website sends it again; a spam one is recognised.",
+          note: "Nothing is deleted. An Enquiries manager can Delete it for good instead.",
         },
       ]),
       blockers: e.customerId
@@ -84,6 +84,51 @@ export const enquirySpamImpact: ImpactSource = {
         : e.stage === "spam"
           ? ["It is already marked as spam."]
           : [],
+    };
+  },
+};
+
+/* ================================================== an enquiry deleted */
+
+export const enquiryDeleteImpact: ImpactSource = {
+  authorize: requireEnquiries,
+
+  async report(enquiryId) {
+    const [e] = await db
+      .select({
+        raw: enquiries.rawSubmission,
+        corrections: enquiries.corrections,
+        customerId: enquiries.customerId,
+        externalRef: enquiries.externalRef,
+        activity: sql<number>`(select count(*)::int from enquiry_activity a where a.enquiry_id = ${enquiries.id})`,
+        followUps: sql<number>`(select count(*)::int from reminders r where r.enquiry_id = ${enquiries.id})`,
+        orders: sql<number>`(select count(*)::int from enquiry_orders o where o.enquiry_id = ${enquiries.id})`,
+      })
+      .from(enquiries)
+      .where(eq(enquiries.id, enquiryId));
+    if (!e) return null;
+    const name = readSubmissionFields(effectiveSubmission(e.raw, e.corrections)).name;
+    const blockers: string[] = [];
+    if (e.customerId) blockers.push("A customer or lead is linked to this enquiry, so it stays on the record. Close it instead.");
+    if (Number(e.orders)) blockers.push("An order is linked to this enquiry, so it stays on the record. Unlink it first, or close it.");
+    return {
+      title: name ?? "this enquiry",
+      verb: "Delete",
+      confirmWord: word(name, "delete"),
+      items: present([
+        { app: "Enquiries", label: "enquiry", effect: "deleted", count: 1, note: "Gone from every list, count and search." },
+        { app: "Enquiries", label: "entries in its activity", effect: "deleted", count: Number(e.activity) },
+        { app: "CRM", label: Number(e.followUps) === 1 ? "follow-up on it" : "follow-ups on it", effect: "deleted", count: Number(e.followUps), note: "They leave the Call Log." },
+        {
+          app: "Enquiries",
+          label: "website reference",
+          effect: "kept",
+          count: e.externalRef ? 1 : 0,
+          note: "Kept on its own, so the website sending the same submission again does not bring it back.",
+        },
+        { app: "Admin Console", label: "audit entry with what was submitted", effect: "kept", count: 1 },
+      ]),
+      blockers,
     };
   },
 };
