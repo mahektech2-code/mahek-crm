@@ -251,14 +251,14 @@ export function FounderSidebar({
       {/* The Mahek mark atop the sidebar, as in the ERP. */}
       <Link
         href="/founder"
-        title="MahekOne Command Centre"
+        title="MahekOne HQ"
         style={{ height: 56, flex: "none", display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : undefined, gap: 10, padding: collapsed ? 0 : "0 16px", textDecoration: "none" }}
       >
         {/* eslint-disable-next-line @next/next/no-img-element -- a 256px static mark, nothing for the optimiser to do */}
         <img src="/brand/mahek-logo.png" alt="Mahek" width={30} height={30} style={{ width: 30, height: 30, flex: "none", borderRadius: "50%", background: C.white, objectFit: "contain" }} />
         {collapsed ? null : (
           <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: "-0.01em", whiteSpace: "nowrap", color: C.ink }}>
-            MahekOne <span style={{ fontWeight: 500, color: C.muted }}>Founder</span>
+            MahekOne <span style={{ fontWeight: 500, color: C.muted }}>HQ</span>
           </span>
         )}
       </Link>
