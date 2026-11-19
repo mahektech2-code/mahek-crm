@@ -1,23 +1,23 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-
 import { Button } from "@/components/console/parts";
+import { EditLeadButton } from "./lead-edit-dialog";
 
 /**
- * EDIT THE LEAD'S BASICS — the Sales Manager's six-field form.
- *
- * The unified record had no edit of its own, and the Sales Manager's record
- * (now retired) did. The form and its write (`editLeadBasics`) already exist
- * and ask the Sales Manager seat again on the server, so this is only the way
- * in; it is drawn for somebody holding that workspace and the page it opens
- * answers 404 for a lead outside their book.
+ * EDIT THE LEAD'S DETAILS from the unified record — the CRM's and the Sales
+ * Dashboard's. It opens the one lead edit modal (`lead-edit-dialog.tsx`);
+ * drawn for anybody holding `lead.work`, and the modal's load and save ask
+ * that and the lead's scope again on the server.
  */
-export function EditDetails({ href }: { href: string }) {
-  const router = useRouter();
+export function EditDetails({ customerId }: { customerId: string }) {
   return (
-    <Button size="sm" tone="quiet" title="Edit this lead's name, contact, city and product." onClick={() => router.push(href)}>
-      Edit details
-    </Button>
+    <EditLeadButton
+      customerId={customerId}
+      renderButton={(open) => (
+        <Button size="sm" tone="quiet" title="Correct this lead's name, contact, city, phone and product." onClick={open}>
+          Edit details
+        </Button>
+      )}
+    />
   );
 }

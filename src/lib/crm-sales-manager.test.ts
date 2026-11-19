@@ -38,7 +38,7 @@ import { recomputeSalesManagers } from "@/lib/recompute";
 import { setLeadNextAction } from "@/lib/actions/leads";
 import { reassignLead } from "@/lib/actions/sales";
 import { verifyProspect } from "@/lib/actions/sales-manager-pipeline";
-import { editLeadBasics } from "@/lib/actions/sales-manager-edit";
+import { editLeadBasics, loadLeadEditForm } from "@/lib/actions/sales-manager-edit";
 import { CRM_SALES_MANAGER_WORKSPACE } from "@/proxy";
 import { setTestWorkspace } from "@/lib/services/crm-sales-manager-scope";
 import { QUAL_NEXT } from "@/lib/services/lead-qualification-flow-service";
@@ -848,11 +848,48 @@ describe("E — the Sales Manager's Edit: six fields, inside the book, and nothi
     assert.equal((await row(mineB.id)).city, "Virar");
   });
 
-  test("it is refused outside the workspace — a server action is a URL", async () => {
+  test("outside the workspace a seat change is refused before anything is written — a server action is a URL", async () => {
     setTestWorkspace(null);
-    const r = await editLeadBasics(sixFields(mineA.id));
+    const r = await editLeadBasics(sixFields(mineANoOwner.id));
     assert.equal(r.ok, false);
-    assert.equal((await row(mineA.id)).city, "Nashik", "unchanged");
+    const after = await row(mineANoOwner.id);
+    assert.equal(after.city, "Nashik", "the city did not slip in ahead of the refusal");
+    assert.equal(after.ownerId, null);
+  });
+
+  test("outside the workspace whoever works the lead corrects its name and details, seats left alone", async () => {
+    setTestWorkspace(null);
+    /* Aye's own book outside the workspace includes her unowned lead (see O). */
+    const phone = freshPhone();
+    const r = await editLeadBasics({ customerId: mineANoOwner.id, name: "Mine A renamed", city: "Virar", contact: "Suresh Rane", phone, productId });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    const after = await row(mineANoOwner.id);
+    assert.equal(after.name, "Mine A renamed");
+    assert.equal(after.city, "Virar");
+    assert.equal(after.phone, phone);
+    assert.equal(after.salesManagerId, smA.id, "no seat moved");
+    assert.equal(await audits(mineANoOwner.id), 1);
+  });
+
+  test("the modal's loader offers the seat boxes only inside the workspace", async () => {
+    const inside = await loadLeadEditForm(mineA.id);
+    assert.ok(inside.ok, inside.ok ? "" : inside.error);
+    assert.ok(inside.data.seats, "the Sales Manager gets owner and sales manager");
+    assert.ok(inside.data.seats.salesmen.some((p) => p.id === salesman.id), "the current owner is always offered");
+
+    setTestWorkspace(null);
+    const outside = await loadLeadEditForm(mineANoOwner.id);
+    assert.ok(outside.ok, outside.ok ? "" : outside.error);
+    assert.equal(outside.data.seats, null);
+    assert.equal((await loadLeadEditForm(mineB.id)).ok, false, "a lead outside the book does not open");
+  });
+
+  test("the name is edited with the rest, and a blank one is refused", async () => {
+    const r = await editLeadBasics(sixFields(mineA.id, { name: "Mine A Traders" }));
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    assert.equal((await row(mineA.id)).name, "Mine A Traders");
+    const bad = await editLeadBasics(sixFields(mineA.id, { name: " " }));
+    assert.equal(bad.ok, false);
   });
 
   test("a CRM user without the Sales Manager module cannot, even on a lead in a Sales Manager's book", async () => {

@@ -37,4 +37,7 @@ export const ADMIN_SITE_SOURCES: Record<string, () => Promise<ImpactSource>> = {
   "site-assignment": () => import("./website-cms").then((m) => m.assignmentImpact),
   "site-approval-revoke": () => import("./website-cms").then((m) => m.approvalRevokeImpact),
   "site-request-withdraw": () => import("./website-cms").then((m) => m.requestWithdrawImpact),
+
+  /* Tasks: a task deleted by whoever gave it. */
+  "task-delete": () => import("./tasks").then((m) => m.taskDeleteImpact),
 };

@@ -4,12 +4,14 @@ import { revalidatePath } from "next/cache";
 import {
   confirmAsMatch,
   confirmReceipt,
+  correctReceipt,
   holdReceipt,
   matchesForEntry,
   recordReceipt,
   rejectReceipt,
   reverseReceipt,
   type ConfirmAllocation,
+  type ReceiptCorrection,
   type ReceiptMatchView,
   type RecordReceiptInput,
 } from "@/lib/services/receipt-service";
@@ -75,6 +77,25 @@ export async function confirmReceiptAction(
 ): Promise<Result> {
   try {
     const r = await confirmReceipt(receiptId, allocation);
+    if (r.ok) refresh();
+    return r.ok ? { ok: true, data: undefined, message: r.message } : r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * Fix a mistyped amount, date, mode or reference on a receipt nobody has
+ * decided yet — instead of rejecting it ("never arrived") and recording it
+ * again. Who may, and what moves, is `correctReceipt`'s.
+ */
+export async function correctReceiptAction(
+  receiptId: string,
+  correction: ReceiptCorrection,
+  reason: string,
+): Promise<Result> {
+  try {
+    const r = await correctReceipt(receiptId, correction, reason);
     if (r.ok) refresh();
     return r.ok ? { ok: true, data: undefined, message: r.message } : r;
   } catch (e) {

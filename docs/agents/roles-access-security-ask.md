@@ -405,6 +405,17 @@ screen's loader, `lib/erp/ai-ask.ts` — behind `/api/erp/ask`, which speaks the
 same stream and adds the records it read as links. The next app is an
 endpoint that streams those events and an `AskSetup` in `ask-setups.ts`.
 
+**AN ACCESS SAVE IS ONE TRANSACTION, AND ITS AUDIT ROW IS A PICTURE.**
+`setAccess` (new person and edit alike) writes the apps, levels, screens, ERP /
+HRMS / Tasks powers, ERP designation, Hire role and factory place inside ONE
+transaction — the powers and the rest used to be written one by one after it,
+so a refusal half way left the new apps beside the old powers. Its
+`set-app-access` / `create-user` audit row carries `accessSnapshot()`
+(`lib/services/access-snapshot.ts`) as `beforeState.access` and
+`afterState.access` beside the old `detail` sentence: what the person held
+either side, sorted so two equal pictures compare equal. That is what answers
+"what did she hold on the 1st" and what a future restore reads.
+
 **THE DOORS ROUND THE CONSOLE ARE SHUT (Nov 2026).** Three places granted apps
 without a platform administrator, and each now defers to one:
 - **Locker's own access screen** (`setLockerModules`) changes the screens of
