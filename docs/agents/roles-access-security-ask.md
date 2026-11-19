@@ -454,3 +454,15 @@ And **a template never carries platform Admin** (`grantsPlatformAdmin`, refused
 on save and on apply): it is given one person at a time on their Manage page.
 Bulk take-away on Powers has a review step naming the people, and designation
 Sync names who it brings up before it runs.
+
+**COPYING, TEMPLATES AND TAKING AWAY IN BULK.** The Manage dialog has **Copy
+from** a person: it fills the draft (apps, levels, screens, powers, ERP
+designation, Hire role) and the review still compares against what THIS person
+holds, so whatever the copy removes is named and confirmed. Platform Admin and
+the factory seat are never copied. Job templates carry the ERP designation and
+Hire role too (`AccessTemplateShape.hireRole` / `erpDesignationId`), applied only
+to somebody the template gives that app. People & access's selection bar can
+**Take an app away** (`takeAppFrom`): the names that lose it are listed and the
+app's name is typed — checked on the server — and each person is then saved
+through `setAccess` with their own impact confirmation read for them. Never the
+Admin Console, never yourself.

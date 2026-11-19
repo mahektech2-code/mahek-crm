@@ -107,6 +107,9 @@ export type HeldAccess = {
   erpPowers: string[];
   hrmsPowers: string[];
   taskPowers: string[];
+  /** Their job inside Hire, and the name on their ERP access — read by a template that carries them. */
+  hireRole?: string | null;
+  erpDesignation?: { id: string } | null;
 };
 
 /** `setAccess`'s input, the parts a bulk change touches. Everything else is left absent, which means "as it is". */
@@ -116,6 +119,9 @@ export type BulkSave = {
   erpPowers: string[];
   hrmsPowers: string[];
   taskPowers: string[];
+  /** Absent means "as it is" — only a template that names one sets it. */
+  hireRole?: string | null;
+  erpDesignationId?: string | null;
 };
 
 /** What somebody holds today, as a save of exactly that. Saving it changes nothing. */
@@ -154,6 +160,14 @@ export type AccessTemplateShape = {
   erpPowers: string[];
   hrmsPowers: string[];
   taskPowers: string[];
+  /**
+   * The job inside Hire and the ERP designation, where the template names them.
+   * They used to be left out, so a template stamped "Sales coordinator" onto
+   * somebody with every screen and none of the name — outside every later edit
+   * to the designation. Applied only to somebody the template gives that app.
+   */
+  hireRole?: string | null;
+  erpDesignationId?: string | null;
 };
 
 /** A person's access as a template — "make a template from Puja". Whole-app grants stay whole. */
@@ -167,6 +181,8 @@ export function shapeFromRow(row: HeldAccess): AccessTemplateShape {
     erpPowers: [...row.erpPowers],
     hrmsPowers: [...row.hrmsPowers],
     taskPowers: [...row.taskPowers],
+    hireRole: row.grants.some((g) => g.app === "hire") ? (row.hireRole ?? null) : null,
+    erpDesignationId: row.grants.some((g) => g.app === "erp") ? (row.erpDesignation?.id ?? null) : null,
   };
 }
 
@@ -185,7 +201,16 @@ export function cleanShape(raw: unknown): AccessTemplateShape {
       };
     });
   const pick = (list: unknown, allowed: readonly string[]) => (Array.isArray(list) ? [...new Set(list.filter((p): p is string => typeof p === "string" && allowed.includes(p)))] : []);
-  return { apps, erpPowers: pick(s.erpPowers, ERP_POWERS), hrmsPowers: pick(s.hrmsPowers, HRMS_POWERS), taskPowers: pick(s.taskPowers, TASK_POWERS) };
+  /* Kept as written: `setAccess` refuses a designation that no longer exists or a role that is not Hire's. */
+  const word = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
+  return {
+    apps,
+    erpPowers: pick(s.erpPowers, ERP_POWERS),
+    hrmsPowers: pick(s.hrmsPowers, HRMS_POWERS),
+    taskPowers: pick(s.taskPowers, TASK_POWERS),
+    hireRole: word(s.hireRole),
+    erpDesignationId: word(s.erpDesignationId),
+  };
 }
 
 /**
@@ -286,6 +311,8 @@ export function applyChange(row: HeldAccess, change: BulkChange): Applied {
       for (const k of t[field]) if (!save[field].includes(k)) save[field].push(k);
       if (app === "erp") for (const k of t[field]) addScreens(save, "erp", ERP_POWER_SCREENS[k as ErpPower] ?? []);
     }
+    if (t.hireRole && grantOf(save, "hire") && row.hireRole !== t.hireRole) save.hireRole = t.hireRole;
+    if (t.erpDesignationId && grantOf(save, "erp") && row.erpDesignation?.id !== t.erpDesignationId) save.erpDesignationId = t.erpDesignationId;
   }
 
   if (JSON.stringify(save) === before) return { changed: false, why: "already holds it" };
@@ -315,5 +342,7 @@ export function describeSave(from: BulkSave, to: BulkSave): string {
     for (const k of added) out.push(`may ${labelOfPower(app, k).toLowerCase()}`);
     for (const k of gone) out.push(`no longer ${labelOfPower(app, k).toLowerCase()}`);
   }
+  if (to.hireRole !== undefined && to.hireRole !== from.hireRole) out.push(`Hire role ${to.hireRole ?? "from the level"}`);
+  if (to.erpDesignationId !== undefined && to.erpDesignationId !== from.erpDesignationId) out.push("given the template's ERP designation");
   return out.join(" · ");
 }

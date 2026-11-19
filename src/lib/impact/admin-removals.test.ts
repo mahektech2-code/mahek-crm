@@ -19,6 +19,7 @@ import { appAccess, appModuleAccess, appSecrets, auditLog, hrmsUserPowers, mbosD
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { offboardPerson, setUserActive } from "@/lib/actions/people";
+import { takeAppFrom } from "@/app/admin/access/bulk-apps";
 import { clearSecretAction } from "@/lib/actions/secrets";
 import { impactReport } from "@/lib/impact/registry";
 
@@ -143,6 +144,27 @@ describe("offboarding somebody who has left", () => {
     assert.equal((await offboardPerson(admin.id)).ok, false);
     const own = await impactReport("admin-offboard", admin.id);
     assert.ok(own.ok && own.data.blockers.length > 0);
+  });
+});
+
+describe("taking an app away from several people at once", () => {
+  test("takes it from those who hold it, after the app's name is typed, and never the Admin Console", async () => {
+    const other = await makeUser("Rakesh Caller", [{ app: "crm", role: "associate" }]);
+    const nobody = await makeUser("Neha Accounts", [{ app: "accounts", role: "associate" }]);
+
+    const untyped = await takeAppFrom({ app: "crm", typed: "", userIds: [salesman.id, other.id] });
+    assert.equal(untyped.ok, false, "refused until the app's name is typed");
+    assert.equal((await db.select().from(appAccess).where(eq(appAccess.userId, other.id))).length, 1);
+
+    const r = await takeAppFrom({ app: "crm", typed: "telecaller crm", userIds: [salesman.id, other.id, nobody.id] });
+    assert.ok(r.ok, r.ok ? "" : r.error);
+    assert.deepEqual(r.data.moved.map((m) => m.name).sort(), ["Mahesh Field", "Rakesh Caller"]);
+    assert.deepEqual(r.data.skipped.map((s) => s.name), ["Neha Accounts"], "somebody without it is skipped, with the reason");
+    const left = await db.select({ app: appAccess.app }).from(appAccess).where(eq(appAccess.userId, salesman.id));
+    assert.deepEqual(left.map((l) => l.app), ["field"], "only the named app goes");
+
+    const admins = await takeAppFrom({ app: "admin", typed: "Admin Console", userIds: [admin.id] });
+    assert.equal(admins.ok, false, "platform Admin is one person at a time");
   });
 });
 

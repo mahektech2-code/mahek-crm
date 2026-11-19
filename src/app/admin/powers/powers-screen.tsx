@@ -614,6 +614,8 @@ function shapeSummary(t: TemplateRow): string[] {
     ...t.shape.taskPowers.map((k) => powerById(`tasks.${k}`)?.label ?? k),
   ];
   if (powers.length) out.push(`Powers: ${powers.join(", ")}`);
+  if (t.shape.hireRole) out.push(`Hire role: ${t.shape.hireRole.replace(/_/g, " ")}`);
+  if (t.shape.erpDesignationId) out.push("Carries an ERP designation");
   return out;
 }
 
@@ -637,11 +639,7 @@ function TemplatesTab({
     <>
       <Callout tone="info">
         <div className="text-[13px] text-body">
-          A job template is a named shape of access across every app — the apps,
-          the level each is held at, the screens and the powers. Applying one
-          only ever <b>adds</b>: it never takes anything away, and editing a
-          template later moves nobody. Make one from somebody who already has
-          the right access.
+          A job template is a named shape of access across every app — the apps, the level each is held at, the screens, the powers, and the ERP designation and Hire role where the person it was made from had them. Applying one only ever <b>adds</b>: it never takes anything away, and editing a template later moves nobody. Make one from somebody who already has the right access.
         </div>
       </Callout>
       <div className="mb-4">
@@ -843,19 +841,7 @@ function EditTemplateModal({
             disabled={busy || !name.trim() || !apps.length}
             onClick={async () => {
               setBusy(true);
-              const r = await toast.run(
-                saveAccessTemplate({
-                  id: t.id,
-                  name,
-                  description,
-                  shape: {
-                    apps,
-                    erpPowers: erp,
-                    hrmsPowers: hrms,
-                    taskPowers: tasks,
-                  },
-                }),
-              );
+              const r = await toast.run(saveAccessTemplate({ id: t.id, name, description, shape: { apps, erpPowers: erp, hrmsPowers: hrms, taskPowers: tasks, hireRole: t.shape.hireRole ?? null, erpDesignationId: t.shape.erpDesignationId ?? null } }));
               setBusy(false);
               if (r.ok) {
                 router.refresh();
