@@ -250,3 +250,13 @@ copy.
 **An employee who leaves the sheet is marked, never deleted.** Payroll history
 outlives a spreadsheet edit, and somebody tidying a leaver off a tab is not
 asking for their record to be erased.
+
+**REMOVING A PICK-LIST VALUE SAYS WHO STILL CARRIES IT.** Pick lists → Remove a
+value goes prompt → impact (`hrms-pick-list-value`, id `impactPart(list,
+value)`, HRMS administration power). `STORED` in
+`lib/impact/kinds/hrms-ref-lists.ts` maps each list to the text columns that
+copy it (Position types → `employees.department`, Positions → `position` and
+`reports_to`, Bank names, Areas, holiday category/name, expense
+category/particular/location, asset names); a list not mapped there is said as
+"stored nowhere by name". Records keep the value; add a mapping when a new form
+starts saving a list.
