@@ -20,13 +20,16 @@ import {
   cx,
 } from "@/components/ui/primitives";
 import { Drawer, DrawerHeader, Modal, Tabs } from "@/components/ui/overlays";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
 import {
+  editComplaintAction,
   logComplaint,
   reassignComplaint,
   resolveComplaint,
   setComplaintPriorityAction,
+  withdrawComplaintAction,
 } from "@/lib/actions/crm";
 import { ageLabel, money, shortDate, stamp } from "@/lib/format";
 import { LogComplaintDialog } from "@/components/crm/log-complaint-dialog";
@@ -52,6 +55,7 @@ type Row = {
   customerName: string;
   category: string;
   description: string;
+  loggedByUserId: string;
   loggedByName: string;
   createdAt: Date;
   assignedTo: string;
@@ -161,7 +165,10 @@ export function ComplaintsScreen({
   categories,
   maxImages,
   openId,
+  userId,
 }: {
+  /** Who is looking — whoever logged a complaint may correct what it says. */
+  userId: string;
   scopeLabel: string;
   /**
    * Holds `complaint.resolve` — the capability `resolveComplaint` asks. It was
@@ -194,6 +201,13 @@ export function ComplaintsScreen({
   const [busy, setBusy] = React.useState(false);
   const [reassigning, setReassigning] = React.useState(false);
   const [logging, setLogging] = React.useState(false);
+  const [editing, setEditing] = React.useState<Row | null>(null);
+  const [withdrawing, setWithdrawing] = React.useState<Row | null>(null);
+  const [confirmingWithdraw, setConfirmingWithdraw] = React.useState<{
+    id: string;
+    reason: string;
+    key: number;
+  } | null>(null);
 
   /*
    * THE BUCKETS AND THE AGE STRIP, IN ONE PASS, MEMOISED ON THE ROWS.
@@ -612,6 +626,42 @@ export function ComplaintsScreen({
               <Button variant="secondary" onClick={() => setReassigning(true)}>
                 Reassign
               </Button>
+              {/* Correcting what it says belongs to whoever wrote it down and
+                * to the people who resolve complaints; withdrawing finishes
+                * it, so it is the resolver's alone — the same split the
+                * server makes. A finished complaint is neither. */}
+              <Button
+                variant="secondary"
+                disabled={
+                  CLOSED.includes(current.status) ||
+                  (current.loggedByUserId !== userId && !canResolve)
+                }
+                title={
+                  CLOSED.includes(current.status)
+                    ? "A finished complaint keeps what it said — its resolution answered it"
+                    : current.loggedByUserId !== userId && !canResolve
+                      ? "Only whoever logged it, or somebody who resolves complaints, may change it"
+                      : "Correct the description or the category"
+                }
+                onClick={() => setEditing(current)}
+              >
+                Edit
+              </Button>
+              <Button
+                variant="danger"
+                className="ml-auto"
+                disabled={!canResolve || CLOSED.includes(current.status)}
+                title={
+                  !canResolve
+                    ? "Withdrawing a complaint needs the right to resolve complaints"
+                    : CLOSED.includes(current.status)
+                      ? "Already finished with"
+                      : "Close a complaint raised by mistake or twice, with the reason"
+                }
+                onClick={() => setWithdrawing(current)}
+              >
+                Withdraw
+              </Button>
             </div>
           </>
         ) : null}
@@ -631,6 +681,54 @@ export function ComplaintsScreen({
           }
         }}
       />
+
+      <EditComplaintModal
+        row={editing}
+        categories={categories}
+        onClose={() => setEditing(null)}
+        onSubmit={async (description, category) => {
+          if (!editing) return;
+          const result = await run(
+            editComplaintAction({ complaintId: editing.id, description, category }),
+          );
+          if (result.ok) {
+            setEditing(null);
+            setCurrent(null);
+            router.refresh();
+          }
+        }}
+      />
+
+      <WithdrawModal
+        row={withdrawing}
+        onClose={() => setWithdrawing(null)}
+        onSubmit={(reason) => {
+          if (!withdrawing) return;
+          setConfirmingWithdraw({ id: withdrawing.id, reason, key: Date.now() });
+          setWithdrawing(null);
+        }}
+      />
+
+      {confirmingWithdraw ? (
+        <ImpactDialog
+          key={confirmingWithdraw.key}
+          kind="crm-complaint-withdraw"
+          id={confirmingWithdraw.id}
+          onClose={() => setConfirmingWithdraw(null)}
+          onConfirm={async (confirmation) => {
+            const r = await withdrawComplaintAction(
+              confirmingWithdraw.id,
+              confirmingWithdraw.reason,
+              confirmation,
+            );
+            if (r.ok) {
+              setCurrent(null);
+              router.refresh();
+            }
+            return r;
+          }}
+        />
+      ) : null}
 
       <LogComplaintDialog
         open={logging}
@@ -702,6 +800,176 @@ function ReassignModalBody({ open, current, onClose, onSubmit }: ReassignProps) 
             <option key={r}>{r}</option>
           ))}
         </Select>
+      </Field>
+    </Modal>
+  );
+}
+
+type EditProps = {
+  row: Row | null;
+  categories: string[];
+  onClose: () => void;
+  onSubmit: (description: string, category: string) => Promise<void>;
+};
+
+/** Remounts per complaint so it opens holding what the complaint says now. */
+function EditComplaintModal(props: EditProps) {
+  if (!props.row) return null;
+  return <EditComplaintModalBody key={props.row.id} {...props} />;
+}
+
+function EditComplaintModalBody({ row, categories, onClose, onSubmit }: EditProps) {
+  /* The stored value is an enum; the list is configured labels. The current
+     one is offered even where the list no longer carries it, so opening the
+     form never silently re-files the complaint. */
+  const currentLabel = categoryLabel(row!.category);
+  const options = categories.includes(currentLabel) ? categories : [currentLabel, ...categories];
+  const [category, setCategory] = React.useState(currentLabel);
+  const [description, setDescription] = React.useState(row!.description);
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState(false);
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Edit complaint"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            disabled={busy}
+            onClick={async () => {
+              if (!description.trim()) {
+                setError(true);
+                return;
+              }
+              setBusy(true);
+              try {
+                await onSubmit(description, category);
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Save changes
+          </Button>
+        </>
+      }
+    >
+      <div className="mb-3 text-sm text-muted">{row!.customerName}</div>
+      <Field label="Category" hint="Which desk it goes to follows from this.">
+        <Select value={category} onChange={(e) => setCategory(e.target.value)}>
+          {options.map((c) => (
+            <option key={c}>{c}</option>
+          ))}
+        </Select>
+      </Field>
+      <Field
+        label="What the customer reported"
+        required
+        className="mt-3"
+        error={error ? "Describe the complaint in the customer's words." : null}
+        hint="The correction is written into the status history."
+      >
+        <VoiceTextarea
+          value={description}
+          onChange={(e) => {
+            setDescription(e.target.value);
+            setError(false);
+          }}
+          onDictate={(v) => {
+            setDescription(v);
+            setError(false);
+          }}
+          invalid={error}
+          className="h-28"
+        />
+      </Field>
+    </Modal>
+  );
+}
+
+/** Asks why; the impact dialog after it says what goes with the complaint. */
+function WithdrawModal({
+  row,
+  onClose,
+  onSubmit,
+}: {
+  row: Row | null;
+  onClose: () => void;
+  onSubmit: (reason: string) => void;
+}) {
+  if (!row) return null;
+  return <WithdrawModalBody key={row.id} row={row} onClose={onClose} onSubmit={onSubmit} />;
+}
+
+function WithdrawModalBody({
+  row,
+  onClose,
+  onSubmit,
+}: {
+  row: Row;
+  onClose: () => void;
+  onSubmit: (reason: string) => void;
+}) {
+  const [reason, setReason] = React.useState("");
+  const [error, setError] = React.useState(false);
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Withdraw complaint"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Keep it open
+          </Button>
+          <Button
+            variant="danger"
+            onClick={() => {
+              if (!reason.trim()) {
+                setError(true);
+                return;
+              }
+              onSubmit(reason.trim());
+            }}
+          >
+            Continue
+          </Button>
+        </>
+      }
+    >
+      <div className="mb-3 text-sm text-muted">
+        {row.customerName} · {categoryLabel(row.category)}
+      </div>
+      <Field
+        label="Why it is being withdrawn"
+        required
+        error={error ? "Say why — it is the last line of the complaint's history." : null}
+        hint={
+          row.requestCn
+            ? "It is closed, not deleted. A credit-note request still waiting on accounts is refused with this reason."
+            : "It is closed, not deleted, with this reason in its history."
+        }
+      >
+        <VoiceTextarea
+          value={reason}
+          onChange={(e) => {
+            setReason(e.target.value);
+            setError(false);
+          }}
+          onDictate={(v) => {
+            setReason(v);
+            setError(false);
+          }}
+          invalid={error}
+          className="h-16"
+          placeholder="Raised twice — the same delivery as the complaint logged on Monday"
+        />
       </Field>
     </Modal>
   );

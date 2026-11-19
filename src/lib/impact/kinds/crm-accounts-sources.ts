@@ -19,6 +19,10 @@ export const CRM_ACCOUNTS_SOURCES: Record<string, () => Promise<ImpactSource>> =
   "crm-reminder-dismiss": () => import("./crm-customers").then((m) => m.reminderDismissImpact),
   /** `unlinkOrderAction` — the id is `impactPair(enquiryId, orderId)`. */
   "crm-enquiry-order": () => import("./crm-customers").then((m) => m.enquiryOrderImpact),
+  /** `cancelPromiseAction` — by the follow-up attempt carrying the promise. */
+  "crm-payment-promise-cancel": () => import("./crm-records").then((m) => m.promiseCancelImpact),
+  /** `withdrawComplaintAction` — a complaint closed as raised by mistake or twice. */
+  "crm-complaint-withdraw": () => import("./crm-records").then((m) => m.complaintWithdrawImpact),
   /** `clearManager` — an employee's reporting line, which the CRM reads for the sales manager seat. */
   "crm-reporting-line": () => import("./crm-customers").then((m) => m.reportingLineImpact),
 

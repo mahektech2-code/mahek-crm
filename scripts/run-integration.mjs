@@ -64,6 +64,8 @@ const files = [
   "src/lib/tasks/permissions.integration.test.ts",
   "src/lib/tasks/lists.integration.test.ts",
   "src/lib/crm-accounts-impact.test.ts",
+  // Correcting a promise, complaint, reminder or opportunity; cancelling and withdrawing.
+  "src/lib/crm-edit-actions.test.ts",
   // Adding a customer from Accounts, and it reaching every app on its own.
   "src/lib/customer-create.test.ts",
   // Converting a lead straight to a customer from Accounts — the bypass.

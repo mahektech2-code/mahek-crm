@@ -3840,6 +3840,16 @@ export const followUpAttempts = pgTable(
     promisedDate: date("promised_date"),
     reminderId: text("reminder_id"),
     idempotencyKey: text("idempotency_key"),
+    /**
+     * Set when the promise above no longer stands — entered by mistake, or
+     * withdrawn by the customer. The attempt itself is a call that happened
+     * and stays; a cancelled promise is simply never the live one, is never
+     * judged kept or broken, and its chase reminder is dismissed. See
+     * `cancelPromise` in `lib/services/payment-service.ts`.
+     */
+    promiseCancelledAt: timestamp("promise_cancelled_at", { withTimezone: true }),
+    promiseCancelledById: text("promise_cancelled_by_id").references(() => users.id),
+    promiseCancelReason: text("promise_cancel_reason"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id"),
   },

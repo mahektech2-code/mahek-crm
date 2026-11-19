@@ -20,9 +20,12 @@ import {
 } from "@/components/ui/primitives";
 import { CardGrid } from "@/components/ui/card-grid";
 import { Modal, RowMenu, Tabs } from "@/components/ui/overlays";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
 import {
+  cancelPromiseAction,
+  editPromiseAction,
   recordPayment,
   recordPromise,
   startStageOneBatch,
@@ -114,6 +117,7 @@ export function PaymentsScreen({
   showAssignee,
   canBulk,
   canExport,
+  canCancelPromise,
   rows,
   aging,
   workingDaysLeft,
@@ -144,6 +148,8 @@ export function PaymentsScreen({
    */
   canBulk: boolean;
   canExport: boolean;
+  /** `reminder.close` — cancelling a promise dismisses its chase reminder. */
+  canCancelPromise: boolean;
   rows: Row[];
   aging: { total: number; buckets: Array<{ label: string; amount: number }> };
   workingDaysLeft: number;
@@ -209,6 +215,13 @@ export function PaymentsScreen({
   const searchTimer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const [promising, setPromising] = React.useState<Row | null>(null);
+  const [editingPromise, setEditingPromise] = React.useState<Row | null>(null);
+  const [cancellingPromise, setCancellingPromise] = React.useState<Row | null>(null);
+  const [confirmingCancel, setConfirmingCancel] = React.useState<{
+    attemptId: string;
+    reason: string;
+    key: number;
+  } | null>(null);
   const [paying, setPaying] = React.useState<Row | null>(null);
   const [heldOpen, setHeldOpen] = React.useState(false);
   /*
@@ -543,6 +556,9 @@ export function PaymentsScreen({
                       onOpen={() => setOpenAt(i)}
                       onPay={() => setPaying(r)}
                       onPromise={() => setPromising(r)}
+                      onEditPromise={() => setEditingPromise(r)}
+                      onCancelPromise={() => setCancellingPromise(r)}
+                      canCancelPromise={canCancelPromise}
                       onGo={(href) => router.push(href)}
                     />
                   ))}
@@ -621,6 +637,61 @@ export function PaymentsScreen({
           }
         }}
       />
+
+      <EditPromiseModal
+        row={editingPromise}
+        onClose={() => setEditingPromise(null)}
+        onSubmit={async (amount, promisedBy, note) => {
+          if (!editingPromise?.promiseAttemptId) return;
+          const result = await run(
+            editPromiseAction({
+              attemptId: editingPromise.promiseAttemptId,
+              amount,
+              promisedBy,
+              note,
+            }),
+          );
+          if (result.ok) {
+            setEditingPromise(null);
+            router.refresh();
+          }
+        }}
+      />
+
+      <CancelPromiseModal
+        row={cancellingPromise}
+        onClose={() => setCancellingPromise(null)}
+        onSubmit={(reason) => {
+          if (!cancellingPromise?.promiseAttemptId) return;
+          setConfirmingCancel({
+            attemptId: cancellingPromise.promiseAttemptId,
+            reason,
+            key: Date.now(),
+          });
+          setCancellingPromise(null);
+        }}
+      />
+
+      {confirmingCancel ? (
+        <ImpactDialog
+          key={confirmingCancel.key}
+          kind="crm-payment-promise-cancel"
+          id={confirmingCancel.attemptId}
+          onClose={() => setConfirmingCancel(null)}
+          onConfirm={async (confirmation) => {
+            const r = await cancelPromiseAction(
+              confirmingCancel.attemptId,
+              confirmingCancel.reason,
+              confirmation,
+            );
+            if (r.ok) {
+              push(r.message ?? "Promise cancelled");
+              router.refresh();
+            }
+            return r;
+          }}
+        />
+      ) : null}
 
       <PaymentModal
         modes={modes}
@@ -722,6 +793,9 @@ function WorklistLine({
   onOpen,
   onPay,
   onPromise,
+  onEditPromise,
+  onCancelPromise,
+  canCancelPromise,
   onGo,
 }: {
   r: Row;
@@ -731,6 +805,9 @@ function WorklistLine({
   onOpen: () => void;
   onPay: () => void;
   onPromise: () => void;
+  onEditPromise: () => void;
+  onCancelPromise: () => void;
+  canCancelPromise: boolean;
   onGo: (href: string) => void;
 }) {
   const wa = r.lastWa ? statusView(r.lastWa) : null;
@@ -877,6 +954,20 @@ function WorklistLine({
                 disabled: r.held,
                 title: r.held ? (r.heldReason ?? undefined) : undefined,
               },
+              ...(r.promiseAttemptId
+                ? [
+                    { label: "Edit the promise", onSelect: onEditPromise },
+                    {
+                      label: "Cancel the promise",
+                      onSelect: onCancelPromise,
+                      destructive: true,
+                      disabled: !canCancelPromise,
+                      title: canCancelPromise
+                        ? undefined
+                        : "Cancelling a promise dismisses its chase reminder, which needs the right to close reminders",
+                    },
+                  ]
+                : []),
               {
                 label: "Open WhatsApp chat",
                 onSelect: () => onGo(`/crm/whatsapp?tab=replies&chat=${r.customerId}`),
@@ -975,6 +1066,173 @@ function PromiseModalBody({ row, onClose, onSubmit }: PromiseProps) {
       <div className="mt-3 rounded-[4px] border border-warn-line bg-warn-soft px-2.5 py-2 text-[13px] text-warn-ink">
         If it does not arrive, a reminder comes up on {shortDate(addDays(promisedBy, 1))}.
       </div>
+    </Modal>
+  );
+}
+
+type EditPromiseProps = {
+  row: Row | null;
+  onClose: () => void;
+  onSubmit: (amount: string, promisedBy: string, note: string) => Promise<void>;
+};
+
+/** Remounts per promise so the form opens holding what was recorded. */
+function EditPromiseModal(props: EditPromiseProps) {
+  if (!props.row?.promiseAttemptId) return null;
+  return <EditPromiseModalBody key={props.row.promiseAttemptId} {...props} />;
+}
+
+/**
+ * Correcting a promise as it was written down. The stage is not on this form:
+ * it is derived from the bills and rebuilt after the save. What moves with
+ * the date is the reminder that chases it.
+ */
+function EditPromiseModalBody({ row, onClose, onSubmit }: EditPromiseProps) {
+  const [amount, setAmount] = React.useState(rupeesFromPaise(row?.promisedAmount ?? 0));
+  const [promisedBy, setPromisedBy] = React.useState(row?.promisedDate ?? "");
+  const [note, setNote] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+
+  return (
+    <Modal
+      open={Boolean(row)}
+      onClose={onClose}
+      title="Edit payment promise"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            disabled={busy || !promisedBy}
+            title={promisedBy ? undefined : "Pick the date they promised to pay by"}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await onSubmit(amount, promisedBy, note);
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Save changes
+          </Button>
+        </>
+      }
+    >
+      <div className="mb-3 text-sm text-muted">
+        {row?.name} · {money(row?.totalOverdue ?? 0)} overdue
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Amount promised">
+          <MoneyInput value={amount} onChange={(e) => setAmount(e.target.value)} />
+        </Field>
+        <Field label="Promised by">
+          <Input type="date" value={promisedBy} onChange={(e) => setPromisedBy(e.target.value)} />
+        </Field>
+      </div>
+      <Field
+        label="Note"
+        optional
+        className="mt-3"
+        hint="Leave empty to keep the note it was recorded with."
+      >
+        <VoiceTextarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          onDictate={setNote}
+          className="h-16"
+          placeholder="Who promised, and how it will be paid"
+        />
+      </Field>
+      {promisedBy ? (
+        <div className="mt-3 rounded-[4px] border border-warn-line bg-warn-soft px-2.5 py-2 text-[13px] text-warn-ink">
+          Its reminder moves with it: if the money does not arrive, it comes up on{" "}
+          {shortDate(addDays(promisedBy, 1))}. The stage is worked out again from the bills.
+        </div>
+      ) : null}
+    </Modal>
+  );
+}
+
+/** Asks why first; the impact dialog that follows says what comes off whose list. */
+function CancelPromiseModal({
+  row,
+  onClose,
+  onSubmit,
+}: {
+  row: Row | null;
+  onClose: () => void;
+  onSubmit: (reason: string) => void;
+}) {
+  if (!row) return null;
+  return (
+    <CancelPromiseModalBody key={row.customerId} row={row} onClose={onClose} onSubmit={onSubmit} />
+  );
+}
+
+function CancelPromiseModalBody({
+  row,
+  onClose,
+  onSubmit,
+}: {
+  row: Row;
+  onClose: () => void;
+  onSubmit: (reason: string) => void;
+}) {
+  const [reason, setReason] = React.useState("");
+  const [error, setError] = React.useState(false);
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Cancel payment promise"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Keep it
+          </Button>
+          <Button
+            variant="danger"
+            onClick={() => {
+              if (!reason.trim()) {
+                setError(true);
+                return;
+              }
+              onSubmit(reason.trim());
+            }}
+          >
+            Continue
+          </Button>
+        </>
+      }
+    >
+      <div className="mb-3 text-sm text-muted">
+        {row.name} · {money(row.promisedAmount ?? 0)} by{" "}
+        {row.promisedDate ? shortDate(row.promisedDate) : "—"}
+      </div>
+      <Field
+        label="Why it no longer stands"
+        required
+        error={error ? "Say why — the next person to ring them needs to know." : null}
+        hint="Nothing is deleted: the call stays on the record. The promise stops being the live one and its chase reminder is dismissed."
+      >
+        <VoiceTextarea
+          value={reason}
+          onChange={(e) => {
+            setReason(e.target.value);
+            setError(false);
+          }}
+          onDictate={(v) => {
+            setReason(v);
+            setError(false);
+          }}
+          invalid={error}
+          className="h-16"
+          placeholder="Recorded against the wrong customer"
+        />
+      </Field>
     </Modal>
   );
 }

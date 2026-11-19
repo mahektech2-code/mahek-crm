@@ -649,6 +649,16 @@ const DESCRIBE: Record<string, Describer> = {
     changes: false,
   }),
   "followup.attempt": (c) => ["chased", c.subject(), "for payment"],
+  "followup.promise_edit": (c) => ["corrected a payment promise from", c.subject()],
+  "followup.promise_cancel": (c) => ({
+    says: [
+      "cancelled a payment promise from",
+      c.subject(),
+      ...(num(c.b.amount) ? ["of", strong(rupees(c.b.amount)!)] : []),
+    ],
+    note: str(c.a.reason),
+    changes: false,
+  }),
   "target.create": (c) => ({ says: ["set a sales target for", c.user(c.a.userId), "for", strong(periodWords(c.a.period))], changes: false }),
   "target.revise": (c) => ({ says: ["changed the published sales target of", c.user(c.a.userId), "for", strong(periodWords(c.a.period))], changes: false }),
   "target.publish": (c) => ({ says: ["published the sales target of", c.user(c.a.userId), "for", strong(periodWords(c.a.period))], changes: false }),
@@ -789,7 +799,15 @@ const DESCRIBE: Record<string, Describer> = {
   }),
   "reminder.close": (c) => ({ says: ["completed a reminder for", c.subject()], changes: false }),
   "reminder.dismiss": (c) => ({ says: ["dismissed a reminder for", c.subject()], changes: false }),
+  "reminder.edit": (c) => ["corrected a reminder for", c.subject()],
   "complaint.priority": (c) => ["changed the priority of a complaint from", c.subject()],
+  "complaint.edit": (c) => ["corrected what a complaint from", c.subject(), "says"],
+  "complaint.withdraw": (c) => ({
+    says: ["withdrew a complaint from", c.subject()],
+    note: str(c.a.reason),
+    changes: false,
+  }),
+  "opportunity.edit": () => ["corrected the figures on a call opportunity"],
   "watch.outcome": (c) => ({ says: ["recorded what happened with the inactive customer", c.subject()], changes: false }),
   "lead.captured": (c) => ({
     says: ["added a new lead,", strong(str(c.a.name) ?? "unnamed"), ...(str(c.a.city) ? [`in ${str(c.a.city)}`] : [])],

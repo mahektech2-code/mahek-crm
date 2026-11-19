@@ -313,3 +313,22 @@ order, and an erratic one earlier, because the honest answer to a guess is a
 wider net. Fifty is neutral, so a swing of zero is exactly the old flat
 behaviour. It moves the day and never creates a call the cycle length says
 should not exist — a short cycle still gets no stock check.
+
+**A promise is corrected or cancelled, never deleted — and the stage is not
+on either form.** A promise is a `follow_up_attempts` row carrying an amount
+and a date, and the attempt is a call that happened. EDIT (`editPromise`)
+rewrites the amount, date and note and moves the pending `payment_promise`
+chase reminder to the working day after the new date, without touching its
+`rescheduleCount`. CANCEL (`cancelPromise`) sets `promise_cancelled_at`, by
+and reason; every read of "the live promise" — the worklist, the "has a
+promise" tab, the cadence, promises kept, the panel, the WhatsApp merge field
+— asks `promise_cancelled_at is null`, and the chase reminder is dismissed
+with the reason. Both end in `recomputeFollowUpState`: the stage is derived,
+so a promise changes it only by being re-read. Cancelling asks
+`reminder.close`, the capability dismissing the reminder itself asks, and
+goes through the `crm-payment-promise-cancel` impact dialog; editing asks
+what rescheduling asks. The EOD counts of promises taken still count a
+cancelled one, because the call that took it still happened. The chase is
+found by `follow_up_attempts.reminder_id`, which the collections panel now
+fills; older panel promises are matched by the system reminder's
+"promised for <date>" note.
