@@ -98,6 +98,8 @@ export type PaymentDetail = {
   holdReason: string | null;
   heldDays: number | null;
   holdStale: boolean;
+  /** For correcting the claim before it is decided: the offered modes and today's date. */
+  correct: { modes: string[]; datedModes: string[]; today: string };
 
   /**
    * Every bill still open on this account, so the drawer can offer accounts
