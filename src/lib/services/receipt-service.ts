@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { auditLog, bills, customers, paymentReceipts, payments } from "@/db/schema";
+import { auditLog, bills, complaints, customers, paymentReceipts, payments } from "@/db/schema";
 import {
   assertCustomerInScope,
   canFor,
@@ -1314,6 +1314,22 @@ export async function reverseReceipt(
         amount: Number(receipt.amount),
       } as never,
     });
+
+    /* A credit note's receipt reversed on the statement IS the credit note
+       cancelled — the complaint must not go on saying "issued" over money
+       that no longer counts. `cancelCreditNote` is the same act from the
+       Credit notes screen. */
+    if (receipt.idempotencyKey.startsWith("creditnote:")) {
+      await tx
+        .update(complaints)
+        .set({ cnStatus: "cancelled", updatedById: ctx.user.id, updatedAt: new Date() })
+        .where(
+          and(
+            eq(complaints.id, receipt.idempotencyKey.slice("creditnote:".length)),
+            eq(complaints.cnStatus, "issued"),
+          ),
+        );
+    }
   });
 
   // Giving the money back to the bills it settled is a rebuild, never a

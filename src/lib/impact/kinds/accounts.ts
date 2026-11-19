@@ -7,6 +7,7 @@ import { requireCapability, resolveScope } from "@/lib/access-control";
 import type { Capability } from "@/lib/capability-matrix";
 import { longDate, money } from "@/lib/format";
 import { BANK_MODULES } from "@/lib/services/bank-statement-service";
+import { creditNoteCancelBlockers, creditNoteReceiptKey } from "@/lib/services/credit-note-service";
 import type { ImpactBody, ImpactSource } from "../registry";
 import type { ImpactItem } from "../types";
 import { many, present, word } from "./crm-common";
@@ -183,6 +184,51 @@ export const receiptReverseImpact: ImpactSource = {
       confirmWord: "REVERSE",
       items: found.items,
       blockers: receiptBlockers(facts.status),
+    };
+  },
+};
+
+/* ================================================ an issued credit note taken back */
+
+/**
+ * `cancelCreditNoteAction`, by the complaint's id. An issued credit note is a
+ * confirmed Adjustment receipt, so what cancelling it moves is exactly what
+ * reversing that receipt moves — the same `reversal` reading — plus the
+ * complaint, which says Cancelled from then on.
+ */
+export const creditNoteCancelImpact: ImpactSource = {
+  authorize: async () => {
+    await requireCapability("creditnote.issue");
+  },
+
+  async report(complaintId): Promise<ImpactBody | null> {
+    const [c] = await db.execute<{ customer: string; cnStatus: string | null; cnAmount: string | null; cnReference: string | null; receiptId: string | null; receiptStatus: string | null }>(sql`
+      select cu.name as customer, c.cn_status::text as "cnStatus", c.cn_amount as "cnAmount", c.cn_reference as "cnReference",
+             r.id as "receiptId", r.status::text as "receiptStatus"
+        from complaints c
+        join customers cu on cu.id = c.customer_id
+        left join payment_receipts r on r.idempotency_key = ${creditNoteReceiptKey(complaintId)}
+       where c.id = ${complaintId}`);
+    if (!c) return null;
+    const found = c.receiptId ? await reversal(c.receiptId) : null;
+    const items: ImpactItem[] = (found?.items ?? []).map((i) =>
+      i.label === "receipt on the customer's statement"
+        ? { ...i, label: "credit note on the customer's statement", note: "It keeps its row, marked Reversed with your reason." }
+        : i,
+    );
+    items.push({
+      app: "CRM",
+      label: "complaint the credit note was raised on",
+      effect: "changed",
+      count: 1,
+      note: "Its credit note reads Cancelled, and your reason is added to the complaint where the telecaller reads it. A new credit note is a new request.",
+    });
+    return {
+      title: `the ${money(Number(c.cnAmount ?? 0))} credit note to ${c.customer}${c.cnReference ? ` (${c.cnReference})` : ""}`,
+      verb: "Cancel",
+      confirmWord: "CANCEL",
+      items,
+      blockers: creditNoteCancelBlockers(c.cnStatus, c.receiptStatus),
     };
   },
 };
