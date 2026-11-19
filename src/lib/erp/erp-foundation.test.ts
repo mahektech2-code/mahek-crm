@@ -281,3 +281,31 @@ describe("powers and godowns", () => {
     assert.equal(n.workingGodown, null, "nobody assigned means no working location, not a guess");
   });
 });
+
+describe("retiring a reference list value", () => {
+  test("the modal names the records that carry the value, which keep it", async () => {
+    const ctx = await as(admin);
+    const part = JSON.stringify(["materialType", "Can"]);
+    const report = await impactReport("erp-ref-value-retire", part);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    const kept = report.data.items.find((i) => i.effect === "kept" && /raw materials/.test(i.label));
+    assert.ok((kept?.count ?? 0) >= 1, JSON.stringify(report.data.items));
+    assert.equal(report.data.items.find((i) => i.effect === "changed")?.count, 1);
+
+    const refused = await mod("refLists").actions!.retire(ctx, "materialType", { v: "Can" });
+    assert.equal(refused.ok ? "ok" : refused.error, "Check what this affects and confirm it first.");
+    setTestUser(outsider);
+    const peek = await impactReport("erp-ref-value-retire", part);
+    assert.equal(peek.ok ? "ok" : peek.code, "not_permitted", "somebody without the ERP cannot read it");
+
+    const done = await mod("refLists").actions!.retire(await as(admin), "materialType", { v: "Can", [IMPACT_FIELD]: JSON.stringify({ typed: "Can", fingerprint: report.data.fingerprint }) });
+    assert.ok(done.ok, JSON.stringify(done));
+    const [row] = (await db.execute(sql`select active from erp_ref_values where list_key = 'materialType' and value = 'Can'`)) as unknown as { active: boolean }[];
+    assert.equal(row.active, false);
+    const [m] = (await db.execute(sql`select material_type from erp_raw_materials where name = '1 L Tin Can'`)) as unknown as { material_type: string }[];
+    assert.equal(m.material_type, "Can", "the record keeps it");
+    const again = await impactReport("erp-ref-value-retire", part);
+    assert.ok(again.ok && again.data.blockers.length === 1, "already retired");
+    assert.ok((await mod("refLists").actions!.restore(ctx, "materialType", { v: "Can" })).ok);
+  });
+});

@@ -61,17 +61,19 @@ export const REGIONS = ["West", "North", "South", "East", "Central"];
  * already in use, so a dropdown is never emptier than the data it describes.
  * Read only to OFFER choices: `refValues` stays the configured list wherever a
  * rule checks a value against it.
+ * (`union all`, not `union`: the retire modal counts the records that carry a
+ * value through these same queries, and the offer reads them `distinct`.)
  */
 const IN_USE: Record<string, ReturnType<typeof sql>> = {
   area: sql`select area as v from customers where deleted_at is null
-            union select area from sheet_party_rows where status = 'present'`,
+            union all select area from sheet_party_rows where status = 'present'`,
   state: sql`select state as v from erp_customer_profiles
-             union select state from sheet_party_rows where status = 'present'
-             union select state from erp_godowns`,
+             union all select state from sheet_party_rows where status = 'present'
+             union all select state from erp_godowns`,
   segment: sql`select segment as v from erp_customer_profiles
-               union select segment from sheet_party_rows where status = 'present'`,
+               union all select segment from sheet_party_rows where status = 'present'`,
   counterType: sql`select unnest(counter_types) as v from erp_customer_profiles
-                   union select counter_type from sheet_party_rows where status = 'present'`,
+                   union all select counter_type from sheet_party_rows where status = 'present'`,
   godownCity: sql`select city as v from erp_godowns`,
 };
 
@@ -149,6 +151,56 @@ const STORED_IN: Record<string, ReturnType<typeof sql>[]> = {
   creditNote: [],
   zone: [],
 };
+
+/**
+ * What each `STORED_IN` query reads, in words, entry for entry — so the
+ * retire modal can say WHICH records carry a value rather than one number.
+ * The customer lists' first entry reads the CRM and the Sales Party sheet
+ * together, which is how it is named.
+ */
+const STORED_WHAT: Record<string, { app: string; what: string }[]> = {
+  materialType: [
+    { app: "ERP", what: "can and material groups" },
+    { app: "ERP", what: "raw materials" },
+    { app: "ERP", what: "requirements" },
+    { app: "ERP", what: "goods inward lines" },
+    { app: "ERP", what: "re-order levels" },
+  ],
+  testingList: [
+    { app: "ERP", what: "raw materials that test for it" },
+    { app: "ERP", what: "lot tests" },
+    { app: "ERP", what: "SFG QC decisions" },
+  ],
+  area: [{ app: "CRM", what: "customers and Sales Party rows" }, { app: "ERP", what: "suppliers" }],
+  state: [{ app: "ERP", what: "parties, Sales Party rows and godowns" }, { app: "ERP", what: "suppliers" }],
+  segment: [{ app: "ERP", what: "parties and Sales Party rows" }],
+  counterType: [{ app: "ERP", what: "parties and Sales Party rows" }],
+  godownCity: [{ app: "ERP", what: "godowns" }],
+  complaintType: [{ app: "ERP", what: "customer requests and complaints" }],
+  expenseCategory: [{ app: "ERP", what: "extra expenses" }, { app: "ERP", what: "petty cash entries" }],
+  expenseParticular: [{ app: "ERP", what: "extra expenses" }],
+  videoTag: [{ app: "ERP", what: "videos" }],
+  paymentTerms: [{ app: "ERP", what: "quotations" }, { app: "ERP", what: "purchase orders" }],
+  scrapCategory: [{ app: "ERP", what: "scrap sales" }, { app: "ERP", what: "scrap entries" }],
+  consignmentLabel: [{ app: "ERP", what: "transporters" }],
+};
+
+/**
+ * Where a list value is carried, source by source, for the retire modal. A
+ * list nobody has mapped answers null — the modal then says records may carry
+ * it, rather than claiming none do.
+ */
+export async function refValueUses(listKey: string, value: string): Promise<{ app: string; what: string; n: number }[] | null> {
+  const uses = STORED_IN[listKey];
+  if (!uses) return null;
+  const words = STORED_WHAT[listKey] ?? [];
+  const out: { app: string; what: string; n: number }[] = [];
+  for (let i = 0; i < uses.length; i++) {
+    const [row] = (await db.execute(sql`select count(*)::int as n from (${uses[i]}) s(v) where lower(trim(s.v)) = lower(trim(${value}))`)) as unknown as { n: number }[];
+    out.push({ ...(words[i] ?? { app: "ERP", what: "records" }), n: Number(row?.n ?? 0) });
+  }
+  return out;
+}
 
 /**
  * Why a list value cannot be renamed, or "" when it can. A value is stored as

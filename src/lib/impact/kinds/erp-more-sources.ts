@@ -47,6 +47,13 @@ export const ERP_MORE_SOURCES: Record<string, () => Promise<ImpactSource>> = {
   "erp-supplier-retire": () => import("./erp-retire").then((m) => m.supplierRetireImpact),
   "erp-party-deactivate": () => import("./erp-retire").then((m) => m.partyDeactivateImpact),
 
+  /* ERP → Item transfers, Goods inward, Recipes, Reference lists: a transfer cancelled, a mistaken inward line voided,
+     a whole recipe retired, a list value retired (the id is `impactPart(listKey, value)` — the prompt picks the value). */
+  "erp-transfer-cancel": () => import("./erp-corrections").then((m) => m.transferCancelImpact),
+  "erp-inward-void": () => import("./erp-corrections").then((m) => m.inwardVoidImpact),
+  "erp-recipe-retire": () => import("./erp-corrections").then((m) => m.recipeRetireImpact),
+  "erp-ref-value-retire": () => import("./erp-corrections").then((m) => m.refValueRetireImpact),
+
   /* ---- transport, trips, LRs and the quotation manager ---- */
 
   /* ERP → Logistics: an LR voided, a bill off its trip, a transport payment reversed, a delivery reopened. */

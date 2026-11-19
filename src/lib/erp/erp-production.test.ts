@@ -575,3 +575,100 @@ describe("a production delete says what moves first, and takes its own stock wit
     assert.equal(r.ok ? "ok" : r.code, "not_permitted");
   });
 });
+
+describe("a transfer is cancelled whole, and only while nothing used what it delivered", () => {
+  const transfer = async (lot: string, to: string, qty: string, from = "Bhiwandi") => {
+    const ctx = await as(admin);
+    const r = await mod("transfers").forms!.new(ctx, { date: TODAY, type: "Purchase", from, item: "Toluene", lot, qty, to }, []);
+    assert.ok(r.ok, JSON.stringify(r));
+    const [t] = (await db.execute(sql`select id from erp_transfers where lot_no = ${lot} and to_godown_id = (select id from erp_godowns where name = ${to}) order by created_at desc limit 1`)) as unknown as { id: string }[];
+    return t.id;
+  };
+
+  test("cancelling puts the stock back where it was, after the modal is answered", async () => {
+    const ctx = await as(admin);
+    const before = await rmLotStock("ASTOL1", "erpg_bhiwandi");
+    const id = await transfer("ASTOL1", "Ambernath", "20");
+    assert.equal(await rmLotStock("ASTOL1", "erpg_bhiwandi"), before - 20);
+    const { report, values } = await impact("erp-transfer-cancel", id);
+    assert.equal(report.blockers.length, 0);
+    assert.equal(item(report, "deleted", /transfer record/)?.count, 1);
+    assert.equal((await mod("transfers").actions!.cancel(ctx, id, {})).ok, false, "refused without the confirmation");
+    const done = await mod("transfers").actions!.cancel(ctx, id, values);
+    assert.ok(done.ok, JSON.stringify(done));
+    assert.equal(await rmLotStock("ASTOL1", "erpg_bhiwandi"), before);
+    assert.equal(await rmLotStock("ASTOL1", "erpg_ambernath"), 0);
+    assert.equal(((await db.execute(sql`select 1 from erp_transfers where id = ${id}`)) as unknown as unknown[]).length, 0);
+    assert.equal(((await db.execute(sql`select 1 from erp_rm_entries where source_type = 'transfer' and source_id = ${id}`)) as unknown as unknown[]).length, 0);
+    const [a] = (await db.execute(sql`select count(*)::int as n from audit_log where action = 'erp.transfer.cancel' and entity_id = ${id}`)) as unknown as { n: number }[];
+    assert.equal(Number(a.n), 1);
+  });
+
+  test("a transfer whose lot moved on from the destination is refused, and the modal says why", async () => {
+    const ctx = await as(admin);
+    const id = await transfer("ASTOL1", "Ambernath", "10");
+    await transfer("ASTOL1", "Bhiwandi", "4", "Ambernath");
+    const { report } = await impact("erp-transfer-cancel", id);
+    assert.match(report.blockers[0] ?? "", /moved on/);
+    const r = await mod("transfers").actions!.cancel(ctx, id, { [IMPACT_FIELD]: JSON.stringify({ typed: "CANCEL", fingerprint: report.fingerprint }) });
+    assert.equal(r.ok ? "ok" : r.code, "rule_violation");
+    const row = (await mod("transfers").load(ctx)).rows.find((x) => x.id === id);
+    assert.match(row?.actions?.find((x) => x.id === "cancel")?.why ?? "", /can no longer be cancelled/);
+  });
+
+  test("cancelling a write-off needs the lost-stock power, and a clerk cannot even read it", async () => {
+    const id = await transfer("ASTOL1", "Item Lost Record", "2");
+    const c = await as(clerk);
+    const peek = await impactReport("erp-transfer-cancel", id);
+    assert.equal(peek.ok ? "ok" : peek.code, "not_permitted");
+    assert.equal((await mod("transfers").actions!.cancel(c, id, { [IMPACT_FIELD]: JSON.stringify({ typed: "CANCEL", fingerprint: "x" }) })).ok, false);
+    const ctx = await as(admin);
+    const before = await rmLotStock("ASTOL1", "erpg_bhiwandi");
+    const { values } = await impact("erp-transfer-cancel", id);
+    assert.ok((await mod("transfers").actions!.cancel(ctx, id, values)).ok);
+    assert.equal(await rmLotStock("ASTOL1", "erpg_bhiwandi"), before + 2);
+  });
+
+  test("boxes a cancelled transfer moved go back with it", async () => {
+    const ctx = await as(admin);
+    const r = await mod("transfers").forms!.new(ctx, { date: TODAY, type: "FG Packing", from: "Bhiwandi", item: BOXED, lot: "FP1BH", qty: "2", to: "Ambernath" }, []);
+    assert.ok(r.ok, JSON.stringify(r));
+    const [t] = (await db.execute(sql`select id from erp_transfers where lot_no = 'FP1BH' order by created_at desc limit 1`)) as unknown as { id: string }[];
+    const bhiwandi = async () => {
+      const [w] = (await db.execute(sql`select count(*)::int as n from erp_units u where u.lot_code = 'FP1BH' and u.godown_id = 'erpg_bhiwandi' and u.status = 'available'`)) as unknown as { n: number }[];
+      return Number(w.n);
+    };
+    const before = await bhiwandi();
+    const { report, values } = await impact("erp-transfer-cancel", t.id);
+    assert.equal(item(report, "changed", /box/)?.count, 2);
+    assert.ok((await mod("transfers").actions!.cancel(ctx, t.id, values)).ok);
+    assert.equal(await bhiwandi(), before + 2);
+  });
+});
+
+describe("a whole recipe is retired and restored, and nothing made to it changes", () => {
+  test("retiring takes it off new batches; restoring brings it back", async () => {
+    const ctx = await as(admin);
+    assert.ok((await mod("recipes").forms!.new(ctx, { product: SFG }, [{ item: "Toluene", qty: "100" }])).ok);
+    const [rcp] = await db.select().from(erpRecipes);
+    const { report, values } = await impact("erp-recipe-retire", rcp.id);
+    assert.ok((item(report, "kept", /SFG batch/)?.count ?? 0) >= 1);
+    assert.equal((await mod("recipes").actions!.retire(ctx, rcp.id, {})).ok, false, "refused without the confirmation");
+    assert.equal((await mod("recipes").actions!.retire(await as(clerk), rcp.id, values)).ok, false, "a manager sets a recipe");
+    assert.ok((await mod("recipes").actions!.retire(await as(admin), rcp.id, values)).ok);
+    assert.ok((await db.select().from(erpRecipes))[0].retiredAt);
+    assert.ok((await db.select().from(erpSfgLines)).length > 0, "the batches made to it are untouched");
+    assert.equal(await mod("recipes").formLoaders!.start(ctx, rcp.id), null, "a retired recipe starts no batch");
+    const qty = await mod("recipes").actions!.qty(ctx, rcp.id, { qty: "5" });
+    assert.match(qty.ok ? "" : qty.error, /retired/);
+    assert.match(fieldMsg(await mod("recipes").forms!.new(ctx, { product: SFG }, [{ item: "Toluene", qty: "1" }])), /retired/);
+    const row = (await mod("recipes").load(ctx)).rows.find((x) => x.id === rcp.id);
+    assert.ok(row?.flags.includes("retired"));
+    assert.deepEqual(row?.actions?.map((a) => a.id), ["restore"]);
+    const again = await impactReport("erp-recipe-retire", rcp.id);
+    assert.ok(again.ok && again.data.blockers.length === 1, "already retired");
+    assert.ok((await mod("recipes").actions!.restore(ctx, rcp.id, {})).ok);
+    assert.equal((await db.select().from(erpRecipes))[0].retiredAt, null);
+    assert.ok(await mod("recipes").formLoaders!.start(ctx, rcp.id));
+  });
+});

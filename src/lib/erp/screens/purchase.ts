@@ -54,10 +54,12 @@ import {
   transportModeByLabel,
   transportModeLabel,
 } from "../engines/purchase";
-import { lotLandings, rmLots, type LotLanding } from "../stock";
+import { lockLot, lotLandings, rmLots, type LotLanding } from "../stock";
 import { foldRmLots, lotRowId } from "../engines/stock-fold";
 import { bindErpFiles } from "../attachments";
-import { type Col, godownField, godownIdByName, godownOptions, has, today, type Tx } from "./common";
+import { type Col, godownField, godownIdByName, godownOptions, has, inTx, refuse, today, type Tx } from "./common";
+import { confirmImpact } from "@/lib/impact/registry";
+import { readConfirmation } from "@/lib/impact/types";
 import { EXTRA_OPTS, RECEIVABLE_PO, SHORT_OPTS, correctionFor, normalisePoNo, poLabel, poName, receiptGap } from "../engines/purchase-flow";
 import { OWNERSHIP_LABEL, ownershipByLabel } from "../engines/drums";
 
@@ -530,6 +532,146 @@ async function writeInwardChange(tx: Tx, ctx: ErpContext, r: InwardRow, next: In
   if (moved("quantity")) await refreshPurchaseOrder(tx, r.poId);
 }
 
+/* ------------------------------------------------------- voiding a line */
+
+/** Voiding takes stock out of the book, so it is a stock-control decision: an ERP manager, or the stock-control power. */
+export const mayVoidInward = (ctx: ErpContext) => ctx.administrator || ctx.level === "manager" || ctx.powers.has("stockControl");
+export const VOID_WHY = "Voiding a received line needs an ERP manager or the stock-control power.";
+
+/**
+ * WHAT VOIDING A MISTAKEN INWARD LINE TAKES WITH IT, and why it cannot — one
+ * reading for the impact modal and for the act, which reads it again under a
+ * lock on each lot. A line goes only while nothing has come of it but its own
+ * records: its register lot (and the stock entry that lot posted), its
+ * not-yet-verified test, and the PO corrections it made. Anything that READ
+ * the lot as stock — a transfer, an SFG batch, a vendor return, an empty drum,
+ * a count, a stock check or an adjustment — or a supplier bill recorded
+ * against it, or a verified test, holds it: those are decisions made on the
+ * line being real, and are corrected where they were made.
+ */
+export type InwardVoidPicture = {
+  r: InwardRow;
+  item: string;
+  supplier: string;
+  godown: string;
+  poNumber: number | null;
+  tests: { id: string; status: string }[];
+  lots: { id: string; lotNo: string; quantity: number; unit: string; posted: boolean; status: string; billReceived: string | null }[];
+  corrections: { id: string; kind: string; quantity: number }[];
+  /** Other lines on the same PR, which stay. */
+  siblings: number;
+  blocker: string | null;
+};
+
+export async function inwardVoidPicture(ex: Tx | typeof db, id: string): Promise<InwardVoidPicture | null> {
+  const [x] = await ex
+    .select({ r: erpInward, item: erpRawMaterials.name, supplier: erpSuppliers.name, godown: erpGodowns.name, poNumber: erpPurchaseOrders.poNumber })
+    .from(erpInward)
+    .innerJoin(erpRawMaterials, eq(erpRawMaterials.id, erpInward.rawMaterialId))
+    .innerJoin(erpSuppliers, eq(erpSuppliers.id, erpInward.supplierId))
+    .innerJoin(erpGodowns, eq(erpGodowns.id, erpInward.godownId))
+    .leftJoin(erpPurchaseOrders, eq(erpPurchaseOrders.id, erpInward.poId))
+    .where(eq(erpInward.id, id));
+  if (!x) return null;
+  const tests = await ex.select({ id: erpTests.id, status: erpTests.status }).from(erpTests).where(eq(erpTests.inwardId, id));
+  const lotRows = await ex
+    .select()
+    .from(erpPurchases)
+    .where(tests.length ? or(eq(erpPurchases.inwardId, id), inArray(erpPurchases.testId, tests.map((t) => t.id))) : eq(erpPurchases.inwardId, id));
+  const posted = lotRows.length
+    ? await ex.select({ sourceId: erpRmEntries.sourceId }).from(erpRmEntries).where(and(eq(erpRmEntries.sourceType, "purchase"), inArray(erpRmEntries.sourceId, lotRows.map((l) => l.id))))
+    : [];
+  const corrections = await ex
+    .select({ id: erpPoCorrections.id, kind: erpPoCorrections.kind, quantity: erpPoCorrections.quantity })
+    .from(erpPoCorrections)
+    .where(and(eq(erpPoCorrections.inwardId, id), isNull(erpPoCorrections.cancelledAt)));
+  const [{ n: siblings }] = (await ex.execute(sql`select count(*)::int as n from erp_inward where pr_number = ${x.r.prNumber} and id <> ${id}`)) as unknown as { n: number }[];
+  const out: InwardVoidPicture = {
+    r: x.r,
+    item: x.item,
+    supplier: x.supplier,
+    godown: x.godown,
+    poNumber: x.poNumber ?? null,
+    tests,
+    lots: lotRows.map((l) => ({ id: l.id, lotNo: l.lotNo, quantity: Number(l.availableLitres ?? l.quantity), unit: l.unit, posted: posted.some((p) => p.sourceId === l.id), status: l.status, billReceived: l.billReceived })),
+    corrections: corrections.map((c) => ({ ...c, quantity: Number(c.quantity) })),
+    siblings: Number(siblings),
+    blocker: null,
+  };
+  const verified = tests.find((t) => t.status === "Verified");
+  if (verified) return { ...out, blocker: `The test on this line is verified. Mark it Not Verified on Lot testing first, if the delivery itself was the mistake.` };
+  for (const l of lotRows) {
+    if (l.status !== "Pending" || l.billReceived === "Received")
+      return { ...out, blocker: `The supplier's bill is recorded against lot ${l.lotNo} (${l.status}). Undo the bill on the purchase register first.` };
+    const [use] = (await ex.execute(sql`
+      select why from (
+        select 1 as o, 'Lot ' || ${l.lotNo} || ' has been moved to another godown since it arrived.' as why
+          from erp_transfers where item_type = 'Purchase' and lot_no = ${l.lotNo}
+        union all
+        select 2, 'Lot ' || ${l.lotNo} || ' has been used in an SFG batch.' from erp_sfg_lines where rm_lot_no = ${l.lotNo}
+        union all
+        select 3, 'Lot ' || ${l.lotNo} || ' has a return to the supplier against it.' from erp_purchase_returns where purchase_id = ${l.id}
+        union all
+        select 4, 'Empty drums of lot ' || ${l.lotNo} || ' have been recorded.' from erp_empty_drums where purchase_id = ${l.id} and status <> 'cancelled'
+        union all
+        select 5, 'Lot ' || ${l.lotNo} || ' was adjusted on Stock on hand.' from erp_manual_adjustments where stage = 'rm' and lot = ${l.lotNo}
+        union all
+        select 6, ${x.item} || ' was counted at ' || ${x.godown} || ' after this delivery, against a book that includes it.'
+          from erp_stock_counts c where c.raw_material_id = ${l.rawMaterialId} and c.godown_id = ${l.godownId} and c.counted_at > ${l.createdAt.toISOString()}::timestamptz and c.status <> 'cancelled'
+        union all
+        select 7, ${x.item} || ' was stock-checked at ' || ${x.godown} || ' after this delivery, against a book that includes it.'
+          from erp_floor_checks f where f.stage = 'rm' and f.item_id = ${l.rawMaterialId} and f.godown_id = ${l.godownId} and f.counted_at > ${l.createdAt.toISOString()}::timestamptz
+      ) u order by o limit 1`)) as unknown as { why: string }[];
+    if (use) return { ...out, blocker: `${use.why} Correct it with a stock adjustment instead of voiding the delivery.` };
+  }
+  return out;
+}
+
+/**
+ * VOIDING A MISTAKEN INWARD LINE, in one transaction: its register lot and the
+ * stock entry that lot posted go (so the stock it added is gone), its
+ * unverified test goes, the PO corrections it made are cancelled with the
+ * reason and stay struck through, and the PO's received figure and status
+ * are worked out again from what is left. The audit row keeps all of it as it
+ * stood. Anything that already used the lot refuses it (`inwardVoidPicture`).
+ */
+async function voidInward(ctx: ErpContext, id: string, values: Record<string, string>): Promise<Result<unknown>> {
+  const reason = text(values.reason);
+  if (!reason || reason.length < 5) return fieldErr("reason", "Say why this line is void — it is kept with the record.");
+  const refusal = await confirmImpact("erp-inward-void", id, readConfirmation(values));
+  if (refusal) return refusal;
+  const seen: { p?: InwardVoidPicture } = {};
+  const res = await inTx(async (tx) => {
+    const [row] = await tx.select().from(erpInward).where(eq(erpInward.id, id)).for("update");
+    if (!row) return refuse(err("That line no longer exists.", "not_found"));
+    const first = await inwardVoidPicture(tx, id);
+    for (const l of first?.lots ?? []) await lockLot(tx, "rm", l.lotNo, row.godownId);
+    const p = await inwardVoidPicture(tx, id);
+    if (!p) return refuse(err("That line no longer exists.", "not_found"));
+    if (p.blocker) return refuse(err(p.blocker, "rule_violation"));
+    seen.p = p;
+    const lotIds = p.lots.map((l) => l.id);
+    if (lotIds.length) {
+      await tx.delete(erpRmEntries).where(and(eq(erpRmEntries.sourceType, "purchase"), inArray(erpRmEntries.sourceId, lotIds)));
+      await tx.delete(erpPurchases).where(inArray(erpPurchases.id, lotIds));
+    }
+    if (p.tests.length) await tx.delete(erpTests).where(inArray(erpTests.id, p.tests.map((t) => t.id)));
+    if (p.corrections.length) {
+      await tx
+        .update(erpPoCorrections)
+        .set({ cancelledAt: new Date(), cancelledById: ctx.user.id, cancelReason: `GRN line voided: ${reason}` })
+        .where(inArray(erpPoCorrections.id, p.corrections.map((c) => c.id)));
+      if (row.poId) await tx.update(erpPurchaseOrders).set({ revision: sql`${erpPurchaseOrders.revision} + 1`, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpPurchaseOrders.id, row.poId));
+    }
+    await tx.delete(erpInward).where(eq(erpInward.id, id));
+    await refreshPurchaseOrder(tx, row.poId);
+    return okVoid(`PR ${row.prNumber} · ${p.item} voided${lotIds.length ? ` · lot ${p.lots.map((l) => l.lotNo).join(", ")} taken out of stock` : ""}`);
+  });
+  if (res.ok && seen.p)
+    await erpAudit(ctx, "erp.inward.void", "erp_inward", id, { line: seen.p.r, lots: seen.p.lots, tests: seen.p.tests, corrections: seen.p.corrections }, { reason });
+  return res;
+}
+
 async function inwardEditForm(ctx: ErpContext, id: string): Promise<FormSpec | null> {
   const [x] = await db
     .select({ r: erpInward, item: erpRawMaterials.name, unit: erpRawMaterials.unit, godown: erpGodowns.name })
@@ -718,6 +860,18 @@ const inward: ScreenModule = {
             : undefined,
         });
         actions.push({ id: "edit", l: "Edit", loadsForm: true });
+        actions.push({
+          id: "void",
+          l: "Void line",
+          why: mayVoidInward(ctx) ? "" : VOID_WHY,
+          prompt: {
+            title: `Void ${x.item} on PR ${x.r.prNumber}?`,
+            sub: "For a line received in error. The modal that follows says what goes with it; anything that already used the lot stops it.",
+            submit: "Next",
+            fields: [{ k: "reason", l: "Why is this line void?", t: "area", req: true }],
+          },
+          impact: { kind: "erp-inward-void", id: x.r.id },
+        });
         const c = costs.get(x.r.prNumber);
         actions.push({
           id: "costs",
@@ -1059,6 +1213,10 @@ const inward: ScreenModule = {
     },
   },
   actions: {
+    async void(ctx, id, values) {
+      if (!mayVoidInward(ctx)) return err(VOID_WHY, "not_permitted");
+      return voidInward(ctx, id, values);
+    },
     /* Routing a line is claimed in the same statement that checks it has not
        been routed, so two people pressing at once route it once. */
     async toTesting(ctx, id) {

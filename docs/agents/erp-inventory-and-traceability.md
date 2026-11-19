@@ -189,6 +189,26 @@ adjustment at either end came after; the edit also refuses when the
 destination no longer holds all it delivered. A write-off, either side of the
 edit, needs `lostStock`.
 
+**CANCELLING A TRANSFER TAKES THE DOCUMENT BACK, under the same rule.** Item
+transfers → Cancel transfer / Cancel write-off (`cancelTransfer`, impact kind
+`erp-transfer-cancel`) deletes the destination's inflow entry, puts the units
+back (`undoUnitsForTransfer` — a further event, never a rewrite) and deletes
+the transfer row, which is the outflow the source reads; the audit row keeps
+it. `transferCancelPicture` is the one reading the modal and the act share
+(the act again under both lots' locks): `transferHolds`, the destination still
+holding everything, units untouched. A balance is never edited.
+
+**A MISTAKEN GOODS INWARD LINE IS VOIDED, NOT EDITED TO ZERO.** Goods inward →
+Void line (`voidInward`, kind `erp-inward-void`, needs an ERP manager or
+`stockControl`, and a reason) deletes the line, its register lot and the RM
+entry it posted, and its not-yet-verified test; cancels the PO corrections the
+line made (kept struck through, the reason prefixed "GRN line voided") and
+re-runs `refreshPurchaseOrder`, so a PO with nothing left received goes back
+to Sent. `inwardVoidPicture` refuses it once the lot was transferred, used in
+an SFG batch, returned to the vendor, had empty drums recorded, was adjusted,
+counted or stock-checked after the delivery, carries a supplier bill, or its
+test is verified — each is corrected where it was made.
+
 **EVERY CHANGE OF A BOX IS AN EVENT, APPENDED.** `erp_unit_events`: created,
 labelled, scanned, unscanned, dispatched, transfer, hold, release, reject,
 return, lost, override. A transfer moves the lowest-numbered boxes in stock
