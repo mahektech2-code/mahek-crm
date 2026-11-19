@@ -87,7 +87,7 @@ export default async function CredentialPage({ params }: { params: Promise<{ id:
               {[c.provider, c.url, d.ownerName ? `owner ${d.ownerName}` : "no owner"].filter(Boolean).join(" · ")}
             </span>
           </span>
-          <CredActions id={c.id} title={c.title} provider={c.provider} fields={d.current.map((x) => x.field)} canWrite={vaultReady()} />
+          <CredActions id={c.id} title={c.title} provider={c.provider} fields={d.current.map((x) => x.field)} canWrite={vaultReady()} active={c.active} />
         </div>
         {flags.map((f) => (
           <div key={f} className="mx-6 mb-4 ml-[72px] rounded-control bg-danger-soft px-3.5 py-2.5 text-[13px] font-medium text-danger">

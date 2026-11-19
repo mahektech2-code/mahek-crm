@@ -6,6 +6,10 @@ import { ACCESS_REVOKE_KIND } from "./access-revoke-key";
    key is the `impact.kind` a screen names and the act passes to
    `confirmImpact`. */
 export const ADMIN_SITE_SOURCES: Record<string, () => Promise<ImpactSource>> = {
+  /* Locker → Vault: a login retired; a sign-in account retired. */
+  "locker-credential-retire": () => import("./locker").then((m) => m.lockerCredentialRetireImpact),
+  "locker-identity-retire": () => import("./locker").then((m) => m.lockerIdentityRetireImpact),
+
   /* Admin Console: a catalogue alias removed, a SKU retired from the order
      form, a sign-in disabled, a saved credential cleared (the id is its name). */
   "admin-catalogue-alias": () => import("./admin").then((m) => m.aliasImpact),

@@ -2,13 +2,14 @@
 
 import { buttonClass, cx } from "@/components/ui/primitives";
 import { useRouter } from "next/navigation";
-import { saveIdentity } from "@/lib/actions/locker-vault";
+import { restoreIdentity, retireIdentity, saveIdentity } from "@/lib/actions/locker-vault";
+import { openImpactModal } from "../../_ui/impact-modal";
 import { C, Pill, nf, useModal, useToast, type ModalField } from "../../_ui/kit";
 import { Alert, Block, Cell, GTable, Stats, Yes } from "../../_ui/vault-parts";
 
 export type IdRow = { id: string; email: string; provider: string; kind: string; controlled: boolean; mfa: boolean; recovery: boolean; controlledByName: string | null; controlledById: string | null; score: number; direct: number; ownerName: string | null; ownerId: string | null };
 
-export function IdentitiesScreen({ rows, people }: { rows: IdRow[]; people: { v: string; l: string }[] }) {
+export function IdentitiesScreen({ rows, people, retired = [] }: { rows: IdRow[]; people: { v: string; l: string }[]; retired?: { id: string; email: string; provider: string }[] }) {
   const router = useRouter();
   const modal = useModal();
   const toast = useToast();
@@ -78,7 +79,7 @@ export function IdentitiesScreen({ rows, people }: { rows: IdRow[]; people: { v:
             ["Linked services", "100px"],
             ["Risk", "70px"],
             ["Owner", "150px"],
-            ["", "70px"],
+            ["", "150px"],
           ]}
           rows={rows.map((i) => ({
             key: i.id,
@@ -94,21 +95,67 @@ export function IdentitiesScreen({ rows, people }: { rows: IdRow[]; people: { v:
               <Cell key="f" t={nf(i.direct)} className="font-semibold text-ink" />,
               <Cell key="g" t={nf(i.score)} className={cx("font-semibold", i.score > 100 ? "text-danger" : "text-ink")} />,
               <Cell key="h" t={i.ownerName ?? "—"} />,
-              <button
-                key="i"
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  edit(i);
-                }}
-                className={buttonClass({ variant: "secondary", size: "sm" })}
-              >
-                Edit
-              </button>,
+              <span key="i" className="flex gap-1.5">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    edit(i);
+                  }}
+                  className={buttonClass({ variant: "secondary", size: "sm" })}
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  title="Retire this account: kept on the record, out of the lists"
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    const failed = await openImpactModal(modal, "locker-identity-retire", i.id, (c) => retireIdentity(i.id, c), (m) => {
+                      toast(m ?? `${i.email} retired`);
+                      router.refresh();
+                    });
+                    if (failed) toast(failed);
+                  }}
+                  className={buttonClass({ variant: "secondary", size: "sm" })}
+                >
+                  Retire
+                </button>
+              </span>,
             ],
           }))}
         />
       </Block>
+      {retired.length ? (
+        <Block vault title="Retired sign-in accounts" sub="Kept on the record with their connections. Restore one that is in use again.">
+          <GTable
+            vault
+            emptyLine=""
+            cols={[
+              ["Account", "minmax(260px,2fr)"],
+              ["", "100px"],
+            ]}
+            rows={retired.map((r) => ({
+              key: r.id,
+              cells: [
+                <Cell key="a" t={r.email} sub={r.provider} />,
+                <button
+                  key="b"
+                  type="button"
+                  onClick={async () => {
+                    const out = await restoreIdentity(r.id);
+                    toast(out.ok ? (out.message ?? `${r.email} restored`) : out.error);
+                    if (out.ok) router.refresh();
+                  }}
+                  className={buttonClass({ variant: "secondary", size: "sm" })}
+                >
+                  Restore
+                </button>,
+              ],
+            }))}
+          />
+        </Block>
+      ) : null}
     </div>
   );
 }
