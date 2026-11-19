@@ -16,6 +16,7 @@ export const ENQUIRY_STAGES = [
   "qualified",
   "converted",
   "closed",
+  "spam",
 ] as const;
 export type EnquiryStage = (typeof ENQUIRY_STAGES)[number];
 
@@ -26,6 +27,7 @@ export const STAGE_LABEL: Record<EnquiryStage, string> = {
   qualified: "Qualified",
   converted: "Converted",
   closed: "Closed",
+  spam: "Spam",
 };
 
 export const STAGE_TONE: Record<EnquiryStage, Tone> = {
@@ -35,11 +37,21 @@ export const STAGE_TONE: Record<EnquiryStage, Tone> = {
   qualified: "brand",
   converted: "success",
   closed: "muted",
+  spam: "danger",
 };
 
 export function isTerminalStage(stage: EnquiryStage): boolean {
-  return stage === "converted" || stage === "closed";
+  return stage === "converted" || stage === "closed" || stage === "spam";
 }
+
+/**
+ * The stages a person may PICK from the stage dropdown. Spam is not one of
+ * them: marking an enquiry as spam takes it off the list and out of the
+ * counts, so it goes through `markEnquirySpam` and its impact dialog, and
+ * `changeStage` refuses it. Moving a spam enquiry to any of these is "Not
+ * spam" — it comes back.
+ */
+export const PICKABLE_STAGES = ENQUIRY_STAGES.filter((s) => s !== "spam") as Exclude<EnquiryStage, "spam">[];
 
 export const ENQUIRY_PRIORITIES = ["low", "normal", "high", "urgent"] as const;
 export type EnquiryPriority = (typeof ENQUIRY_PRIORITIES)[number];
@@ -78,6 +90,14 @@ export const ENQUIRY_SOURCES = [
   "other",
 ] as const;
 export type EnquirySource = (typeof ENQUIRY_SOURCES)[number];
+
+/**
+ * Where an enquiry entered by hand may say it came from. Website is not
+ * offered: a website enquiry arrives through the ingest door with the
+ * website's own reference, and it is the only source that may become a lead
+ * (`leadConvertibility`) — a typed one claiming it would be both.
+ */
+export const MANUAL_ENQUIRY_SOURCES = ENQUIRY_SOURCES.filter((s) => s !== "website") as Exclude<EnquirySource, "website">[];
 
 export const SOURCE_LABEL: Record<EnquirySource, string> = {
   website: "Website",
@@ -297,6 +317,14 @@ export const ACTIVITY_LABEL: Record<string, string> = {
   order_unlinked: "Order unlinked",
   reminder_created: "Follow-up scheduled",
   lead_created: "Lead created",
+  created: "Enquiry entered by hand",
+  details_corrected: "Details corrected",
+  note_edited: "Note edited",
+  note_deleted: "Note deleted",
+  reminder_rescheduled: "Follow-up moved",
+  reminder_cancelled: "Follow-up cancelled",
+  marked_spam: "Marked as spam",
+  unmarked_spam: "Not spam",
 };
 
 /* ---------------------------------------------------------------------------

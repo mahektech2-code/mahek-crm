@@ -4,6 +4,7 @@ import { and, eq, gte, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appAccess,
+  auditLog,
   appModuleAccess,
   lockerAssetTypes,
   lockerAssets,
@@ -27,7 +28,10 @@ import { notifyUsers } from "@/lib/notify";
 import { err, ok, type Result } from "@/lib/result";
 import { writeModules } from "@/lib/services/access-writes";
 import { lockerAccess } from "./access";
+import { isPlatformAdmin } from "@/lib/access-control";
 import { lockerAuditTx } from "./audit";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 import { CATEGORY } from "./catalogue";
 import { mergeSettings, type LockerSettings } from "./settings";
 import { holdersOf } from "./vault-core";
@@ -110,6 +114,46 @@ export async function removeLink(actor: User, linkId: string): Promise<Result> {
     await lockerAuditTx(tx, { actorId: actor.id, actorName: actor.name, action: "locker.credential.edited", entityType: "credential", entityId: l.credentialId, summary: `Removed a connection: ${l.kind}` });
   });
   return ok(undefined);
+}
+
+/**
+ * RETIRING A SIGN-IN ACCOUNT — one the company no longer has, or recorded by
+ * mistake. Nothing is deleted: its connections stay on the record and the
+ * logins that relied on it keep pointing at it, which the impact modal
+ * (`locker-identity-retire`) names one by one. It leaves the account lists,
+ * the connection map and offboarding. Refused while it is the ONLY way into a
+ * login still in use — that login is changed first. Restore brings it back.
+ */
+export async function retireIdentity(actor: User, id: string, confirmation: ImpactConfirmation | null): Promise<Result> {
+  const a = await lockerAccess(actor.id);
+  if (!a.has("locker.identities") && !a.vault) return err(NO("Sign-in accounts"), "not_permitted");
+  const [i] = await db.select().from(lockerIdentities).where(eq(lockerIdentities.id, id)).limit(1);
+  if (!i) return err("That sign-in account does not exist.", "not_found");
+  const refusal = await confirmImpact("locker-identity-retire", id, confirmation);
+  if (refusal) return refusal;
+  const done = await db.transaction(async (tx) => {
+    const rows = await tx.update(lockerIdentities).set({ active: false }).where(and(eq(lockerIdentities.id, id), eq(lockerIdentities.active, true))).returning({ id: lockerIdentities.id });
+    if (!rows.length) return false;
+    await lockerAuditTx(tx, { actorId: actor.id, actorName: actor.name, action: "locker.identity.retired", entityType: "identity", entityId: id, entityTitle: i.email, summary: `Retired the sign-in account ${i.email}`, security: true });
+    return true;
+  });
+  if (!done) return err("That sign-in account is already retired.", "conflict");
+  return ok(undefined, `${i.email} retired`);
+}
+
+export async function restoreIdentity(actor: User, id: string): Promise<Result> {
+  const a = await lockerAccess(actor.id);
+  if (!a.has("locker.identities") && !a.vault) return err(NO("Sign-in accounts"), "not_permitted");
+  const [i] = await db.select().from(lockerIdentities).where(eq(lockerIdentities.id, id)).limit(1);
+  if (!i) return err("That sign-in account does not exist.", "not_found");
+  const done = await db.transaction(async (tx) => {
+    const rows = await tx.update(lockerIdentities).set({ active: true }).where(and(eq(lockerIdentities.id, id), eq(lockerIdentities.active, false))).returning({ id: lockerIdentities.id });
+    if (!rows.length) return false;
+    await lockerAuditTx(tx, { actorId: actor.id, actorName: actor.name, action: "locker.identity.restored", entityType: "identity", entityId: id, entityTitle: i.email, summary: `Restored the sign-in account ${i.email}`, security: true });
+    return true;
+  });
+  if (!done) return err("That sign-in account is not retired.", "conflict");
+  return ok(undefined, `${i.email} restored`);
 }
 
 /* ---------------------------------------------------------------- offboarding */
@@ -245,6 +289,15 @@ export async function setLockerModules(actor: User, userId: string, modules: str
   const [person] = await db.select({ name: users.name }).from(users).where(eq(users.id, userId)).limit(1);
   if (!person) return err("Nobody was chosen.", "not_found");
   const before = await holdersByUser(userId);
+  /* GIVING SOMEBODY THE LOCKER APP is granting an app, and only a platform
+     administrator does that (`docs/agents/roles-access-security-ask.md`). This
+     screen kept its own door: anybody holding Admin › Access could hand the
+     vault to anybody. Changing the screens of somebody who already holds it,
+     and taking it away, stay here. */
+  const [already] = await db.select({ id: appAccess.id }).from(appAccess).where(and(eq(appAccess.userId, userId), eq(appAccess.app, "locker"))).limit(1);
+  if (!already && wanted.length && !(await isPlatformAdmin(actor))) {
+    return err("Giving somebody the Locker is a platform administrator's — ask one on the Admin Console's People & access.", "not_permitted");
+  }
   /* A reviewer without Admin › Access may only TAKE AWAY — what a review
      decides. The action takes any person and any list, so without this a
      reviewer could hand themselves Admin › Access and the vault. */
@@ -275,6 +328,17 @@ export async function setLockerModules(actor: User, userId: string, modules: str
       reason: why || null,
       detail: { added, removed },
       security: true,
+    });
+    /* And on the console's own audit, where every other access change is —
+       the person's Audit tab used to miss everything decided in here. */
+    await tx.insert(auditLog).values({
+      id: nid("aud"),
+      actorId: actor.id,
+      action: "locker.access.changed",
+      entityType: "user",
+      entityId: userId,
+      beforeState: { modules: before } as never,
+      afterState: { modules: wanted, added, removed, reason: why || null } as never,
     });
   });
   /* A8: a permission change is notified — to the person, and to another admin. */

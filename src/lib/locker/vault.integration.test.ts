@@ -17,6 +17,8 @@ import { db } from "@/db";
 import { appAccess, appModuleAccess, lockerAudit, lockerCredentials, lockerReveals, lockerSecrets, users, type User } from "@/db/schema";
 import { hashPassword } from "@/lib/password";
 import { verifyAuditChain } from "./audit";
+import { setTestUser } from "@/lib/auth";
+import { impactReport } from "@/lib/impact/registry";
 import * as core from "./vault-core";
 import * as ops from "./ops-core";
 
@@ -216,6 +218,74 @@ describe("offboarding", () => {
     const items = (ob as unknown as { items: ops.OffItem[] }).items;
     assert.deepEqual(items.filter((i) => i.kind === "identity").map((i) => i.id), [mine.data.id], "his own account, not the consultant's with the same name");
     assert.deepEqual(items.filter((i) => i.kind === "payment").map((i) => i.id), ["lkp_rahul"]);
+  });
+});
+
+describe("retiring keeps everything and takes it out of use", () => {
+  const confirm = async (as: User, kind: string, rid: string) => {
+    setTestUser(as);
+    const r = await impactReport(kind, rid);
+    assert.ok(r.ok, r.ok ? "" : r.error);
+    return { report: r.data, c: { typed: r.data.confirmWord, fingerprint: r.data.fingerprint } };
+  };
+
+  test("a retired login cannot be revealed, its waiting requests expire, and Restore brings it back", async () => {
+    const req = await core.requestReveal(rahul, restrictedId, "Login password", null, "monthly settlement report download");
+    assert.ok(req.ok);
+    const { report, c } = await confirm(admin, "locker-credential-retire", restrictedId);
+    assert.equal(report.items.find((i) => /reveal request/.test(i.label))?.count, 1);
+    assert.equal(report.items.find((i) => /stored value/.test(i.label))?.effect, "kept");
+
+    setTestUser(auditor);
+    const peek = await impactReport("locker-credential-retire", restrictedId);
+    assert.equal(peek.ok ? "ok" : peek.code, "not_permitted", "the auditor cannot read it");
+    assert.equal((await core.retireCredential(auditor, restrictedId, c)).ok, false);
+    assert.equal((await core.retireCredential(admin, restrictedId, null)).ok, false, "no confirmation, no retire");
+
+    const done = await core.retireCredential(admin, restrictedId, c);
+    assert.ok(done.ok, done.ok ? "" : done.error);
+    const [row] = await db.select().from(lockerCredentials).where(eq(lockerCredentials.id, restrictedId));
+    assert.equal(row.active, false);
+    const [r] = await db.select().from(lockerReveals).where(eq(lockerReveals.id, req.data.requestId));
+    assert.equal(r.state, "expired");
+    assert.ok((await db.select().from(lockerSecrets).where(eq(lockerSecrets.credentialId, restrictedId))).length > 0, "the values are kept");
+    const plan = await core.planReveal(admin, restrictedId, "Login password", null);
+    assert.equal(plan.step, "denied");
+    const [a] = await db.select().from(lockerAudit).where(and(eq(lockerAudit.action, "locker.credential.retired"), eq(lockerAudit.entityId, restrictedId)));
+    assert.ok(a, "on the Locker's own audit chain");
+    assert.equal((await verifyAuditChain()).ok, true);
+
+    assert.ok((await core.restoreCredential(admin, restrictedId)).ok);
+    assert.equal((await db.select().from(lockerCredentials).where(eq(lockerCredentials.id, restrictedId)))[0].active, true);
+  });
+
+  test("open emergency access over a login blocks retiring it", async () => {
+    const s = await core.startBreakglass(rahul, [sensitiveId], "Production payment page is down and the finance manager is unreachable");
+    assert.ok(s.ok, s.ok ? "" : s.error);
+    const { report, c } = await confirm(admin, "locker-credential-retire", sensitiveId);
+    assert.match(report.blockers[0] ?? "", /Emergency access/);
+    const r = await core.retireCredential(admin, sensitiveId, c);
+    assert.equal(r.ok ? "ok" : r.code, "rule_violation");
+  });
+
+  test("a sign-in account names the logins that rely on it, and is refused while it is a login's only way in", async () => {
+    const acct = await ops.saveIdentity(admin, null, { email: "accounts@mahek.com", provider: "Google Workspace", kind: "organisational", controlled: true, mfa: true, recovery: true, controlledByName: "", ownerId: null });
+    assert.ok(acct.ok);
+    assert.ok((await ops.addLink(admin, sensitiveId, acct.data.id, "Recovery email", true)).ok);
+    const sole = await confirm(admin, "locker-identity-retire", acct.data.id);
+    assert.match(sole.report.blockers[0] ?? "", /only way into DigitalOcean API/);
+    assert.equal((await ops.retireIdentity(admin, acct.data.id, sole.c)).ok, false);
+
+    assert.ok((await ops.addLink(admin, sensitiveId, acct.data.id, "Recovery email", false)).ok);
+    const { report, c } = await confirm(admin, "locker-identity-retire", acct.data.id);
+    assert.deepEqual(report.blockers, []);
+    assert.equal(report.items.find((i) => /connection/.test(i.label))?.count, 1);
+    assert.equal((await ops.retireIdentity(meera, acct.data.id, c)).ok, false, "without Sign-in accounts");
+    assert.ok((await ops.retireIdentity(admin, acct.data.id, c)).ok);
+    const [row] = await db.execute<{ active: boolean }>(sql`select active from locker_identities where id = ${acct.data.id}`);
+    assert.equal((row as unknown as { active: boolean }).active, false);
+    assert.equal((await db.execute(sql`select 1 from locker_links where identity_id = ${acct.data.id}`)).length, 1, "the connection is kept");
+    assert.ok((await ops.restoreIdentity(admin, acct.data.id)).ok);
   });
 });
 

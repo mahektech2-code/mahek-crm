@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/auth";
 import { err, ok, type Result } from "@/lib/result";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 import { lockerAccess } from "@/lib/locker/access";
 import { writeLockerAudit } from "@/lib/locker/audit";
 import { backupPlan } from "@/lib/locker/graph";
@@ -141,4 +142,33 @@ export async function exportBackupPlan(identityId: string): Promise<Result<{ tex
   const at = new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" }).format(new Date());
   await writeLockerAudit({ actorId: user.id, actorName: user.name, action: "locker.assets.exported", entityType: "identity", entityId: identityId, entityTitle: blast.identity.email, summary: `Exported the backup plan for ${blast.identity.email}` });
   return ok({ text: backupPlan(blast, user.name, at), filename: `backup-plan-${blast.identity.email.replace(/[^a-z0-9]+/gi, "-")}.txt` });
+}
+
+/* Retiring keeps everything and takes it out of use; each act re-checks the impact report it was confirmed against. */
+export async function retireCredential(id: string, confirmation: ImpactConfirmation | null) {
+  const user = await requireUser();
+  const r = await core.retireCredential(user, id, confirmation);
+  refresh("/locker/vault", `/locker/vault/${id}`, "/locker/vault/change-due", "/locker/vault/connections");
+  return r;
+}
+
+export async function restoreCredential(id: string) {
+  const user = await requireUser();
+  const r = await core.restoreCredential(user, id);
+  refresh("/locker/vault", `/locker/vault/${id}`);
+  return r;
+}
+
+export async function retireIdentity(id: string, confirmation: ImpactConfirmation | null) {
+  const user = await requireUser();
+  const r = await ops.retireIdentity(user, id, confirmation);
+  refresh("/locker/vault/accounts", "/locker/vault/connections");
+  return r;
+}
+
+export async function restoreIdentity(id: string) {
+  const user = await requireUser();
+  const r = await ops.restoreIdentity(user, id);
+  refresh("/locker/vault/accounts", "/locker/vault/connections");
+  return r;
 }

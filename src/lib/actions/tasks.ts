@@ -6,6 +6,8 @@ import { and, eq, inArray, isNull, notInArray, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { attachments, auditLog, customers, taskBatches, taskEvents, taskTransfers, tasks, type TaskChecklistItem } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 import { listUserApps } from "@/lib/access";
 import { notifyUsers, type NotifyEntry } from "@/lib/notify";
 import { today } from "@/lib/recompute";
@@ -386,11 +388,14 @@ export async function reopenTask(id: string): Promise<Result> {
   return ok(undefined, "Reopened");
 }
 
-export async function deleteTask(id: string): Promise<Result> {
+export async function deleteTask(id: string, confirmation?: ImpactConfirmation | null): Promise<Result> {
   const user = await requireUser();
   const d = await taskDetail(user, id);
   if (!d) return err("That task is not there any more.", "not_found");
   if (!d.can.delete) return err("Only the person who gave a task can delete it, and not once somebody else has closed it.", "not_permitted");
+  /* What goes with it was shown first (the Activity tab, proofs, the holder told). */
+  const refusal = await confirmImpact("task-delete", id, confirmation);
+  if (refusal) return refusal;
   await audit(user.id, "task.deleted", id, { title: d.task.title, assigneeId: d.task.assigneeId });
   await db.delete(tasks).where(eq(tasks.id, id));
   if (d.task.assigneeId !== user.id && d.task.status !== "done") {

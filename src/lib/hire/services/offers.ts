@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "@/db";
 import { hireApplications, hireOffers, type HireOffer } from "@/db/schema";
 import { err, ok, type Result } from "@/lib/result";
@@ -220,6 +220,70 @@ export async function recordResponse(ctx: HireContext, applicationId: string, in
     );
   });
   return ok(undefined, input.response === "accepted" ? "Accepted. Documents and the courier finish this stage." : "Recorded as declined. The application is closed.");
+}
+
+/** The least a withdrawal says — Hire's decision reasons are at least this long. */
+export const OFFER_WITHDRAW_MIN = 20;
+
+/**
+ * RESCIND AN OFFER WE ISSUED — issued, or already accepted.
+ *
+ * It was not possible: an issued offer could only be answered (accepted,
+ * declined, negotiating), so an offer the business had to take back — the
+ * role closed, a reference failed, a background check came back flagged —
+ * stood on the record as live until somebody closed the whole application,
+ * and the candidate was never told on the record.
+ *
+ * The offer row becomes `withdrawn` (the status the table always allowed);
+ * nothing is deleted, because Hire's record is append-only. The candidate is
+ * told in the message log. The APPLICATION STAYS OPEN at Documents & offer:
+ * withdrawing an offer and rejecting a person are two decisions, and the
+ * second is the gate's or the rejection queue's — a new draft can be made, or
+ * the candidate closed, as the next step. A hired person is refused: they
+ * have joined, and leaving is HRMS's.
+ */
+export async function withdrawOffer(ctx: HireContext, applicationId: string, reason: string): Promise<Result> {
+  const b = await getApplication(ctx, applicationId);
+  if (!b) return err("That candidate is not on your list.", "not_found");
+  if (b.app.status === "hired") return err("They have joined. Leaving is recorded in HRMS, not by withdrawing the offer.", "rule_violation");
+  if (b.app.status !== "in_progress" && b.app.status !== "on_hold") return err("This application is already closed.", "rule_violation");
+  const why = reason.trim();
+  if (why.length < OFFER_WITHDRAW_MIN)
+    return { ok: false, error: `Say why — at least ${OFFER_WITHDRAW_MIN} characters. It is kept on the record.`, code: "validation", fieldErrors: [{ field: "reason", message: "Required" }] };
+  const o = await currentOffer(applicationId);
+  if (!o || (o.status !== "issued" && o.status !== "accepted")) return err("There is no issued or accepted offer to withdraw.", "rule_violation");
+  const now = new Date();
+  await db.transaction(async (tx) => {
+    const moved = await tx
+      .update(hireOffers)
+      .set({ status: "withdrawn", updatedAt: now, updatedById: ctx.user.id })
+      .where(and(eq(hireOffers.id, o.id), inArray(hireOffers.status, ["issued", "accepted"])))
+      .returning({ id: hireOffers.id });
+    if (!moved.length) throw new Error("offer moved");
+    await hireTrail(
+      ctx,
+      {
+        applicationId,
+        candidateId: b.candidate.id,
+        entityType: "offer",
+        entityId: o.id,
+        event: "offer_withdrawn",
+        summary: `Offer withdrawn by us (it was ${o.status}) · ${o.gradeLabel} · ${rupees(o.basicPaise)} a month · “${why}”`,
+      },
+      tx,
+    );
+  });
+  await recordMessage(ctx, {
+    candidateId: b.candidate.id,
+    applicationId,
+    direction: "out",
+    channel: "portal",
+    language: "English",
+    subject: `Your offer — ${b.blueprint.title}`,
+    body: `We have withdrawn the offer for ${b.blueprint.title} (${o.gradeLabel}) made to you${o.issuedAt ? ` on ${new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeZone: "Asia/Kolkata" }).format(o.issuedAt)}` : ""}. Someone from the team will be in touch.`,
+    status: "logged",
+  });
+  return ok(undefined, "Offer withdrawn. The application stays open — make a new offer, or close it.");
 }
 
 export async function updateTracking(ctx: HireContext, applicationId: string, patch: { courierStatus?: string; backgroundCheck?: string }): Promise<Result> {

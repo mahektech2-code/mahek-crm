@@ -14,7 +14,7 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appAccess, appModuleAccess, lockerAssets, lockerAudit, lockerPaymentMethods, lockerRenewals, notifications, users } from "@/db/schema";
+import { appAccess, appModuleAccess, auditLog, lockerAssets, lockerAudit, lockerPaymentMethods, lockerRenewals, notifications, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { addDays, today } from "@/lib/format";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
@@ -210,5 +210,26 @@ describe("An access reviewer", () => {
 
     const removal = await setLockerModules(reviewer, fleet.id, ["locker.dashboard", "locker.myassets", "locker.renewals"], "Access review 2026-Q4");
     assert.equal(removal.ok, true, JSON.stringify(removal));
+  });
+});
+
+describe("Giving somebody the Locker", () => {
+  test("is a platform administrator's: Admin › Access changes screens, and cannot hand the app to somebody new", async () => {
+    const { setLockerModules } = await import("./ops-core");
+    const keeper = await makeUser("Kiran Keeper", ["locker.dashboard", "locker.access"]);
+    const [stranger] = await db
+      .insert(users)
+      .values({ id: id("usr"), name: "Sam Stranger", email: `sam-${randomUUID().slice(0, 4)}@test.local`, passwordHash: "x", role: "associate", initials: "SS" })
+      .returning();
+
+    const given = await setLockerModules(keeper, stranger.id, ["locker.dashboard"], "New starter");
+    assert.equal(given.ok, false, "the app itself is not this screen's to give");
+    assert.equal((await db.select().from(appAccess).where(eq(appAccess.userId, stranger.id))).length, 0);
+
+    /* Somebody who already holds it can have their screens changed here, and the console hears about it. */
+    const widened = await setLockerModules(keeper, fleet.id, ["locker.dashboard", "locker.myassets", "locker.renewals", "locker.audit"], "Covers audits now");
+    assert.equal(widened.ok, true, JSON.stringify(widened));
+    const rows = await db.select().from(auditLog).where(eq(auditLog.entityId, fleet.id));
+    assert.ok(rows.some((r) => r.action === "locker.access.changed"), "the change is on the console's audit too");
   });
 });

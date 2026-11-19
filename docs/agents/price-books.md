@@ -82,3 +82,9 @@ answer is "keep" (a leave-out row on this list) or "move"
 (`leaveShopOutOfBook` on the other book's every live, scheduled and draft
 version); a draft holds its moves in `price_lists.pending_moves` until it is
 published. `assignCustomerList` takes the shop off every other book.
+
+**CANCELLING A SPECIAL PRICE GOES THROUGH THE IMPACT MODAL, WITH ITS REASON.**
+`cancelOverride` asks `confirmImpact("pricing-override-cancel")` after the
+Price Desk check and the reason; the report says whether the shop's agreed list
+changes today (live) or the price simply never starts (scheduled). End is not
+routed through it — it applied correctly and is finishing on a day.

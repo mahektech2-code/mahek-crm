@@ -1,8 +1,8 @@
-import { describe, it } from "node:test";
+import { describe, it, test } from "node:test";
 import assert from "node:assert/strict";
 import { ERP_POWERS } from "./erp/powers";
 import { moduleKeysForApp } from "./modules";
-import { ALL_POWERS, ERP_POWER_SCREENS, applyChange, cleanShape, holdsPower, inputFromRow, shapeFromRow, type HeldAccess } from "./access-bulk";
+import { ALL_POWERS, ERP_POWER_SCREENS, applyChange, cleanShape, grantsPlatformAdmin, holdsPower, inputFromRow, shapeFromRow, type AccessTemplateShape, type HeldAccess } from "./access-bulk";
 
 /* The bulk arithmetic: every change is the whole picture `setAccess` saves,
    so what matters is that it changes exactly what was asked and nothing else. */
@@ -134,4 +134,11 @@ describe("applyChange", () => {
     assert.deepEqual(s.apps, [{ app: "erp", role: "associate", modules: ["erp.orders"] }]);
     assert.deepEqual(s.erpPowers, ["verifyOrders"]);
   });
+});
+
+test("a template never makes somebody a platform administrator", () => {
+  const shape = (app: string, role: "associate" | "manager" | "admin") => ({ apps: [{ app, role, modules: null }], erpPowers: [], hrmsPowers: [], taskPowers: [] }) as AccessTemplateShape;
+  assert.equal(grantsPlatformAdmin(shape("admin", "admin")), true);
+  assert.equal(grantsPlatformAdmin(shape("admin", "manager")), false, "a lower Admin Console level is not the platform hat");
+  assert.equal(grantsPlatformAdmin(shape("erp", "admin")), false, "admin of another app is admin of that app only");
 });

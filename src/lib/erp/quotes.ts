@@ -229,8 +229,8 @@ const BOUGHT = ["po", "pickup"];
  * THE TWO CHANGES THAT REACH PAST THE SHEET, checked against what the person
  * was shown before anything in the save is written: a bought rate taken off
  * (it withdraws the ERP PO line, maybe the PO, and moves its requirement), and
- * a row deleted while it holds one (its PO stays, and the sheet stops saying
- * where it was bought). A server action is a URL, so the grid asking first is
+ * a row deleted while it holds one (refused while that PO is still open;
+ * a received or closed PO stays as the history it is). A server action is a URL, so the grid asking first is
  * not the check. Every other change is the spreadsheet's own, undone with
  * Ctrl+Z, and asks nothing — undoing a paste deletes the rows it made.
  */

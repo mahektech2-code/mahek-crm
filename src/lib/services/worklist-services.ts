@@ -367,9 +367,10 @@ export const reminderSchema = z.object({
 });
 
 /**
- * `skipCustomerScope` exists for exactly one caller —
- * `enquiry-service.ts`'s `createEnquiryReminder` — and nobody else may set
- * it: it is a plain TypeScript parameter, never part of `reminderSchema`,
+ * `skipCustomerScope` exists for exactly two callers —
+ * `enquiry-service.ts`'s `createEnquiryReminder` and, through
+ * `rescheduleReminder`, its `rescheduleEnquiryReminder` — and nobody else may
+ * set it: it is a plain TypeScript parameter, never part of `reminderSchema`,
  * so it can never arrive from a request body, form data, a URL, or any
  * other client-controlled payload.
  *
@@ -652,6 +653,9 @@ export async function rescheduleReminder(
   reminderId: string,
   newDate: string,
   note?: string,
+  /* `enquiry-service.ts`'s `rescheduleEnquiryReminder` only, for the reason
+     `CreateReminderOptions` gives: the Enquiries grant is not the CRM book. */
+  opts?: CreateReminderOptions,
 ): Promise<Result> {
   const ctx = await resolveScope();
   const config = await getConfig();
@@ -661,7 +665,7 @@ export async function rescheduleReminder(
   /* Anybody's own promise is theirs to move; anybody else's needs the
      customer in their book. Nothing was checked, so any signed-in user could
      move any reminder by id. */
-  if (existing.assignedUserId !== ctx.user.id && existing.createdByUserId !== ctx.user.id) {
+  if (!opts?.skipCustomerScope && existing.assignedUserId !== ctx.user.id && existing.createdByUserId !== ctx.user.id) {
     const [customer] = await db.select().from(customers).where(eq(customers.id, existing.customerId));
     if (!customer) return err("That customer no longer exists.", "not_found");
     await assertCustomerInScope(customer);

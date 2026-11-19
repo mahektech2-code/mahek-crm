@@ -321,3 +321,9 @@ row in `mbos_manager_territories`, which is every plain salesman, so falling
 straight through would let one salesman open another's mileage evidence by id.
 It is not read through the customer's scope either, though a leg names a shop:
 this is evidence about a person's expense claim, not about the customer.
+
+**"Reset to shipped defaults" is the editor's, not a server action.** It fills
+the standard policy's editor with `STANDARD_POLICY`'s rules and guidelines and
+is saved through `savePolicySet` like any edit, with its note. The unused
+`resetStandardToDefaults` action, which saved without showing anything first,
+was removed (Nov 2026).

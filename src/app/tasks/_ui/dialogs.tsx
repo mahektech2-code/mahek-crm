@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Badge, Button, Field, Input, Select, Textarea, cx } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { DialogBody, DialogFooter, DialogHeader, DialogTitle, ErpDialog, StepBar, TabBar } from "@/app/erp/_ui/dialog";
 import {
   addTaskNote,
@@ -151,6 +152,7 @@ function RecordDialog({ id, onClose, ctx }: { id: string; onClose: () => void; c
   const [rejectNote, setRejectNote] = React.useState("");
   const [note, setNote] = React.useState("");
   const [busy, setBusy] = React.useState(false);
+  const [deleting, setDeleting] = React.useState(false);
 
   const act = async (p: Promise<{ ok: boolean; message?: string; error?: string }>, close = false) => {
     setBusy(true);
@@ -298,7 +300,7 @@ function RecordDialog({ id, onClose, ctx }: { id: string; onClose: () => void; c
       <DialogFooter
         left={
           d.can.delete ? (
-            <button type="button" className="cursor-pointer text-danger hover:underline" disabled={busy} onClick={() => void act(deleteTask(t.id), true)}>
+            <button type="button" className="cursor-pointer text-danger hover:underline" disabled={busy} onClick={() => setDeleting(true)}>
               Delete
             </button>
           ) : null
@@ -326,6 +328,23 @@ function RecordDialog({ id, onClose, ctx }: { id: string; onClose: () => void; c
         ) : null}
         {!d.can.close && !d.can.reopen && !d.can.transfer ? <Button onClick={onClose}>Close</Button> : null}
       </DialogFooter>
+      {deleting ? (
+        <ImpactDialog
+          key={t.id}
+          kind="task-delete"
+          id={t.id}
+          onClose={() => setDeleting(false)}
+          onConfirm={async (confirmation) => {
+            const r = await deleteTask(t.id, confirmation);
+            if (r.ok) {
+              toast.push(r.message ?? "Deleted");
+              router.refresh();
+              onClose();
+            }
+            return r;
+          }}
+        />
+      ) : null}
     </ErpDialog>
   );
 }

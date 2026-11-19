@@ -107,7 +107,15 @@ export default async function Page({
         ]
           .filter(Boolean)
           .join(" · ")}
-        actions={<CampaignActions campaignId={c.id} open={open.length} />}
+        actions={
+          <CampaignActions
+            campaignId={c.id}
+            open={open.length}
+            answered={done.length}
+            closed={Boolean(c.closedAt)}
+            current={{ title: c.title, description: c.description ?? "", priority: c.priority, dueDate: c.dueDate ?? "" }}
+          />
+        }
       />
       {c.description ? (
         <p className="mb-4 max-w-[80ch] text-[13px] whitespace-pre-line text-body">{c.description}</p>

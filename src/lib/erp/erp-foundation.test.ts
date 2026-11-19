@@ -280,4 +280,24 @@ describe("powers and godowns", () => {
     const n = await as(narrowed);
     assert.equal(n.workingGodown, null, "nobody assigned means no working location, not a guess");
   });
+
+  test("two people with one name are told apart on a godown's staff — ticking one gives it to that one", async () => {
+    const twin = async (email: string) =>
+      (
+        await db
+          .insert(users)
+          .values({ id: id("usr"), name: "Ravi Kumar", email, phone: testPhone(), passwordHash: "x", role: "associate", initials: "RK" })
+          .returning()
+      )[0];
+    const [r1, r2] = [await twin("ravi.one@erp.test"), await twin("ravi.two@erp.test")];
+    for (const u of [r1, r2]) await db.insert(appAccess).values({ id: id("aca"), userId: u.id, app: "erp", role: "associate" });
+    const a = await as(admin);
+    const r = await mod("godowns").actions!.staff(a, "erpg_bhiwandi", { people: "Ravi Kumar (ravi.two@erp.test)" });
+    assert.ok(r.ok, r.ok ? "" : r.error);
+    const staff = await db.select().from(erpGodownStaff).where(eq(erpGodownStaff.godownId, "erpg_bhiwandi"));
+    assert.deepEqual(staff.map((s) => s.userId), [r2.id], "only the Ravi who was ticked");
+    /* The bare shared name no longer names anybody. */
+    await mod("godowns").actions!.staff(a, "erpg_bhiwandi", { people: "Ravi Kumar" });
+    assert.equal((await db.select().from(erpGodownStaff).where(eq(erpGodownStaff.godownId, "erpg_bhiwandi"))).length, 0);
+  });
 });
