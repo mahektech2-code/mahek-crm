@@ -282,7 +282,7 @@ export async function quickRun(ctx: Ctx, index: number, v: Record<string, string
       }
       case 4: {
         const digits = (v.phone ?? "").replace(/\D/g, "").slice(-10);
-        const r = await createCustomer({ name: v.name, contactPerson: v.contact, phone: digits, city: v.city, leadSource: "Founder Command Centre" });
+        const r = await createCustomer({ name: v.name, contactPerson: v.contact, phone: digits, city: v.city, leadSource: "HQ" });
         return fromOwning(r, `Lead created · ${v.name}, ${v.city}`);
       }
       case 5: {
