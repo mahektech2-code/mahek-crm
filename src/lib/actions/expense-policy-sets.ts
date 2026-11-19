@@ -13,7 +13,7 @@ import {
 } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
 import { requireCapability } from "@/lib/access-control";
-import { STANDARD_DEFAULTS_VERSION, STANDARD_GUIDELINES, STANDARD_POLICY } from "@/lib/expense-policy-standard";
+import { STANDARD_POLICY } from "@/lib/expense-policy-standard";
 import {
   MAX_GUIDELINE_CHARS,
   MAX_GUIDELINES,
@@ -327,26 +327,6 @@ export async function restorePolicyRevision(input: {
     guidelines: readGuidelines(snap.guidelines),
     expectedRevision: current.revision,
     note: `Restored revision ${input.revision}.`,
-  });
-}
-
-/** Put the standard policy back to the figures it shipped with. */
-export async function resetStandardToDefaults(input: {
-  expectedRevision: number;
-}): Promise<Result<{ revision: number }>> {
-  await author();
-  await ensureStandardSet();
-  const current = await readPolicySet(STANDARD_POLICY.id);
-  if (!current) return fail("The standard policy is missing.", "not_found");
-  return savePolicySet({
-    id: current.id,
-    name: current.name,
-    description: current.description,
-    rules: STANDARD_POLICY.rules.map(ruleToDraft),
-    guidelines: [...STANDARD_GUIDELINES],
-    defaultsVersion: STANDARD_DEFAULTS_VERSION,
-    expectedRevision: input.expectedRevision,
-    note: "Reset to the shipped defaults.",
   });
 }
 

@@ -201,10 +201,22 @@ always does, so the delta carries the change. `scope` on the wire is
 before levels existed were migrated as `company` (how the server already read
 them) and keep their text in `scope`, which the Holidays screen flags.
 
-**The employee master is a mirror, and mirrors do not get edited.** HRMS reads
-the workbook's `Employee Details` tab and nothing on its screens can be
-changed, because HR maintains that sheet and a field edited here would be
-overwritten by the next sync without telling anybody. The sync is
+**The employee master began as a mirror of the sheet; HRMS now owns what it
+touches.** (This paragraph used to say nothing on HRMS's screens could be
+changed. That stopped being true when HRMS learned to sign people up and edit
+them.) The People screen (`lib/hrms/screens/people.ts`) has **Sign up an
+employee** (`source = 'hrms'`), **Edit** (the HR power), **Edit my details**
+(the person: their own contact details and family dates), Deactivate, and
+**Delete** (the HRMS administration power, through the `hrms-employee` impact
+modal). An edit stamps `hrms_decided_at`, and from then on the sync never
+overwrites, withdraws or reparses that row — the same discipline
+`customers.am_decided_at` keeps for the sales seats — so HR's change is not
+undone by a sheet that still says the old thing. A name edited here is carried
+to the account and the customers' seat copies (`renameEmployee`). Delete is
+refused while the person has ANY history (`employeeDeleteRefusal`: deactivate
+instead, because every HRMS table cascades from the employee) and while a
+sheet-sourced row is still present on the sheet (the next pull would bring it
+back). A row nobody has touched in HRMS is still the sheet's. The sync is
 hash-driven, so a tab that has not changed costs a read and zero writes —
 which is what makes it affordable every minute rather than every night. One
 mode, `reconcile`, not the order sheet's three: seventy rows is a single API
