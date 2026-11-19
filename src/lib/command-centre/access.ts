@@ -1,5 +1,4 @@
 import "server-only";
-import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { listUserApps, listUserModules } from "@/lib/access";
 import { levelInApp } from "@/lib/access-control";
@@ -66,7 +65,12 @@ export async function founderAccess() {
  */
 export async function founderPageAccess() {
   const user = await requireUser();
-  if (!(await listUserApps(user.id)).includes("founder")) redirect("/apps");
+  if (!(await listUserApps(user.id)).includes("founder")) {
+    // Imported lazily, as `requireUser` does: next/navigation pulls in the
+    // client React runtime, which a test importing this file cannot load.
+    const { redirect } = await import("next/navigation");
+    redirect("/apps");
+  }
   return founderAccess();
 }
 

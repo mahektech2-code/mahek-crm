@@ -7,6 +7,7 @@ import { requireActIn, requireNoteIn, requireSection, founderAccess, NotAllowedH
 import { readPeriodState } from "@/lib/command-centre/period";
 import { providerFor } from "@/lib/command-centre/registry";
 import { addNote, pageOf, refusal, type Ctx } from "@/lib/command-centre/provider";
+import { deleteOwnNote, editOwnNote } from "@/lib/command-centre/notes";
 import { companyFigure } from "@/lib/command-centre/company";
 import { inboxFor, handOn, snooze, clearMark } from "@/lib/command-centre/inbox";
 import { globalSearch, searchRecord, type SearchKind } from "@/lib/command-centre/search";
@@ -118,6 +119,16 @@ export async function addNoteAction(kind: string, id: string, note: string): Pro
   } catch (e) {
     return refusal(e);
   }
+}
+
+/** One's OWN note, corrected — see `lib/command-centre/notes.ts`. */
+export async function editNoteAction(noteId: string, note: string): Promise<Result> {
+  return editOwnNote(noteId, note);
+}
+
+/** One's OWN note, taken off the timeline; the audit log keeps it. */
+export async function deleteNoteAction(noteId: string): Promise<Result> {
+  return deleteOwnNote(noteId);
 }
 
 export async function searchAction(q: string): Promise<SearchHit[]> {

@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Field, Input, PageHeader, Select, Textarea, cx } from "@/components/ui/primitives";
-import { ConfirmDialog } from "@/components/ui/overlays";
+import { ConfirmDialog, RowMenu } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { DialogBody, DialogFooter, DialogHeader, DialogTitle, ErpDialog } from "@/app/erp/_ui/dialog";
 import { deleteRoutine, saveRoutine, setRoutineActive } from "@/lib/actions/task-routines";
@@ -108,13 +108,13 @@ export function RoutinesScreen({ routines, people, apps, viewerId }: Props) {
                   </div>
                 </div>
                 {r.canManage ? (
-                  <div className="flex flex-none gap-1.5">
-                    <Button size="sm" onClick={() => setEditing(r)}>
-                      Edit
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={() => setDeleting(r)}>
-                      Delete
-                    </Button>
+                  <div className="flex-none">
+                    <RowMenu
+                      items={[
+                        { label: "Edit", onSelect: () => setEditing(r) },
+                        { label: "Delete…", onSelect: () => setDeleting(r), destructive: true },
+                      ]}
+                    />
                   </div>
                 ) : (
                   <span className="flex-none text-xs text-muted" title="A routine is changed by whoever set it, or a manager above you.">

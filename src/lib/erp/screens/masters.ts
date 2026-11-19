@@ -1236,13 +1236,25 @@ async function godownForm(id?: string): Promise<FormSpec> {
   };
 }
 
-async function erpUsers(): Promise<{ id: string; name: string }[]> {
-  return db
-    .select({ id: users.id, name: users.name })
+/**
+ * The ERP's people, each with a LABEL that names exactly one of them.
+ *
+ * The godown staff box is a list of words, and it used to be names — the save
+ * then matched names back, so two people called the same thing were both
+ * given a godown when one was ticked, and a renamed person fell off it (the
+ * "a person is an id" rule). The label is the name where it is unique and the
+ * name with the email or number where it is not; the save maps a label to the
+ * one id it was made from.
+ */
+async function erpUsers(): Promise<{ id: string; name: string; label: string }[]> {
+  const rows = await db
+    .select({ id: users.id, name: users.name, email: users.email, phone: users.phone })
     .from(users)
     .innerJoin(appAccess, and(eq(appAccess.userId, users.id), eq(appAccess.app, "erp")))
     .where(eq(users.active, true))
     .orderBy(asc(users.name));
+  const shared = new Set(rows.filter((r, i) => rows.findIndex((o) => o.name === r.name) !== i).map((r) => r.name));
+  return rows.map((r) => ({ id: r.id, name: r.name, label: shared.has(r.name) ? `${r.name} (${r.email ?? r.phone ?? r.id.slice(-6)})` : r.name }));
 }
 
 const godowns: ScreenModule = {
@@ -1252,12 +1264,13 @@ const godowns: ScreenModule = {
        it stays in the table for transfers and stock counts, and off this list. */
     const rows = await db.select().from(erpGodowns).where(eq(erpGodowns.reserved, false)).orderBy(asc(erpGodowns.name));
     const staff = await db
-      .select({ godownId: erpGodownStaff.godownId, name: users.name })
+      .select({ godownId: erpGodownStaff.godownId, userId: erpGodownStaff.userId, name: users.name })
       .from(erpGodownStaff)
       .innerJoin(users, eq(users.id, erpGodownStaff.userId));
     const people = await erpUsers();
+    const labelOf = new Map(people.map((p) => [p.id, p.label]));
     const byGodown = new Map<string, string[]>();
-    staff.forEach((s) => byGodown.set(s.godownId, [...(byGodown.get(s.godownId) ?? []), s.name]));
+    staff.forEach((s) => byGodown.set(s.godownId, [...(byGodown.get(s.godownId) ?? []), labelOf.get(s.userId) ?? s.name]));
     const admin = ctx.powers.has("employeeAdmin");
     const why = admin ? "" : "Only an ERP administrator changes a godown's status and staff.";
     /* Only somebody who can save a godown is offered a new one: saveGodown needs employeeAdmin. */
@@ -1301,7 +1314,7 @@ const godowns: ScreenModule = {
                   title: `Who works at ${g.name}`,
                   sub: "Only people holding the ERP are listed. A working location is chosen from these.",
                   submit: "Save",
-                  fields: [{ k: "people", l: "Assigned employees", t: "multi", opts: people.map((p) => p.name) }],
+                  fields: [{ k: "people", l: "Assigned employees", t: "multi", opts: people.map((p) => p.label) }],
                   init: { people: names.join("|") },
                 },
               },
@@ -1375,7 +1388,8 @@ const godowns: ScreenModule = {
       if (!ctx.powers.has("employeeAdmin")) return err("Only an ERP administrator assigns godown staff.", "not_permitted");
       const names = multi(values.people);
       const people = await erpUsers();
-      const ids = people.filter((p) => names.includes(p.name)).map((p) => p.id);
+      /* By the label each person was offered under — one label, one id. */
+      const ids = people.filter((p) => names.includes(p.label)).map((p) => p.id);
       await db.transaction(async (tx) => {
         await tx.delete(erpGodownStaff).where(eq(erpGodownStaff.godownId, id));
         if (ids.length) await tx.insert(erpGodownStaff).values(ids.map((userId) => ({ godownId: id, userId })));
