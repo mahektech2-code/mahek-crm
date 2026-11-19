@@ -1,10 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Badge, Button, cx } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
+import { ConfirmDialog, RowMenu } from "@/components/ui/overlays";
 import { archiveDesign, restoreDesign } from "@/lib/actions/studio";
 import type { LibraryItem } from "@/lib/studio/library";
 import { OccasionChip } from "./parts";
@@ -12,7 +12,7 @@ import { OccasionChip } from "./parts";
 /* ---------------------------------------------------------------------------
  * A template in the shared library: its preview, who uploaded it, the
  * languages it is made in, and — for the person who uploaded it and for whoever
- * approves designs — Archive or Restore. Archiving takes it out of the
+ * approves designs — Versions and Archive on its ⋯ menu, or Restore. Archiving takes it out of the
  * library for new posters; posters already made from it are unchanged.
  * ------------------------------------------------------------------------- */
 
@@ -20,6 +20,7 @@ export function LibraryTile({ item, canManage, dim = false }: { item: LibraryIte
   const router = useRouter();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
+  const [confirmArchive, setConfirmArchive] = useState(false);
   const run = async (action: (id: string) => ReturnType<typeof archiveDesign>) => {
     setBusy(true);
     const r = await toast.run(action(item.id));
@@ -43,24 +44,33 @@ export function LibraryTile({ item, canManage, dim = false }: { item: LibraryIte
         </div>
         <span className="text-[12px] text-muted">{item.uploaderName ? `By ${item.uploaderName}` : "Built in"}</span>
         {canManage ? (
-          <div className="pt-1">
-            {!item.archived ? (
-              <Link href={`/studio/designs/${item.id}`} className="mr-2 text-[12.5px]" data-testid={`versions-${item.id}`}>
-                Versions
-              </Link>
-            ) : null}
+          <div className="flex justify-end pt-1" data-testid={`manage-${item.id}`}>
+            {/* Versions and Archive behind the tile's ⋯, like every row's actions elsewhere. An archived
+                tile has one thing to do, so Restore stays a plain button. */}
             {item.archived ? (
               <Button size="sm" onClick={() => run(restoreDesign)} disabled={busy} data-testid={`restore-${item.id}`}>
                 {busy ? "Restoring…" : "Restore"}
               </Button>
             ) : (
-              <Button size="sm" variant="ghost" onClick={() => run(archiveDesign)} disabled={busy} data-testid={`archive-${item.id}`}>
-                {busy ? "Archiving…" : "Archive"}
-              </Button>
+              <RowMenu
+                items={[
+                  { label: "Versions", onSelect: () => router.push(`/studio/designs/${item.id}`) },
+                  { label: busy ? "Archiving…" : "Archive…", onSelect: () => setConfirmArchive(true), disabled: busy, destructive: true },
+                ]}
+              />
             )}
           </div>
         ) : null}
       </div>
+      <ConfirmDialog
+        open={confirmArchive}
+        title={`Archive “${item.name}”?`}
+        body="It leaves the library, so nobody can make a new poster from it. Posters already made from it are unchanged, and it can be restored later."
+        confirmLabel="Archive"
+        cancelLabel="Keep it"
+        onConfirm={() => run(archiveDesign)}
+        onClose={() => setConfirmArchive(false)}
+      />
     </div>
   );
 }

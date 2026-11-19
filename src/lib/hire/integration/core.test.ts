@@ -11,12 +11,14 @@
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { appAccess, hireApplications, hireAudit, hireDecisions, hireOffers, hireStageExecutions, hireUserRoles, users } from "@/db/schema";
-import { recordResponse } from "@/lib/hire/services/offers";
+import { appAccess, hireApplications, hireAudit, hireBlueprints, hireDecisions, hireMessages, hireOffers, hireStageExecutions, hireUserRoles, notifications, users } from "@/db/schema";
+import { deleteDraftBlueprint } from "@/lib/hire/services/blueprints";
+import { cancelBooking } from "@/lib/hire/services/schedule";
+import { currentOffer, recordResponse, withdrawOffer } from "@/lib/hire/services/offers";
 import { setTestUser } from "@/lib/auth";
-import { hireContext, type HireContext } from "@/lib/hire/access";
+import { HireNotPermitted, hireContext, requireHireCap, type HireContext } from "@/lib/hire/access";
 import { boardRows, createApplication, resolveDuplicate, screenIn } from "@/lib/hire/services/pipeline";
 import { getApplication, moveApplication, stageOutcome } from "@/lib/hire/services/core";
 import { cancelBookedInterviews } from "@/lib/hire/services/schedule";
@@ -227,6 +229,36 @@ describe("Hire core", () => {
     assert.deepEqual(closed.data.blockers, ["This application is already closed."]);
     assert.equal((await confirmImpact("hire-withdraw", appId, { typed: "Meena Joshi", fingerprint: closed.data.fingerprint }))?.code, "rule_violation");
   });
+  test("an issued offer can be withdrawn: it says what stays, the candidate is told, and the application stays open", async () => {
+    const ctx = await as(manager);
+    const r = await createApplication(ctx, { fullName: "Asha Kulkarni", phone: "98200 77441", blueprintId: SE, consent: true, location: "Pune" });
+    assert.ok(r.ok, !r.ok ? r.error : "");
+    const appId = r.data.applicationId;
+    const offerId = `hof_${randomUUID().slice(0, 12)}`;
+    await db.insert(hireOffers).values({ id: offerId, applicationId: appId, status: "accepted", grade: "g1", gradeLabel: "Grade 1", basicPaise: 2000000 });
+
+    const report = await impactReport("hire-offer-withdraw", appId);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    assert.deepEqual(report.data.blockers, []);
+    assert.ok(report.data.items.some((i) => i.effect === "changed" && /accepted offer/.test(i.label)), JSON.stringify(report.data.items));
+    assert.ok(report.data.items.some((i) => i.effect === "kept" && i.label === "application"));
+    assert.ok(await confirmImpact("hire-offer-withdraw", appId, undefined), "no confirmation, no withdrawal");
+
+    const short = await withdrawOffer(ctx, appId, "Role closed.");
+    assert.equal(short.ok, false, "a reason under twenty characters is refused");
+    const done = await withdrawOffer(ctx, appId, "The territory was merged and the role has closed.");
+    assert.equal(done.ok, true, done.ok ? "" : done.error);
+
+    const [o] = await db.select().from(hireOffers).where(eq(hireOffers.id, offerId));
+    assert.equal(o.status, "withdrawn", "the row stays, marked withdrawn");
+    const [a] = await db.select().from(hireApplications).where(eq(hireApplications.id, appId));
+    assert.equal(a.status, "in_progress", "withdrawing the offer is not closing the application");
+    assert.equal((await currentOffer(appId))?.status, "withdrawn");
+    assert.equal((await withdrawOffer(ctx, appId, "The territory was merged and the role has closed.")).ok, false, "nothing left to withdraw");
+    const after = await impactReport("hire-offer-withdraw", appId);
+    assert.ok(after.ok && after.data.blockers.length > 0, "the modal says so instead of offering the button");
+  });
+
   test("an answer to an offer is refused once the application is closed, and the closure stands", async () => {
     const ctx = await as(recruiter);
     const r = await createApplication(ctx, { fullName: "Farhan Qureshi", phone: "98765 11223", blueprintId: SE, consent: true, location: "Thane" });
@@ -241,5 +273,66 @@ describe("Hire core", () => {
     assert.equal(a.status, "rejected");
     assert.equal(a.decisionReason, "Failed the field ride");
     assert.equal(a.closedAt?.getTime(), closedAt.getTime());
+  });
+
+  test("a draft that was never published is deleted through the impact modal; a published version never is", async () => {
+    const DRAFT = "hbp_warehouse-supervisor_v1";
+    await as(interviewer);
+    const peek = await impactReport("hire-blueprint-draft", DRAFT);
+    assert.equal(peek.ok ? "ok" : peek.code, "not_permitted", "an interviewer cannot even read it");
+
+    const ctx = await as(head);
+    const published = await impactReport("hire-blueprint-draft", SE);
+    assert.ok(published.ok && /has been published/.test(published.data.blockers[0] ?? ""), JSON.stringify(published));
+    assert.equal((await deleteDraftBlueprint(ctx, SE, { typed: "Sales Executive", fingerprint: published.ok ? published.data.fingerprint : "" })).ok, false);
+
+    const report = await impactReport("hire-blueprint-draft", DRAFT);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    assert.deepEqual(report.data.blockers, []);
+    assert.equal(report.data.items.find((i) => i.effect === "deleted")?.count, 1);
+    const bare = await deleteDraftBlueprint(ctx, DRAFT, null);
+    assert.equal(bare.ok, false, "no confirmation, no delete");
+    const done = await deleteDraftBlueprint(ctx, DRAFT, { typed: report.data.confirmWord, fingerprint: report.data.fingerprint });
+    assert.ok(done.ok, done.ok ? "" : done.error);
+    assert.equal((await db.select().from(hireBlueprints).where(eq(hireBlueprints.id, DRAFT))).length, 0);
+    const [trail] = await db.select().from(hireAudit).where(eq(hireAudit.entityId, DRAFT)).orderBy(desc(hireAudit.at)).limit(1);
+    assert.equal(trail?.eventType, "blueprint_draft_deleted");
+  });
+
+  test("a booked interview is cancelled with a reason: status and trail, the candidate told as recorded, the interviewer belled", async () => {
+    const ctx = await as(recruiter);
+    const r = await createApplication(ctx, { fullName: "Kiran Desai", phone: "98200 77452", blueprintId: SE, consent: true, location: "Pune" });
+    assert.ok(r.ok, !r.ok ? r.error : "");
+    const appId = r.data.applicationId;
+    const execId = `hex_${randomUUID().slice(0, 12)}`;
+    const at = new Date(Date.now() + 2 * 86_400_000);
+    await db.insert(hireStageExecutions).values({ id: execId, applicationId: appId, stageKey: "app", status: "scheduled", scheduledAt: at, scheduledMinutes: 45, place: "Pune office", conductedById: interviewer.id });
+
+    await as(interviewer);
+    await assert.rejects(requireHireCap("addCandidate"), HireNotPermitted, "an interviewer cannot cancel — the action asks this first");
+    await as(recruiter);
+    const b = (await getApplication(ctx, appId))!;
+    const short = await cancelBooking(ctx, b, execId, { reason: "no", tell: "none", message: "" });
+    assert.equal(short.ok ? "ok" : short.code, "validation");
+    const noEmail = await cancelBooking(ctx, b, execId, { reason: "Interviewer is travelling that day", tell: "email", message: "Your interview is cancelled, sorry." });
+    assert.equal(noEmail.ok ? "ok" : noEmail.error, "There is no email address on this candidate.");
+
+    const done = await cancelBooking(ctx, b, execId, { reason: "Interviewer is travelling that day", tell: "whatsapp", message: "Your interview is cancelled; we will send a new time." });
+    assert.ok(done.ok, done.ok ? "" : done.error);
+    const [x] = await db.select().from(hireStageExecutions).where(eq(hireStageExecutions.id, execId));
+    assert.equal(x.status, "not_started");
+    assert.equal(x.scheduledAt, null);
+    const [trail] = await db.select().from(hireAudit).where(eq(hireAudit.entityId, execId)).orderBy(desc(hireAudit.at)).limit(1);
+    assert.equal(trail.eventType, "interview_cancelled");
+    assert.match(trail.summary, /Interviewer is travelling that day/);
+    assert.equal((trail.before as { place?: string }).place, "Pune office", "the booking as it stood is kept");
+    const [msg] = await db.select().from(hireMessages).where(eq(hireMessages.applicationId, appId));
+    assert.equal(msg.channel, "whatsapp");
+    assert.equal(msg.status, "logged");
+    const bells = await db.select().from(notifications).where(eq(notifications.userId, interviewer.id));
+    assert.ok(bells.some((n) => /Interview cancelled: Kiran Desai/.test(n.title)), JSON.stringify(bells.map((n) => n.title)));
+
+    const again = await cancelBooking(ctx, b, execId, { reason: "Interviewer is travelling that day", tell: "none", message: "" });
+    assert.equal(again.ok ? "ok" : again.code, "rule_violation");
   });
 });

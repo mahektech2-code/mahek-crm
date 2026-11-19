@@ -2,12 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 import { and, eq } from "drizzle-orm";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 import { db } from "@/db";
 import { hireBlueprints } from "@/db/schema";
 import { err, ok, type Result } from "@/lib/result";
 import { HireNotPermitted, requireHireCap, type HireContext } from "../access";
 import { hireTrail, hid } from "../services/core";
-import { blankDefinition, freeKey, getBlueprintRow, publishedForCopy, studioIssues, type StudioDefinition } from "../services/blueprints";
+import { blankDefinition, deleteDraftBlueprint, freeKey, getBlueprintRow, publishedForCopy, studioIssues, type StudioDefinition } from "../services/blueprints";
 import { blocking } from "../engines/validator";
 import { critiqueRubric } from "../ai/rubric-critic";
 import { assembleDefinition, generateStep, type GenParts, type GenStep, type Intake } from "../ai/generate-blueprint";
@@ -107,6 +108,23 @@ export async function publishBlueprint(id: string): Promise<Result> {
     });
     revalidatePath("/hire/blueprints");
     return ok(undefined, `${b.title} v${b.version} is published.${retired.length ? ` Candidates already on v${retired.join(", v")} stay on it for their whole journey.` : ""}`);
+  });
+}
+
+/**
+ * DELETING A DRAFT THAT WAS NEVER PUBLISHED. A published or retired version is
+ * history candidates were scored against and is never deleted; a draft is
+ * somebody's unfinished work that nobody was ever scored under, so it may go.
+ * The impact modal says so (`hire-blueprint-draft`); `deleteDraftBlueprint` checks the
+ * same picture; the trail keeps a line naming what was deleted, because
+ * `hire_audit` is append-only and outlives the row.
+ */
+export async function deleteDraft(id: string, confirmation: ImpactConfirmation | null): Promise<Result> {
+  return guard(async () => {
+    const ctx = await editor();
+    const r = await deleteDraftBlueprint(ctx, id, confirmation);
+    if (r.ok) revalidatePath("/hire/blueprints");
+    return r;
   });
 }
 

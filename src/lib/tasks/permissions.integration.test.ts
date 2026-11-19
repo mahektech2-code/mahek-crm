@@ -14,6 +14,7 @@ import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { moduleKeysForApp } from "@/lib/modules";
 import { setAccess } from "@/lib/actions/access";
+import { impactReport } from "@/lib/impact/registry";
 import { createTask, deleteTask, loadTaskDetail, nudgePerson, updateTask } from "@/lib/actions/tasks";
 import { listAccess } from "@/lib/services/access-service";
 import { canManageAutomations } from "./setup-access";
@@ -130,7 +131,10 @@ describe("Granted on the Access screen", () => {
     assert.equal(d.ok && d.data.can.edit && d.data.can.close && d.data.can.delete, true);
     assert.equal((await updateTask(taskId, { priority: "urgent" })).ok, true);
     assert.equal((await nudgePerson(priya.id)).ok, true);
-    assert.equal((await deleteTask(taskId)).ok, true);
+    const report = await impactReport("task-delete", taskId);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    assert.equal((await deleteTask(taskId)).ok, false, "refused without the confirmation");
+    assert.equal((await deleteTask(taskId, { typed: report.data.confirmWord, fingerprint: report.data.fingerprint })).ok, true);
   });
 
   test("Give tasks to anyone puts work on somebody outside the org chart, and nothing more", async () => {

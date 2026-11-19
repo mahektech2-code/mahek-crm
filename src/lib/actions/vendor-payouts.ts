@@ -9,6 +9,7 @@ import {
   addPayoutInvoice,
   cancelPayout,
   createManualPayout,
+  editManualPayout,
   holdPayout,
   markPayoutPaid,
   releasePayout,
@@ -18,6 +19,7 @@ import {
   updatePayoutNotes,
   type InvoiceInput,
   type ManualPayoutInput,
+  type PayoutEditInput,
 } from "@/lib/services/vendor-payout-service";
 
 /* ---------------------------------------------------------------------------
@@ -83,6 +85,10 @@ export async function cancelPayoutAction(payoutId: string, reason: string, confi
     const refusal = reason.trim() ? await confirmed("payment.confirm", "accounts-payout-cancel", payoutId, confirmation) : null;
     return refusal ?? cancelPayout(payoutId, reason);
   });
+}
+/** Payee and amount, while a manual payout is still to pay — the service says why not otherwise. */
+export async function editPayoutAction(payoutId: string, input: PayoutEditInput) {
+  return run(() => editManualPayout(payoutId, input));
 }
 export async function updatePayoutNotesAction(payoutId: string, notes: string) {
   return run(() => updatePayoutNotes(payoutId, notes));

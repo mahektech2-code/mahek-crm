@@ -44,7 +44,8 @@ import {
   type LinkableEmployee,
 } from "@/lib/services/access-service";
 import { ADMIN } from "@/lib/admin-routes";
-import { writeErpPowers as writeErpPowersIn, writeModules } from "@/lib/services/access-writes";
+import { writeErpPowers as writeErpPowersIn, writeModules, type Tx } from "@/lib/services/access-writes";
+import { accessSnapshot, type AccessSnapshot } from "@/lib/services/access-snapshot";
 import { ConsoleNotConfirmedError } from "@/lib/console-confirm";
 
 /* ---------------------------------------------------------------------------
@@ -94,6 +95,8 @@ async function audit(
   action: string,
   userId: string,
   detail: string,
+  /** The whole access picture either side of the change — see `access-snapshot.ts`. */
+  states?: { before: AccessSnapshot | null; after: AccessSnapshot },
 ) {
   await db.insert(auditLog).values({
     id: newId("aud"),
@@ -104,7 +107,8 @@ async function audit(
     /* The only hat that can reach this file — see `actor()`. */
     actorRole: "admin",
     actorApp: "admin",
-    afterState: { detail } as never,
+    ...(states?.before ? { beforeState: { access: states.before } as never } : {}),
+    afterState: (states ? { detail, access: states.after } : { detail }) as never,
   });
 }
 
@@ -319,18 +323,14 @@ function wantedTaskPowers(input: SetAccessInput, keepsTasks: boolean, current: s
   return same ? null : next;
 }
 
-async function writeTaskPowers(userId: string, powers: string[], by: string) {
-  await db.transaction(async (tx) => {
-    await tx.delete(taskUserPowers).where(eq(taskUserPowers.userId, userId));
-    if (powers.length) await tx.insert(taskUserPowers).values(powers.map((power) => ({ userId, power, grantedById: by })));
-  });
+async function writeTaskPowers(tx: Tx, userId: string, powers: string[], by: string) {
+  await tx.delete(taskUserPowers).where(eq(taskUserPowers.userId, userId));
+  if (powers.length) await tx.insert(taskUserPowers).values(powers.map((power) => ({ userId, power, grantedById: by })));
 }
 
-async function writeHrmsPowers(userId: string, powers: string[], by: string) {
-  await db.transaction(async (tx) => {
-    await tx.delete(hrmsUserPowers).where(eq(hrmsUserPowers.userId, userId));
-    if (powers.length) await tx.insert(hrmsUserPowers).values(powers.map((power) => ({ userId, power, grantedById: by })));
-  });
+async function writeHrmsPowers(tx: Tx, userId: string, powers: string[], by: string) {
+  await tx.delete(hrmsUserPowers).where(eq(hrmsUserPowers.userId, userId));
+  if (powers.length) await tx.insert(hrmsUserPowers).values(powers.map((power) => ({ userId, power, grantedById: by })));
 }
 
 /**
@@ -346,9 +346,9 @@ function wantedHireRole(input: SetAccessInput, keepsHire: boolean, current: stri
   return { next: role === current ? undefined : role };
 }
 
-async function writeHireRole(userId: string, role: string | null, by: string) {
-  await db.delete(hireUserRoles).where(eq(hireUserRoles.userId, userId));
-  if (role) await db.insert(hireUserRoles).values({ userId, role, grantedById: by });
+async function writeHireRole(tx: Tx, userId: string, role: string | null, by: string) {
+  await tx.delete(hireUserRoles).where(eq(hireUserRoles.userId, userId));
+  if (role) await tx.insert(hireUserRoles).values({ userId, role, grantedById: by });
 }
 
 /* ------------------------------------------------------------ the factory floor */
@@ -404,8 +404,8 @@ function wantedFactoryPlace(input: SetAccessInput, keepsFactory: boolean, curren
  * department — a new one in that seat takes it — and any number of helpers.
  * The PIN on the staff row is theirs and is never touched here.
  */
-async function writeFactoryPlace(userId: string, p: FactoryPlace | null) {
-  await db.transaction(async (tx) => {
+async function writeFactoryPlace(tx: Tx, userId: string, p: FactoryPlace | null) {
+  {
     await tx.execute(sql`delete from factory_team_defaults where user_id = ${userId}`);
     if (!p) {
       await tx.execute(sql`delete from factory_staff where user_id = ${userId}`);
@@ -423,7 +423,7 @@ async function writeFactoryPlace(userId: string, p: FactoryPlace | null) {
       if (crew === "owner" || crew === "operator") await tx.execute(sql`delete from factory_team_defaults where proc = ${proc} and role = ${crew}`);
       await tx.execute(sql`insert into factory_team_defaults (proc, role, user_id) values (${proc}, ${crew}, ${userId}) on conflict do nothing`);
     }
-  });
+  }
 }
 
 const factoryPlaceWord = (p: FactoryPlace | null) => placeWords(p).replace("still to confirm", "to confirm");
@@ -439,9 +439,7 @@ function wantedErpPowers(input: SetAccessInput, keepsErp: boolean, current: stri
   return same ? null : next;
 }
 
-async function writeErpPowers(userId: string, powers: string[], by: string) {
-  await db.transaction((tx) => writeErpPowersIn(tx, userId, powers, by));
-}
+const writeErpPowers = (tx: Tx, userId: string, powers: string[], by: string) => writeErpPowersIn(tx, userId, powers, by);
 
 /**
  * The designation a person should hold after this save: `undefined` where it
@@ -463,9 +461,9 @@ async function wantedDesignation(
   return { next: id === current ? undefined : id, name: d.name };
 }
 
-async function writeDesignation(userId: string, next: string | null, by: string) {
-  await db.delete(erpUserDesignations).where(eq(erpUserDesignations.userId, userId));
-  if (next) await db.insert(erpUserDesignations).values({ userId, designationId: next, assignedById: by });
+async function writeDesignation(tx: Tx, userId: string, next: string | null, by: string) {
+  await tx.delete(erpUserDesignations).where(eq(erpUserDesignations.userId, userId));
+  if (next) await tx.insert(erpUserDesignations).values({ userId, designationId: next, assignedById: by });
 }
 
 export async function setAccess(
@@ -639,6 +637,10 @@ export async function setAccess(
     const passwordHash = await hashPassword(randomUUID() + randomUUID());
     const apps = [...wanted.keys()];
 
+    const newPowers = wantedErpPowers(input, wanted.has("erp"), []);
+    const newHrmsPowers = wantedHrmsPowers(input, wanted.has("hrms"), []);
+    const newTaskPowers = wantedTaskPowers(input, wanted.has("tasks"), []);
+
     class SetUpMeanwhile extends Error {}
     try {
       await db.transaction(async (tx) => {
@@ -688,6 +690,14 @@ export async function setAccess(
         for (const [app, modules] of wanted) {
           await writeModules(tx, userId!, app, modules, me.id);
         }
+        /* Every part of the access in the one transaction: a refusal half way
+           used to leave an account with its apps and none of its powers. */
+        if (newPowers?.length) await writeErpPowers(tx, userId!, newPowers, me.id);
+        if (newHrmsPowers?.length) await writeHrmsPowers(tx, userId!, newHrmsPowers, me.id);
+        if (newTaskPowers?.length) await writeTaskPowers(tx, userId!, newTaskPowers, me.id);
+        if (newDesignation.next) await writeDesignation(tx, userId!, newDesignation.next, me.id);
+        if (newHireRole.next) await writeHireRole(tx, userId!, newHireRole.next, me.id);
+        if (newPlace.next) await writeFactoryPlace(tx, userId!, newPlace.next);
       });
     } catch (e) {
       if (e instanceof SetUpMeanwhile) {
@@ -695,15 +705,6 @@ export async function setAccess(
       }
       throw e;
     }
-    const newPowers = wantedErpPowers(input, wanted.has("erp"), []);
-    if (newPowers?.length) await writeErpPowers(userId!, newPowers, me.id);
-    const newHrmsPowers = wantedHrmsPowers(input, wanted.has("hrms"), []);
-    if (newHrmsPowers?.length) await writeHrmsPowers(userId!, newHrmsPowers, me.id);
-    const newTaskPowers = wantedTaskPowers(input, wanted.has("tasks"), []);
-    if (newTaskPowers?.length) await writeTaskPowers(userId!, newTaskPowers, me.id);
-    if (newDesignation.next) await writeDesignation(userId!, newDesignation.next, me.id);
-    if (newHireRole.next) await writeHireRole(userId!, newHireRole.next, me.id);
-    if (newPlace.next) await writeFactoryPlace(userId!, newPlace.next);
 
     await audit(
       me.id,
@@ -722,6 +723,7 @@ export async function setAccess(
       ]
         .filter(Boolean)
         .join("; "),
+      { before: null, after: await accessSnapshot(userId!) },
     );
     refresh();
 
@@ -926,6 +928,8 @@ export async function setAccess(
     if (refusal) return refusal;
   }
 
+  const accessBefore = await accessSnapshot(userId);
+  let accessAfter: AccessSnapshot | null = null;
   await db.transaction(async (tx) => {
     if (revoked.length) {
       await tx
@@ -983,6 +987,16 @@ export async function setAccess(
     for (const { app } of acknowledged) {
       await writeModules(tx, userId!, app, storedByApp.get(app)!, me.id);
     }
+    /* The rest of the access, in the SAME transaction. They used to be written
+       one by one after it, so a refusal half way through left somebody with
+       the new apps and the old powers — and an audit row describing neither. */
+    if (powers) await writeErpPowers(tx, userId!, powers, me.id);
+    if (hrmsPowers) await writeHrmsPowers(tx, userId!, hrmsPowers, me.id);
+    if (taskPowers) await writeTaskPowers(tx, userId!, taskPowers, me.id);
+    if (designation.next !== undefined) await writeDesignation(tx, userId!, designation.next, me.id);
+    if (hireRole.next !== undefined) await writeHireRole(tx, userId!, hireRole.next, me.id);
+    if (place.next !== undefined) await writeFactoryPlace(tx, userId!, place.next);
+    accessAfter = await accessSnapshot(userId!, tx);
   });
 
   const detail = [
@@ -1006,30 +1020,30 @@ export async function setAccess(
     .filter(Boolean)
     .join("; ");
 
-  if (powers) await writeErpPowers(userId, powers, me.id);
   const powerDetail = powers ? `ERP powers ${currentPowers.length} → ${powers.length}${powers.length ? ` (${powers.join(", ")})` : ""}` : "";
-  if (hrmsPowers) await writeHrmsPowers(userId, hrmsPowers, me.id);
   const hrmsPowerDetail = hrmsPowers
     ? `HRMS powers ${currentHrmsPowers.length} → ${hrmsPowers.length}${hrmsPowers.length ? ` (${hrmsPowers.join(", ")})` : ""}`
     : "";
-  if (taskPowers) await writeTaskPowers(userId, taskPowers, me.id);
   const taskPowerDetail = taskPowers
     ? `Tasks permissions ${currentTaskPowers.length} → ${taskPowers.length}${taskPowers.length ? ` (${taskPowers.join(", ")})` : ""}`
     : "";
 
-  if (designation.next !== undefined) await writeDesignation(userId, designation.next, me.id);
   const designationDetail =
     designation.next === undefined
       ? ""
       : `ERP designation ${currentDesignationRow?.name ?? "none"} → ${designation.next ? designation.name : "none"}`;
 
-  if (hireRole.next !== undefined) await writeHireRole(userId, hireRole.next, me.id);
   const hireRoleDetail = hireRole.next === undefined ? "" : `Hire role ${hireRoleWord(currentHireRow?.role ?? null)} → ${hireRoleWord(hireRole.next)}`;
 
-  if (place.next !== undefined) await writeFactoryPlace(userId, place.next);
   const placeDetail = place.next === undefined ? "" : `Factory ${factoryPlaceWord(placeBefore)} → ${factoryPlaceWord(place.next)}`;
 
-  await audit(me.id, "set-app-access", userId, [detail, powerDetail, hrmsPowerDetail, taskPowerDetail, designationDetail, hireRoleDetail, placeDetail].filter(Boolean).join("; "));
+  await audit(
+    me.id,
+    "set-app-access",
+    userId,
+    [detail, powerDetail, hrmsPowerDetail, taskPowerDetail, designationDetail, hireRoleDetail, placeDetail].filter(Boolean).join("; "),
+    accessAfter ? { before: accessBefore, after: accessAfter } : undefined,
+  );
   refresh();
 
   const said = [

@@ -21,6 +21,7 @@ import {
 } from "@/lib/studio/domain/template-upload";
 import { Button, Card } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
+import { ConfirmDialog } from "@/components/ui/overlays";
 import { approveDesign, deleteDraft, publishDesign, saveDraftPlacement, sendDesignBack } from "@/lib/actions/studio";
 
 /* ---------------------------------------------------------------------------
@@ -49,6 +50,7 @@ export function DesignEditor({ draftId, initial, occasions, approved, owner, can
   const [preview, setPreview] = useState<ServerPreview | null>(null);
   const [showPreview, setShowPreview] = useState(false);
   const [busy, setBusy] = useState<"save" | "preview" | "approve" | "publish" | "back" | "delete" | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [status, setStatus] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
   const [dirty, setDirty] = useState(false);
   const stage = useRef<HTMLDivElement>(null);
@@ -513,9 +515,19 @@ export function DesignEditor({ draftId, initial, occasions, approved, owner, can
           ) : null}
           {owner && !approved ? (
             <div className="mt-3 border-t border-divider pt-3">
-              <Button size="sm" variant="ghost" onClick={removeDraft} disabled={busy !== null}>
+              <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(true)} disabled={busy !== null}>
                 Delete this draft
               </Button>
+              <ConfirmDialog
+                open={confirmDelete}
+                title={`Delete the draft “${draft.name}”?`}
+                body="The draft and the artwork uploaded for it are deleted for good. It was never published, so no poster uses it. This cannot be undone."
+                confirmLabel="Delete draft"
+                cancelLabel="Keep it"
+                destructive
+                onConfirm={removeDraft}
+                onClose={() => setConfirmDelete(false)}
+              />
             </div>
           ) : null}
         </Card>

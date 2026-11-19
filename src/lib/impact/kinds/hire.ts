@@ -88,3 +88,68 @@ export const hireWithdrawImpact: ImpactSource = {
     };
   },
 };
+
+/* ---------------------------------------------------------------------------
+ * AN OFFER WE TAKE BACK. The id is the application's.
+ *
+ * The offer is not deleted (Hire is append-only) — it becomes `withdrawn` and
+ * the candidate is told. What people assume goes with it and does not: the
+ * application stays open at Documents & offer, and documents, the courier and
+ * onboarding ticks stay as they are.
+ * ------------------------------------------------------------------------- */
+
+export const hireOfferWithdrawImpact: ImpactSource = {
+  authorize: async (id) => {
+    const ctx = await requireHireCap();
+    if (!ctx.can("offer")) throw new HireNotPermitted("This needs somebody who makes offers.");
+    if (!(await getApplication(ctx, id))) throw new HireNotPermitted("That candidate is not on your list.");
+  },
+
+  async report(id) {
+    const [x] = await db
+      .select({ app: hireApplications, name: hireCandidates.fullName, role: hireBlueprints.title })
+      .from(hireApplications)
+      .innerJoin(hireCandidates, eq(hireCandidates.id, hireApplications.candidateId))
+      .innerJoin(hireBlueprints, eq(hireBlueprints.id, hireApplications.blueprintId))
+      .where(eq(hireApplications.id, id));
+    if (!x) return null;
+    const [offer] = await db
+      .select()
+      .from(hireOffers)
+      .where(and(eq(hireOffers.applicationId, id), isNull(hireOffers.supersededById), inArray(hireOffers.status, ["issued", "accepted"])));
+    const blockers: string[] = [];
+    if (x.app.status === "hired") blockers.push("They have joined. Leaving is recorded in HRMS.");
+    else if (x.app.status !== "in_progress" && x.app.status !== "on_hold") blockers.push("This application is already closed.");
+    if (!offer) blockers.push("There is no issued or accepted offer to withdraw.");
+    const items: ImpactItem[] = offer
+      ? [
+          {
+            app: "Hire",
+            label: `${offer.status} offer`,
+            effect: "changed",
+            count: 1,
+            examples: [`${offer.gradeLabel} · ₹${(offer.basicPaise / 100).toLocaleString("en-IN")} a month${offer.joiningDate ? ` · joining ${offer.joiningDate}` : ""}`],
+            note: "It becomes Withdrawn and stays on the record.",
+          },
+          { app: "Hire", label: "message to the candidate", effect: "changed", count: 1, note: `${x.name} is told the offer has been withdrawn.` },
+          {
+            app: "Hire",
+            label: "application",
+            effect: "kept",
+            count: 1,
+            note: "It stays open at Documents & offer — make a new offer, or close it as a separate decision.",
+          },
+          ...(offer.courierStatus !== "not_sent"
+            ? [{ app: "Hire", label: "signed letter sent by courier", effect: "kept" as const, count: 1, note: "Courier tracking is not changed. Ask for it back if it is out." }]
+            : []),
+        ]
+      : [];
+    return {
+      title: `the offer to ${x.name} for ${x.role}`,
+      verb: "Withdraw",
+      confirmWord: typeable(x.name, "WITHDRAW"),
+      items,
+      blockers,
+    };
+  },
+};
