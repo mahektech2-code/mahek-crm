@@ -5,9 +5,9 @@ import { CardGrid } from "@/components/ui/card-grid";
 import { fd, fdLong, inr, nf } from "@/lib/erp/ui";
 import { erpLink } from "@/lib/erp/registry";
 import { MONEY_KIND_LABEL } from "@/lib/erp/engines/money";
-import type { AdvanceRow, TxnRow } from "@/lib/erp/money";
+import { advanceEditLock, type AdvanceRow, type TxnRow } from "@/lib/erp/money";
 import type { bankView, statementView, TxnDetail } from "@/lib/erp/money-views";
-import { CancelTxn, Drawer, FilterBar, ImportStatement, MatchButton, MatchLink, OpenRow, ReviewButtons, SettleBox, SplitLink, type FilterDef } from "./money-client";
+import { CancelTxn, Drawer, EditAdvance, FilterBar, ImportStatement, MatchButton, MatchLink, OpenRow, ReviewButtons, SettleBox, SplitLink, type FilterDef } from "./money-client";
 import { AccountMark, labelClass, Note, Pill, SumStrip, Timeline, type KitAccount } from "./money-ui";
 
 /* ---------------------------------------------------------------------------
@@ -486,13 +486,18 @@ export function advanceTone(a: AdvanceRow): { tone: "success" | "brand" | "warn"
   return { tone: "success", label: "Ready to settle" };
 }
 
-export function AdvancesTable({ rows, depts, today }: { rows: AdvanceRow[]; depts: Map<string, string | null>; today: string }) {
+/** Why an advance's Edit is locked for this person, or "" — the same rule the save applies. */
+function advanceEditWhy(a: AdvanceRow, me: string, approver: boolean, canWrite: boolean): string {
+  return canWrite ? advanceEditLock(a, me, approver).why : "Previewing — nothing can be changed";
+}
+
+export function AdvancesTable({ rows, depts, today, me, approver, canWrite }: { rows: AdvanceRow[]; depts: Map<string, string | null>; today: string; me: string; approver: boolean; canWrite: boolean }) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full">
         <thead>
           <Tr>
-            {["Advance", "Given to", "Issued", "From", "Given", "Bills", "With them", "Status"].map((h, i) => (
+            {["Advance", "Given to", "Issued", "From", "Given", "Bills", "With them", "Status", ""].map((h, i) => (
               <Th key={h} align={i >= 4 && i <= 6 ? "right" : undefined} className="bg-surface">
                 {h}
               </Th>
@@ -524,6 +529,9 @@ export function AdvancesTable({ rows, depts, today }: { rows: AdvanceRow[]; dept
                   {owed ? <div className="text-sm text-muted">owed to {a.employee.split(" ")[0]}</div> : null}
                 </Td>
                 <Td>{late ? <Pill tone="danger">Bills late</Pill> : <Pill tone={s.tone}>{s.label}</Pill>}</Td>
+                <Td align="right">
+                  <EditAdvance id={a.id} why={advanceEditWhy(a, me, approver, canWrite)} />
+                </Td>
               </OpenRow>
             );
           })}
@@ -538,6 +546,7 @@ export function AdvancePage({
   a,
   files,
   history,
+  me,
   approver,
   canWrite,
   accounts,
@@ -545,6 +554,7 @@ export function AdvancePage({
   backHref,
 }: {
   a: AdvanceRow;
+  me: string;
   files: Map<string, { id: string; name: string }[]>;
   history: { at: string; who: string | null; action: string }[];
   approver: boolean;
@@ -585,6 +595,7 @@ export function AdvancePage({
                 <NavLink href={backHref} className="text-sm font-semibold text-brand hover:underline">
                   ← All advances
                 </NavLink>
+                <EditAdvance id={a.id} why={advanceEditWhy(a, me, approver, canWrite)} />
                 {a.status === "open" && canWrite ? (
                   <NavLink href={billsHref} className="text-sm font-semibold text-brand hover:underline">
                     Submit bills

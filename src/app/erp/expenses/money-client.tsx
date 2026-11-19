@@ -13,6 +13,7 @@ import { inr } from "@/lib/erp/ui";
 import { ErpDialog } from "../_ui/dialog";
 import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { IconButton, linkClass } from "../_ui/look";
+import { useErpUi } from "../_ui/erp-ui";
 import { boxClass, MField, MoneyFoot, MoneyHead, Note } from "./money-ui";
 
 /* ---------------------------------------------------------------------------
@@ -229,6 +230,29 @@ export function Drawer({ title, code, children, param = "open" }: { title: strin
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">{children}</div>
       </aside>
     </BodyPortal>
+  );
+}
+
+/**
+ * Edit on an advance: the ERP's own form for it, built on the server with the
+ * record's values (`advances` → `formLoaders.edit`) and saved by its handler,
+ * which checks the power and what is locked again. Locked, it says why.
+ */
+export function EditAdvance({ id, why }: { id: string; why: string }) {
+  const ui = useErpUi();
+  return (
+    <button
+      type="button"
+      disabled={!!why}
+      title={why || undefined}
+      onClick={(e) => {
+        e.stopPropagation();
+        ui.act("advances", { id: "edit", l: "Edit", loadsForm: true }, id);
+      }}
+      className={cx(linkClass("brand", "text-sm font-semibold"), why && "cursor-not-allowed opacity-50 hover:no-underline")}
+    >
+      Edit
+    </button>
   );
 }
 

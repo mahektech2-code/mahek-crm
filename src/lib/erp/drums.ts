@@ -38,7 +38,7 @@ import {
   type DrumStatus,
 } from "./engines/drums";
 import { erpId, nextNumber } from "./server";
-import { cancelScrapMoney, recordScrapMoney } from "./money";
+import { cancelScrapMoney, editScrapMoney, recordScrapMoney } from "./money";
 
 /* ---------------------------------------------------------------------------
  * EMPTY DRUMS, SCRAP SALE, VENDOR RETURNS AND SCRAP RECEIVABLES — the writes
@@ -532,7 +532,7 @@ export async function cancelScrapEntry(actor: Actor, id: string, reason: string)
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"erp:scrap:" + e.category + ":" + e.unit}))`);
     await tx.update(erpScrapEntries).set({ status: "cancelled", cancelReason: reason.trim(), cancelledById: actor.id, cancelledAt: new Date() }).where(eq(erpScrapEntries.id, id));
     const left = (await scrapStock(tx)).find((s) => s.category === e.category && s.unit === e.unit && s.godownId === e.godownId)?.available ?? 0;
-    if (left < 0) return err(`Cancelling this would leave ${left} ${e.unit} of ${e.category} — more has been sold than was recorded without it.`, "rule_violation");
+    if (left < 0) return refuse(err(`Cancelling this would leave ${left} ${e.unit} of ${e.category} — more has been sold than was recorded without it.`, "rule_violation"));
     return okVoid("Entry cancelled");
   });
   if (r.ok) await audit(actor, "erp.scrap.entry.cancel", "erp_scrap_entry", id, { reason });
@@ -639,6 +639,90 @@ export async function cancelScrapSale(actor: Actor, id: string, reason: string):
   return r;
 }
 
+/** What a correction of a sale may change. Category, unit and godown stay: they decide which stock it drew. */
+export type SaleEdit = {
+  date: string;
+  buyerId: string;
+  quantity: number;
+  ratePaise: number;
+  refKind: "invoice" | "challan" | "none";
+  externalRef: string | null;
+  dueDate: string | null;
+  remark: string | null;
+};
+
+/**
+ * Corrects a confirmed sale. While money is matched to it the buyer, quantity
+ * and rate — everything its amount and its receivable hang on — stay as they
+ * are until the accountant undoes the match. A drum sale's quantity moves its
+ * drums the way the sale did: more takes the oldest available, fewer puts the
+ * most recently recorded back in stock, each with a line in its history.
+ */
+export async function editScrapSale(actor: Actor, id: string, x: SaleEdit): Promise<Result> {
+  if (!x.date) return fieldErr("date", "Enter the sale date.");
+  if (!(x.quantity > 0)) return fieldErr("quantity", "Enter the quantity sold.");
+  if (!(x.ratePaise >= 0)) return fieldErr("rate", "Enter the rate.");
+  if (x.refKind !== "none" && !x.externalRef) return fieldErr("externalRef", x.refKind === "invoice" ? "Enter the external invoice number." : "Enter the challan or reference number.");
+  if (x.refKind === "none" && x.externalRef) return fieldErr("externalRef", "A sale with no external invoice carries no invoice number — leave it empty.");
+  if (x.dueDate && x.dueDate < x.date) return fieldErr("dueDate", "The due date cannot be before the sale.");
+  const r = await inTx<{ before: Record<string, unknown>; saleNo: number; moved: string }>(async (tx) => {
+    const [s] = await tx.select().from(erpScrapSales).where(eq(erpScrapSales.id, id)).for("update");
+    if (!s) return err("That sale is gone.", "not_found");
+    if (s.status !== "confirmed") return err("A cancelled sale cannot be changed.", "rule_violation");
+    const isDrum = s.category === DRUM_CATEGORY;
+    const qty = r3(x.quantity);
+    const oldQty = Number(s.quantity);
+    if (isDrum && !Number.isInteger(qty)) return fieldErr("quantity", "Drums are sold whole: enter a whole number.");
+    const [m] = await q<{ n: number }>(tx, sql`select count(*)::int as n from erp_scrap_allocations where sale_id = ${id} and voided_at is null`);
+    if (Number(m?.n) > 0 && (x.buyerId !== s.buyerId || qty !== oldQty || x.ratePaise !== Number(s.ratePaise)))
+      return err("Money is matched to this sale. The accountant undoes the match first (Scrap sales → Receipts) before the buyer, quantity or rate can change.", "rule_violation");
+    const label = scrapSaleLabel(s.saleNo);
+    let moved = "";
+    if (isDrum && qty > oldQty) {
+      const pool = await q<{ id: string; drumNo: number; recordedAt: string }>(tx, sql`
+        select id, drum_no as "drumNo", recorded_at::text as "recordedAt" from erp_empty_drums
+         where status = 'available' and (${s.godownId}::text is null or godown_id = ${s.godownId})
+         order by recorded_at, drum_no for update`);
+      const pick = fifoPick(pool.map((p) => ({ ...p, drumNo: Number(p.drumNo) })), qty - oldQty, "Mahek-owned empty drum");
+      if (!pick.ok) return fieldErr("quantity", pick.error);
+      const ids = pick.picked.map((d) => d.id);
+      await tx.update(erpEmptyDrums).set({ status: "sold", scrapSaleId: id, updatedAt: new Date() }).where(inArray(erpEmptyDrums.id, ids));
+      for (const d of ids) await event(tx, d, "sold", "available", "sold", actor.id, null, { sale: label, allocation: "fifo", edit: true });
+      moved = ` · ${ids.length} more drum${ids.length === 1 ? "" : "s"} allocated oldest first`;
+    } else if (isDrum && qty < oldQty) {
+      const back = await q<{ id: string }>(tx, sql`
+        select id from erp_empty_drums where scrap_sale_id = ${id} and status = 'sold'
+         order by recorded_at desc, drum_no desc limit ${oldQty - qty} for update`);
+      if (back.length !== oldQty - qty) return err("This sale's drums do not add up to its quantity. Cancel and re-enter it instead.", "conflict");
+      await tx.update(erpEmptyDrums).set({ status: "available", scrapSaleId: null, updatedAt: new Date() }).where(inArray(erpEmptyDrums.id, back.map((d) => d.id)));
+      for (const d of back) await event(tx, d.id, "sale_reduced", "sold", "available", actor.id, null, { sale: label });
+      moved = ` · ${back.length} drum${back.length === 1 ? "" : "s"} back in stock`;
+    } else if (!isDrum && qty > oldQty) {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"erp:scrap:" + s.category + ":" + s.unit}))`);
+      /* What is on hand already has this sale taken off it, so the sale may grow by what is left. */
+      const have = (await scrapStock(tx)).filter((k) => k.category === s.category && k.unit === s.unit && (!s.godownId || k.godownId === s.godownId)).reduce((a, k) => a + k.available, 0);
+      if (qty > oldQty + have + 1e-9) return fieldErr("quantity", `Only ${r3(oldQty + have)} ${s.unit} of ${s.category} can be on this sale — you entered ${qty}.`);
+    }
+    const after = {
+      saleDate: x.date,
+      buyerId: x.buyerId,
+      quantity: qty,
+      ratePaise: x.ratePaise,
+      amountPaise: saleAmount(qty, x.ratePaise),
+      refKind: x.refKind,
+      externalRef: x.refKind === "none" ? null : x.externalRef,
+      dueDate: x.dueDate,
+      remark: x.remark,
+    };
+    await tx.update(erpScrapSales).set(after).where(eq(erpScrapSales.id, id));
+    const before = { saleDate: s.saleDate, buyerId: s.buyerId, quantity: oldQty, ratePaise: Number(s.ratePaise), amountPaise: Number(s.amountPaise), refKind: s.refKind, externalRef: s.externalRef, dueDate: s.dueDate, remark: s.remark };
+    return ok({ before, saleNo: s.saleNo, moved });
+  });
+  if (!r.ok) return r;
+  await audit(actor, "erp.scrap.sale.edit", "erp_scrap_sale", id, x, r.data.before);
+  return okVoid(`${scrapSaleLabel(r.data.saleNo)} saved${r.data.moved}`);
+}
+
 /* ============================================================ vendor returns */
 
 export async function returnDrums(actor: Actor, x: { supplierId: string; date: string; quantity: number; challanRef: string | null; remark: string | null }): Promise<Result<{ id: string; returnNo: number }>> {
@@ -677,6 +761,25 @@ export async function cancelDrumReturn(actor: Actor, id: string, reason: string)
   return r;
 }
 
+/**
+ * Corrects an outward's paperwork. The drums left with it, so the supplier and
+ * how many stay: a wrong count is cancelled (by a corrections approver) and
+ * entered again, which puts the drums back first.
+ */
+export async function editDrumReturn(actor: Actor, id: string, x: { date: string; challanRef: string | null; remark: string | null }): Promise<Result> {
+  if (!x.date) return fieldErr("date", "Enter the return date.");
+  const r = await inTx<{ before: Record<string, unknown>; returnNo: number }>(async (tx) => {
+    const [d] = await tx.select().from(erpDrumReturns).where(eq(erpDrumReturns.id, id)).for("update");
+    if (!d) return err("That return is gone.", "not_found");
+    if (d.status !== "confirmed") return err("A cancelled outward cannot be changed.", "rule_violation");
+    await tx.update(erpDrumReturns).set({ returnDate: x.date, challanRef: x.challanRef, remark: x.remark }).where(eq(erpDrumReturns.id, id));
+    return ok({ before: { returnDate: d.returnDate, challanRef: d.challanRef, remark: d.remark }, returnNo: d.returnNo });
+  });
+  if (!r.ok) return r;
+  await audit(actor, "erp.drum.return.edit", "erp_drum_return", id, x, r.data.before);
+  return okVoid(`${drumReturnLabel(r.data.returnNo)} saved`);
+}
+
 /* ============================================================ receipts and matching */
 
 export const RECEIPT_MODES = ["Cash", "Bank transfer", "UPI", "Cheque"];
@@ -697,6 +800,37 @@ export async function recordReceipt(actor: Actor, x: { date: string; mode: strin
   });
   if (r.ok) await audit(actor, "erp.receipt.create", "erp_cash_receipt", r.data.id, x);
   return r.ok ? ok(r.data, `${receiptLabel(r.data.receiptNo)} recorded`) : r;
+}
+
+/**
+ * Corrects a receipt and its Petty Cash row together, in one transaction.
+ * While it is matched to a sale its money — amount, buyer, mode and the
+ * account it came into — stays until the match is undone; the date, payer,
+ * reference and note can always be put right. The money row refuses on its
+ * own account what a bank match or onward cash forbids.
+ */
+export async function editReceipt(actor: Actor, id: string, x: { date: string; mode: string; amountPaise: number; buyerId: string | null; payer: string | null; reference: string | null; note: string | null; into: string | null }): Promise<Result> {
+  if (!x.date) return fieldErr("date", "Enter the date it was received.");
+  if (!RECEIPT_MODES.includes(x.mode)) return fieldErr("mode", "Choose how the money came.");
+  if (!(x.amountPaise > 0)) return fieldErr("amount", "Enter the amount received.");
+  if (!x.buyerId && !x.payer) return fieldErr("buyer", "Name the scrap buyer, or who the money came from.");
+  const r = await inTx<{ before: Record<string, unknown>; receiptNo: number }>(async (tx) => {
+    const [c] = await tx.select().from(erpCashReceipts).where(eq(erpCashReceipts.id, id)).for("update");
+    if (!c) return err("That receipt is gone.", "not_found");
+    if (c.status !== "active") return err("A void receipt cannot be changed.", "rule_violation");
+    const [m] = await q<{ n: number }>(tx, sql`select count(*)::int as n from erp_scrap_allocations where receipt_id = ${id} and voided_at is null`);
+    const matched = Number(m?.n) > 0;
+    if (matched && (x.amountPaise !== Number(c.amountPaise) || x.buyerId !== c.buyerId || x.mode !== c.mode))
+      return err("This receipt is matched to a sale. Undo the match first to change the amount, buyer or mode.", "rule_violation");
+    await tx.update(erpCashReceipts).set({ receiptDate: x.date, mode: x.mode, amountPaise: x.amountPaise, buyerId: x.buyerId, payer: x.payer, reference: x.reference, note: x.note }).where(eq(erpCashReceipts.id, id));
+    const [buyer] = x.buyerId ? await q<{ name: string }>(tx, sql`select name from erp_scrap_buyers where id = ${x.buyerId}`) : [];
+    const money = await editScrapMoney(tx, { scrapReceiptId: id, date: x.date, mode: x.mode, amountPaise: x.amountPaise, accountName: x.into, payer: buyer?.name ?? x.payer ?? "Scrap buyer", reference: x.reference, note: x.note, matchedToSales: matched });
+    if (!money.ok) return refuse(money);
+    return ok({ before: { receiptDate: c.receiptDate, mode: c.mode, amountPaise: Number(c.amountPaise), buyerId: c.buyerId, payer: c.payer, reference: c.reference, note: c.note, into: money.data.before }, receiptNo: c.receiptNo });
+  });
+  if (!r.ok) return r;
+  await audit(actor, "erp.receipt.edit", "erp_cash_receipt", id, x, r.data.before);
+  return okVoid(`${receiptLabel(r.data.receiptNo)} saved`);
 }
 
 async function receiptLeft(tx: Ex, receiptId: string): Promise<{ amount: number; matched: number; status: string; buyerId: string | null; receiptNo: number } | null> {
@@ -904,6 +1038,7 @@ export async function drumHistories(drumIds: string[]): Promise<Map<string, Drum
       : r.kind === "opening" ? `Added as opening stock, approved by ${String(d.approvedBy ?? "")}`
       : r.kind === "write_off" ? `Written off, approved by ${String(d.approvedBy ?? "")}`
       : r.kind === "sale_cancelled" ? `${String(d.sale ?? "Sale")} cancelled — back in stock`
+      : r.kind === "sale_reduced" ? `${String(d.sale ?? "Sale")} corrected to fewer drums — back in stock`
       : r.kind === "return_cancelled" ? `${String(d.return ?? "Return")} cancelled — waiting to be returned again`
       : r.kind === "cancelled" ? "Entry cancelled"
       : r.kind;

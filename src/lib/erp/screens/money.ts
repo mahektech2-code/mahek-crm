@@ -32,12 +32,14 @@ import {
   accountBalanceMap,
   advanceRows,
   bankLineRows,
+  advanceEditLock,
   cancelAdvance,
   cancelTxn,
   candidatesFor,
   cashSources,
   createFromBankLine,
   customerChoices,
+  editAdvance,
   giveAdvance,
   importBankStatement,
   matchBankLine,
@@ -287,6 +289,49 @@ async function advanceForm(): Promise<FormSpec> {
       { k: "reference", l: "UTR / reference", t: "text" },
       { k: "note", l: "Notes", t: "area" },
     ],
+  };
+}
+
+/**
+ * Edit opens the advance's own form, filled in. Who holds it never changes —
+ * that is a cancel and a new advance — and once bills, a bank match or a
+ * settlement hang off it, neither do the amount, date, account or mode.
+ */
+async function advanceEditForm(ctx: ErpContext, id: string): Promise<FormSpec | null> {
+  const [a] = await advanceRows(sql`a.id = ${id}`);
+  if (!a || !a.issueTxn) return null;
+  const lock = advanceEditLock(a, ctx.actor.id, ctx.powers.has("approveMoney"));
+  if (lock.why) return null;
+  const [base, cards] = await Promise.all([advanceForm(), accountCards()]);
+  const from = a.issueTxn.from ?? "";
+  const card = cards.find((c) => c.name === from)?.label ?? from;
+  const fixed = new Set(["employee", ...(lock.moneyWhy ? ["amount", "date", "from", "mode"] : [])]);
+  return {
+    ...base,
+    id: "edit",
+    recordId: a.id,
+    title: `Edit ${a.label}`,
+    sub: `${lock.moneyWhy ? `${lock.moneyWhy}. ` : ""}Who holds it stays — to give it to somebody else, cancel it and give a new one. The before is kept in the audit trail.`,
+    submit: "Save changes",
+    init: {
+      employee: a.userId ?? "",
+      amount: rupeesField(a.issueTxn.amountPaise),
+      date: a.issuedOn,
+      purpose: a.purpose ?? "",
+      billsDueOn: a.billsDueOn ?? "",
+      from: card,
+      mode: a.issueTxn.mode ?? "",
+      reference: a.issueTxn.reference ?? "",
+      note: a.issueTxn.note ?? "",
+    },
+    header: base.header.map((f) => {
+      /* Its holder and its account stay on offer even if they have since left or closed. */
+      const g =
+        f.k === "employee" && a.userId && !f.opts?.includes(a.userId) ? { ...f, opts: [a.userId, ...(f.opts ?? [])], optLabels: { ...f.optLabels, [a.userId]: a.employee } }
+        : f.k === "from" && card && !f.opts?.includes(card) ? { ...f, opts: [card, ...(f.opts ?? [])] }
+        : f;
+      return fixed.has(f.k) ? { ...g, readOnly: true } : g;
+    }),
   };
 }
 
@@ -755,7 +800,9 @@ const advances: ScreenModule = {
         const late = advanceLate({ status: a.status, billsDueOn: a.billsDueOn, billCount: a.bills.filter((b) => b.status === "active").length }, day);
         const state = a.status === "settled" ? "Settled" : a.status === "cancelled" ? "Cancelled" : late ? "Bills late" : p.toReview > 0 ? "Bills to review" : p.sentBack > 0 ? "Bill sent back" : a.bills.length ? "Open" : "Open · no bills yet";
         const settleSub = p.settleAmount > 0 ? `${inr(p.settleAmount)} comes back from ${a.employee}.` : p.settleAmount < 0 ? `${a.employee} spent ${inr(-p.settleAmount)} more than given — it is paid to them.` : "Spent exactly what was given: nothing moves.";
+        const editLock = advanceEditLock(a, ctx.actor.id, approver);
         const actions: ActionSpec[] = [
+          { id: "edit", l: "Edit", loadsForm: true, why: editLock.why },
           ...(a.status === "open" ? [{ id: "bills", l: "Submit bills", primary: p.toReview === 0, form: bills.get(a.id) } as ActionSpec] : []),
           ...(a.status === "open"
             ? [
@@ -841,6 +888,19 @@ const advances: ScreenModule = {
       const r = await giveAdvance(actorOf(ctx), { userId: text(h.employee), amountPaise: paise(h.amount), date: text(h.date) ?? "", purpose: text(h.purpose), billsDueOn: text(h.billsDueOn), from: cardName(text(h.from)), mode: text(h.mode), reference: text(h.reference), note: text(h.note) });
       return r.ok ? okVoid(r.message) : r;
     },
+    async edit(ctx, h, _l, recordId) {
+      if (!recordId) return err("Which advance?");
+      return editAdvance(actorOf(ctx), recordId, {
+        amountPaise: paise(h.amount),
+        date: text(h.date) ?? "",
+        purpose: text(h.purpose),
+        billsDueOn: text(h.billsDueOn),
+        from: cardName(text(h.from)),
+        mode: text(h.mode),
+        reference: text(h.reference),
+        note: text(h.note),
+      });
+    },
     async bills(ctx, _h, lines, recordId) {
       if (!recordId) return err("Which advance?");
       const r = await submitAdvanceBills(
@@ -851,6 +911,7 @@ const advances: ScreenModule = {
       return r.ok ? okVoid(r.message) : r;
     },
   },
+  formLoaders: { edit: advanceEditForm },
   actions: {
     async settle(ctx, id, v) {
       return settleAdvance(actorOf(ctx), id, text(v.account), text(v.mode));
