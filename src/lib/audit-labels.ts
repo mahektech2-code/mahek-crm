@@ -896,6 +896,9 @@ const DESCRIBE: Record<string, Describer> = {
     changes: false,
   }),
   "mbos.task.campaignClosed": (c) => ({ says: ["withdrew", plural(num(c.a.cancelled) ?? 0, "open task"), "from an assignment"], changes: false }),
+  "mbos.task.campaignEdited": (c) => ({
+    says: ["edited an assignment", strong(str(c.a.title) ?? ""), "and", plural(num(c.a.openTasksUpdated) ?? 0, "open task"), "with it"],
+  }),
   "customer.task.linkSaved": (c) => ({ says: ["saved a field task's answer to the customer record", c.subject()], changes: false }),
   "mbos.document.publish": (c) => ({ says: ["published a document to the field team", ...(str(c.a.title) ? [strong(str(c.a.title)!)] : [])], changes: false }),
   "mbos.document.withdraw": () => ({ says: ["withdrew a document from the field team"], changes: false }),
@@ -906,6 +909,7 @@ const DESCRIBE: Record<string, Describer> = {
   "mbos.document.edit": (c) => ({ says: ["edited a document", ...(str(c.a.title) ? [strong(str(c.a.title)!)] : [])] }),
   "mbos.course.publish": (c) => ({ says: ["published a training course", ...(str(c.a.title) ? [strong(str(c.a.title)!)] : [])], changes: false }),
   "mbos.course.withdraw": () => ({ says: ["withdrew a training course"], changes: false }),
+  "mbos.course.edit": (c) => ({ says: ["edited a training course", ...(str(c.a.title) ? [strong(str(c.a.title)!)] : [])] }),
   "mbos.holiday.add": (c) => ({ says: ["added a holiday,", strong(str(c.a.name) ?? ""), "on", strong(shortDate(str(c.a.onDate) ?? ""))], changes: false }),
   "mbos.holiday.remove": (c) => ({ says: ["removed the holiday", strong(str(c.b.name) ?? ""), "on", strong(shortDate(str(c.b.onDate) ?? ""))], changes: false }),
   "mbos.holiday.edit": (c) => ({ says: ["changed the holiday", strong(str(c.a.name) ?? ""), "on", strong(shortDate(str(c.a.onDate) ?? ""))], changes: false }),
