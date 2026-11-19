@@ -8,8 +8,9 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { reminderTypeEnum, reminderStatusEnum, orderStatusEnum } from "@/db/schema";
-import { buildEnquirySearchText } from "@/lib/enquiry-submission";
+import { enquiryStageEnum, reminderTypeEnum, reminderStatusEnum, orderStatusEnum } from "@/db/schema";
+import { buildEnquirySearchText, effectiveSubmission, readSubmissionFields } from "@/lib/enquiry-submission";
+import { MANUAL_ENQUIRY_SOURCES, PICKABLE_STAGES, isTerminalStage } from "@/lib/enquiry-labels";
 import {
   ENQUIRY_STAGES,
   ENQUIRY_PRIORITIES,
@@ -42,7 +43,7 @@ describe("the internal values themselves are unchanged", () => {
     // label fix must never touch them. Pinned so a later edit to this file
     // that quietly renames one of them (rather than only its label) fails
     // here instead of on a filter that stops matching any row.
-    assert.deepEqual(ENQUIRY_STAGES, ["new", "contacted", "follow_up", "qualified", "converted", "closed"]);
+    assert.deepEqual(ENQUIRY_STAGES, ["new", "contacted", "follow_up", "qualified", "converted", "closed", "spam"]);
     assert.deepEqual(ENQUIRY_PRIORITIES, ["low", "normal", "high", "urgent"]);
     assert.deepEqual(ENQUIRY_SOURCES, ["website", "instagram", "facebook", "whatsapp", "indiamart", "google", "manual", "other"]);
   });
@@ -379,5 +380,46 @@ describe("the launcher badge does not import the access rule that imports it", (
     const imports = src.match(/^import .*$/gm) ?? [];
     assert.ok(imports.length > 0);
     assert.ok(!imports.some((line) => /access|enquiry-service/.test(line)), imports.join("\n"));
+  });
+});
+
+/* ------------------------------------------------ spam and corrections */
+
+describe("spam is a stage nobody picks", () => {
+  test("the stage list is the database enum, value for value", () => {
+    assert.deepEqual([...ENQUIRY_STAGES], [...enquiryStageEnum.enumValues]);
+  });
+  test("spam is labelled, terminal, and not offered in the stage dropdown", () => {
+    assert.equal(STAGE_LABEL.spam, "Spam");
+    assert.ok(isTerminalStage("spam"));
+    assert.ok(!(PICKABLE_STAGES as string[]).includes("spam"));
+    assert.equal(PICKABLE_STAGES.length, ENQUIRY_STAGES.length - 1);
+  });
+  test("an enquiry typed in by hand cannot claim to be from the website", () => {
+    assert.ok(!(MANUAL_ENQUIRY_SOURCES as string[]).includes("website"));
+    assert.ok((MANUAL_ENQUIRY_SOURCES as string[]).includes("manual"));
+  });
+});
+
+describe("a correction is read over the submission, never into it", () => {
+  test("a corrected name beats a split first and last name", () => {
+    const raw = { first_name: "Rames", last_name: "Patil", mobile: "+91 98200 11001", enquiry: "Need 20L" };
+    const merged = effectiveSubmission(raw, { name: "Ramesh Patil", phone: "9820011002" });
+    const f = readSubmissionFields(merged);
+    assert.equal(f.name, "Ramesh Patil");
+    assert.equal(f.phone, "9820011002");
+    assert.equal(f.message, "Need 20L");
+    /* the raw object is untouched */
+    assert.equal(raw.first_name, "Rames");
+  });
+  test("a correction to empty clears the field, and none leaves the raw as it was", () => {
+    const raw = { name: "A", company: "Old Co", message: "x" };
+    assert.equal(readSubmissionFields(effectiveSubmission(raw, { company: "" })).company, null);
+    assert.deepEqual(effectiveSubmission(raw, null), raw);
+  });
+  test("search text is built from the corrected values", () => {
+    const text = buildEnquirySearchText(effectiveSubmission({ name: "Old" }, { name: "New Name" }));
+    assert.ok(text.includes("New Name"));
+    assert.ok(!text.includes("Old"));
   });
 });

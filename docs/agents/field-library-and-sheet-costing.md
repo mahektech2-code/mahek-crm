@@ -54,6 +54,26 @@ decides who may open a file FROM the parent kind, so a course deck filed as a
 document would be read under the document rules — role lists and a customer's
 scope, neither of which a course has.
 
+**Editing a course corrects it; it never re-scores anybody.** `editCourse`
+changes the title, kind, length, compulsory flag and deadline (and keeps a pass
+mark the form does not ask about) under the same rules `publishCourse` holds —
+a deadline only on a compulsory course. Bumping `updated_at` is what carries it
+to the phones (`coursesFor` reads `c.updated_at > since`). Progress rows are
+not touched: somebody who passed under the old mark has passed. The file is
+not editable — new material is a new course.
+
+**Editing a Sales Dashboard assignment (`editTaskCampaign`) reaches only the
+work still open.** Title, description, priority and due date change on the
+`mbos_task_campaigns` row and on every task of it still `open`/`in_progress`
+in the editing manager's team (`onlyMine`, as withdrawing narrows); an
+ANSWERED task keeps the wording it was answered under, and a withdrawn one
+stays withdrawn. When the due date moves, each salesman with an open task gets
+ONE bell. The modal says all of this before saving. The audience and the
+questions are deliberately not editable: changing who it goes to is minting
+and withdrawing tasks, which `assignTaskCampaign` and `closeTaskCampaign`
+already do with their own previews, and answers already given were given to
+the questions as they stood. A withdrawn assignment is not edited.
+
 **A LINE THAT LEFT BEFORE LOTS WERE ALLOCATED IS COSTED BY THE SHEET THAT
 SHIPPED IT.** The ERP's margin is the allocated lots' cost, and nobody
 allocated a lot to anything before 26 Oct 2026 — so every line before then,

@@ -64,6 +64,11 @@ const files = [
   "src/lib/tasks/permissions.integration.test.ts",
   "src/lib/tasks/lists.integration.test.ts",
   "src/lib/crm-accounts-impact.test.ts",
+  // An issued credit note cancelled; a manual payout corrected while unpaid.
+  "src/lib/accounts-corrections.test.ts",
+  "src/lib/order-decisions-impact.test.ts",
+  // Correcting a promise, complaint, reminder or opportunity; cancelling and withdrawing.
+  "src/lib/crm-edit-actions.test.ts",
   // Adding a customer from Accounts, and it reaching every app on its own.
   "src/lib/customer-create.test.ts",
   // Converting a lead straight to a customer from Accounts — the bypass.
@@ -184,6 +189,8 @@ const files = [
   "src/lib/performance.test.ts",
   "src/lib/owner-dashboard.test.ts",
   "src/lib/founder-dashboard.test.ts",
+  // HQ notes: edited and deleted by their author only, the audit log never rewritten.
+  "src/lib/founder-notes.test.ts",
   "src/lib/expense-policy.test.ts",
   "src/lib/travel-on-visit.test.ts",
   // An expense and every file behind it: several per claim, one that uploaded
@@ -243,6 +250,9 @@ const files = [
   "src/lib/price-overrides.integration.test.ts",
   "src/lib/sample-logistics.test.ts",
   "src/lib/enquiries.test.ts",
+  // The enquiry desk's edits and removals: entered by hand, corrected over the
+  // submission, own notes, follow-ups moved and cancelled, spam as a stage.
+  "src/lib/enquiry-edits.test.ts",
   // A website enquiry becomes a lead by hand, through the one writer, and only
   // the people granted the calling desk can work it: the four forms that may,
   // the atomic link, assignment and who sees an unowned lead, and the

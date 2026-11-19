@@ -45,6 +45,7 @@ export const ERP_MORE_SOURCES: Record<string, () => Promise<ImpactSource>> = {
   /* ERP → Masters: a raw material or supplier retired, a party deactivated. */
   "erp-raw-material-retire": () => import("./erp-retire").then((m) => m.rawMaterialRetireImpact),
   "erp-supplier-retire": () => import("./erp-retire").then((m) => m.supplierRetireImpact),
+  "erp-godown-retire": () => import("./erp-retire").then((m) => m.godownRetireImpact),
   "erp-party-deactivate": () => import("./erp-retire").then((m) => m.partyDeactivateImpact),
 
   /* ERP → Item transfers, Goods inward, Recipes, Reference lists: a transfer cancelled, a mistaken inward line voided,

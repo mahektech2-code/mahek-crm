@@ -1,7 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { cache } from "react";
-import { and, asc, desc, eq, gt, gte, inArray, isNotNull, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
@@ -17,7 +17,7 @@ import {
   ASSIGNED_TO_SQL,
   resolveScope,
   scopedUserIds,
-  assertCustomerInScope, scopedToUsers,
+  assertCustomerInScope, requireCapability, scopedToUsers,
   type RequestScope,
 } from "../access-control";
 import { getConfig } from "../config/store";
@@ -45,7 +45,7 @@ import {
   type BusinessDate,
 } from "../business-date";
 import { yearKindOf, yearRange } from "../year-period";
-import { err, ok, type Result } from "../result";
+import { err, ok, type Err, type Result } from "../result";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -74,6 +74,8 @@ export type WorklistRow = {
   lastFollowUpAt: string | null;
   lastChannel: "whatsapp" | "call" | null;
   nextAction: string;
+  /** The attempt carrying the live promise — what Edit and Cancel act on. */
+  promiseAttemptId: string | null;
   /** The most recent dated promise, if one is still live. */
   promisedAmount: number | null;
   promisedDate: string | null;
@@ -111,14 +113,19 @@ const WORKLIST_SELECT = {
       )`,
       // The latest dated promise. A promise stays interesting after its date
       // passes — that is exactly when it becomes a broken promise.
+      promiseAttemptId: sql<string | null>`(
+        select a.id from follow_up_attempts a
+         where a.customer_id = customers.id and a.promised_date is not null and a.promise_cancelled_at is null
+         order by a.attempted_at desc limit 1
+      )`,
       promisedAmount: sql<number | null>`(
         select a.promised_amount from follow_up_attempts a
-         where a.customer_id = customers.id and a.promised_date is not null
+         where a.customer_id = customers.id and a.promised_date is not null and a.promise_cancelled_at is null
          order by a.attempted_at desc limit 1
       )`,
       promisedDate: sql<string | null>`(
         select a.promised_date from follow_up_attempts a
-         where a.customer_id = customers.id and a.promised_date is not null
+         where a.customer_id = customers.id and a.promised_date is not null and a.promise_cancelled_at is null
          order by a.attempted_at desc limit 1
       )`,
       // Money reported against this account and not yet decided on. Shown
@@ -149,6 +156,7 @@ function toWorklistRows(
     customer: typeof customers.$inferSelect;
     ownerName: string | null;
     assignedToName: string | null;
+    promiseAttemptId: string | null;
     promisedAmount: number | null;
     promisedDate: string | null;
     reportedAmount: number | null;
@@ -174,6 +182,7 @@ function toWorklistRows(
     heldReason: state.heldReason,
     lastFollowUpAt: state.lastFollowUpAt?.toISOString() ?? null,
     lastChannel: state.lastChannel,
+    promiseAttemptId: promise.promiseAttemptId,
     promisedAmount: promise.promisedAmount === null ? null : Number(promise.promisedAmount),
     promisedDate: promise.promisedDate,
     // Promised, the date has passed, and the money is still outstanding.
@@ -333,7 +342,7 @@ export async function followUpWorklistPage(
    */
   const hasPromise = sql`exists (
     select 1 from follow_up_attempts a
-     where a.customer_id = customers.id and a.promised_date is not null
+     where a.customer_id = customers.id and a.promised_date is not null and a.promise_cancelled_at is null
   )`;
 
   /* Everything except the tab. The counts are taken over this. */
@@ -489,7 +498,7 @@ export const getPaymentFollowUpPlan = cache(
       )`,
       promisedDate: sql<string | null>`(
         select a.promised_date from follow_up_attempts a
-         where a.customer_id = customers.id and a.promised_date is not null
+         where a.customer_id = customers.id and a.promised_date is not null and a.promise_cancelled_at is null
          order by a.attempted_at desc limit 1
       )`,
     })
@@ -587,7 +596,7 @@ export async function paymentCadencesFor(customerIds: string[]): Promise<Map<str
         promisedDate: sql<string | null>`(
           select a.promised_date from follow_up_attempts a
            where a.customer_id = ${followUpStates.customerId}
-             and a.promised_date is not null
+             and a.promised_date is not null and a.promise_cancelled_at is null
            order by a.attempted_at desc limit 1
         )`,
       })
@@ -812,6 +821,244 @@ export async function recordFollowUpAttempt(
   await recomputeFollowUpState(input.customerId);
   void day;
   return ok({ attemptId, reminderId }, "Follow-up recorded");
+}
+
+/* ------------------------------------------------- correcting a promise */
+
+/**
+ * A PROMISE IS A STATEMENT A CUSTOMER MADE, and two things can be wrong with
+ * it afterwards: it was written down wrong (the amount, the date, the words),
+ * or it no longer stands (the customer took it back, or it was recorded
+ * against the wrong account). The first is an EDIT, the second a CANCEL.
+ * Neither deletes: the attempt is a call that happened, and the EOD counts of
+ * promises taken on calls still count it.
+ *
+ * WHAT MOVES WITH IT is the chase reminder, never the stage. The stage is
+ * derived — `recomputeFollowUpState` rebuilds it after either act, which is
+ * the whole of what a promise does to it — while the pending reminder that
+ * chases the promise is moved to the day after the new date (edit) or
+ * dismissed with the reason (cancel). Without that, a corrected promise is
+ * still chased on the old day.
+ *
+ * WHO. Editing is the same decision as rescheduling a reminder: whoever made
+ * the promise, or anybody with the customer in their book. Cancelling clears
+ * a chase off the list exactly as dismissing its reminder does, so it asks
+ * the same capability (`reminder.close`) — gating one and not the other would
+ * rename the escape rather than close it.
+ */
+
+/** The pending reminder chasing this promise, if one is still open. */
+async function chaseReminderFor(attempt: typeof followUpAttempts.$inferSelect) {
+  if (attempt.reminderId) {
+    const [linked] = await db
+      .select()
+      .from(reminders)
+      .where(
+        and(
+          eq(reminders.id, attempt.reminderId),
+          eq(reminders.type, "payment_promise"),
+          eq(reminders.status, "pending"),
+        ),
+      );
+    if (linked) return linked;
+  }
+  /* Promises logged from the collections panel before it named the reminder
+     on the attempt: the chase is the system's own payment-promise reminder
+     for this customer whose note names this promise's date. */
+  if (!attempt.promisedDate) return null;
+  const [found] = await db
+    .select()
+    .from(reminders)
+    .where(
+      and(
+        eq(reminders.customerId, attempt.customerId),
+        eq(reminders.type, "payment_promise"),
+        eq(reminders.status, "pending"),
+        eq(reminders.systemGenerated, true),
+        sql`${reminders.note} like ${`%promised for ${attempt.promisedDate}`}`,
+      ),
+    )
+    .orderBy(desc(reminders.createdAt))
+    .limit(1);
+  return found ?? null;
+}
+
+async function livePromise(
+  attemptId: string,
+): Promise<
+  | { refusal: Err }
+  | {
+      attempt: typeof followUpAttempts.$inferSelect;
+      customer: typeof customers.$inferSelect;
+    }
+> {
+  const [attempt] = await db
+    .select()
+    .from(followUpAttempts)
+    .where(eq(followUpAttempts.id, attemptId));
+  if (!attempt || !attempt.promisedDate) {
+    return { refusal: err("That promise no longer exists.", "not_found") };
+  }
+  if (attempt.promiseCancelledAt) {
+    return { refusal: err("That promise was already cancelled.", "rule_violation") };
+  }
+  const [customer] = await db.select().from(customers).where(eq(customers.id, attempt.customerId));
+  if (!customer) return { refusal: err("That customer no longer exists.", "not_found") };
+  return { attempt, customer };
+}
+
+export async function editPromise(input: {
+  attemptId: string;
+  /** Paise. */
+  amount: number;
+  promisedDate: string;
+  note?: string;
+}): Promise<Result<{ reminderMoved: boolean }>> {
+  if (!Number.isInteger(input.amount) || input.amount <= 0) {
+    return err("Enter the amount they committed to.", "validation", [
+      { field: "amount", message: "Enter a positive amount." },
+    ]);
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.promisedDate)) {
+    return err("Pick the date they promised to pay by.", "validation", [
+      { field: "promisedDate", message: "Pick a date." },
+    ]);
+  }
+  const ctx = await resolveScope();
+  const found = await livePromise(input.attemptId);
+  if ("refusal" in found) return found.refusal;
+  const { attempt, customer } = found;
+  if (attempt.userId !== ctx.user.id) await assertCustomerInScope(customer);
+
+  /* Not before the day it was made: a promise cannot have been due before
+     anybody heard it. A date already past is allowed — correcting a typo on a
+     promise that has since broken is exactly when this is used. */
+  const madeOn = calendarDate(attempt.attemptedAt);
+  if (input.promisedDate < madeOn) {
+    return err(`The promise was made on ${madeOn}, so it cannot fall due before that.`, "validation", [
+      { field: "promisedDate", message: "Before the day it was made." },
+    ]);
+  }
+
+  const config = await getConfig();
+  const chase = await chaseReminderFor(attempt);
+  const note = input.note?.trim();
+  const due = onOrAfterWorkingDay(addDays(input.promisedDate, 1), {
+    timezone: config["workingDay.timezone"],
+    dayBoundaryHour: config["workingDay.dayBoundaryHour"],
+    workingDays: config["workingDay.workingDays"],
+  });
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(followUpAttempts)
+      .set({
+        promisedAmount: input.amount,
+        promisedDate: input.promisedDate,
+        ...(note ? { outcome: note } : {}),
+        // Named now if it was found by its note, so the next edit finds it directly.
+        ...(chase ? { reminderId: chase.id } : {}),
+      })
+      .where(eq(followUpAttempts.id, attempt.id));
+
+    if (chase) {
+      await tx
+        .update(reminders)
+        .set({
+          dueDate: due,
+          note: `Check ₹${Math.round(input.amount / 100).toLocaleString("en-IN")} promised for ${input.promisedDate}`,
+          updatedAt: new Date(),
+          updatedById: ctx.user.id,
+        })
+        .where(eq(reminders.id, chase.id));
+    }
+
+    await tx.insert(auditLog).values({
+      id: id("aud"),
+      actorId: ctx.user.id,
+      action: "followup.promise_edit",
+      entityType: "customer",
+      entityId: attempt.customerId,
+      beforeState: {
+        amount: attempt.promisedAmount,
+        date: attempt.promisedDate,
+        note: attempt.outcome,
+      } as never,
+      afterState: {
+        attemptId: attempt.id,
+        amount: input.amount,
+        date: input.promisedDate,
+        note: note ?? attempt.outcome,
+      } as never,
+    });
+  });
+
+  await recomputeFollowUpState(attempt.customerId);
+  return ok(
+    { reminderMoved: Boolean(chase) },
+    chase ? `Promise updated — chased on ${due} if it does not arrive` : "Promise updated",
+  );
+}
+
+export async function cancelPromise(input: {
+  attemptId: string;
+  reason: string;
+}): Promise<Result<{ reminderDismissed: boolean }>> {
+  const reason = input.reason.trim();
+  if (!reason) {
+    return err("Say why the promise no longer stands.", "validation", [
+      { field: "reason", message: "Give a reason." },
+    ]);
+  }
+  const ctx = await requireCapability("reminder.close");
+  const found = await livePromise(input.attemptId);
+  if ("refusal" in found) return found.refusal;
+  const { attempt, customer } = found;
+  await assertCustomerInScope(customer);
+
+  const chase = await chaseReminderFor(attempt);
+  const now = new Date();
+  await db.transaction(async (tx) => {
+    await tx
+      .update(followUpAttempts)
+      .set({
+        promiseCancelledAt: now,
+        promiseCancelledById: ctx.user.id,
+        promiseCancelReason: reason,
+      })
+      .where(eq(followUpAttempts.id, attempt.id));
+
+    if (chase) {
+      await tx
+        .update(reminders)
+        .set({
+          status: "dismissed",
+          dismissReason: `Promise cancelled: ${reason}`,
+          closedAt: now,
+          closedById: ctx.user.id,
+          closedBy: "person",
+          closedBySourceId: null,
+          updatedAt: now,
+          updatedById: ctx.user.id,
+        })
+        .where(eq(reminders.id, chase.id));
+    }
+
+    await tx.insert(auditLog).values({
+      id: id("aud"),
+      actorId: ctx.user.id,
+      actorRole: ctx.authorisedBy,
+      actorApp: ctx.authorisedIn,
+      action: "followup.promise_cancel",
+      entityType: "customer",
+      entityId: attempt.customerId,
+      beforeState: { amount: attempt.promisedAmount, date: attempt.promisedDate } as never,
+      afterState: { attemptId: attempt.id, reason, reminderDismissed: chase?.id ?? null } as never,
+    });
+  });
+
+  await recomputeFollowUpState(attempt.customerId);
+  return ok({ reminderDismissed: Boolean(chase) }, "Promise cancelled");
 }
 
 /* ------------------------------------------------------------ record payment */
@@ -1816,6 +2063,7 @@ export async function collectionsMetrics(): Promise<CollectionsMetrics> {
         scoped,
         isNotNull(followUpAttempts.promisedDate),
         isNotNull(followUpAttempts.promisedAmount),
+        isNull(followUpAttempts.promiseCancelledAt),
         gte(followUpAttempts.promisedDate, promiseFloor),
       ),
     );

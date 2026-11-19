@@ -289,9 +289,9 @@ export const deliveryReopenImpact: ImpactSource = {
     items.push({
       app: "ERP",
       label: `"delivered" ${many(Number(waiting?.n ?? 0), "message")} still waiting to be sent`,
-      effect: "kept",
+      effect: "changed",
       count: Number(waiting?.n ?? 0),
-      note: "It still says delivered. Skip it on Messages, or it will tell the customer the goods arrived.",
+      note: "Withdrawn — marked not sent, with the reopening as the reason — so the customer is not told the goods arrived. A message that also spoke for other bills goes with it.",
     });
     return {
       title: name,

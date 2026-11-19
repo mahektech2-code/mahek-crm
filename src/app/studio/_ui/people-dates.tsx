@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Card, Field, Input, Select, Textarea } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
+import { ConfirmDialog, RowMenu } from "@/components/ui/overlays";
 import { deletePersonDate, savePersonDate } from "@/lib/actions/studio";
 
 /* ---------------------------------------------------------------------------
@@ -116,6 +117,7 @@ export function PeopleDatesList({ items }: { items: PersonDateView[] }) {
   const router = useRouter();
   const toast = useToast();
   const [editing, setEditing] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<PersonDateView | null>(null);
   if (!items.length) return <p className="px-5 py-4 text-sm text-muted">No dates yet. Add the first one above.</p>;
   return (
     <ul className="divide-y divide-divider">
@@ -145,23 +147,31 @@ export function PeopleDatesList({ items }: { items: PersonDateView[] }) {
                   {p.note ? ` · ${p.note}` : ""}
                 </div>
               </div>
-              <Button size="sm" variant="ghost" onClick={() => setEditing(p.id)}>
-                Edit
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={async () => {
-                  const res = await toast.run(deletePersonDate(p.id));
-                  if (res.ok) router.refresh();
-                }}
-              >
-                Delete
-              </Button>
+              <RowMenu
+                items={[
+                  { label: "Edit", onSelect: () => setEditing(p.id) },
+                  { label: "Delete…", onSelect: () => setDeleting(p), destructive: true },
+                ]}
+              />
             </div>
           )}
         </li>
       ))}
+      <ConfirmDialog
+        key={deleting?.id ?? "none"}
+        open={deleting !== null}
+        title={deleting ? `Delete ${deleting.personName}’s ${deleting.kind}?` : ""}
+        body="It leaves the shared list for everybody in the Studio, and no reminder is raised for it any more."
+        confirmLabel="Delete"
+        cancelLabel="Keep it"
+        destructive
+        onConfirm={async () => {
+          if (!deleting) return;
+          const res = await toast.run(deletePersonDate(deleting.id));
+          if (res.ok) router.refresh();
+        }}
+        onClose={() => setDeleting(null)}
+      />
     </ul>
   );
 }

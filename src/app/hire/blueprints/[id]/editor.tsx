@@ -7,7 +7,8 @@ import { cx } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
 import { approvalCount, studioIssues, type StudioDefinition } from "@/lib/hire/engines/diff";
 import type { CriticFinding } from "@/lib/hire/ai/rubric-critic";
-import { newVersion, publishBlueprint, runCritic, saveDraft, type IdentityInput } from "@/lib/hire/actions/blueprints";
+import { deleteDraft, newVersion, publishBlueprint, runCritic, saveDraft, type IdentityInput } from "@/lib/hire/actions/blueprints";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { Btn, Callout, Label, Pill } from "../../_ui/kit";
 import { Area, F, Num, Txt } from "./fields";
 import { Briefing, Competencies, Documents, Fairness, OfferSec, Onboarding, Provisioning, Questions, Rubrics, Stages, Thresholds, type Mut, type SecProps } from "./sections";
@@ -70,6 +71,8 @@ export function Editor(p: EditorProps) {
   const [identity, setIdentity] = useState<IdentityInput>(p.identity);
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  /* Deleting asks through the impact modal; a fresh key each time it opens. */
+  const [deleting, setDeleting] = useState<number | null>(null);
   const ro = p.status !== "draft" || !p.canEdit;
 
   const mut: Mut = (fn) => {
@@ -252,7 +255,26 @@ export function Editor(p: EditorProps) {
             <div className="mt-3 flex flex-wrap gap-2">
               <Btn kind="primary" size="sm" disabled={!dirty || busy !== null} onClick={save}>{busy === "save" ? "Saving…" : dirty ? "Save draft" : "Saved"}</Btn>
               <Btn size="sm" disabled={busy !== null} onClick={critic}>{busy === "critic" ? "Reviewing…" : "Run the rubric critic"}</Btn>
+              <Btn size="sm" kind="danger" disabled={busy !== null} title={busy !== null ? "Wait for the current action to finish" : undefined} onClick={() => setDeleting(Date.now())}>
+                Delete draft
+              </Btn>
             </div>
+          ) : null}
+          {deleting ? (
+            <ImpactDialog
+              key={deleting}
+              kind="hire-blueprint-draft"
+              id={p.id}
+              onClose={() => setDeleting(null)}
+              onConfirm={async (confirmation) => {
+                const r = await deleteDraft(p.id, confirmation);
+                if (r.ok) {
+                  toast.push(r.message ?? "Draft deleted.");
+                  router.push("/hire/blueprints");
+                }
+                return r;
+              }}
+            />
           ) : null}
         </div>
 

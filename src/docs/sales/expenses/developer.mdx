@@ -17,7 +17,7 @@ Expense money lives in `mbos_expenses`: a logged expense is a row the handset (o
 | Hometown | `src/lib/expense-hometown.ts` | `awayFromHometown` (pure) |
 | Writes | `src/lib/actions/sales.ts` | `decideExpense`, `addExpenseFor`, `recordExpensePayout`, `voidExpensePayout`, `decideApproval` |
 | Flag answers | `src/lib/actions/expenses.ts` | `resolveException` |
-| Policy writes | `src/lib/actions/expense-policy-sets.ts` | `savePolicySet`, `assignPolicySet`, `setExpenseHometowns`, `resetStandardToDefaults` (Admin Console) |
+| Policy writes | `src/lib/actions/expense-policy-sets.ts` | `savePolicySet`, `assignPolicySet`, `setExpenseHometowns` (Admin Console; Reset to shipped defaults fills the editor and is saved through `savePolicySet`) |
 | Sync | `src/lib/actions/mbos.ts` | `handleExpense`, `handleExpenseDay`, `handleExpenseDaySubmit` |
 
 ## Pricing a day

@@ -42,6 +42,7 @@ export default async function ComplaintsPage({
       categories={config["complaints.categories"]}
       maxImages={config["attachments.maxPerComplaint"]}
       openId={open}
+      userId={user.id}
       key={open ?? "list"}
     />
   );

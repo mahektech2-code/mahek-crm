@@ -181,3 +181,66 @@ export async function setOpportunityStatus(input: {
   });
   return ok({ status }, "Updated");
 }
+
+/**
+ * Correct what an opportunity is WORTH and WHEN it is expected — the two
+ * figures somebody guessed on the call and learns better while working it.
+ *
+ * The same people who may move it along may correct it, checked the same way.
+ * Only while it is being worked: a won or lost opportunity is a record of how
+ * it ended, and reopening it (always allowed) is the way back to changing it.
+ * Either figure may be cleared — "nobody put a number on it" is an honest
+ * answer the list already says out loud. The product and the quantity are the
+ * customer's own words from the call and are not edited here.
+ */
+export async function editOpportunity(input: {
+  id: string;
+  /** Paise, or null for "no estimate". */
+  estimatedValuePaise: number | null;
+  expectedOrderDate: string | null;
+}): Promise<Result<{ id: string }>> {
+  const value = input.estimatedValuePaise;
+  if (value !== null && (!Number.isInteger(value) || value <= 0)) {
+    return err("Enter the value in rupees, or leave it empty.", "validation", [
+      { field: "value", message: "A positive amount, or empty." },
+    ]);
+  }
+  const date = input.expectedOrderDate?.trim() || null;
+  if (date !== null && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return err("Pick the day an order is expected, or leave it empty.", "validation", [
+      { field: "expectedOrderDate", message: "Pick a date." },
+    ]);
+  }
+
+  const ctx = await resolveScope();
+  const ids = scopedUserIds(ctx.scope);
+  const [row] = await db
+    .select()
+    .from(callOpportunities)
+    .where(and(eq(callOpportunities.id, input.id), visibleTo(ids)));
+  if (!row) return err("That opportunity is not on your list.", "not_found");
+  if (row.status === "won" || row.status === "lost") {
+    return err("It is closed as " + row.status + ". Reopen it to change its figures.", "rule_violation");
+  }
+  if (row.estimatedValuePaise === value && row.expectedOrderDate === date) {
+    return ok({ id: row.id }, "Nothing changed");
+  }
+
+  const now = new Date();
+  await db.transaction(async (tx) => {
+    await tx
+      .update(callOpportunities)
+      .set({ estimatedValuePaise: value, expectedOrderDate: date, updatedAt: now, updatedById: ctx.user.id })
+      .where(eq(callOpportunities.id, row.id));
+    await tx.insert(auditLog).values({
+      id: `aud_${randomUUID().slice(0, 12)}`,
+      actorId: ctx.user.id,
+      action: "opportunity.edit",
+      entityType: "call_opportunity",
+      entityId: row.id,
+      beforeState: { estimatedValuePaise: row.estimatedValuePaise, expectedOrderDate: row.expectedOrderDate } as never,
+      afterState: { estimatedValuePaise: value, expectedOrderDate: date } as never,
+    });
+  });
+  return ok({ id: row.id }, "Opportunity updated");
+}

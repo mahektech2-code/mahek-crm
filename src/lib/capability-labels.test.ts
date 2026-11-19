@@ -83,7 +83,9 @@ describe("levelCarries", () => {
   });
 
   test("an app with no capabilities says it opens screens and nothing more", () => {
-    assert.match(levelCarries("enquiries", "manager")[0], /screens ticked below/);
+    assert.match(levelCarries("enquiries", "associate")[0], /screens ticked below/);
+    /* An Enquiries manager closes a follow-up by hand (owner's decision, Nov 2026). */
+    assert.ok(levelCarries("enquiries", "manager").includes(CAPABILITY_LABELS["reminder.close"]));
     assert.match(levelCarries("reports", "associate")[0], /screens ticked below/);
     assert.ok(levelCarries("reports", "manager").includes(CAPABILITY_LABELS["team.report"]));
   });

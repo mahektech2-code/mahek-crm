@@ -171,3 +171,13 @@ because a narrowed grant must never hide work somebody owes. Each is placed
 last in its app's order so the "first screen they hold" landing never lands
 there. A task's notification opens its app's My tasks (and so lands in that
 app's bell); the header tray links to the current app's.
+
+**"PAST ITS DUE TIME" READS ONE CLOCK, AND A TEST PINS IT.** `lib/tasks/clock.ts`
+holds `tasksNow()`: `appClock()` (the JS check behind Mark done and the task
+card) and `markMissedRoutineTasks` (which binds it in place of SQL `now()`)
+both read it. `pinTasksClock(at)` holds it — refused outside NODE_ENV=test. The
+routine "not done on time" tests pin noon IST on the business day: unpinned,
+they failed for the grace time (≤15 min) after every midnight in India, when
+yesterday's task was still in its grace and today's 00:00 task not yet past it.
+A new Tasks check of "now" goes through `tasksNow()`, never `new Date()` or
+`now()`. (`inGraceSql`, a display read, still uses `now()`.)

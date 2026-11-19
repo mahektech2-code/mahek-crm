@@ -11,7 +11,7 @@ import {
   SlowPayerBadge,
   cx,
 } from "@/components/ui/primitives";
-import { useEscape } from "@/components/ui/overlays";
+import { ConfirmDialog, useEscape } from "@/components/ui/overlays";
 import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
 import { NextStepDialog } from "@/components/crm/next-step-dialog";
@@ -240,18 +240,15 @@ function PanelBody({
     ? [typed.trim(), chips.join(". ")].filter(Boolean).join(". ")
     : typed;
 
+  /* Leaving with unsaved details asks first — in the app's own dialog, not
+     the browser's, which looks like a different program and blocks the tab. */
+  const [discarding, setDiscarding] = React.useState<{ go: () => void } | null>(null);
   const guard = React.useCallback(
     (go: () => void) => {
       if (!dirty) return go();
-      if (
-        window.confirm(
-          `You have entered details for ${panel?.name ?? "this customer"} that have not been saved. Discard them?`,
-        )
-      ) {
-        go();
-      }
+      setDiscarding({ go });
     },
-    [dirty, panel?.name],
+    [dirty],
   );
 
   const close = () => guard(onClose);
@@ -609,6 +606,16 @@ function PanelBody({
             }}
           />
         ) : null}
+        <ConfirmDialog
+          open={discarding !== null}
+          title="Discard what you entered?"
+          body={`You have entered details for ${panel?.name ?? "this customer"} that have not been saved.`}
+          confirmLabel="Discard"
+          cancelLabel="Keep editing"
+          destructive
+          onConfirm={() => discarding?.go()}
+          onClose={() => setDiscarding(null)}
+        />
       </div>
     </BodyPortal>
   );

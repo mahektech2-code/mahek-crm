@@ -6,6 +6,8 @@ import { err, fromThrown, ok, type Result } from "@/lib/result";
 import { z } from "zod";
 import { approvableProducts, approveTo, declineTo, holdTo, releaseTo, saveToLines, sendBackTo, toReview, type ToReview } from "@/lib/services/to-approval-service";
 import type { ApprovalLine } from "@/lib/erp/order-hub";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 
 /* Thin over the service, which owns the `order.approve` check on every decision. */
 
@@ -47,8 +49,18 @@ export async function approveToAction(id: string, lines: ApprovalLine[] | null) 
   return run(() => approveTo(id, lines));
 }
 
-export async function sendBackToAction(id: string, note: string) {
-  return run(() => sendBackTo(id, note));
+/**
+ * Send back and decline: the reason first, then the impact modal. The
+ * confirmation is asked after the capability and once there is a reason, so
+ * an empty one keeps the service's words.
+ */
+async function confirmed(kind: string, id: string, text: string, confirmation: ImpactConfirmation | null | undefined) {
+  await requireCapability("order.approve");
+  return text.trim() ? confirmImpact(kind, id, confirmation) : null;
+}
+
+export async function sendBackToAction(id: string, note: string, confirmation?: ImpactConfirmation | null) {
+  return run(async (): Promise<Result<unknown>> => (await confirmed("accounts-to-send-back", id, note, confirmation)) ?? sendBackTo(id, note));
 }
 
 export async function holdToAction(id: string, reasonCode: string, note: string) {
@@ -59,8 +71,8 @@ export async function releaseToAction(id: string, note: string) {
   return run(() => releaseTo(id, note));
 }
 
-export async function declineToAction(id: string, reason: string) {
-  return run(() => declineTo(id, reason));
+export async function declineToAction(id: string, reason: string, confirmation?: ImpactConfirmation | null) {
+  return run(async (): Promise<Result<unknown>> => (await confirmed("accounts-to-decline", id, reason, confirmation)) ?? declineTo(id, reason));
 }
 
 /* Lines only: `strict` refuses a line or a body that carries anything else (a party, a godown). */

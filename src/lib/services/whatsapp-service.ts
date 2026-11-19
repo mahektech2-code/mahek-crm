@@ -155,6 +155,7 @@ async function mergeValuesFor(customerId: string): Promise<MergeValues> {
       and(
         eq(followUpAttempts.customerId, customerId),
         sql`${followUpAttempts.promisedDate} is not null`,
+        sql`${followUpAttempts.promiseCancelledAt} is null`,
       ),
     )
     .orderBy(desc(followUpAttempts.attemptedAt))

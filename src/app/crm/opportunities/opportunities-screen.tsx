@@ -9,7 +9,9 @@ import {
   Card,
   EmptyState,
   Field,
+  Input,
   MetricStrip,
+  MoneyInput,
   PageHeader,
   Textarea,
   type Tone,
@@ -17,9 +19,9 @@ import {
 import { Modal } from "@/components/ui/modal";
 import { Tabs } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
-import { setOpportunityStatusAction } from "@/lib/actions/crm";
+import { editOpportunityAction, setOpportunityStatusAction } from "@/lib/actions/crm";
 import { CALLER_ROLE_LABEL, CALL_REASON_LABEL } from "@/lib/call-reasons";
-import { money, shortDate } from "@/lib/format";
+import { money, rupeesFromPaise, shortDate } from "@/lib/format";
 import type { OpportunityRow as Row } from "@/lib/services/opportunity-service";
 
 /**
@@ -64,6 +66,7 @@ export function OpportunitiesScreen({
   const [closing, setClosing] = React.useState<{ row: Row; status: "won" | "lost" } | null>(null);
   const [note, setNote] = React.useState("");
   const [busy, setBusy] = React.useState(false);
+  const [editing, setEditing] = React.useState<Row | null>(null);
 
   const buckets = React.useMemo(() => {
     const working = rows.filter((r) => r.status === "open" || r.status === "in_progress");
@@ -190,6 +193,15 @@ export function OpportunitiesScreen({
                         >
                           Lost
                         </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={busy}
+                          title="Correct the estimated value or the day an order is expected"
+                          onClick={() => setEditing(r)}
+                        >
+                          Edit
+                        </Button>
                       </>
                     ) : (
                       <Button size="sm" disabled={busy} onClick={() => move(r, "open")}>
@@ -244,6 +256,81 @@ export function OpportunitiesScreen({
           </Field>
         ) : null}
       </Modal>
+
+      {editing ? (
+        <EditOpportunityModal
+          key={editing.id}
+          row={editing}
+          onClose={() => setEditing(null)}
+          onSubmit={async (value, expectedOrderDate) => {
+            const res = await run(editOpportunityAction({ id: editing.id, value, expectedOrderDate }));
+            if (res.ok) {
+              setEditing(null);
+              router.refresh();
+            }
+          }}
+        />
+      ) : null}
     </div>
+  );
+}
+
+/**
+ * The two guesses made on the call — what it might be worth and when — as
+ * somebody working it learns better. Either may be left empty: the list
+ * already says that a figure nobody put a number on is left out of the sum.
+ */
+function EditOpportunityModal({
+  row,
+  onClose,
+  onSubmit,
+}: {
+  row: Row;
+  onClose: () => void;
+  onSubmit: (value: string, expectedOrderDate: string) => Promise<void>;
+}) {
+  const [value, setValue] = React.useState(
+    row.estimatedValuePaise != null ? rupeesFromPaise(row.estimatedValuePaise) : "",
+  );
+  const [expected, setExpected] = React.useState(row.expectedOrderDate ?? "");
+  const [busy, setBusy] = React.useState(false);
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Edit opportunity"
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button
+            variant="primary"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await onSubmit(value, expected);
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Save changes
+          </Button>
+        </>
+      }
+    >
+      <div className="mb-3 text-sm text-muted">
+        {row.customerName} · {row.product}
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Estimated value" optional hint="Empty means nobody has put a figure on it.">
+          <MoneyInput value={value} onChange={(e) => setValue(e.target.value)} />
+        </Field>
+        <Field label="Order expected by" optional>
+          <Input type="date" value={expected} onChange={(e) => setExpected(e.target.value)} />
+        </Field>
+      </div>
+    </Modal>
   );
 }

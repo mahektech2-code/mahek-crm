@@ -3,6 +3,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { canFor } from "@/lib/access-control";
 import { opensTheBook } from "@/app/api/book-door";
 import { customerStatement } from "@/lib/services/customer-statement-service";
+import { myReportedReceipts } from "@/lib/services/receipt-service";
 
 /**
  * One customer's statement for a period, for the CRM customer record's Ledger
@@ -35,6 +36,10 @@ export async function GET(request: Request) {
     return NextResponse.json({
       ...statement,
       canReverse: await canFor(user, "payment.confirm"),
+      /* The viewer's OWN claims still waiting for Accounts, which they may
+         correct (`correctReceipt` checks it again). Read after the statement,
+         so scope has already answered for this customer. */
+      mine: (await canFor(user, "payment.record")) ? await myReportedReceipts(customerId, user.id) : null,
     });
   } catch {
     return NextResponse.json({ error: "Not found." }, { status: 404 });

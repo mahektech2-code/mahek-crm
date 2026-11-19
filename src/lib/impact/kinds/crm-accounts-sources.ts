@@ -19,6 +19,17 @@ export const CRM_ACCOUNTS_SOURCES: Record<string, () => Promise<ImpactSource>> =
   "crm-reminder-dismiss": () => import("./crm-customers").then((m) => m.reminderDismissImpact),
   /** `unlinkOrderAction` — the id is `impactPair(enquiryId, orderId)`. */
   "crm-enquiry-order": () => import("./crm-customers").then((m) => m.enquiryOrderImpact),
+  /** `markEnquirySpamAction` — an enquiry off the list and the counts (a stage, not a delete). */
+  "enquiry-spam": () => import("./enquiries").then((m) => m.enquirySpamImpact),
+  "enquiry-delete": () => import("./enquiries").then((m) => m.enquiryDeleteImpact),
+  /** `deleteEnquiryNoteAction` — by the note's activity id. */
+  "enquiry-note-delete": () => import("./enquiries").then((m) => m.enquiryNoteImpact),
+  /** `cancelEnquiryReminderAction` — an enquiry's follow-up dismissed, through the Enquiries grant. */
+  "enquiry-reminder-cancel": () => import("./enquiries").then((m) => m.enquiryReminderImpact),
+  /** `cancelPromiseAction` — by the follow-up attempt carrying the promise. */
+  "crm-payment-promise-cancel": () => import("./crm-records").then((m) => m.promiseCancelImpact),
+  /** `withdrawComplaintAction` — a complaint closed as raised by mistake or twice. */
+  "crm-complaint-withdraw": () => import("./crm-records").then((m) => m.complaintWithdrawImpact),
   /** `clearManager` — an employee's reporting line, which the CRM reads for the sales manager seat. */
   "crm-reporting-line": () => import("./crm-customers").then((m) => m.reportingLineImpact),
 
@@ -35,6 +46,8 @@ export const CRM_ACCOUNTS_SOURCES: Record<string, () => Promise<ImpactSource>> =
 
   /** `reverseReceiptAction` — a confirmed payment taken back. */
   "accounts-receipt-reverse": () => import("./accounts").then((m) => m.receiptReverseImpact),
+  /** `cancelCreditNoteAction` — an issued credit note taken back, by the complaint's id. */
+  "accounts-creditnote-cancel": () => import("./accounts").then((m) => m.creditNoteCancelImpact),
   /** `bankReverseForReturn` — the id is `impactPair(lineId, receiptId)`. */
   "accounts-bank-return": () => import("./accounts").then((m) => m.bankReturnImpact),
   /** `bankUndo` — a bank line's match undone. */
@@ -45,6 +58,17 @@ export const CRM_ACCOUNTS_SOURCES: Record<string, () => Promise<ImpactSource>> =
   "accounts-payout-cancel": () => import("./accounts").then((m) => m.payoutCancelImpact),
   "accounts-payout-reopen": () => import("./accounts").then((m) => m.payoutReopenImpact),
   "accounts-payout-invoice": () => import("./accounts").then((m) => m.payoutInvoiceImpact),
+
+  /* ---- An order turned down: the reason first, then this ---- */
+
+  /** `cancelMyToAction` — the taker cancels their own TO from My orders. */
+  "crm-to-cancel": () => import("./order-decisions").then((m) => m.myToCancelImpact),
+  /** `declineToAction` — Accounts decline a TO. */
+  "accounts-to-decline": () => import("./order-decisions").then((m) => m.toDeclineImpact),
+  /** `sendBackToAction` — Accounts send a TO back to whoever took it. */
+  "accounts-to-send-back": () => import("./order-decisions").then((m) => m.toSendBackImpact),
+  /** `declineOrderAction` — Accounts decline a numbered order. */
+  "accounts-order-decline": () => import("./order-decisions").then((m) => m.orderDeclineImpact),
 
   /* ---- Leads ---- */
 
