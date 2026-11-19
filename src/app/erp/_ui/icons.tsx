@@ -49,6 +49,7 @@ const PATHS: Record<string, string> = {
   crop: "M6 2v14a2 2 0 0 0 2 2h14M18 22V8a2 2 0 0 0-2-2H2",
   rotate: "M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5",
   eye: "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6",
+  pencil: "M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4",
   bin: "M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13",
   back: "M15 6l-6 6 6 6",
   zoom: "M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14M20 20l-4-4M11 8v6M8 11h6",

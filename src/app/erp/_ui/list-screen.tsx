@@ -495,10 +495,15 @@ export function ListScreen({
   const lineCols = gk ? cols.filter((c) => !headCols.includes(c) && !gk.includes(c.k)) : cols;
   /* The longest badge each status and flags column will draw, over every row rather than this page, so widths hold still from page to page. */
   const badgeChars = lp.badgeChars;
-  /* A row's ⋯ menu takes a narrow column of its own at the end. */
-  const menuIds = spec.rowMenu ?? [];
-  const menuOn = menuIds.length > 0;
-  const fit = fitColumns({ cols: lineCols, avail: menuOn ? Math.max(0, avail - MENU_COL) : avail, check: selectOn, chosen: chosenCols, badgeChars, headExtra: 0 });
+  /* A row's actions take a narrow column of their own at the end. A screen
+     that names its ⋯ menu (`rowMenu`) gets exactly that; every other list
+     offers the record's own actions there, with its Edit drawn as a button,
+     so an edit is never only inside the record. */
+  const menuIds: string[] | null = spec.rowMenu ?? null;
+  const menuOn = menuIds ? menuIds.length > 0 : pageRows.some((r) => !!r.actions?.length || !!r.sub?.some((x) => !!x.actions?.length));
+  const editOn = !menuIds && pageRows.some((r) => rowEdit(r) || !!r.sub?.some((x) => rowEdit(x)));
+  const menuCol = editOn ? MENU_COL + EDIT_COL : MENU_COL;
+  const fit = fitColumns({ cols: lineCols, avail: menuOn ? Math.max(0, avail - menuCol) : avail, check: selectOn, chosen: chosenCols, badgeChars, headExtra: 0 });
   const shownCols = fit.shown;
 
   const exportCsv = async () => {
@@ -946,13 +951,13 @@ export function ListScreen({
             ) : (
             <div ref={tableBox} className="overflow-x-auto">
               {/* A person's own pick may be wider than the card: drawn whole, it scrolls sideways (`fit-columns.ts`). */}
-              <table className="w-full table-fixed" style={{ minWidth: fit.total + (menuOn ? MENU_COL : 0) }}>
+              <table className="w-full table-fixed" style={{ minWidth: fit.total + (menuOn ? menuCol : 0) }}>
                 <colgroup>
                   {selectOn ? <col style={{ width: CHECK_COL }} /> : null}
                   {shownCols.map((c) => (
                     <col key={c.k} style={{ width: fit.widths[c.k] }} />
                   ))}
-                  {menuOn ? <col style={{ width: MENU_COL }} /> : null}
+                  {menuOn ? <col style={{ width: menuCol }} /> : null}
                 </colgroup>
                 <thead>
                   <tr>
@@ -1190,23 +1195,52 @@ export function ListScreen({
   );
 }
 
-/** The width of a row's ⋯ menu column. */
+/** The width of a row's ⋯ menu column, and what its Edit button adds to it. */
 const MENU_COL = 52;
+const EDIT_COL = 64;
+
+/** An action that changes the record itself: "Edit", "Edit order", "Edit TO", "Edit packing"… */
+export function isEditAction(a: { id: string; l: string; ai?: boolean }): boolean {
+  return !a.ai && (/^edit/i.test(a.id) || /^edit\b/i.test(a.l));
+}
+
+/** The record's first edit action, the one its row draws as a button. */
+function rowEdit(row: ListRow) {
+  return row.actions?.find(isEditAction);
+}
 
 /**
- * A row's ⋯ menu: the record's own actions the screen names in `rowMenu`, in
- * that order, run exactly as the record dialog runs them. A click inside it
- * never opens the record.
+ * A row's actions: the ones the screen names in `rowMenu`, in that order —
+ * or, where it names none, the record's Edit as a button and every one of its
+ * actions in a ⋯ menu — run exactly as the record dialog runs them. A held-back
+ * Edit is drawn locked and says why. A click inside never opens the record.
  */
-function MenuCell({ row, ids, screen, onRowAct }: { row: ListRow; ids: string[]; screen: string; onRowAct?: (actionId: string, rowId: string) => void }) {
+function MenuCell({ row, ids, screen, onRowAct }: { row: ListRow; ids: string[] | null; screen: string; onRowAct?: (actionId: string, rowId: string) => void }) {
   const ui = useErpUi();
-  const items = ids
-    .map((id) => row.actions?.find((a) => a.id === id))
-    .filter((a): a is NonNullable<typeof a> => !!a)
-    .map((a) => ({ label: a.l, disabled: !!a.why, title: a.why || undefined, onSelect: () => (onRowAct ? onRowAct(a.id, row.id) : ui.act(screen, a, row.id)) }));
+  const run = (a: NonNullable<ListRow["actions"]>[number]) => (onRowAct ? onRowAct(a.id, row.id) : ui.act(screen, a, row.id));
+  const picked = ids ? ids.map((id) => row.actions?.find((a) => a.id === id)).filter((a): a is NonNullable<typeof a> => !!a) : (row.actions ?? []);
+  const items = picked.map((a) => ({ label: a.l, disabled: !!a.why, title: a.why || undefined, onSelect: () => run(a) }));
+  const edit = ids ? undefined : rowEdit(row);
   return (
     <Td className="text-right" onClick={(e) => e.stopPropagation()}>
-      {items.length ? <RowMenu items={items} /> : null}
+      <span className="inline-flex items-center justify-end gap-1">
+        {edit ? (
+          <button
+            type="button"
+            onClick={() => (edit.why ? ui.toast(`${edit.l} · ${edit.why}`, "error") : run(edit))}
+            title={edit.why || edit.l}
+            aria-label={`${edit.l}${edit.why ? ` (${edit.why})` : ""}`}
+            className={cx(
+              "inline-flex h-7 cursor-pointer items-center gap-1 rounded-control px-1.5 text-xs font-medium",
+              edit.why ? "text-line-strong hover:bg-canvas" : "text-brand hover:bg-brand-soft hover:text-brand-hover",
+            )}
+          >
+            <Icon n={edit.why ? "lock" : "pencil"} s={13} />
+            Edit
+          </button>
+        ) : null}
+        {items.length ? <RowMenu items={items} /> : null}
+      </span>
     </Td>
   );
 }
