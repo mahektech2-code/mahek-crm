@@ -2,7 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { and, eq, isNull, ne } from "drizzle-orm";
+import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appAccess,
@@ -24,6 +24,7 @@ import { ADMIN } from "@/lib/admin-routes";
 import { ConsoleNotConfirmedError } from "@/lib/console-confirm";
 import { confirmImpact } from "@/lib/impact/registry";
 import type { ImpactConfirmation } from "@/lib/impact/types";
+import { accessSnapshot } from "@/lib/services/access-snapshot";
 
 /* ---------------------------------------------------------------------------
  * Writes for the People section.
@@ -185,6 +186,84 @@ export async function setUserActive(
   );
 }
 
+
+/**
+ * OFFBOARD SOMEBODY WHO HAS LEFT — the sign-in AND the access, in one step.
+ *
+ * Disabling is deliberately only the sign-in (see `setUserActive`), because a
+ * person on a month's leave comes back to what they had. A leaver does not,
+ * and closing their access used to be a dozen separate acts in four apps —
+ * the apps on Manage access, their godowns in the ERP, their regions on the
+ * Sales Dashboard, their website assignments on the Website — which in
+ * practice meant it was not done. HRMS marking somebody as left changed none
+ * of it.
+ *
+ * So this is one transaction: the sign-in off, sessions ended, and every grant
+ * removed — apps, screens, ERP / HRMS / Tasks powers, the ERP designation, the
+ * Hire role, the factory place and crew seats, godown staff, territories and
+ * regions; website assignments are REVOKED (kept on the record). What they did
+ * stays. Their book stays too, and the impact modal names it, because moving
+ * it is the next thing somebody has to do. The audit row carries the whole
+ * access picture they held, so what was taken can be read back.
+ */
+export async function offboardPerson(userId: string, confirmation?: ImpactConfirmation): Promise<Result<null>> {
+  let actor;
+  try {
+    actor = await manager();
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : "Not allowed.");
+  }
+  const [person] = await db.select({ name: users.name }).from(users).where(eq(users.id, userId));
+  if (!person) return fail("That account no longer exists.");
+  if (userId === actor.id) return fail("You cannot offboard yourself.");
+  if (!(await anotherPlatformAdmin(userId))) {
+    const [admin] = await db
+      .select({ id: appAccess.id })
+      .from(appAccess)
+      .where(and(eq(appAccess.userId, userId), eq(appAccess.app, "admin"), eq(appAccess.role, "admin")))
+      .limit(1);
+    if (admin) return fail(`${person.name} is the only platform administrator, so they cannot be offboarded.`);
+  }
+  const refusal = await confirmImpact("admin-offboard", userId, confirmation);
+  if (refusal) return refusal;
+
+  const before = await accessSnapshot(userId);
+  await db.transaction(async (tx) => {
+    await tx.update(users).set({ active: false, role: "associate", updatedAt: new Date() }).where(eq(users.id, userId));
+    await tx.delete(sessions).where(eq(sessions.userId, userId));
+    for (const table of [
+      "app_module_access",
+      "app_access",
+      "erp_user_powers",
+      "hrms_user_powers",
+      "task_user_powers",
+      "hire_user_roles",
+      "erp_user_designations",
+      "factory_team_defaults",
+      "factory_staff",
+      "erp_godown_staff",
+      "mbos_user_territories",
+    ]) {
+      await tx.execute(sql`delete from ${sql.identifier(table)} where user_id = ${userId}`);
+    }
+    await tx.execute(sql`
+      update website_assignment set revoked_at = now(), revoked_by_id = ${actor.id}
+       where employee_id = ${userId} and revoked_at is null`);
+    await tx.insert(auditLog).values({
+      id: newId("aud"),
+      actorId: actor.id,
+      action: "offboard-user",
+      entityType: "user",
+      entityId: userId,
+      actorRole: "admin",
+      actorApp: "admin",
+      beforeState: { access: before } as never,
+      afterState: { detail: `${person.name} offboarded: sign-in off, every app, power, seat and assignment removed` } as never,
+    });
+  });
+  refresh();
+  return ok(null, `${person.name} is offboarded: they cannot sign in, and every app, power and seat is gone. Move the customers in their book next.`);
+}
 
 /**
  * Send somebody a reset link from the console.
