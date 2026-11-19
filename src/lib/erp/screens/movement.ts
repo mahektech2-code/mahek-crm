@@ -1,5 +1,5 @@
 import "server-only";
-import { asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   erpFgEntries,
@@ -29,7 +29,7 @@ import { godownField, godownIdByName, godownOptions, inTx, materials, pair, refu
 import { requisitionForm } from "./purchase-flow";
 import { departmentForCategory, requirementDepartmentsFor } from "../departments";
 import { levelSuggestions } from "../suggest";
-import { moveUnitsForTransfer, trimLooseUnits } from "../units";
+import { moveUnitsForTransfer, trimLooseUnits, undoUnitsForTransfer, unitsOfTransfer } from "../units";
 import type { LevelSuggestion } from "../engines/production";
 import { confirmImpact } from "@/lib/impact/registry";
 import { readConfirmation } from "@/lib/impact/types";
@@ -132,6 +132,14 @@ async function postTransferIn(tx: Tx, t: typeof erpTransfers.$inferSelect) {
   }
 }
 
+/** Takes back the inflow `postTransferIn` posted for a transfer — the first half of redoing it. */
+async function dropTransferIn(tx: Tx, type: ItemType, id: string) {
+  if (type === "Purchase") await tx.delete(erpRmEntries).where(and(eq(erpRmEntries.sourceType, "transfer"), eq(erpRmEntries.sourceId, id)));
+  else if (type === "Semi Finished") await tx.delete(erpSfgEntries).where(and(eq(erpSfgEntries.sourceType, "transfer"), eq(erpSfgEntries.sourceId, id)));
+  else if (type === "Finish Goods") await tx.delete(erpFgEntries).where(and(eq(erpFgEntries.sourceType, "transfer"), eq(erpFgEntries.sourceId, id)));
+  else await tx.delete(erpPackEntries).where(and(eq(erpPackEntries.sourceType, "transfer"), eq(erpPackEntries.sourceId, id)));
+}
+
 /**
  * Writes a quantity of one lot off to Item Lost Record: the transfer, its
  * inflow there, and — for boxes and labelled cans — the units going with it,
@@ -158,6 +166,179 @@ export async function postWriteOff(
   return ok(id);
 }
 
+/** The stock-stage key each transfer type is kept under — the spelling consumers lock and adjustments record. */
+const STAGE_OF: Record<ItemType, "rm" | "sfg" | "fg" | "pack"> = { Purchase: "rm", "Semi Finished": "sfg", "Finish Goods": "fg", "FG Packing": "pack" };
+
+type TransferRow = typeof erpTransfers.$inferSelect;
+
+/** One lot of one item's stock at one godown, read for exactly that lot. */
+async function lotStockAt(ex: Ex, type: ItemType, itemId: string, lot: string, godownId: string): Promise<number> {
+  const pick = { lots: [lot], rates: false as const };
+  if (type === "Purchase") return (await rmLots(ex, pick)).find((l) => l.lotNo === lot && l.godownId === godownId && l.rawMaterialId === itemId)?.stock ?? 0;
+  if (type === "Semi Finished") return (await sfgLots(ex, pick)).find((l) => l.lotCode === lot && l.godownId === godownId && l.formulationId === itemId)?.stock ?? 0;
+  if (type === "Finish Goods") return (await fgLots(ex, pick)).find((l) => l.lotCode === lot && l.godownId === godownId && l.finishedGoodId === itemId)?.stock ?? 0;
+  return (await packLots(ex, pick)).find((l) => l.batchNo === lot && l.godownId === godownId && l.skuId === itemId)?.stock ?? 0;
+}
+
+/**
+ * WHY A TRANSFER CAN NO LONGER BE EDITED, per transfer, from what points at
+ * it or at the stock it moved: a stock adjustment that wrote it (corrected
+ * from Stock accuracy, not here), the lot moved on again from where it
+ * arrived, or a count, a floor check or an adjustment of the item at either
+ * end after it — each was judged against a book this transfer is part of.
+ * `alsoGodown` is a new destination an edit would post to, which a count
+ * there after the transfer holds as well. What the destination has since
+ * USED is read off the ledger under the lot's lock, in the edit itself.
+ */
+async function transferHolds(ex: Ex, ids: string[], alsoGodown: string | null = null): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (!ids.length) return out;
+  const stage = sql`case t.item_type when 'Purchase' then 'rm' when 'Semi Finished' then 'sfg' when 'Finish Goods' then 'fg' else 'pack' end`;
+  const rows = (await ex.execute(sql`
+    select id, why from (
+      select t.id, 1 as o, 'This transfer was written by a stock adjustment; correct it from Stock accuracy, not here.' as why
+        from erp_transfers t
+       where t.id in ${ids}
+         and (exists (select 1 from erp_manual_adjustments m where m.posted->>'transfer' = t.id)
+              or exists (select 1 from erp_stock_adjustments a where a.posted->'transfers' @> to_jsonb(array[t.id])))
+      union all
+      select t.id, 2, 'Lot ' || t.lot_no || ' has since moved on from ' || g.name || ', so this transfer can no longer be edited.'
+        from erp_transfers t join erp_godowns g on g.id = t.to_godown_id
+       where t.id in ${ids}
+         and exists (select 1 from erp_transfers n where n.item_type = t.item_type and n.lot_no = t.lot_no and n.from_godown_id = t.to_godown_id and n.created_at > t.created_at)
+      union all
+      select t.id, 3, t.item_name || ' was counted at ' || g.name || ' after this transfer, against a book that includes it; correct it with a stock adjustment instead.'
+        from erp_transfers t
+        join erp_stock_counts c on c.raw_material_id = t.item_id and c.godown_id in (t.from_godown_id, t.to_godown_id, ${alsoGodown}) and c.counted_at > t.created_at and c.status <> 'cancelled'
+        join erp_godowns g on g.id = c.godown_id
+       where t.id in ${ids} and t.item_type = 'Purchase'
+      union all
+      select t.id, 3, t.item_name || ' was stock-checked at ' || g.name || ' after this transfer, against a book that includes it; correct it with a stock adjustment instead.'
+        from erp_transfers t
+        join erp_floor_checks f on f.stage = ${stage} and f.item_id = t.item_id and f.godown_id in (t.from_godown_id, t.to_godown_id, ${alsoGodown}) and f.counted_at > t.created_at
+        join erp_godowns g on g.id = f.godown_id
+       where t.id in ${ids}
+      union all
+      select t.id, 3, 'Lot ' || t.lot_no || ' was adjusted at ' || g.name || ' after this transfer; correct it with a stock adjustment instead.'
+        from erp_transfers t
+        join erp_manual_adjustments m on m.stage = ${stage} and m.lot = t.lot_no and m.godown_id in (t.from_godown_id, t.to_godown_id, ${alsoGodown}) and m.created_at > t.created_at
+             and m.posted->>'transfer' is distinct from t.id
+        join erp_godowns g on g.id = m.godown_id
+       where t.id in ${ids}
+    ) x order by o
+  `)) as unknown as { id: string; why: string }[];
+  for (const r of rows) if (!out.has(r.id)) out.set(r.id, r.why);
+  return out;
+}
+
+const LOST_EDIT_WHY = "Editing a write-off to Item Lost Record needs the lost-stock power.";
+
+async function transferEditForm(ctx: ErpContext, id: string): Promise<FormSpec | null> {
+  const [t] = await db.select().from(erpTransfers).where(eq(erpTransfers.id, id));
+  if (!t) return null;
+  const [gds, tos] = await Promise.all([db.select({ id: erpGodowns.id, name: erpGodowns.name, reserved: erpGodowns.reserved }).from(erpGodowns), godownOptions(ctx)]);
+  const name = (gid: string) => gds.find((g) => g.id === gid)?.name ?? "";
+  const type = t.itemType as ItemType;
+  const own = await lotStockAt(db, type, t.itemId, t.lotNo, t.fromGodownId);
+  let unit = "Litre";
+  if (type === "Purchase") {
+    const [m] = await db.select({ unit: erpRawMaterials.unit }).from(erpRawMaterials).where(eq(erpRawMaterials.id, t.itemId));
+    unit = stockUnit(m?.unit ?? "");
+  } else if (type === "Finish Goods") unit = "cans";
+  else if (type === "FG Packing") unit = "boxes";
+  const toNames = tos.filter((g) => g.id !== t.fromGodownId).map((g) => g.name);
+  if (!toNames.includes(name(t.toGodownId))) toNames.push(name(t.toGodownId));
+  return {
+    screen: "transfers",
+    id: "edit",
+    recordId: id,
+    title: `Edit transfer · ${t.itemName}`,
+    sub: `Lot ${t.lotNo} from ${name(t.fromGodownId)}. The item, lot and the godown it left are fixed; a different lot is a new transfer.`,
+    submit: "Save changes",
+    init: { date: t.transferDate, type, from: name(t.fromGodownId), item: t.itemName, lot: t.lotNo, qty: String(t.quantity), to: name(t.toGodownId), remark: t.remark ?? "" },
+    header: [
+      { k: "date", l: "Transfer date", t: "date", req: true },
+      { k: "type", l: "Item type", t: "text", readOnly: true },
+      { k: "from", l: "From godown", t: "text", readOnly: true },
+      { k: "item", l: "Item", t: "text", readOnly: true },
+      { k: "lot", l: "Lot", t: "text", readOnly: true },
+      { k: "qty", l: "Transfer quantity", t: "num", req: true, min: 0.001, qtyUnit: { base: unit }, hint: `Up to ${nf(own + t.quantity)}: what the lot holds at ${name(t.fromGodownId)} now plus the ${nf(t.quantity)} this transfer moved.` },
+      { k: "to", l: "Transfer to godown", t: "select", req: true, opts: toNames },
+      { k: "remark", l: "Remark", t: "area", mic: true },
+    ],
+  };
+}
+
+/**
+ * EDITING A TRANSFER redoes it in one transaction: the destination's inflow
+ * entry is taken back and the units it moved are put back where they came
+ * from, then the transfer's own row (it is the outflow the source's stock is
+ * read from) takes the new figures and is posted again through
+ * `postTransferIn` and `moveUnitsForTransfer`, as a new one is. Refused once
+ * the stock it delivered has been used, moved on or counted.
+ */
+async function editTransfer(ctx: ErpContext, h: Record<string, string>, id: string): Promise<Result<unknown>> {
+  const qty = num(h.qty);
+  if (qty == null || qty <= 0) return fieldErr("qty", "Enter a quantity above 0 and no more than the lot holds.");
+  const toId = await godownIdByName(text(h.to));
+  if (!toId) return fieldErr("to", "Pick the godown it moves to.");
+  const date = text(h.date);
+  if (!date) return fieldErr("date", "Transfer date is required");
+  const remark = text(h.remark);
+  const lostPower = ctx.powers.has("lostStock");
+  const seen: { before?: TransferRow; after?: TransferRow; lost?: boolean; to?: string } = {};
+  const res = await inTx(async (tx) => {
+    const [b] = await tx.select().from(erpTransfers).where(eq(erpTransfers.id, id)).for("update");
+    if (!b) return refuse(err("That transfer no longer exists.", "not_found"));
+    seen.before = b;
+    const type = b.itemType as ItemType;
+    if (!TYPES.includes(type)) return refuse(err("This transfer is of a kind that cannot be edited.", "rule_violation"));
+    if (toId === b.fromGodownId) return refuse(fieldErr("to", "Pick a different godown to move it to."));
+    const gds = await tx.select().from(erpGodowns);
+    const oldTo = gds.find((g) => g.id === b.toGodownId);
+    const newTo = gds.find((g) => g.id === toId);
+    if ((oldTo?.reserved || newTo?.reserved) && !lostPower) return refuse(err(LOST_EDIT_WHY, "not_permitted"));
+    if (toId !== b.toGodownId && newTo?.status !== "active") return refuse(fieldErr("to", "That godown is not active."));
+    /* Every end the edit touches, under both spellings of the stage, in one order — two edits never wait on each other crosswise. */
+    const ends = [...new Set([b.fromGodownId, b.toGodownId, toId])].sort();
+    for (const g of ends) for (const st of [STAGE_OF[type], type].sort()) await lockLot(tx, st, b.lotNo, g);
+    const hold = (await transferHolds(tx, [id], toId === b.toGodownId ? null : toId)).get(id);
+    if (hold) return refuse(err(hold, "rule_violation"));
+    /* What it delivered must all still be there: Item Lost Record never gives stock out, anywhere else the ledger says. */
+    if (!oldTo?.reserved) {
+      const there = await lotStockAt(tx, type, b.itemId, b.lotNo, b.toGodownId);
+      if (there < b.quantity - 1e-9)
+        return refuse(err(`Of the ${nf(b.quantity)} this transfer delivered to ${oldTo?.name ?? "its godown"}, only ${nf(Math.max(there, 0))} of lot ${b.lotNo} is still there — the rest has been used or moved on, so this transfer can no longer be edited.`, "rule_violation"));
+    }
+    const lotFrom = type === "FG Packing" ? "pack" : type === "Finish Goods" ? "fg" : null;
+    const held = lotFrom ? await unitsOfTransfer(tx, { transferId: id, lotFrom, lotCode: b.lotNo }) : [];
+    const wantStatus = oldTo?.reserved ? "lost" : "available";
+    if (held.some((u) => u.touched || u.godownId !== b.toGodownId || u.status !== wantStatus))
+      return refuse(err(`${type === "FG Packing" ? "Boxes" : "Labelled cans"} this transfer moved have since been scanned, dispatched or moved again, so it can no longer be edited.`, "rule_violation"));
+    const srcStock = await lotStockAt(tx, type, b.itemId, b.lotNo, b.fromGodownId);
+    if (qty > srcStock + b.quantity + 1e-9) return refuse(fieldErr("qty", "Enter a quantity above 0 and no more than the lot holds."));
+
+    /* Undo: the destination's entry, and the units back to the source. */
+    await dropTransferIn(tx, type, id);
+    if (held.length) await undoUnitsForTransfer(tx, { transferId: id, unitIds: held.map((u) => u.id), fromGodownId: b.fromGodownId, byId: ctx.user.id });
+
+    /* Redo, as a new transfer posts. */
+    const [a] = await tx.update(erpTransfers).set({ transferDate: date, toGodownId: toId, quantity: qty, remark }).where(eq(erpTransfers.id, id)).returning();
+    seen.after = a;
+    await postTransferIn(tx, a);
+    if (lotFrom) {
+      const moved = await moveUnitsForTransfer(tx, { lotFrom, lotCode: b.lotNo, fromGodownId: b.fromGodownId, toGodownId: toId, qty, lost: !!newTo?.reserved, transferId: id, byId: ctx.user.id });
+      if (type === "Finish Goods" && moved < Math.floor(qty))
+        await trimLooseUnits(tx, { lotCode: b.lotNo, finishedGoodId: b.itemId, godownId: b.fromGodownId, ledgerStock: srcStock + b.quantity - qty, byId: ctx.user.id, why: `Transfer ${id} edited` });
+    }
+    seen.lost = !!newTo?.reserved;
+    seen.to = newTo?.name;
+    return okVoid(newTo?.reserved ? `Write-off saved · ${nf(qty)} of ${b.itemName} written off` : `Transfer saved · ${nf(qty)} of ${b.itemName} to ${newTo?.name}`);
+  });
+  if (res.ok) await erpAudit(ctx, "erp.transfer.edit", "erp_transfer", id, seen.before ?? null, seen.after ?? null);
+  return res;
+}
+
 /* Transfers are a register: read by transfer date, never the whole history (`window.ts`). */
 const TRANSFER_WINDOW = { label: "Transfer date", default: REGISTER_DEFAULT } as const;
 
@@ -175,6 +356,8 @@ const transfers: ScreenModule = {
     ]);
     const g = new Map(gds.map((x) => [x.id, x]));
     const now = today();
+    const holds = await transferHolds(db, rows.map((x) => x.t.id));
+    const lostPower = ctx.powers.has("lostStock");
     const cols: ColSpec[] = [
       { k: "date", l: "Date", t: "d" },
       { k: "type", l: "Item type", t: "s" },
@@ -219,12 +402,20 @@ const transfers: ScreenModule = {
           flags,
           title: `${x.t.itemName} · ${nf(x.t.quantity)}`,
           header: `${from?.name ?? ""} → ${to?.name ?? ""} · lot ${x.t.lotNo}`,
+          actions: [{ id: "edit", l: "Edit", loadsForm: true, why: holds.get(x.t.id) ?? (to?.reserved && !lostPower ? LOST_EDIT_WHY : "") }],
           by: stampLine(x.by, x.t.createdAt),
         };
       }),
     };
   },
+  formLoaders: {
+    edit: transferEditForm,
+  },
   forms: {
+    async edit(ctx, h, _l, id) {
+      if (!id) return err("No transfer named.", "not_found");
+      return editTransfer(ctx, h, id);
+    },
     async new(ctx, h) {
       const type = text(h.type) as ItemType | null;
       if (!type || !TYPES.includes(type)) return fieldErr("type", "Pick the item type.");
