@@ -4,6 +4,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLog, users } from "@/db/schema";
 import { APP_TIMEZONE } from "@/lib/business-date";
+import { getCurrentUser } from "@/lib/auth";
 import type {
   FigureDrawer,
   PeriodState,
@@ -143,7 +144,8 @@ export async function auditFor(
     .orderBy(desc(auditLog.at))
     .limit(limit);
   return rows
-    .filter((r) => r.action !== "founder.note")
+    // Notes, and the corrections to them, are the timeline, not the history.
+    .filter((r) => !r.action.startsWith("founder.note"))
     .map((r) => ({
       what: actionWords(r.action),
       who: [
@@ -195,19 +197,118 @@ export function actionWords(action: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+/*
+ * A NOTE IS AN AUDIT ROW, AND THE AUDIT LOG IS APPEND-ONLY (`audit-labels.ts`
+ * says so in its header). So a note is never rewritten in place: correcting
+ * one appends `founder.note_edit` naming it, and deleting one appends
+ * `founder.note_delete`. The reading below folds them — the newest edit is the
+ * text shown, a deleted note is not shown — while the original row, and every
+ * correction, stays in the log for anybody reading it as a log. Only the
+ * person who wrote a note may edit or delete it.
+ */
+const NOTE_EDIT = "founder.note_edit";
+const NOTE_DELETE = "founder.note_delete";
+
+type NoteChange = { noteId?: string; note?: string };
+
 /** Notes written from the Command Centre, kept as audited rows. */
-export async function notesFor(kind: string, id: string): Promise<{ what: string; when: string }[]> {
-  const rows = await db
-    .select({ after: auditLog.afterState, at: auditLog.at, name: users.name })
+export async function notesFor(
+  kind: string,
+  id: string,
+): Promise<{ what: string; when: string; note?: { id: string; mine: boolean } }[]> {
+  const [rows, changes, viewer] = await Promise.all([
+    db
+      .select({ id: auditLog.id, actorId: auditLog.actorId, after: auditLog.afterState, at: auditLog.at, name: users.name })
+      .from(auditLog)
+      .leftJoin(users, eq(users.id, auditLog.actorId))
+      .where(and(eq(auditLog.action, "founder.note"), eq(auditLog.entityType, kind), eq(auditLog.entityId, id)))
+      .orderBy(desc(auditLog.at))
+      .limit(50),
+    db
+      .select({ action: auditLog.action, after: auditLog.afterState })
+      .from(auditLog)
+      .where(and(inArray(auditLog.action, [NOTE_EDIT, NOTE_DELETE]), eq(auditLog.entityType, kind), eq(auditLog.entityId, id)))
+      .orderBy(auditLog.at),
+    getCurrentUser(),
+  ]);
+  const edited = new Map<string, string>();
+  const deleted = new Set<string>();
+  for (const c of changes) {
+    const after = (c.after ?? {}) as NoteChange;
+    if (!after.noteId) continue;
+    if (c.action === NOTE_DELETE) deleted.add(after.noteId);
+    else if (typeof after.note === "string") edited.set(after.noteId, after.note);
+  }
+  return rows
+    .filter((r) => !deleted.has(r.id))
+    .map((r) => ({
+      what: edited.get(r.id) ?? String((r.after as { note?: string } | null)?.note ?? ""),
+      when: `${stampIST(r.at)} · ${r.name ?? "Someone"}, under the Founder hat${edited.has(r.id) ? " · edited" : ""}`,
+      note: { id: r.id, mine: Boolean(viewer && r.actorId === viewer.id) },
+    }));
+}
+
+/**
+ * The note as it stands, for its own author — null where it is not a note,
+ * is somebody else's, or has been deleted. The text is the newest edit's.
+ */
+export async function ownNote(
+  userId: string,
+  noteId: string,
+): Promise<{ kind: string; id: string; note: string } | null> {
+  const [row] = await db
+    .select({ actorId: auditLog.actorId, kind: auditLog.entityType, id: auditLog.entityId, after: auditLog.afterState })
     .from(auditLog)
-    .leftJoin(users, eq(users.id, auditLog.actorId))
-    .where(and(eq(auditLog.action, "founder.note"), eq(auditLog.entityType, kind), eq(auditLog.entityId, id)))
-    .orderBy(desc(auditLog.at))
-    .limit(50);
-  return rows.map((r) => ({
-    what: String((r.after as { note?: string } | null)?.note ?? ""),
-    when: `${stampIST(r.at)} · ${r.name ?? "Someone"}, under the Founder hat`,
-  }));
+    .where(and(eq(auditLog.id, noteId), eq(auditLog.action, "founder.note")));
+  if (!row || row.actorId !== userId || !row.id) return null;
+  const changes = await db
+    .select({ action: auditLog.action, after: auditLog.afterState })
+    .from(auditLog)
+    .where(and(inArray(auditLog.action, [NOTE_EDIT, NOTE_DELETE]), eq(auditLog.entityType, row.kind), eq(auditLog.entityId, row.id)))
+    .orderBy(auditLog.at);
+  let note = String((row.after as { note?: string } | null)?.note ?? "");
+  for (const c of changes) {
+    const after = (c.after ?? {}) as NoteChange;
+    if (after.noteId !== noteId) continue;
+    if (c.action === NOTE_DELETE) return null;
+    if (typeof after.note === "string") note = after.note;
+  }
+  return { kind: row.kind, id: row.id, note };
+}
+
+/** A correction to one's own note, appended — the original row is not touched. */
+export async function editNote(userId: string, noteId: string, note: string) {
+  const current = await ownNote(userId, noteId);
+  if (!current) throw new Error("That note is not yours to change, or it has been deleted.");
+  if (current.note === note) return;
+  await db.insert(auditLog).values({
+    id: `aud_${randomUUID().slice(0, 12)}`,
+    actorId: userId,
+    action: NOTE_EDIT,
+    entityType: current.kind,
+    entityId: current.id,
+    actorRole: "admin",
+    actorApp: "founder",
+    beforeState: { noteId, note: current.note } as never,
+    afterState: { noteId, note } as never,
+  });
+}
+
+/** One's own note taken off the record's timeline; the log keeps it. */
+export async function deleteNote(userId: string, noteId: string) {
+  const current = await ownNote(userId, noteId);
+  if (!current) throw new Error("That note is not yours to delete, or it has been deleted already.");
+  await db.insert(auditLog).values({
+    id: `aud_${randomUUID().slice(0, 12)}`,
+    actorId: userId,
+    action: NOTE_DELETE,
+    entityType: current.kind,
+    entityId: current.id,
+    actorRole: "admin",
+    actorApp: "founder",
+    beforeState: { noteId, note: current.note } as never,
+    afterState: { noteId } as never,
+  });
 }
 
 export async function addNote(userId: string, kind: string, id: string, note: string) {

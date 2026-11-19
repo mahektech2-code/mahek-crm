@@ -6,11 +6,17 @@ import { ACCESS_REVOKE_KIND } from "./access-revoke-key";
    key is the `impact.kind` a screen names and the act passes to
    `confirmImpact`. */
 export const ADMIN_SITE_SOURCES: Record<string, () => Promise<ImpactSource>> = {
+  /* Locker → Vault: a login retired; a sign-in account retired. */
+  "locker-credential-retire": () => import("./locker").then((m) => m.lockerCredentialRetireImpact),
+  "locker-identity-retire": () => import("./locker").then((m) => m.lockerIdentityRetireImpact),
+
   /* Admin Console: a catalogue alias removed, a SKU retired from the order
      form, a sign-in disabled, a saved credential cleared (the id is its name). */
   "admin-catalogue-alias": () => import("./admin").then((m) => m.aliasImpact),
   "admin-sku-retire": () => import("./admin").then((m) => m.skuRetireImpact),
   "admin-user-disable": () => import("./admin").then((m) => m.userDisableImpact),
+  /** Somebody who has left: the sign-in, and every grant, seat and assignment with it. */
+  "admin-offboard": () => import("./admin").then((m) => m.offboardImpact),
   "admin-secret": () => import("./admin").then((m) => m.secretImpact),
   /** `setAccess` taking apps away — the id is `accessRevokeKey(user, apps)`. */
   [ACCESS_REVOKE_KIND]: () => import("./admin").then((m) => m.accessRevokeImpact),
@@ -37,4 +43,7 @@ export const ADMIN_SITE_SOURCES: Record<string, () => Promise<ImpactSource>> = {
   "site-assignment": () => import("./website-cms").then((m) => m.assignmentImpact),
   "site-approval-revoke": () => import("./website-cms").then((m) => m.approvalRevokeImpact),
   "site-request-withdraw": () => import("./website-cms").then((m) => m.requestWithdrawImpact),
+
+  /* Tasks: a task deleted by whoever gave it. */
+  "task-delete": () => import("./tasks").then((m) => m.taskDeleteImpact),
 };

@@ -109,3 +109,14 @@ seeds the blueprints the first time Hire opens on an empty database. Everybody
 else gets Hire, and their role in it, on the Access screen.
 `npm run hire:seed -- --demo --reset`
 wipes Hire and loads the demo pipeline, development only.
+
+**AN ISSUED OR ACCEPTED OFFER CAN BE WITHDRAWN BY US, AND THAT IS NOT CLOSING
+THE APPLICATION.** `withdrawOffer` (services/offers.ts) moves the current offer
+to `withdrawn` — the status `hire_offers` always allowed and nothing set — with a
+reason of at least 20 characters on the trail (`offer_withdrawn`) and a message
+to the candidate in the log. The application stays open at Documents & offer:
+the form opens again for a new offer, and rejecting the person is still the
+gate's or the rejection queue's decision. A hired person is refused (leaving is
+HRMS's). The UI is "Withdraw offer" on the offer panel, a `ReasonButton` with
+the `hire-offer-withdraw` impact modal (id = the application), and the action
+asks `confirmImpact` before the service writes.

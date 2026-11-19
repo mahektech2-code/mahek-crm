@@ -15,10 +15,10 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appAccess, appSecrets, mbosDevices, sessions, users } from "@/db/schema";
+import { appAccess, appModuleAccess, appSecrets, auditLog, hrmsUserPowers, mbosDevices, mbosUserTerritories, sessions, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
-import { setUserActive } from "@/lib/actions/people";
+import { offboardPerson, setUserActive } from "@/lib/actions/people";
 import { clearSecretAction } from "@/lib/actions/secrets";
 import { impactReport } from "@/lib/impact/registry";
 
@@ -99,6 +99,50 @@ describe("disabling a sign-in", () => {
     const refused = await setUserActive(admin.id, false);
     assert.equal(refused.ok, false);
     assert.match(refused.ok ? "" : refused.error, /your own account/, "the act's own refusal comes before the confirmation");
+  });
+});
+
+describe("offboarding somebody who has left", () => {
+  test("turns the sign-in off and takes every grant, power and territory in one step — after naming them", async () => {
+    await db.insert(sessions).values({ id: id("ses"), userId: salesman.id, expiresAt: new Date(Date.now() + 86_400_000) });
+    await db.insert(appModuleAccess).values({ id: id("ama"), userId: salesman.id, app: "crm", module: "crm.reminders" } as never);
+    await db.insert(hrmsUserPowers).values({ userId: salesman.id, power: "hr" } as never);
+    await db.insert(mbosUserTerritories).values({ id: id("ter"), userId: salesman.id, region: "Pune" } as never);
+
+    const bare = await offboardPerson(salesman.id);
+    assert.equal(bare.ok, false, "refused without the confirmation");
+    assert.equal((await db.select().from(appAccess).where(eq(appAccess.userId, salesman.id))).length, 2);
+
+    const report = await impactReport("admin-offboard", salesman.id);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    const by = (label: RegExp) => report.data.items.find((i) => label.test(i.label));
+    assert.equal(by(/apps they hold/)?.effect, "deleted");
+    assert.equal(by(/apps they hold/)?.count, 2);
+    assert.equal(by(/powers held by name/)?.count, 1);
+    assert.equal(by(/territor/)?.count, 1);
+
+    const done = await offboardPerson(salesman.id, { typed: report.data.confirmWord, fingerprint: report.data.fingerprint });
+    assert.ok(done.ok, done.ok ? "" : done.error);
+    const [u] = await db.select().from(users).where(eq(users.id, salesman.id));
+    assert.equal(u.active, false);
+    for (const [table, n] of [
+      [appAccess, (await db.select().from(appAccess).where(eq(appAccess.userId, salesman.id))).length],
+      [appModuleAccess, (await db.select().from(appModuleAccess).where(eq(appModuleAccess.userId, salesman.id))).length],
+      [hrmsUserPowers, (await db.select().from(hrmsUserPowers).where(eq(hrmsUserPowers.userId, salesman.id))).length],
+      [mbosUserTerritories, (await db.select().from(mbosUserTerritories).where(eq(mbosUserTerritories.userId, salesman.id))).length],
+      [sessions, (await db.select().from(sessions).where(eq(sessions.userId, salesman.id))).length],
+    ] as const) assert.equal(n, 0, String(table));
+
+    const [row] = await db.select().from(auditLog).where(eq(auditLog.action, "offboard-user"));
+    const held = (row.beforeState as { access: { apps: { app: string }[]; hrmsPowers: string[] } }).access;
+    assert.deepEqual(held.apps.map((a) => a.app).sort(), ["crm", "field"], "what they held is kept on the audit row");
+    assert.deepEqual(held.hrmsPowers, ["hr"]);
+  });
+
+  test("never yourself, and never the last platform administrator", async () => {
+    assert.equal((await offboardPerson(admin.id)).ok, false);
+    const own = await impactReport("admin-offboard", admin.id);
+    assert.ok(own.ok && own.data.blockers.length > 0);
   });
 });
 

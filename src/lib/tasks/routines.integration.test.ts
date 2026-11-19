@@ -5,7 +5,7 @@
  * often the day is asked for; only whoever set it, or a manager above its
  * person, may change it; a paused routine writes nothing.
  */
-import { after, before, beforeEach, describe, test } from "node:test";
+import { after, afterEach, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
@@ -19,6 +19,7 @@ import { deleteRoutine, saveRoutine, setRoutineActive } from "@/lib/actions/task
 import { markMissedRoutineTasks, routinesFor, writeRoutineTasks } from "@/lib/tasks/routine-service";
 import { closeTask, reopenTask, updateTask } from "@/lib/actions/tasks";
 import { plusDays } from "@/lib/tasks/rules";
+import { pinTasksClock } from "@/lib/tasks/clock";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -130,6 +131,13 @@ describe("A routine", () => {
 });
 
 describe("A routine's task not done on time", () => {
+  /* Noon in India on the business day, every run: a sweep just after midnight found yesterday's task still in
+     its grace time, and today's 00:00 task not yet past it, so these failed whenever CI ran then. */
+  beforeEach(async () => {
+    pinTasksClock(new Date(`${await today()}T12:00:00+05:30`));
+  });
+  afterEach(() => pinTasksClock(null));
+
   /** A task of the routine for `day`, written straight in — the way the writer would have on that day. */
   async function routineTask(routineId: string, day: string, dueTime: string | null) {
     const [row] = await db

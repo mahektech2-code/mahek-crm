@@ -21,6 +21,8 @@ import { verifyPassword } from "@/lib/password";
 import { err, ok, type Result } from "@/lib/result";
 import { lockerAccess } from "./access";
 import { lockerAuditTx } from "./audit";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 import { fingerprint, hintOf, openValue, sealValue, vaultReady } from "./crypto";
 import type { Tier } from "./engine";
 import { lockerSettingsRow } from "./service";
@@ -680,4 +682,59 @@ export async function reviewBreakglass(actor: User, id: string, note: string): P
     await lockerAuditTx(tx, { actorId: actor.id, actorName: actor.name, action: "locker.breakglass.ended", entityType: "breakglass", entityId: id, summary: "Recorded the after-emergency review", reason: note.trim(), security: true });
   });
   return ok(undefined, "Review recorded");
+}
+
+/* ------------------------------------------------------------- retiring */
+
+/**
+ * RETIRING A LOGIN. Nothing in the vault is deleted — the values stay
+ * encrypted, the audit chain and the connections stay — but a retired login
+ * leaves every list, count and reuse check (they all read `active`), cannot be
+ * revealed, and any reveal request still waiting or approved on it expires.
+ * Refused while emergency access covering it is open. The impact modal
+ * (`locker-credential-retire`) says all of it, and this re-reads the same
+ * picture before writing. Restore brings it back as it was.
+ */
+export async function retireCredential(actor: User, id: string, confirmation: ImpactConfirmation | null): Promise<Result> {
+  if (!(await lockerAccess(actor.id)).vault) return err(REFUSED_VAULT, "not_permitted");
+  const c = await loadCred(id);
+  if (!c) return err("That login does not exist.", "not_found");
+  const refusal = await confirmImpact("locker-credential-retire", id, confirmation);
+  if (refusal) return refusal;
+  const done = await db.transaction(async (tx) => {
+    const rows = await tx.update(lockerCredentials).set({ active: false }).where(and(eq(lockerCredentials.id, id), eq(lockerCredentials.active, true))).returning({ id: lockerCredentials.id });
+    if (!rows.length) return false;
+    const expired = await tx
+      .update(lockerReveals)
+      .set({ state: "expired" })
+      .where(and(eq(lockerReveals.credentialId, id), inArray(lockerReveals.state, ["waiting", "approved"])))
+      .returning({ id: lockerReveals.id });
+    await lockerAuditTx(tx, {
+      actorId: actor.id,
+      actorName: actor.name,
+      action: "locker.credential.retired",
+      entityType: "credential",
+      entityId: id,
+      entityTitle: c.title,
+      summary: `Retired the login ${c.title}${expired.length ? ` · ${expired.length} reveal request${expired.length === 1 ? "" : "s"} expired` : ""}`,
+      security: true,
+    });
+    return true;
+  });
+  if (!done) return err("That login is already retired.", "conflict");
+  return ok(undefined, `${c.title} retired`);
+}
+
+export async function restoreCredential(actor: User, id: string): Promise<Result> {
+  if (!(await lockerAccess(actor.id)).vault) return err(REFUSED_VAULT, "not_permitted");
+  const c = await loadCred(id);
+  if (!c) return err("That login does not exist.", "not_found");
+  const done = await db.transaction(async (tx) => {
+    const rows = await tx.update(lockerCredentials).set({ active: true }).where(and(eq(lockerCredentials.id, id), eq(lockerCredentials.active, false))).returning({ id: lockerCredentials.id });
+    if (!rows.length) return false;
+    await lockerAuditTx(tx, { actorId: actor.id, actorName: actor.name, action: "locker.credential.restored", entityType: "credential", entityId: id, entityTitle: c.title, summary: `Restored the retired login ${c.title}`, security: true });
+    return true;
+  });
+  if (!done) return err("That login is not retired.", "conflict");
+  return ok(undefined, `${c.title} restored`);
 }
