@@ -35,8 +35,12 @@ test("the CRM shell asks for the v4 look, and the ERP and the CRM read one sheet
   /* The Sales Dashboard wears it through its own shell. */
   assert.match(read("src/app/sales/layout.tsx"), /@\/styles\/v4-theme\.css/);
   assert.match(read("src/app/sales/sales-shell.tsx"), /data-v4-app="sales"/);
-  /* Accounts shares AppShell and has not asked for the look. */
-  assert.doesNotMatch(read("src/app/accounts/layout.tsx"), /look="v4"/);
+  /* Accounts and the Founder Command Centre wear it through their own shells. */
+  assert.match(read("src/app/accounts/layout.tsx"), /@\/styles\/v4-theme\.css/);
+  assert.match(read("src/app/accounts/accounts-shell.tsx"), /data-v4-app="accounts"/);
+  assert.match(read("src/app/founder/layout.tsx"), /@\/styles\/v4-theme\.css/);
+  assert.match(read("src/app/founder/(command)/command-centre.tsx"), /data-v4-app="founder"/);
+  assert.match(read("src/app/founder/(desks)/desk-shell.tsx"), /data-v4-app="founder"/);
 });
 
 /** A selector list split on its own commas, not the ones inside `:is(…)`. */
@@ -66,7 +70,7 @@ test("every rule in the sheet is scoped to a marker, so it cannot follow somebod
     for (const part of topLevel(sel)) {
       const p = part.trim();
       if (!p) continue;
-      assert.match(p, /^:root:has\(\[data-v4(-app="(crm|sales|hrms|admin)")?\]\)/, `unscoped selector: ${p}`);
+      assert.match(p, /^:root:has\(\[data-v4(-app="(crm|sales|hrms|admin|accounts|founder)")?\]\)/, `unscoped selector: ${p}`);
     }
   }
 });

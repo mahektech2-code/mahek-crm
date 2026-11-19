@@ -940,7 +940,7 @@ export const SETTINGS = [
     category: "payments",
     label: "Accounts approval deadline",
     description:
-      "When on, anything waiting on the accounts team — an order to approve, a payment to confirm, a credit note or an order change to decide — that is still waiting after the deadline below is reported to the admins, put on the Founder Command Centre's Accounts deadlines page, and the accounts team is asked for a reason until it is decided.",
+      "When on, anything waiting on the accounts team — an order to approve, a payment to confirm, a credit note or an order change to decide — that is still waiting after the deadline below is reported to the admins, put on HQ's Accounts deadlines page, and the accounts team is asked for a reason until it is decided.",
     default: true,
   },
   {
@@ -1646,7 +1646,7 @@ export const SETTINGS = [
     category: "queue",
     label: "Follow-up call back after",
     description:
-      "A Follow-up call no longer asks the telecaller for a date. It becomes a call-back reminder this many days ahead, moved on to the next working day if that lands on a day off - so the customer is never left with a follow-up nobody is reminded of. A date the customer actually named, supplied by the call assistant or the Command Centre, is used as given.",
+      "A Follow-up call no longer asks the telecaller for a date. It becomes a call-back reminder this many days ahead, moved on to the next working day if that lands on a day off - so the customer is never left with a follow-up nobody is reminded of. A date the customer actually named, supplied by the call assistant or HQ, is used as given.",
     default: 1,
     min: 0,
     max: 30,
@@ -1657,7 +1657,7 @@ export const SETTINGS = [
     category: "queue",
     label: "Promised payment date when none is given",
     description:
-      "A Pay Promise no longer asks the telecaller for a payment date. Saved with none, the promise is dated this many days ahead (moved on to the next working day), so it still writes its payment reminder and still holds the customer back from collections until it passes. It is a stand-in, not something the customer said: a date they actually named, supplied by the call assistant or the Command Centre, is used as given.",
+      "A Pay Promise no longer asks the telecaller for a payment date. Saved with none, the promise is dated this many days ahead (moved on to the next working day), so it still writes its payment reminder and still holds the customer back from collections until it passes. It is a stand-in, not something the customer said: a date they actually named, supplied by the call assistant or HQ, is used as given.",
     default: 3,
     min: 1,
     max: 30,
@@ -2128,7 +2128,7 @@ export const SETTINGS = [
     category: "whatsapp",
     label: "Mode (retired)",
     description:
-      "No longer read. Sending through the WhatsApp API is switched on and off by the founder, on the Founder Command Centre's WhatsApp desk — a setting anybody holding the Settings screen could flip was the wrong home for that decision. Kept so a stored value still resolves.",
+      "No longer read. Sending through the WhatsApp API is switched on and off by the founder, on HQ's WhatsApp desk — a setting anybody holding the Settings screen could flip was the wrong home for that decision. Kept so a stored value still resolves.",
     default: "manual",
     options: ["manual", "automatic"],
   },

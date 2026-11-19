@@ -1,6 +1,8 @@
 /* ---------------------------------------------------------------------------
    THE V4 LOOK — the ERP's, since October 2026 the CRM's, and since November
-   2026 the Sales Dashboard's (its own shell carries `data-v4-app="sales"`).
+   2026 the Sales Dashboard's (its own shell carries `data-v4-app="sales"`),
+   the HRMS's, the Admin Console's, Accounts' and the Founder Command
+   Centre's.
 
    One stylesheet, and only a look: it changes no element, no handler and no
    order of anything, so every screen does exactly what it did and is drawn
@@ -9,8 +11,7 @@
 
    WHO WEARS IT. An app's shell carries `data-v4` (the ERP's shell, and the
    CRM's through `AppShell look="v4"`) and its header `data-v4-header`. An app
-   that does not — Accounts shares `AppShell` with the CRM and does not ask —
-   is drawn exactly as before.
+   that does not is drawn exactly as before.
 
    WHY IT IS SCOPED THROUGH `:root:has([data-v4])`. A stylesheet imported by a
    layout stays in the document after a client navigation away from it, so a
@@ -225,6 +226,26 @@
 :root:has([data-v4-app="admin"]) .uppercase.text-\[11px\]:not(th):not(th *):not([data-nav-group]),
 :root:has([data-v4-app="admin"]) .uppercase.text-\[10px\]:not(th):not(th *),
 :root:has([data-v4-app="admin"]) .uppercase.text-\[10\.5px\]:not(th):not(th *) {
+  font-size: 12px;
+}
+
+/* Accounts and the Founder Command Centre wear it too since their redraws
+   (Nov 2026). The Command Centre draws in inline styles, so its own labels
+   were moved to sentence case at the source (`founder/(command)/ui.tsx`);
+   this catches the shared screens its desks and Accounts render. */
+
+:root:has([data-v4-app="accounts"]) .uppercase:not(th):not(th *),
+:root:has([data-v4-app="founder"]) .uppercase:not(th):not(th *) {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+:root:has([data-v4-app="accounts"]) .uppercase.text-\[11px\]:not(th):not(th *),
+:root:has([data-v4-app="accounts"]) .uppercase.text-\[10px\]:not(th):not(th *),
+:root:has([data-v4-app="accounts"]) .uppercase.text-\[10\.5px\]:not(th):not(th *),
+:root:has([data-v4-app="founder"]) .uppercase.text-\[11px\]:not(th):not(th *),
+:root:has([data-v4-app="founder"]) .uppercase.text-\[10px\]:not(th):not(th *),
+:root:has([data-v4-app="founder"]) .uppercase.text-\[10\.5px\]:not(th):not(th *) {
   font-size: 12px;
 }
 

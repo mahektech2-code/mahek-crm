@@ -13,7 +13,7 @@ import { WhatsappControl } from "./whatsapp-control";
 import { isPlatformAdmin } from "@/lib/access-control";
 import { specFor } from "@/lib/wati-templates";
 
-export const metadata = { title: "WhatsApp - Founder Command Centre - MahekOne" };
+export const metadata = { title: "WhatsApp - HQ - MahekOne" };
 
 /**
  * The founder's WhatsApp desk: the switch, whether the Wati connection works,

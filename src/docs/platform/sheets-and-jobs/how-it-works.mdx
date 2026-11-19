@@ -74,7 +74,7 @@ Orders are moving to the ERP, and the order sheet is retired by two switches rat
 | <Setting k="erp.orders.partySheet" /> | Off: the office keeps parties in MahekOne | The Sales Party tab is no longer read or published; seats, deactivations, phones, GST, credit days and price lists are kept in MahekOne |
 
 <Rule title="A retired tab is not read, whoever asks">
-The schedule, the Admin Console and the command line all reach the same job runner, which answers a retired read with the reason and records a run carrying it — so the schedule keeps getting a success, and the job history says why nothing was read. Once the ERP takes the orders, Admin Console → Sheets and Accounts → Sheet import show a banner and draw their import buttons disabled with the reason. A retired source reads **Retired · last read … ago** on the Command Centre, is never called *Stale*, and has nothing to run; Admin Console → Integrations lists it as **Retired**.
+The schedule, the Admin Console and the command line all reach the same job runner, which answers a retired read with the reason and records a run carrying it — so the schedule keeps getting a success, and the job history says why nothing was read. Once the ERP takes the orders, Admin Console → Sheets and Accounts → Sheet import show a banner and draw their import buttons disabled with the reason. A retired source reads **Retired · last read … ago** on HQ, is never called *Stale*, and has nothing to run; Admin Console → Integrations lists it as **Retired**.
 </Rule>
 
 <Callout kind="note">

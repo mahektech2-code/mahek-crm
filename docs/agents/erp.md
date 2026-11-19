@@ -197,7 +197,7 @@ generic list and have no cards from this.
 it was taken away.** The look is one sheet, `src/styles/v4-theme.css` (it was
 `app/erp/erp-theme.css`), answering to a `data-v4` marker on the shell: the
 ERP's shell carries it, and the CRM's through `AppShell look="v4" app="crm"`.
-Accounts shares `AppShell` and has not asked, so it is drawn as before. Every
+Every
 selector names the marker (`quiet-crm.test.ts` refuses one that does not),
 because a stylesheet a layout imported stays in the document after a client
 navigation away. What the CRM gets beyond the ERP's look is keyed on
@@ -228,6 +228,20 @@ in the ERP's forms: `MetricRow` is figure cards, `Pill` is a sentence-case
 The sheet's sentence-case label rule answers to `sales` as it does to `crm`,
 and a head cell with `aria-sort="none"` is no longer drawn as the sorted one.
 Nothing about what any screen shows or does moved.
+
+**ACCOUNTS AND THE FOUNDER COMMAND CENTRE WEAR IT TOO (Nov 2026).** Accounts'
+own shell (`app/accounts/accounts-shell.tsx`) is the ERP's frame — the sidebar
+the full height under the Mahek mark, the lavender header with the switcher,
+the search, the bell, the shortcut key and the account menu (which replaced the
+sidebar's sign-out) — and carries `data-v4 data-v4-app="accounts"`. The
+Command Centre draws in inline styles, so the sheet cannot reach its own
+furniture: its palette `C` (`founder/(command)/ui.tsx`) carries the v4 tokens,
+its labels are sentence case at the source, its table heads are the navy band,
+and its header and sidebar (`chrome.tsx`) are the v4 frame. The page and the
+desks carry `data-v4 data-v4-app="founder"`, so the shared screens the desks
+render and everything portalled to `<body>` get the sheet. Both apps' layouts
+import it. `quiet-crm.test.ts` pins all of this. Nothing about what any screen
+shows or does moved.
 
 **AN ERP SCREEN DRAWS EACH PIECE ONE WAY, AND A TEST READS THE SOURCE.**
 The screens had drifted into twenty-two spellings of the small uppercase

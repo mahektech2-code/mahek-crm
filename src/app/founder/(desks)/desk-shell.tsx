@@ -56,16 +56,17 @@ export function DeskFrame({
   const current = tabs?.find((t) => tabIsOn(t, pathname));
 
   return (
-    <div className="fcc-desk" style={{ position: "fixed", inset: 0, overflowX: "auto", overflowY: "hidden", zIndex: 1 }}>
+    <div className="fcc-desk" data-v4="" data-v4-app="founder" style={{ position: "fixed", inset: 0, overflowX: "auto", overflowY: "hidden", zIndex: 1 }}>
       <DesignStyles />
       <style>{`
-.fcc-desk{font-family:var(--font-google-sans),system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums lining-nums;background:${C.canvas}}
+.fcc-desk{font-family:var(--font-geist),system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums lining-nums;background:${C.canvas}}
 .fcc-desk .fcc-chrome button,.fcc-desk .fcc-chrome input{font:inherit;color:inherit}
 @media print{.fcc-desk{position:static!important;overflow:visible!important}}
 `}</style>
       <AppFrame
         bleed
         fade={false}
+        sidebarFirst
         header={
           <div className="fcc-root fcc-chrome" style={{ display: "contents" }}>
             <FounderHeader

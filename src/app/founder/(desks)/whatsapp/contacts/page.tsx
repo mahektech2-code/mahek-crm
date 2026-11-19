@@ -3,7 +3,7 @@ import { founderPageAccess } from "@/lib/command-centre/access";
 import { listContacts, type ContactFilter } from "@/lib/services/whatsapp-dnd-service";
 import { ContactsControl } from "./contacts-control";
 
-export const metadata = { title: "WhatsApp contacts & DND - Founder Command Centre - MahekOne" };
+export const metadata = { title: "WhatsApp contacts & DND - HQ - MahekOne" };
 
 /**
  * Every customer, and whether WhatsApp messages may go to them. The list is

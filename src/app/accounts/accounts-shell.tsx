@@ -9,7 +9,7 @@ import { Modal } from "@/components/ui/overlays";
 import { AppFrame } from "@/components/shell/app-frame";
 import { HeaderLead } from "@/components/shell/header-lead";
 import type { AppDefinition } from "@/lib/apps";
-import { signOut } from "@/lib/actions/auth";
+import { AccountMenu } from "@/components/shell/account-menu";
 import { AccountsIcon, type AccountsIconName } from "./icons";
 import { AccountsSearch } from "./accounts-search";
 
@@ -74,7 +74,7 @@ export function AccountsShell({
 }: {
   /** `role` is the level for THIS app — see `lib/hat-labels.ts` — and
       `roleSentence` is what it amounts to here, for the hover. */
-  user: { name: string; role: string; roleSentence: string; initials: string };
+  user: { name: string; email: string | null; phone: string | null; role: string; roleSentence: string; initials: string };
   counts: NavCounts;
   /**
    * The routes this person may open, resolved in the layout. The sidebar draws
@@ -253,21 +253,32 @@ export function AccountsShell({
 
   return (
     <>
-      {/* The floor, the scroll model and the arrival animation belong to the
-          frame now — see `components/shell/app-frame.tsx`. Accounts stated its
-          own 1000px floor, one of the four different answers this suite
-          carried for one question. */}
+      {/* The ERP's look, since November 2026 (`styles/v4-theme.css`): the
+          marker is all the sheet needs, and it answers on :root so the
+          review drawer and every dialog portalled to <body> are drawn in the
+          same hand. The frame is the ERP's too — the sidebar the full height
+          under the Mahek mark, the lavender header beside it. */}
+      <div data-v4 data-v4-app="accounts" className="contents">
       <AppFrame
+        sidebarFirst
         header={
-          <header className="relative z-30 flex h-14 flex-none items-center gap-5 border-b border-line bg-surface px-4">
-            <HeaderLead
-              apps={apps}
-              current="accounts"
-              collapsed={collapsed}
-              onToggleSidebar={() => setCollapsed((c) => !c)}
-              href="/accounts"
-              label="MAHEK AC"
-            />
+          <header data-v4-header className="relative z-30 flex h-14 flex-none items-center gap-3 border-b border-brand-softer bg-brand-soft px-3">
+            <div className="flex flex-none items-center">
+              <HeaderLead
+                apps={apps}
+                current="accounts"
+                collapsed={collapsed}
+                onToggleSidebar={() => setCollapsed((c) => !c)}
+                href="/accounts"
+                label="MAHEK AC"
+                wordmark={false}
+                toggleIcon={
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <path d="M4 5h16v14H4zM9 5v14" />
+                  </svg>
+                }
+              />
+            </div>
 
             <AccountsSearch />
 
@@ -279,27 +290,17 @@ export function AccountsShell({
               <button
                 onClick={() => setShortcutsOpen(true)}
                 title="Keyboard shortcuts"
-                className="flex h-8 w-8 flex-none cursor-pointer items-center justify-center rounded-[4px] border border-line bg-surface text-[13px] font-medium text-muted hover:bg-canvas hover:text-body"
+                aria-label="Keyboard shortcuts"
+                className="flex h-8 w-8 flex-none cursor-pointer items-center justify-center rounded-control border border-line bg-surface text-sm font-medium text-muted hover:bg-canvas hover:text-body"
               >
                 ?
               </button>
-              <span className="mx-1 h-6 w-px flex-none bg-divider" />
-              <div className="flex flex-none items-center gap-2">
-                <span
-                  title={`${user.name} — ${user.roleSentence}`}
-                  className="flex h-7 w-7 flex-none items-center justify-center rounded-[4px] bg-brand-soft text-xs font-semibold text-[#5223E0]"
-                >
-                  {user.initials}
-                </span>
-                <span className="min-w-0 leading-[14px]">
-                  <span className="block text-[13px] font-medium whitespace-nowrap text-ink">
-                    {user.name}
-                  </span>
-                  <span className="block text-[11px] whitespace-nowrap text-muted capitalize">
-                    {user.role}
-                  </span>
-                </span>
-              </div>
+              <AccountMenu
+                user={{ name: user.name, email: user.email, phone: user.phone, initials: user.initials, role: user.role }}
+                hat={{ label: user.role, sentence: user.roleSentence }}
+                variant="header"
+                nameFromXl
+              />
             </div>
           </header>
         }
@@ -307,19 +308,28 @@ export function AccountsShell({
             <aside
               className={cx(
                 "flex flex-none flex-col border-r border-line bg-surface transition-[width] duration-150 ease-[var(--ease-swift)]",
-                collapsed ? "w-16" : "w-[clamp(196px,17vw,240px)]",
+                collapsed ? "w-16" : "w-[232px]",
               )}
             >
+              <Link href="/accounts" title="MahekOne Accounts" className="flex h-14 flex-none items-center gap-2.5 px-4 no-underline hover:no-underline">
+                {/* eslint-disable-next-line @next/next/no-img-element -- a 256px static mark, nothing for the optimiser to do */}
+                <img src="/brand/mahek-logo.png" alt="Mahek" width={30} height={30} className="h-7.5 w-7.5 flex-none rounded-full bg-surface object-contain" />
+                {collapsed ? null : (
+                  <span className="text-md font-bold tracking-tight whitespace-nowrap text-ink">
+                    MahekOne <span className="font-medium text-faint">Accounts</span>
+                  </span>
+                )}
+              </Link>
               <nav
                 aria-label="Accounts sections"
-                className="flex-1 overflow-y-auto px-1.5 pt-2 pb-4"
+                className="flex-1 overflow-y-auto px-2 pt-1 pb-4"
               >
                 {groups.map((group) => (
                   <div key={group.label}>
                     {collapsed ? (
                       <div className="mx-2 mt-2 mb-1 h-3 border-t border-divider" />
                     ) : (
-                      <div className="px-3 pt-3.5 pb-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                      <div className="px-3 pt-3.5 pb-1.5 text-xs font-semibold text-faint">
                         {group.label}
                       </div>
                     )}
@@ -331,18 +341,17 @@ export function AccountsShell({
                         <Link
                           key={item.href}
                           href={item.href}
+                          data-nav-row=""
                           title={collapsed ? item.label : undefined}
                           aria-current={active ? "page" : undefined}
                           className={cx(
-                            "relative mb-px flex h-9 items-center gap-2.5 overflow-hidden rounded-[4px] border-l-[3px] text-sm whitespace-nowrap no-underline transition-colors duration-100 hover:no-underline",
+                            "relative mb-px flex h-9 items-center gap-2.5 overflow-hidden rounded-control border-l-[3px] border-l-transparent text-sm whitespace-nowrap no-underline transition-colors duration-100 hover:no-underline",
                             collapsed ? "px-2.5" : "pr-2.5 pl-[9px]",
-                            active
-                              ? "border-l-brand font-medium text-[#5223E0]"
-                              : "border-l-transparent text-body hover:bg-canvas",
+                            active ? "font-medium text-brand-hover" : "text-body hover:bg-canvas",
                           )}
                         >
                           {active ? (
-                            <span className="pointer-events-none absolute inset-0 rounded-[4px] bg-brand-soft" />
+                            <span data-nav-fill="" className="pointer-events-none absolute inset-0 rounded-control bg-brand-soft" />
                           ) : null}
                           <AccountsIcon name={item.icon} className="relative z-1 flex-none" />
                           {collapsed ? null : (
@@ -352,11 +361,10 @@ export function AccountsShell({
                           )}
                           {!collapsed && item.badge ? (
                             <span
+                              data-nav-badge={item.urgent ? "danger" : ""}
                               className={cx(
-                                "relative z-1 flex-none rounded-[9px] px-1.5 py-px text-[11px] font-medium tabular-nums",
-                                item.urgent
-                                  ? "bg-danger-soft text-danger"
-                                  : "bg-brand-soft text-[#5223E0]",
+                                "relative z-1 flex-none rounded-[9px] px-1.5 py-px text-xs font-medium tabular-nums",
+                                item.urgent ? "bg-danger-soft text-danger" : "bg-brand-soft text-brand-hover",
                               )}
                             >
                               {item.badge}
@@ -368,39 +376,12 @@ export function AccountsShell({
                   </div>
                 ))}
               </nav>
-
-              <div className="flex flex-none items-center gap-2.5 border-t border-divider px-3 py-2.5">
-                <span className="flex h-7.5 w-7.5 flex-none items-center justify-center rounded-[4px] bg-brand-soft text-xs font-semibold text-[#5223E0]">
-                  {user.initials}
-                </span>
-                {collapsed ? null : (
-                  <>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[13px] leading-4 font-medium text-ink">
-                        {user.name}
-                      </span>
-                      <span className="block text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                        {user.role}
-                      </span>
-                    </span>
-                    <form action={signOut} className="flex-none">
-                      <button
-                        type="submit"
-                        title="Signing out records your finish time for the day"
-                        aria-label="Sign out"
-                        className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[4px] text-muted hover:bg-canvas hover:text-body"
-                      >
-                        <AccountsIcon name="signout" size={16} />
-                      </button>
-                    </form>
-                  </>
-                )}
-              </div>
             </aside>
         }
       >
         {children}
       </AppFrame>
+      </div>
 
       <Modal
         open={shortcutsOpen}

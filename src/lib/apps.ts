@@ -139,7 +139,7 @@ export const APPS: AppDefinition[] = [
     // grant made before the retirement still resolves to something.
     name: "Reports",
     initials: "RP",
-    description: "Retired — the owner's figures are in the Founder Command Centre.",
+    description: "Retired — the owner's figures are in HQ.",
     href: "/founder",
     tone: "neutral",
     built: false,
@@ -172,8 +172,8 @@ export const APPS: AppDefinition[] = [
      * already compute. No new derived numbers live here; this reads and
      * rolls up. It is also where the retired Reports app's figures now live.
      */
-    name: "Founder Command Centre",
-    initials: "FC",
+    name: "HQ",
+    initials: "HQ",
     description:
       "Every record and every decision in the company, in one place — and what needs you today.",
     href: "/founder",

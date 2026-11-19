@@ -5,7 +5,7 @@ import { marginLines, marginRules, MARGIN_LINE_CAP } from "@/lib/services/margin
 import { ADMIN } from "@/lib/admin-routes";
 import { MarginsDesk } from "./margins-desk";
 
-export const metadata = { title: "Margins - Founder Command Centre - MahekOne" };
+export const metadata = { title: "Margins - HQ - MahekOne" };
 
 /**
  * THE FOUNDER'S MARGINS DESK — one entry under Sell, six sub-tabs, read off

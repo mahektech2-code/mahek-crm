@@ -5,34 +5,40 @@ import * as React from "react";
 /* ---------------------------------------------------------------------------
  * The design's small vocabulary — colours, icons, and the one behaviour
  * inline styles cannot express on their own: a hover and a focus style.
- * Every colour below is the design's own (Founder Command Centre.dc.html).
+ * The shapes are the design's own (Founder Command Centre.dc.html); the
+ * colours, the type and the label case are the ERP's v4 look.
  * ------------------------------------------------------------------------- */
 
 export const C = {
-  ink: "#161616",
-  body: "#3D4453",
-  muted: "#6B7385",
-  faint: "#C2C8D2",
-  line: "#DDE1E8",
-  soft: "#EDEFF3",
-  canvas: "#F7F8FA",
+  /* The ERP's v4 tokens since November 2026 (`styles/v4-theme.css`) — the
+     names are the design's, the values the look every other MahekOne app
+     now wears: a navy ink, a cool slate canvas. */
+  ink: "#0F1B33",
+  body: "#33415C",
+  muted: "#5E6B85",
+  faint: "#B8C2D3",
+  line: "#DCE3EE",
+  soft: "#E8EDF4",
+  canvas: "#EDF1F7",
   white: "#FFFFFF",
   brand: "#6835FB",
   brandDark: "#5223E0",
-  brandDeep: "#3D14A8",
+  brandDeep: "#4419C4",
   brandTint: "#F1ECFF",
-  brandTint2: "#DDD2FF",
+  brandTint2: "#DCD1FC",
   lime: "#C6FF34",
   bad: "#B3261E",
-  badTint: "#FCECEC",
-  warn: "#B77B08",
+  badTint: "#FCEBEA",
+  warn: "#D9930D",
   warnInk: "#8A5C05",
-  warnTint: "#FDF6E7",
-  warnLine: "#F9E9C4",
+  warnTint: "#FDF3DC",
+  warnLine: "#F3DFA8",
   good: "#1D7A45",
-  goodTint: "#E9F5EE",
+  goodTint: "#E7F4EC",
   blue: "#2B5CBF",
   blueTint: "#EDF2FC",
+  /** The v4 hover wash, a step off the canvas. */
+  hover: "#F1F4F9",
 } as const;
 
 export const PILL: Record<string, [string, string]> = {
@@ -45,11 +51,10 @@ export const PILL: Record<string, [string, string]> = {
 
 export const EASE = "cubic-bezier(0.2,0,0.2,1)";
 
+/** A small label. Sentence case in v4 — it reads as words, not as a code. */
 export const upper: React.CSSProperties = {
-  fontSize: "11px",
-  fontWeight: 500,
-  textTransform: "uppercase",
-  letterSpacing: "0.04em",
+  fontSize: "12px",
+  fontWeight: 600,
   color: C.muted,
 };
 
@@ -158,13 +163,14 @@ export function DesignStyles() {
     <>
       <style>{`
 .fcc-root, .fcc-root *{box-sizing:border-box}
-.fcc-root{font-family:var(--font-google-sans),system-ui,-apple-system,"Segoe UI",sans-serif;font-size:14px;line-height:20px;color:#3D4453;background:#F7F8FA;-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums lining-nums}
+.fcc-root{font-family:var(--font-geist),system-ui,-apple-system,"Segoe UI",sans-serif;font-size:14px;line-height:20px;color:#33415C;background:#EDF1F7;-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums lining-nums}
 .fcc-root button,.fcc-root input,.fcc-root select,.fcc-root textarea{font:inherit;color:inherit;font-variant-numeric:inherit}
 .fcc-root a{color:#6835FB;text-decoration:none}
 .fcc-root a:hover{color:#5223E0;text-decoration:underline}
 .fcc-root :focus-visible{outline:2px solid #6835FB;outline-offset:2px}
 .fcc-root ::-webkit-scrollbar{width:10px;height:10px}
-.fcc-root ::-webkit-scrollbar-thumb{background:#DDE1E8;border-radius:5px}
+.fcc-root ::-webkit-scrollbar-thumb{background:#D3DBE7;border-radius:5px}
+.fcc-root ::selection{background:#DCD1FC}
 @keyframes fd-fade{from{opacity:0}to{opacity:1}}
 @keyframes fd-drawer{from{transform:translateX(24px);opacity:0}to{transform:translateX(0);opacity:1}}
 @keyframes fd-pulse{0%{opacity:1}50%{opacity:0.35}100%{opacity:1}}
