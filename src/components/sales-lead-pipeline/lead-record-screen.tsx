@@ -116,7 +116,6 @@ export function LeadRecordScreen({ initialTab, timeline }: { initialTab?: string
           <ProtoRecordHeader
             lead={lead}
             canWork={canWork}
-            editHref={links.record(lead.id)}
             onReassign={() => openModal("reassign", lead.id)}
             onLost={() => openModal("lost", lead.id)}
           />

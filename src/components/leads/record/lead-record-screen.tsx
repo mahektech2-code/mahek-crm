@@ -740,7 +740,7 @@ export function LeadRecordScreen({
                 viaSalesManager={canReassignSalesman}
               />
               <ActivityMenuItems customerId={record.customerId} leadName={record.name} canWork={canWork} />
-              {canEditBasics ? <EditDetails href={`/crm/leads/sales-manager/${record.customerId}/edit`} /> : null}
+              {canEditBasics ? <EditDetails customerId={record.customerId} /> : null}
               {/* §2 — not on a distributor (`MigrateDistributor` is that path)
                   and not on a closed lead, which has no ladder left to climb. */}
               {distributor || closed ? null : (

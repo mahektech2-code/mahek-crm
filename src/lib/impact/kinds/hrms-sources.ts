@@ -5,6 +5,8 @@ import type { ImpactSource } from "../registry";
    key is the `impact.kind` a screen names and the act passes to
    `confirmImpact`. */
 export const HRMS_SOURCES: Record<string, () => Promise<ImpactSource>> = {
+  /* HRMS → Pick lists: one value removed (the id is `impactPart(list, value)` — the prompt picks the value). */
+  "hrms-pick-list-value": () => import("./hrms-ref-lists").then((m) => m.pickListValueImpact),
   /* Hire → Blueprints: an unpublished draft deleted. */
   "hire-blueprint-draft": () => import("./hire-blueprints").then((m) => m.hireBlueprintDraftImpact),
 
@@ -37,4 +39,5 @@ export const HRMS_SOURCES: Record<string, () => Promise<ImpactSource>> = {
 
   /* Hire → a candidate's application withdrawn. */
   "hire-withdraw": () => import("./hire").then((m) => m.hireWithdrawImpact),
+  "hire-offer-withdraw": () => import("./hire").then((m) => m.hireOfferWithdrawImpact),
 };

@@ -223,3 +223,79 @@ export const partyDeactivateImpact: ImpactSource = {
     };
   },
 };
+
+/* ============================================================== a godown */
+
+/**
+ * Retiring a godown takes it off every picker — new orders, inward, transfers,
+ * somebody's working location — and moves nothing already there. It used to
+ * be one click with no word at all; this names who works there and what is
+ * still meant to leave it.
+ */
+export const godownRetireImpact: ImpactSource = {
+  authorize: async () => {
+    await erpMayDelete(["godowns"], (ctx) => (ctx.powers.has("employeeAdmin") ? null : "Only an ERP administrator changes a godown's status."));
+  },
+
+  async report(id) {
+    const [g] = await db.execute<{ name: string; status: string; reserved: boolean; staff: number; working: number; open: number }>(sql`
+      select g.name, g.status, g.reserved,
+             (select count(*)::int from erp_godown_staff s where s.godown_id = g.id) as staff,
+             (select count(*)::int from erp_user_settings u where u.working_godown_id = g.id) as working,
+             (select count(*)::int from erp_orders o where o.godown_id = g.id and o.status <> 'Cancel'
+                 and not exists (select 1 from erp_order_details d where d.order_id = o.id and d.verification = 'Verified')) as open
+        from erp_godowns g
+       where g.id = ${id}`);
+    if (!g) return null;
+    const [staff, orders] = await Promise.all([
+      Number(g.staff)
+        ? db.execute<{ name: string }>(sql`select u.name from erp_godown_staff s join users u on u.id = s.user_id where s.godown_id = ${id} order by u.name limit 5`)
+        : Promise.resolve([]),
+      Number(g.open)
+        ? db.execute<{ no: string }>(sql`
+            select o.order_no::text as no from erp_orders o where o.godown_id = ${id} and o.status <> 'Cancel'
+               and not exists (select 1 from erp_order_details d where d.order_id = o.id and d.verification = 'Verified')
+             order by o.order_no desc limit 5`)
+        : Promise.resolve([]),
+    ]);
+
+    return {
+      title: g.name,
+      verb: "Retire",
+      confirmWord: word(g.name, "retire"),
+      items: present([
+        {
+          app: "ERP",
+          label: "godown stops being offered on new orders, inward, transfers and working locations",
+          effect: "changed",
+          count: g.status === "active" ? 1 : 0,
+          note: "Restore brings it back.",
+        },
+        {
+          app: "ERP",
+          label: `open ${many(Number(g.open), "order")} set to leave from it`,
+          effect: "kept",
+          count: Number(g.open),
+          examples: orders.map((o) => `Order ${o.no}`),
+          note: "They are dispatched from it as they are. Move them to another godown first if it is closing.",
+        },
+        {
+          app: "ERP",
+          label: `${many(Number(g.staff), "employee")} assigned to it`,
+          effect: "kept",
+          count: Number(g.staff),
+          examples: staff.map((s) => s.name),
+        },
+        {
+          app: "ERP",
+          label: `${many(Number(g.working), "person", "people")} working from it`,
+          effect: "kept",
+          count: Number(g.working),
+          note: "Their working location stays set to it until they pick another.",
+        },
+        { app: "ERP", label: "stock held in it", effect: "kept", count: 1, note: "It stays on the books and can still be used and moved out." },
+      ]),
+      blockers: g.reserved ? ["This godown is built in and cannot be retired."] : [],
+    };
+  },
+};

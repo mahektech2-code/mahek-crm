@@ -413,3 +413,33 @@ describe("people", () => {
     assert.ok((await mod("assignments").actions!.delete(ctx, asg, yes(a))).ok);
   });
 });
+
+describe("pick lists", () => {
+  test("removing a value names the employees who carry it, who keep it; only an HRMS admin may", async () => {
+    const ctx = await asAdmin();
+    const [before] = (await db.execute(sql`select values from hrms_ref_lists where list = 'Position types'`)) as unknown as { values: string[] }[];
+    await db.execute(sql`update hrms_ref_lists set values = ${JSON.stringify([...new Set([...(before?.values ?? []), "Sales"])])}::jsonb where list = 'Position types'`);
+    const part = JSON.stringify(["Position types", "Sales"]);
+    const r = await report("hrms-pick-list-value", part);
+    const carrying = (await db.select().from(employees).where(eq(employees.department, "Sales"))).length;
+    assert.ok(carrying >= 2);
+    assert.equal(item(r, "HRMS", "kept")?.count, carrying, items(r));
+    assert.match(item(r, "HRMS", "kept")?.label ?? "", /position type/);
+    assert.equal(item(r, "HRMS", "changed")?.count, 1);
+
+    assert.equal((await mod("refLists").actions!.remove(ctx, "Position types", { v: "Sales" })).ok, false, "no confirmation, no removal");
+    setTestUser(ashaUser);
+    const peek = await impactReport("hrms-pick-list-value", part);
+    assert.equal(peek.ok ? "ok" : peek.code, "not_permitted");
+    const notAdmin = await mod("refLists").actions!.remove(await hrmsContext(), "Position types", { v: "Sales", ...yes(r) });
+    assert.equal(notAdmin.ok ? "ok" : notAdmin.code, "not_permitted");
+
+    const done = await mod("refLists").actions!.remove(await asAdmin(), "Position types", { v: "Sales", ...yes(r) });
+    assert.ok(done.ok, JSON.stringify(done));
+    const [after] = (await db.execute(sql`select values from hrms_ref_lists where list = 'Position types'`)) as unknown as { values: string[] }[];
+    assert.ok(!after.values.includes("Sales"));
+    assert.equal((await db.select().from(employees).where(eq(employees.department, "Sales"))).length, carrying, "the employees keep it");
+    assert.match((await report("hrms-pick-list-value", part)).blockers[0] ?? "", /no longer/);
+    await db.execute(sql`update hrms_ref_lists set values = ${JSON.stringify(before?.values ?? [])}::jsonb where list = 'Position types'`);
+  });
+});

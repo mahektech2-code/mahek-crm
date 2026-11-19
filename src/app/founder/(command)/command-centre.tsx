@@ -6,6 +6,8 @@ import {
   addNoteAction,
   askAction,
   clearMarkAction,
+  deleteNoteAction,
+  editNoteAction,
   figureAction,
   handOnAction,
   optionsAction,
@@ -625,6 +627,41 @@ export function CommandCentre({ section, shell, canAct, switcherApps, company, p
                   return r;
                 },
               );
+            }}
+            editNote={(n) => {
+              openForm(
+                {
+                  title: "Edit your note",
+                  sub: rec.data!.title,
+                  submit: "Save note",
+                  init: { n: n.text },
+                  fields: [{ k: "n", label: "Note", type: "area", req: true }],
+                },
+                async (v) => {
+                  const r = await editNoteAction(n.id, v.n ?? "");
+                  if (r.ok) {
+                    notify(`Note updated on ${rec.data!.title}`);
+                    void openRecord(rec.ref.section, rec.ref.table, rec.ref.id, rec.ref.subject);
+                  }
+                  return r;
+                },
+              );
+            }}
+            deleteNote={(n) => {
+              setConfirm({
+                title: "Delete your note?",
+                body: `“${n.text.length > 140 ? `${n.text.slice(0, 140)}…` : n.text}” comes off ${rec.data!.title}'s timeline. The audit log keeps that it was written and deleted.`,
+                label: "Delete note",
+                danger: true,
+                run: () => {
+                  void deleteNoteAction(n.id).then((r) => {
+                    setConfirm(null);
+                    if (!r.ok) return notify(r.error);
+                    notify("Note deleted");
+                    void openRecord(rec.ref.section, rec.ref.table, rec.ref.id, rec.ref.subject);
+                  });
+                },
+              });
             }}
             runAct={(a) => {
               const ref = rec.ref;
@@ -1586,12 +1623,17 @@ function RecordDrawer({
   rec,
   close,
   addNote,
+  editNote,
+  deleteNote,
   runAct,
   open,
 }: {
   rec: { loading: boolean; data: RecordView | null; error?: string; ref: { subject: string } };
   close: () => void;
   addNote: () => void;
+  /** One's own note only — the server refuses anybody else's. */
+  editNote: (n: { id: string; text: string }) => void;
+  deleteNote: (n: { id: string; text: string }) => void;
   runAct: (a: ActSpec) => void;
   open: (url: string) => void;
 }) {
@@ -1636,6 +1678,22 @@ function RecordDrawer({
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <span style={{ display: "block", fontSize: 14, color: C.ink }}>{e.what}</span>
                   <span style={{ display: "block", fontSize: 12, color: C.muted }}>{e.when}</span>
+                  {e.note?.mine ? (
+                    <span style={{ display: "flex", gap: 12, marginTop: 4 }}>
+                      <button
+                        onClick={() => editNote({ id: e.note!.id, text: e.what })}
+                        style={{ border: "none", background: "none", padding: 0, fontSize: 12, fontWeight: 500, color: C.brand, cursor: "pointer" }}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => deleteNote({ id: e.note!.id, text: e.what })}
+                        style={{ border: "none", background: "none", padding: 0, fontSize: 12, fontWeight: 500, color: C.bad, cursor: "pointer" }}
+                      >
+                        Delete
+                      </button>
+                    </span>
+                  ) : null}
                 </span>
               </div>
             ))}

@@ -5,6 +5,7 @@ import { attachments, hrmsAttendance, hrmsGrievances, hrmsHelp, hrmsNotification
 import { submitFeedback } from "@/lib/actions/feedback";
 import { bindAttachments } from "@/lib/services/attachment-service";
 import type { ActionSpec, Contact, FormSpec, ListRow, RowField } from "@/lib/erp/ui";
+import { impactPart } from "@/lib/erp/ui";
 import { has, resolvesHelpFor, type HrmsContext, type Scope } from "../access";
 import { err, fieldErr, first, hrmsAudit, hrmsId, inTx, nextSeries, now, okVoid, stampLine, text, today, type HrmsScreenModule, type ScreenQuery } from "../server";
 import { allPeople, byId, isActive, isSales, offices, type Person } from "../services/people";
@@ -922,10 +923,12 @@ const refLists: HrmsScreenModule = {
               why: why ?? (r.values.length ? undefined : "The list is empty"),
               prompt: {
                 title: `Remove from ${r.list}`,
-                sub: "Old records keep the value they were saved with.",
-                submit: "Remove value",
+                sub: "Old records keep the value they were saved with. The next step lists them.",
+                submit: "Next",
                 fields: [{ k: "v", l: "Value", t: "select", req: true, opts: r.values }],
               },
+              /* The report is about the value the prompt picked. */
+              impact: { kind: "hrms-pick-list-value", id: r.list, withValue: "v" },
             },
           ],
           by: r.updatedById ? `Last changed by ${setBy.get(r.updatedById) ?? "someone"} · ${when(r.updatedAt)}` : undefined,
@@ -951,6 +954,9 @@ const refLists: HrmsScreenModule = {
       const [r] = await db.select().from(hrmsRefLists).where(eq(hrmsRefLists.list, list));
       if (!r) return err("That list no longer exists.", "not_found");
       if (!value || !r.values.includes(value)) return fieldErr("v", `Choose a value from ${list}`);
+      /* The person saw which records carry it — they keep it — before it leaves the forms. */
+      const refusal = await confirmImpact("hrms-pick-list-value", impactPart(list, value), readConfirmation(v));
+      if (refusal) return refusal;
       await db.update(hrmsRefLists).set({ values: r.values.filter((x) => x !== value), updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(hrmsRefLists.list, list));
       await hrmsAudit(ctx, "hrms.refList.remove", "hrms_ref_lists", list, { value }, null);
       return okVoid(`Removed “${value}” from ${list}`);

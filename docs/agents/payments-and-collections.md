@@ -313,3 +313,24 @@ order, and an erratic one earlier, because the honest answer to a guess is a
 wider net. Fifty is neutral, so a swing of zero is exactly the old flat
 behaviour. It moves the day and never creates a call the cycle length says
 should not exist — a short cycle still gets no stock check.
+
+**A claim nobody has decided can be CORRECTED, not only rejected.**
+`correctReceipt` fixes the amount, the received date, the mode, the reference,
+the cheque date and the note of a `reported` or `held` receipt, with a required
+reason kept in the audit log (`payment.corrected`). Accounts (`payment.confirm`)
+may on either status; the person who recorded it may only while it is still
+`reported` — once Accounts hold it they are the ones looking. A `confirmed`
+receipt is never corrected: it has counted, so it is reversed from the statement
+and recorded again. Nothing that counts moves, because every money path keys on
+`confirmed`. A new amount is filled into the SAME bills the claim named, in
+order, each up to what it owes, and the rest goes on account (or is refused
+where `payments.allowOnAccountRemainder` refuses it) — "settle these bills"
+would refuse a smaller figure outright, which is the usual correction. Before
+this, a mistyped figure had to be rejected ("never arrived") and recorded again,
+which tells the customer's statement something untrue. It is the Correct button
+in the Accounts review drawer, and in the CRM customer record's Ledger tab for
+the person who recorded it: `/api/customer-statement` returns `mine`, their own
+`reported` claims for that customer (`myReportedReceipts`, read after the
+statement so scope has answered), and the tab lists them above the statement
+with Correct, which opens the same `CorrectReceiptDialog`. Held claims are not
+listed there — they are Accounts' by then.

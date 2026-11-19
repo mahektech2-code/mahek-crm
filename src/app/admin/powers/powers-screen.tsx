@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Callout, Card, Checkbox, EmptyState, Field, Input, Select, Textarea, cx } from "@/components/ui/primitives";
-import { FilterPills, Modal } from "@/components/ui/overlays";
+import { ConfirmDialog, FilterPills, Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { ADMIN } from "@/lib/admin-routes";
 import { getModule } from "@/lib/modules";
@@ -354,6 +354,7 @@ function TemplatesTab({ templates, people, onDone }: { templates: TemplateRow[];
   const [creating, setCreating] = React.useState(false);
   const [editing, setEditing] = React.useState<TemplateRow | null>(null);
   const [applying, setApplying] = React.useState<TemplateRow | null>(null);
+  const [deleting, setDeleting] = React.useState<TemplateRow | null>(null);
 
   return (
     <>
@@ -391,10 +392,7 @@ function TemplatesTab({ templates, people, onDone }: { templates: TemplateRow[];
                   <Button
                     size="sm"
                     variant="danger"
-                    onClick={async () => {
-                      const r = await toast.run(deleteAccessTemplate(t.id));
-                      if (r.ok) router.refresh();
-                    }}
+                    onClick={() => setDeleting(t)}
                   >
                     Delete
                   </Button>
@@ -410,6 +408,21 @@ function TemplatesTab({ templates, people, onDone }: { templates: TemplateRow[];
       )}
       <NewTemplateModal key={creating ? "open" : "shut"} open={creating} people={people} onClose={() => setCreating(false)} />
       {editing ? <EditTemplateModal key={editing.id} t={editing} onClose={() => setEditing(null)} /> : null}
+      <ConfirmDialog
+        key={deleting?.id ?? "none"}
+        open={deleting !== null}
+        title={deleting ? `Delete the template “${deleting.name}”?` : ""}
+        body="Nobody's access changes — applying a template stamps it, it does not stay linked. You just can't stamp this one onto anybody new."
+        confirmLabel="Delete template"
+        cancelLabel="Keep it"
+        destructive
+        onConfirm={async () => {
+          if (!deleting) return;
+          const r = await toast.run(deleteAccessTemplate(deleting.id));
+          if (r.ok) router.refresh();
+        }}
+        onClose={() => setDeleting(null)}
+      />
       {applying ? (
         <PeoplePicker
           key={`apply-${applying.id}`}
