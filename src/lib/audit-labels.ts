@@ -481,6 +481,8 @@ const DESCRIBE: Record<string, Describer> = {
   "erp.purchaseOrder.share": () => ["shared a purchase order"],
   "erp.floorCheck.review": () => ["reviewed a stock check that did not match the book"],
   "erp.floorCheck.escalate": () => ["raised a stock check mismatch into a formal count"],
+  "erp.floorCheck.edit": () => ["corrected a stock check before it was reviewed"],
+  "erp.floorCheck.delete": () => ["deleted a stock check before it was reviewed"],
   /* ---- empty drums, scrap sale and scrap receipts */
   "erp.rawMaterial.photos": () => ["changed a can's photos"],
   "erp.quotes.edit": () => ["edited the quotation sheet"],
@@ -496,6 +498,7 @@ const DESCRIBE: Record<string, Describer> = {
   "erp.drum.adjust.request": () => ["asked for a drum correction"],
   "erp.drum.adjust.approve": () => ["approved a drum correction"],
   "erp.drum.adjust.reject": () => ["rejected a drum correction"],
+  "erp.drum.adjust.withdraw": () => ["withdrew their own drum correction"],
   "erp.drum.return": () => ["returned empty drums to their supplier"],
   "erp.drum.return.cancel": () => ["cancelled a returnable drum outward"],
   "erp.drum.return.edit": () => ["corrected a returnable drum outward"],

@@ -490,6 +490,24 @@ export async function decideDrumAdjustment(actor: Actor, id: string, approve: bo
   return r;
 }
 
+/**
+ * The person who asked takes their own correction back while nobody has
+ * decided it — asked for the wrong supplier or count. It is kept, marked
+ * withdrawn, so the list still shows it was asked.
+ */
+export async function withdrawDrumAdjustment(actor: Actor, id: string, note: string): Promise<Result> {
+  const r = await inTx(async (tx) => {
+    const [adj] = await tx.select().from(erpDrumAdjustments).where(eq(erpDrumAdjustments.id, id)).for("update");
+    if (!adj) return err("That request is gone.", "not_found");
+    if (adj.requestedById !== actor.id) return err("Only the person who asked withdraws a correction.", "not_permitted");
+    if (adj.status !== "pending") return err("This request is already decided.", "conflict");
+    await tx.update(erpDrumAdjustments).set({ status: "withdrawn", decidedById: actor.id, decidedAt: new Date(), decisionNote: note.trim() || "Withdrawn by the person who asked" }).where(eq(erpDrumAdjustments.id, id));
+    return okVoid("Withdrawn");
+  });
+  if (r.ok) await audit(actor, "erp.drum.adjust.withdraw", "erp_drum_adjustment", id, { note });
+  return r;
+}
+
 /* ============================================================ stock */
 
 export type ScrapStock = { category: string; unit: string; godownId: string | null; available: number };

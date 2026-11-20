@@ -411,6 +411,8 @@ async function txnListRows(ctx: ErpContext, rows: TxnRow[]): Promise<ListRow[]> 
         /* The reason, then every balance it stops counting in. */
         impact: { kind: "erp-money-txn", id: t.id },
       });
+    /* An advance's own lines are corrected or cancelled on Advances, where its bills and balance are — never a dead end here. */
+    if (t.advanceId) actions.push({ id: "openAdvance", l: "Open in Advances", primary: !actions.length, href: erpLink("advances", { open: t.advanceId }) });
     const figures: MoneyPanel["figures"] = [{ l: MONEY_KIND_LABEL[t.kind], v: inr(t.amountPaise), tone: t.kind === "receipt" ? "success" : undefined }];
     if (t.fromKind === "bank" || t.toKind === "bank") figures.push({ l: "Bank matched", v: inr(t.matchedPaise), tone: t.matchedPaise >= t.amountPaise ? "success" : "danger" });
     if (t.kind === "receipt" || (t.kind === "transfer" && t.toKind === "cash")) figures.push({ l: "Still unused", v: inr(t.amountPaise - t.usedPaise), tone: t.amountPaise - t.usedPaise > 0 ? undefined : "success" });

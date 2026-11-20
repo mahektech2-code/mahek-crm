@@ -215,6 +215,7 @@ export type FloorCheckRow = FloorCheckResult & {
   itemId: string;
   bin: string | null;
   source: string;
+  counterId: string;
   counter: string;
   countedAt: Date;
   reviewer: string | null;
@@ -229,7 +230,7 @@ export async function floorCheckRows(where = sql`true`, limit = 500): Promise<Fl
   const rows = (await db.execute(sql`
     select f.id, f.stage, f.item_id as "itemId", f.item_name as item, f.godown_id as "godownId", g.name as godown, f.unit,
            f.counted_qty::float8 as counted, (f.book_qty + f.pending_in)::float8 as book, f.difference::float8 as difference,
-           f.tolerance::float8 as tolerance, f.matched, f.reason, f.bin, f.source, uc.name as counter, f.counted_at as "countedAt",
+           f.tolerance::float8 as tolerance, f.matched, f.reason, f.bin, f.source, f.counted_by_id as "counterId", uc.name as counter, f.counted_at as "countedAt",
            ur.name as reviewer, f.reviewed_at as "reviewedAt", f.review_note as "reviewNote",
            f.stock_count_id as "stockCountId", sc.count_no as "stockCountNo"
       from erp_floor_checks f

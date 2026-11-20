@@ -884,6 +884,7 @@ const fgFill: ScreenModule = {
           packingRatePaise: x.packPrice ?? null,
         });
         const actions: ActionSpec[] = [
+          { id: "edit", l: "Edit", loadsForm: true },
           { id: "more", l: "Add another", loadsForm: true },
           { id: "select", l: "Show the whole fill", href: `?f=${encodeURIComponent(fillsOf.get(x.f.fgNum)!.join(","))}&fl=${encodeURIComponent(`FG ${x.f.fgNum}`)}` },
           { id: "trace", l: "Trace this lot", href: erpTraceHref(x.f.lotCode) },
@@ -926,6 +927,7 @@ const fgFill: ScreenModule = {
     };
   },
   formLoaders: {
+    edit: fillEditForm,
     async more(ctx, id) {
       const [f] = await db.select({ f: erpFgFills, godown: erpGodowns.name }).from(erpFgFills).innerJoin(erpGodowns, eq(erpGodowns.id, erpFgFills.godownId)).where(eq(erpFgFills.id, id));
       return f ? fillForm(ctx, { fgNum: f.f.fgNum, date: f.f.fillDate, godown: f.godown }) : null;
@@ -934,6 +936,7 @@ const fgFill: ScreenModule = {
   forms: {
     new: (ctx, h) => saveFill(ctx, h),
     more: (ctx, h) => saveFill(ctx, h),
+    edit: (ctx, h, _l, id) => (id ? editFill(ctx, id, h) : Promise.resolve(err("No filling named.", "not_found"))),
   },
   actions: {
     async post(ctx, id) {
@@ -987,6 +990,73 @@ const fgFill: ScreenModule = {
     },
   },
 };
+
+/**
+ * EDIT A FILLING: the cans filled and the cans lost. The lot, the products,
+ * the size and the packing are what the lot code and the stock it drew mean,
+ * so they stay; a filling of the wrong thing is deleted (an administrator)
+ * and filled again. More cans need the SFG and the empty cans to be there;
+ * fewer need the FG cans not to have been packed or moved on.
+ */
+async function fillEditForm(ctx: ErpContext, id: string): Promise<FormSpec | null> {
+  const [x] = await db
+    .select({ f: erpFgFills, fg: finishedGoods.name, godown: erpGodowns.name, canUse: erpRawMaterials.name })
+    .from(erpFgFills)
+    .innerJoin(finishedGoods, eq(finishedGoods.id, erpFgFills.finishedGoodId))
+    .innerJoin(erpGodowns, eq(erpGodowns.id, erpFgFills.godownId))
+    .leftJoin(erpRawMaterials, eq(erpRawMaterials.id, erpFgFills.canUseId))
+    .where(eq(erpFgFills.id, id));
+  if (!x) return null;
+  return {
+    screen: "fgFill",
+    id: "edit",
+    recordId: id,
+    title: `Edit filling · ${x.fg} · ${x.f.lotCode}`,
+    sub: `${nf(x.f.canSize)} L ${x.canUse ?? "Naket"} from SFG ${x.f.sfgLotCode} at ${x.godown}. The lot, product, size and packing are fixed; to change them, delete the filling and fill again.`,
+    submit: "Save filling",
+    init: { cans: String(x.f.cans), adjusted: String(x.f.canAdjusted) },
+    header: [
+      { k: "cans", l: "Cans or drums filled", t: "num", qtyUnit: { base: "cans" }, req: true, min: 1 },
+      { k: "adjusted", l: "Cans adjusted (lost)", t: "num", qtyUnit: { base: "cans" }, min: 0 },
+    ],
+  };
+}
+
+export async function editFill(ctx: ErpContext, id: string, h: Record<string, string>): Promise<Result<unknown>> {
+  const cans = int(h.cans);
+  const adjusted = int(h.adjusted) ?? 0;
+  if (cans == null || cans <= 0) return fieldErr("cans", "Cans must be above 0.");
+  if (adjusted < 0 || adjusted > cans) return fieldErr("adjusted", "Cans adjusted must be between 0 and the cans filled");
+  return inTx(async (tx) => {
+    const [before] = await tx.select().from(erpFgFills).where(eq(erpFgFills.id, id));
+    if (!before) return refuse(err("That filling no longer exists.", "not_found"));
+    if (cans === before.cans && adjusted === before.canAdjusted) return refuse(err("Nothing changed.", "validation"));
+    await lockLot(tx, "sfg", before.sfgLotCode, before.godownId);
+    await lockLot(tx, "fg", before.lotCode, before.godownId);
+    const more = cans - before.cans;
+    if (more > 0) {
+      /* The SFG and the empty cans this filling already drew are its own: only the extra is asked of the stock. */
+      const sfgNow = await sfgLotStock(before.sfgLotCode, before.godownId, tx);
+      if (before.canSize * more > sfgNow + 1e-9) return refuse(fieldErr("cans", `There is not enough SFG in lot ${before.sfgLotCode} for ${nf(more)} more cans.`));
+      if (before.canUseId && before.packingType !== "Naket") {
+        await lockLot(tx, "packing", before.canUseId, before.packingType === "Drum" ? "all" : before.godownId);
+        const level = await rmLevelAvailable(await rmLots(tx));
+        const [m] = await tx.select({ type: erpRawMaterials.materialType }).from(erpRawMaterials).where(eq(erpRawMaterials.id, before.canUseId));
+        if (more > level(m?.type ?? before.packingType, before.canUseId, before.godownId) + 1e-9) return refuse(fieldErr("cans", "Not enough empty cans of this packing are in stock for the extra cans."));
+      }
+    }
+    const netDrop = before.cans - before.canAdjusted - (cans - adjusted);
+    /* A filling not yet posted has put nothing in FG stock, so there is nothing of it to have moved on. */
+    const [posted] = await tx.select({ id: erpFgEntries.id }).from(erpFgEntries).where(and(eq(erpFgEntries.sourceType, "fill"), eq(erpFgEntries.sourceId, id)));
+    const fgNow = await fgLotStock(before.finishedGoodId, before.lotCode, before.godownId, tx);
+    if (posted && netDrop > 0 && fgNow - netDrop < -1e-9) return refuse(fieldErr("cans", "Those cans have already been packed or moved on; the filling cannot shrink below what was used."));
+    const [after] = await tx.update(erpFgFills).set({ cans, canAdjusted: adjusted, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpFgFills.id, id)).returning();
+    await syncFgEntry(tx, after);
+    if (posted && netDrop > 0) await trimLooseUnits(tx, { lotCode: before.lotCode, finishedGoodId: before.finishedGoodId, godownId: before.godownId, ledgerStock: fgNow - netDrop, byId: ctx.user.id, why: "Filling edited" });
+    await erpAudit(ctx, "erp.fg.edit", "erp_fg_fill", id, { cans: before.cans, canAdjusted: before.canAdjusted }, { cans, canAdjusted: adjusted });
+    return okVoid(`Filling saved · ${nf(cans - adjusted)} cans in stock`);
+  });
+}
 
 async function saveFill(ctx: ErpContext, h: Record<string, string>): Promise<Result<unknown>> {
   const godownId = await godownIdByName(text(h.godown));

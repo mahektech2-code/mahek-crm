@@ -67,3 +67,7 @@ approved by another holding `scrapApprove`, an ERP administrator excepted.
 Weight corrections, cancelled entries, cancelled sales (only with nothing
 matched) and cancelled outwards need `scrapApprove` and a reason, and keep the
 original in the drum's history.
+
+A pending correction is WITHDRAWN by whoever asked for it
+(`withdrawDrumAdjustment`, status `withdrawn` since 0367): kept on the list,
+nothing about the drums moves, and it can no longer be approved.
