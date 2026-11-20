@@ -146,3 +146,15 @@ scope. Each interviewer (not the person withdrawing) gets a bell. Answers
 already recorded stay, and scoring a skipped run is refused. An offer still
 stays as it stands. The `hire-withdraw` impact says "booked interviews
 cancelled" (it said "stays" before).
+
+**A booking is moved or cancelled from the Interviews list too.** Each human
+interview row carries a ⋯ menu (`interviews/interview-menu.tsx`) for anybody
+holding `addCandidate`: Reschedule opens the Calendar's own `Booker`
+(`framed={false}`, `current` = the booking as it stands) and Cancel opens the
+Calendar's own `CancelDialog`. Nothing new on the server — booking the stage
+again moves its execution (`bookInterview` records `rescheduled`), and
+`cancelInterview` is the Calendar's action. A row that is not booked shows both
+items disabled with the reason. `InterviewRow` carries the minutes, place,
+interviewer id, location, and whether the candidate has an email or is
+do-not-contact, so the two dialogs open without another read.
+

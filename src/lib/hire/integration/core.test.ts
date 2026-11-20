@@ -15,7 +15,8 @@ import { desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appAccess, hireApplications, hireAudit, hireBlueprints, hireDecisions, hireMessages, hireOffers, hireStageExecutions, hireUserRoles, notifications, users } from "@/db/schema";
 import { deleteDraftBlueprint } from "@/lib/hire/services/blueprints";
-import { cancelBooking } from "@/lib/hire/services/schedule";
+import { bookInterview, cancelBooking } from "@/lib/hire/services/schedule";
+import { listHumanInterviews } from "@/lib/hire/services/interview";
 import { currentOffer, recordResponse, withdrawOffer } from "@/lib/hire/services/offers";
 import { setTestUser } from "@/lib/auth";
 import { HireNotPermitted, hireContext, requireHireCap, type HireContext } from "@/lib/hire/access";
@@ -341,5 +342,33 @@ describe("Hire core", () => {
 
     const again = await cancelBooking(ctx, b, execId, { reason: "Interviewer is travelling that day", tell: "none", message: "" });
     assert.equal(again.ok ? "ok" : again.code, "rule_violation");
+  });
+
+  test("the Interviews list carries a booking as it stands, and Reschedule moves it: one booking, the trail says rescheduled", async () => {
+    const ctx = await as(recruiter);
+    const r = await createApplication(ctx, { fullName: "Meera Joshi", phone: "98200 77453", blueprintId: SE, consent: true, location: "Pune" });
+    assert.ok(r.ok, !r.ok ? r.error : "");
+    const appId = r.data.applicationId;
+    /* Straight to the first human interview: gating is tested above. */
+    await db.update(hireApplications).set({ stageKey: "l1" }).where(eq(hireApplications.id, appId));
+    const first = new Date(Date.now() + 3 * 86_400_000);
+    const b = (await getApplication(ctx, appId))!;
+    const booked = await bookInterview(ctx, b, { interviewerId: interviewer.id, startIso: first.toISOString(), minutes: 60, place: "Pune office", modality: "in_person" });
+    assert.ok(booked.ok, booked.ok ? "" : booked.error);
+    const row = (await listHumanInterviews(ctx)).find((x) => x.applicationId === appId)!;
+    assert.equal(row.status, "scheduled");
+    assert.deepEqual([row.minutes, row.place, row.interviewerId, row.hasEmail, row.doNotContact], [60, "Pune office", interviewer.id, false, false]);
+
+    const moved = new Date(first.getTime() + 86_400_000);
+    const again = await bookInterview(ctx, (await getApplication(ctx, appId))!, { interviewerId: interviewer.id, startIso: moved.toISOString(), minutes: 45, place: "Video link", modality: "video" });
+    assert.ok(again.ok, again.ok ? "" : again.error);
+    const runs = await db.select().from(hireStageExecutions).where(eq(hireStageExecutions.applicationId, appId));
+    assert.equal(runs.filter((x) => x.status === "scheduled").length, 1, "moved, not doubled");
+    assert.equal(runs.find((x) => x.status === "scheduled")?.scheduledAt?.getTime(), moved.getTime());
+    const [trail] = await db.select().from(hireAudit).where(eq(hireAudit.entityId, row.execId)).orderBy(desc(hireAudit.at)).limit(1);
+    assert.equal(trail.eventType, "rescheduled");
+
+    await as(interviewer);
+    await assert.rejects(requireHireCap("addCandidate"), HireNotPermitted, "an interviewer is not offered, and cannot run, Reschedule");
   });
 });
