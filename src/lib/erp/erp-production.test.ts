@@ -50,7 +50,7 @@ import { testPhone } from "@/lib/test-phone";
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const TODAY = "2026-09-20";
 
-async function makeUser(name: string, level: "associate" | "admin") {
+async function makeUser(name: string, level: "associate" | "manager" | "admin") {
   const [u] = await db
     .insert(users)
     .values({
@@ -566,6 +566,20 @@ describe("a production delete says what moves first, and takes its own stock wit
     assert.equal(item(fgLevel.report, "deleted", /Re-order finished goods/)?.count, 1);
     assert.equal((await mod("fgLevels").actions!.delete(ctx, boxed.id, {})).ok, false);
     assert.ok((await mod("fgLevels").actions!.delete(ctx, boxed.id, fgLevel.values)).ok);
+  });
+
+  test("an ERP manager — the Production Head — may delete a wrong production entry, a clerk may not", async () => {
+    const head = await makeUser("Ankit Head", "manager");
+    const ctx = await as(head);
+    const [line] = await db.select().from(erpSfgLines).limit(1);
+    const row = (await mod("sfgBatches").load(ctx)).rows.find((x) => x.id === line.id);
+    const del = row?.actions?.find((a) => a.id === "delete");
+    assert.ok(del, "the Delete action is on the row");
+    assert.equal(del?.why ?? "", "", "and not disabled for a manager");
+    const r = await impactReport("erp-sfg-line", line.id);
+    assert.ok(r.ok, r.ok ? "" : r.error);
+    await as(clerk);
+    assert.equal((await mod("sfgBatches").actions!.delete(await as(clerk), line.id, {})).ok, false, "a clerk is refused");
   });
 
   test("a clerk cannot read what an administrator's delete would touch", async () => {

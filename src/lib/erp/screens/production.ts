@@ -90,6 +90,16 @@ async function godownName(id: string): Promise<string> {
 
 type SfgRow = typeof erpSfgLines.$inferSelect;
 
+
+/**
+ * WHO DELETES A WRONG PRODUCTION ENTRY — an SFG batch line, a filling, a
+ * packing line. It was an administrator only, so the Production Head (an ERP
+ * manager who runs these screens) could not take back a line entered in
+ * error. Any ERP manager or administrator now may; the impact modal still
+ * refuses once the stock it made has moved on, which is the real guard.
+ */
+const mayDeleteProduction = (ctx: { administrator: boolean; level: string | null }) => ctx.administrator || ctx.level === "manager";
+
 /** Posts, or re-syncs, a batch line's SFG entry: its yield, under its lot code. */
 async function syncSfgEntry(tx: Ex, line: SfgRow) {
   const values = {
@@ -352,7 +362,7 @@ const sfgBatches: ScreenModule = {
           {
             id: "delete",
             l: "Delete",
-            why: ctx.administrator ? "" : "Only an administrator deletes a batch line",
+            why: mayDeleteProduction(ctx) ? "" : "Only an ERP manager or administrator deletes a batch line",
             /* Raw material back, SFG out, and what else the lot carries: the impact modal says so. */
             impact: { kind: "erp-sfg-line", id: x.l.id },
           },
@@ -524,7 +534,7 @@ const sfgBatches: ScreenModule = {
       return okVoid("Posted to SFG inventory");
     },
     async delete(ctx, id, values) {
-      if (!ctx.administrator) return err("Only an administrator deletes a posted batch line.", "not_permitted");
+      if (!mayDeleteProduction(ctx)) return err("Only an ERP manager or administrator deletes a posted batch line.", "not_permitted");
       const [before] = await db.select().from(erpSfgLines).where(eq(erpSfgLines.id, id));
       if (!before) return err("That line no longer exists.", "not_found");
       const refusal = await confirmImpact("erp-sfg-line", id, readConfirmation(values));
@@ -889,7 +899,7 @@ const fgFill: ScreenModule = {
           { id: "select", l: "Show the whole fill", href: `?f=${encodeURIComponent(fillsOf.get(x.f.fgNum)!.join(","))}&fl=${encodeURIComponent(`FG ${x.f.fgNum}`)}` },
           { id: "trace", l: "Trace this lot", href: erpTraceHref(x.f.lotCode) },
           { id: "adjust", l: "Edit cans adjusted", prompt: { title: "Cans adjusted", sub: `${x.fg} · ${x.f.lotCode}`, submit: "Save", fields: [{ k: "adjusted", l: "Cans lost or adjusted", t: "num", qtyUnit: { base: "cans" }, req: true, min: 0, max: x.f.cans }], init: { adjusted: String(x.f.canAdjusted) } } },
-          { id: "delete", l: "Delete", why: ctx.administrator ? "" : "Only an administrator deletes a filling", impact: { kind: "erp-fg-fill", id: x.f.id } },
+          { id: "delete", l: "Delete", why: mayDeleteProduction(ctx) ? "" : "Only an ERP manager or administrator deletes a filling", impact: { kind: "erp-fg-fill", id: x.f.id } },
         ];
         if (!posted.has(x.f.id)) actions.unshift({ id: "post", l: "Post to inventory", primary: true });
         return {
@@ -964,7 +974,7 @@ const fgFill: ScreenModule = {
       });
     },
     async delete(ctx, id, values) {
-      if (!ctx.administrator) return err("Only an administrator deletes a posted filling.", "not_permitted");
+      if (!mayDeleteProduction(ctx)) return err("Only an ERP manager or administrator deletes a posted filling.", "not_permitted");
       const [before] = await db.select().from(erpFgFills).where(eq(erpFgFills.id, id));
       if (!before) return err("That filling no longer exists.", "not_found");
       const refusal = await confirmImpact("erp-fg-fill", id, readConfirmation(values));
@@ -1464,7 +1474,7 @@ const packBatches: ScreenModule = {
         actions.push({
           id: "delete",
           l: "Delete",
-          why: ctx.administrator ? "" : "Only an administrator deletes a packing line",
+          why: mayDeleteProduction(ctx) ? "" : "Only an ERP manager or administrator deletes a packing line",
           impact: { kind: "erp-pack-line", id: x.l.id },
         });
         return {
@@ -1522,7 +1532,7 @@ const packBatches: ScreenModule = {
   },
   actions: {
     async delete(ctx, id, values) {
-      if (!ctx.administrator) return err("Only an administrator deletes a packing line.", "not_permitted");
+      if (!mayDeleteProduction(ctx)) return err("Only an ERP manager or administrator deletes a packing line.", "not_permitted");
       const [exists] = await db.select({ id: erpPackLines.id }).from(erpPackLines).where(eq(erpPackLines.id, id));
       if (!exists) return err("That line no longer exists.", "not_found");
       const refusal = await confirmImpact("erp-pack-line", id, readConfirmation(values));

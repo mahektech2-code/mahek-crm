@@ -772,3 +772,12 @@ note. The CRM still sees it as closed, with the note.
 cans lost. The lot, products, size and packing are fixed (they are what the
 lot code and the stock drawn mean); more cans need the SFG and empty cans, and
 fewer are refused once the FG cans were packed or moved on.
+
+**A WRONG PRODUCTION ENTRY IS DELETED BY AN ERP MANAGER, NOT ONLY AN ADMIN.**
+SFG batch lines, FG fillings and packing lines were deletable by an ERP
+administrator alone, so the Production Head (an ERP manager running those
+screens) could not take back a line entered in error. `mayDeleteProduction`
+(production.ts) and the matching impact sources (erp-production.ts) now allow
+any ERP manager or administrator; associates still cannot. The impact modal's
+blockers — stock the entry made has been packed, moved or used — remain the
+real guard (Nov 2026, owner).
