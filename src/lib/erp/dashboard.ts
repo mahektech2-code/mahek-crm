@@ -1,4 +1,5 @@
 import "server-only";
+import { returnableInUse } from "./drums";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { APP_TIMEZONE, calendarDate } from "@/lib/business-date";
@@ -460,10 +461,13 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
     if (has("emptyDrums") || has("drumReturns")) {
       const ret = drums.filter((d) => d.status === "returnable");
       const oldest = ret.map((d) => String(d.on)).sort()[0];
+      /* A supplier's drums still full are owed back too, only not yet. */
+      const inUse = (await returnableInUse()).reduce((n, l) => n + l.inUse, 0);
+      const inUseLine = inUse ? ` · ${nf(inUse)} still in use` : "";
       scrap.push({
         l: "Supplier-returnable drums pending",
         v: nf(ret.length),
-        sub: oldest ? `oldest waiting since ${fd(oldest)} · ${new Set(ret.map((d) => d.supplier)).size} supplier${new Set(ret.map((d) => d.supplier)).size === 1 ? "" : "s"}` : "nothing waiting",
+        sub: (oldest ? `oldest waiting since ${fd(oldest)} · ${new Set(ret.map((d) => d.supplier)).size} supplier${new Set(ret.map((d) => d.supplier)).size === 1 ? "" : "s"}` : "nothing empty yet") + inUseLine,
         tone: oldest && Date.parse(day) - Date.parse(oldest) > 60 * 86_400_000 ? "warn" : undefined,
         href: tileHref(has("drumReturns") ? "drumPending" : "drumReturnable", null, ""),
       });

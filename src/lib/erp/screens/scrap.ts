@@ -58,6 +58,7 @@ import {
   receiptRows,
   recordEmptyDrum,
   recordReceipt,
+  returnableInUse,
   recordScrapEntry,
   requestDrumAdjustment,
   returnDrums,
@@ -69,6 +70,7 @@ import {
   type Actor,
   type DrumHistoryLine,
   type DrumRow,
+  type InUseLot,
   type SaleRow,
 } from "../drums";
 
@@ -285,6 +287,43 @@ function drumRow(ctx: ErpContext, d: DrumRow, limits: { alertKg: number; alertPe
     by: stampLine(d.by, d.recordedAt),
     panel: { kind: "scrap", data: drumPanel(d, limits, hist.get(d.id) ?? []) },
   };
+}
+
+/* ------------------------------------------------------------ a supplier's drums still in use */
+
+/** What a drum still full says where a recorded drum says its status. */
+const IN_USE = "In use – not yet emptied";
+/** The age chip an in-use drum sits under: it has not started waiting yet. */
+const IN_USE_AGE = "Not yet emptied";
+
+/**
+ * One row per drum of a supplier's lot not yet recorded empty (`returnableInUse`).
+ * Read off the GRN, never stored, so its id is the lot and the place in it, and
+ * the one thing it offers is the entry that turns it into a recorded drum.
+ */
+function inUseRows(lots: InUseLot[], record?: (l: InUseLot) => ActionSpec): ListRow[] {
+  return lots.flatMap((l) =>
+    Array.from({ length: l.inUse }, (_, j): ListRow => {
+      const n = l.recorded + j + 1;
+      return {
+        id: `inuse:${l.purchaseId}:${n}`,
+        v: {
+          drum: `${n} of ${l.drums}`, material: l.material, supplier: l.supplier, lot: l.lotNo, kg: null, variance: null, emptied: null,
+          received: l.receivedOn, godown: l.godown, grn: `PR ${l.prNumber}`, by: null, ownership: OWNERSHIP_LABEL.returnable, status: IN_USE, age: IN_USE_AGE, f: null,
+        },
+        flags: ["drumInUse"],
+        title: `Drum ${n} of ${l.drums} · ${l.material} · ${l.lotNo}`,
+        header: `${IN_USE} · ${OWNERSHIP_LABEL.returnable}`,
+        fields: [
+          { l: "Received on", v: fd(l.receivedOn) },
+          { l: "Drums in the lot", v: `${l.drums} · ${l.recorded} recorded empty · ${l.inUse} still in use` },
+          { l: "Ownership", v: `${OWNERSHIP_LABEL.returnable} (${l.supplier})` },
+          { l: "What happens next", v: "When it is emptied, scan its label and weigh it. It then waits here to go back to the supplier." },
+        ],
+        actions: record ? [record(l)] : [],
+      };
+    }),
+  );
 }
 
 const drumActions: ScreenModule["actions"] = {
@@ -524,20 +563,21 @@ const emptyDrums: ScreenModule = {
 const drumReturnable: ScreenModule = {
   key: "drumReturnable",
   async load(ctx) {
-    const [all, limits] = await Promise.all([drumRows(), varianceLimits()]);
+    const [all, limits, lots, form] = await Promise.all([drumRows(), varianceLimits(), returnableInUse(), emptyForm(ctx)]);
     const rows = all.filter((d) => d.status === "returnable");
     const hist = await drumHistories(rows.map((d) => d.id));
     const day = today();
     return {
       spec: {
         screen: "drumReturnable",
-        cols: drumCols([{ k: "age", l: "Waiting", t: "s" }]),
+        cols: drumCols([{ k: "status", l: "Status", t: "s" }, { k: "age", l: "Waiting", t: "s" }]),
         hidden: [],
-        groups: ["supplier", "material"],
+        groups: ["supplier", "status", "material"],
         chips: "age",
         godownKey: "godown",
         stats: [
-          { l: "Drums waiting" },
+          { l: "Empty, waiting to return", where: { k: "status", in: [DRUM_STATUS_LABEL.returnable] } },
+          { l: "In use, not yet emptied", where: { flag: "drumInUse" }, tone: "info" },
           { l: "Suppliers", kind: "distinct", k: "supplier" },
           { l: "Weight", kind: "sum", k: "kg", missing: "without a weight" },
           { l: "Over 90 days", where: { k: "age", in: ["90+ days"] }, tone: "danger" },
@@ -546,15 +586,21 @@ const drumReturnable: ScreenModule = {
         filters: ["supplier", "material", "kg"],
         sortDefault: ["emptied", 1],
         tools: [{ id: "return", l: "Return drums", href: erpLink("drumReturns"), primary: true, why: why(ctx, "scrapSale") }],
-        noDataLine: "No supplier-owned drums waiting to be returned.",
+        newForm: form,
+        newLabel: "New empty drum",
+        noDataLine: "No supplier-owned drums in the factory. A returnable lot's drums are listed from the day its GRN is saved.",
       },
-      rows: rows.map((d) => {
-        const row = drumRow(ctx, d, limits, hist, []);
-        row.v.age = returnBucket(d.emptiedOn, day);
-        return row;
-      }),
+      rows: [
+        ...rows.map((d) => {
+          const row = drumRow(ctx, d, limits, hist, []);
+          row.v.age = returnBucket(d.emptiedOn, day);
+          return row;
+        }),
+        ...inUseRows(lots, (l) => ({ id: "empty", l: "Record empty", primary: true, why: "", form: { ...form, init: { ...form.init, code: l.lotNo } } })),
+      ],
     };
   },
+  forms: { empty: saveEmpty },
   actions: drumActions,
 };
 
@@ -673,7 +719,7 @@ const drumVariance: ScreenModule = {
 const drumRegister: ScreenModule = {
   key: "drumRegister",
   async load(ctx) {
-    const [all, limits] = await Promise.all([drumRows(), varianceLimits()]);
+    const [all, limits, lots] = await Promise.all([drumRows(), varianceLimits(), returnableInUse()]);
     const hist = await drumHistories(all.map((d) => d.id));
     return {
       spec: {
@@ -687,6 +733,7 @@ const drumRegister: ScreenModule = {
           { l: "Drums" },
           { l: "Available", where: { k: "status", in: ["Empty – available"] }, tone: "success" },
           { l: "Returnable", where: { k: "status", in: ["Empty – returnable to supplier"] }, tone: "info" },
+          { l: "Supplier's, in use", where: { flag: "drumInUse" }, tone: "info" },
           { l: "Needs review", where: { k: "status", in: ["Needs review"] }, tone: "warn" },
           { l: "Sold", where: { k: "status", in: ["Sold"] }, tone: "neutral" },
           { l: "High variance", where: { flag: "drumVariance" }, tone: "danger" },
@@ -695,7 +742,7 @@ const drumRegister: ScreenModule = {
         download: true,
         noDataLine: "No drums recorded empty yet.",
       },
-      rows: all.map((d) => drumRow(ctx, d, limits, hist)),
+      rows: [...all.map((d) => drumRow(ctx, d, limits, hist)), ...inUseRows(lots)],
     };
   },
   actions: drumActions,
@@ -829,12 +876,22 @@ const drumAdjustments: ScreenModule = {
 
 /* ------------------------------------------------------------ vendor returns */
 
-async function pendingBySupplier(): Promise<{ id: string; name: string; pending: number; oldest: string | null; buckets: Record<string, number>; returned: number }[]> {
+type SupplierDrums = { id: string; name: string; pending: number; oldest: string | null; buckets: Record<string, number>; returned: number; inUse: number };
+
+async function pendingBySupplier(): Promise<SupplierDrums[]> {
   const day = today();
-  const drums = (await drumRows()).filter((d) => d.supplierId && (d.status === "returnable" || d.status === "returned"));
-  const sups = new Map<string, { id: string; name: string; pending: number; oldest: string | null; buckets: Record<string, number>; returned: number }>();
+  const [all, lots] = await Promise.all([drumRows(), returnableInUse()]);
+  const drums = all.filter((d) => d.supplierId && (d.status === "returnable" || d.status === "returned"));
+  const sups = new Map<string, SupplierDrums>();
+  const blank = (id: string, name: string): SupplierDrums => ({ id, name, pending: 0, oldest: null, buckets: Object.fromEntries(RETURN_BUCKETS.map((b) => [b, 0])), returned: 0, inUse: 0 });
+  /* Still full in the factory: owed back once emptied, but not returnable yet. */
+  for (const l of lots) {
+    const s = sups.get(l.supplierId) ?? blank(l.supplierId, l.supplier);
+    s.inUse += l.inUse;
+    sups.set(s.id, s);
+  }
   for (const d of drums) {
-    const s = sups.get(d.supplierId!) ?? { id: d.supplierId!, name: d.supplier ?? "", pending: 0, oldest: null, buckets: Object.fromEntries(RETURN_BUCKETS.map((b) => [b, 0])), returned: 0 };
+    const s = sups.get(d.supplierId!) ?? blank(d.supplierId!, d.supplier ?? "");
     if (d.status === "returned") s.returned++;
     else {
       s.pending++;
@@ -985,6 +1042,7 @@ const drumPending: ScreenModule = {
         cols: [
           { k: "supplier", l: "Supplier", t: "b" },
           { k: "pending", l: "Waiting to return", t: "n" },
+          { k: "inUse", l: "In use, not yet emptied", t: "n" },
           { k: "oldest", l: "Oldest waiting since", t: "d" },
           ...RETURN_BUCKETS.map((b, i) => ({ k: `b${i}`, l: b, t: "n" as const })),
           { k: "returned", l: "Returned so far", t: "n" },
@@ -994,6 +1052,7 @@ const drumPending: ScreenModule = {
         stats: [
           { l: "Suppliers" },
           { l: "Waiting to return", kind: "sum", k: "pending", u: "drums" },
+          { l: "In use, not yet emptied", kind: "sum", k: "inUse", u: "drums", tone: "info" },
           { l: "Over 90 days", kind: "sum", k: "b3", u: "drums", tone: "danger" },
           { l: "With drums over 90 days", where: { flag: "late" }, tone: "warn" },
           { l: "Returned so far", kind: "sum", k: "returned", u: "drums", tone: "success" },
@@ -1001,15 +1060,15 @@ const drumPending: ScreenModule = {
         filters: ["pending", "returned"],
         readOnly: true,
         sortDefault: ["oldest", 1],
-        noDataLine: "No supplier-owned drums recorded empty yet.",
+        noDataLine: "No supplier-owned drums in the factory.",
       },
       rows: await Promise.all(
         sups.map(async (s) => ({
           id: s.id,
-          v: { supplier: s.name, pending: s.pending, oldest: s.oldest, ...Object.fromEntries(RETURN_BUCKETS.map((b, i) => [`b${i}`, s.buckets[b]])), returned: s.returned },
+          v: { supplier: s.name, pending: s.pending, inUse: s.inUse, oldest: s.oldest, ...Object.fromEntries(RETURN_BUCKETS.map((b, i) => [`b${i}`, s.buckets[b]])), returned: s.returned },
           flags: s.buckets["90+ days"] > 0 ? ["late"] : [],
-          title: `${s.name} · ${s.pending} drums waiting`,
-          actions: [{ id: "return", l: "Return drums", primary: true, why: s.pending ? why(ctx, "scrapSale") : "Nothing waiting", form: await returnForm(ctx, s.name) }],
+          title: `${s.name} · ${s.pending} drums waiting${s.inUse ? ` · ${s.inUse} still in use` : ""}`,
+          actions: [{ id: "return", l: "Return drums", primary: true, why: s.pending ? why(ctx, "scrapSale") : s.inUse ? "Its drums are still in use. Record them empty first" : "Nothing waiting", form: await returnForm(ctx, s.name) }],
         })),
       ),
     };
