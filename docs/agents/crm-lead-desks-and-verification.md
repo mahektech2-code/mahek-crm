@@ -393,3 +393,33 @@ of `lead.verify` (candidates are filtered to it — `users.role = 'manager'` alo
 includes an Accounts-only manager), and never falls back to the Telecaller being
 verified; with no manager available the conversion is refused and the lead stays a
 Suspect.
+
+**THE MANAGERS ABOVE A LEAVER WORK THEIR LEADS, WITHOUT A TRANSFER.** When a
+lead's owner has left, the active managers above them on the Org Chart may work
+the lead (Bharat's manager Seema, and Pritesh above her). `customers.owner_id`
+stays the leaver's until somebody with `lead.assign` moves it. It is a SCOPE arm,
+not a permission: the last line of `assertCustomerInScope`, for a lead only,
+asking `holdsAuthorityOverOwner` (`services/lead-manager-authority.ts`, over the
+pure `engines/manager-authority.ts`). Every capability a caller already demands
+is still demanded: reassignment stays `lead.verify` plus the Calling desk, and
+Qualification is still collected by the owner and reviewed by the manager, so a
+manager acting for a leaver still cannot collect it.
+
+The owner has LEFT when `users.active` is false or `employees.status` is
+`inactive`. Never `status_raw` (HRMS deactivation leaves what the sheet said) and
+never `sheet_status` (whether the row is still on the tab). The walk starts from
+the owner's STORED `users.employee_id` and follows `employee_reporting`. A manager
+who has left, has no account or an inactive one is skipped and their own manager
+is next; a loop names nobody. Two accounts on one employee cannot exist
+(`users_employee_key`), and the engine stops the walk there if one ever did. The
+manager must also hold the CRM Leads module; the Calling desk is not needed.
+
+It changes no list, Calling desk, handset book, target or personal assignment
+list: a leaver's lead does not land in a manager's queue. The actual person is
+always the audit actor. Where authority was the only claim, "acting on behalf of
+<owner>" is on the lead's record (`ActingOnBehalfBar`), in Reverse Lost and Mark
+as Dead (`actingForLead`), and in `afterState.actingFor` and the timeline of both.
+A reopen's next action goes to the door's named owner, or to the person reversing
+where that owner has left. A Dead request is routed from the REQUESTER up the
+chart, so Seema's goes to Pritesh. Phase 2, not built: lead lists for a non-admin
+ancestor who holds no seat.

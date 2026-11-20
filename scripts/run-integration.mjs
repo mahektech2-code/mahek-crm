@@ -69,6 +69,8 @@ const files = [
   // A lead is raised inside the salesman's own area, and lands there.
   "src/lib/lead-territory.test.ts",
   "src/lib/lead-scope.test.ts",
+  // Manager authority: the managers above a leaver work their leads; ownership never moves.
+  "src/lib/manager-authority.test.ts",
   // Editing a field order before approval, and asking to change it after.
   "src/lib/order-change.test.ts",
   // A field payment's remainder is on account once, not twice.

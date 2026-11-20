@@ -790,7 +790,18 @@ export async function assertCustomerInScope(
     (relationshipOwner !== null && ids.includes(relationshipOwner)) ||
     (owner !== null && ids.includes(owner));
 
-  if (!mine) throw new NotPermittedError("customer.read");
+  if (mine) return;
+
+  /* A LEAD WHOSE OWNER HAS LEFT is worked by the managers above that owner on
+     the Org Chart, without being transferred (`lead-manager-authority`). It is
+     the last arm and only for a lead: every other record, and every lead whose
+     owner is still working, is refused exactly as before. `owner_id` is read
+     here and never written. */
+  if (customer.kind === "lead" && owner) {
+    const { holdsAuthorityOverOwner } = await import("@/lib/services/lead-manager-authority");
+    if (await holdsAuthorityOverOwner((await resolveScope()).user.id, owner)) return;
+  }
+  throw new NotPermittedError("customer.read");
 }
 
 export async function userIdsInScope(): Promise<string[] | null> {

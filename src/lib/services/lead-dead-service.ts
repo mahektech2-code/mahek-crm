@@ -22,6 +22,7 @@ import { REASON_CODE_NEEDING_REMARKS } from "../lead-labels";
 import { err, ok, type Result } from "../result";
 import { MBOS_EVENT, writeTimelineEvent } from "../timeline";
 import { leadsVisible, managerScope } from "./sales-service";
+import { actingOnBehalfOf } from "./lead-manager-authority";
 
 /* ---------------------------------------------------------------------------
  * DEAD LEADS — the one implementation behind the request, the decision and
@@ -180,6 +181,10 @@ export async function requestLeadDead(input: RequestDeadInput): Promise<Result<{
   const approver = await resolveDeadApprover(input.actorUserId);
   if (!approver.ok) return err(approver.message, "rule_violation");
 
+  /* Working this lead on a leaver's behalf is said on the request, the audit
+     row and the approver's message. Read from the lead row, never the client. */
+  const acting = await actingOnBehalfOf(input.customerId, input.actorUserId);
+
   const requestId = newId("ldr");
   try {
     return await db.transaction(async (tx) => {
@@ -242,7 +247,7 @@ export async function requestLeadDead(input: RequestDeadInput): Promise<Result<{
         id: newId("ntf"),
         userId: approver.approverUserId,
         title: `Dead request: ${lead.name}`,
-        body: `${requesterEmp?.name ?? "A colleague"} asked to mark ${lead.name} permanently Dead (${reason.label}). Approving locks the lead for ever.`,
+        body: `${requesterEmp?.name ?? "A colleague"} asked to mark ${lead.name} permanently Dead (${reason.label})${acting ? `, acting on behalf of ${acting.ownerName}, who has left` : ""}. Approving locks the lead for ever.`,
         kind: "warn",
         href: "/crm/leads/dead?tab=queue",
       });
@@ -261,6 +266,7 @@ export async function requestLeadDead(input: RequestDeadInput): Promise<Result<{
           reasonCode: input.reasonCode,
           approverId: approver.approverUserId,
           approverEmployeeId: approver.approverEmployeeId,
+          ...(acting ? { actingFor: { ownerId: acting.ownerId, ownerName: acting.ownerName } } : {}),
         } as never,
       });
 
@@ -271,7 +277,7 @@ export async function requestLeadDead(input: RequestDeadInput): Promise<Result<{
         sourceRecordId: `${requestId}:requested`,
         occurredAt: new Date(),
         actorUserId: input.actorUserId,
-        summary: `Marked Dead requested — ${reason.label}. Waiting on ${approver.approverName}.`,
+        summary: `Marked Dead requested — ${reason.label}${acting ? ` (on behalf of ${acting.ownerName}, who has left)` : ""}. Waiting on ${approver.approverName}.`,
       });
 
       return ok({ requestId, approverName: approver.approverName }, `Sent to ${approver.approverName} for approval.`);
