@@ -2,7 +2,12 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/toast";
+import { RowMenu } from "@/components/ui/overlays";
+import { ReasonImpactDialog } from "@/components/ui/reason-impact-dialog";
+import { reverseReceiptAction } from "@/lib/actions/payments";
+import { EditPaymentDialog } from "../edit-payment-dialog";
 import { downloadCsv, toCsv } from "@/lib/csv";
 import { money, stamp } from "@/lib/format";
 import type { PaymentHistoryRow } from "@/lib/services/receipt-service";
@@ -71,13 +76,24 @@ export function PaymentHistoryScreen({
   capped,
   currentUserName,
   nowMs,
+  canDecide,
+  currentUserId,
 }: {
   rows: PaymentHistoryRow[];
   capped: boolean;
   currentUserName: string;
   nowMs: number;
+  /** Accounts' `payment.confirm`: edit and reverse any payment. */
+  canDecide: boolean;
+  currentUserId: string;
 }) {
-  const { push } = useToast();
+  const { push, run } = useToast();
+  const router = useRouter();
+  const [editing, setEditing] = React.useState<string | null>(null);
+  const [reversing, setReversing] = React.useState<PaymentHistoryRow | null>(null);
+  /* Who may edit which row — the server asks again. */
+  const mayEdit = (r: PaymentHistoryRow) =>
+    canDecide ? r.status === "confirmed" || r.status === "reported" || r.status === "held" : r.status === "reported" && r.reportedById === currentUserId;
   const [query, setQuery] = React.useState("");
   const [who, setWho] = React.useState(currentUserName);
   const [range, setRange] = React.useState<Range>("Today");
@@ -283,6 +299,7 @@ export function PaymentHistoryScreen({
                   <HeadCell width={240}>Status</HeadCell>
                   <HeadCell width={130}>Recorded by</HeadCell>
                   <HeadCell width={130}>Decided by</HeadCell>
+                  <HeadCell width={44}>{""}</HeadCell>
                 </>
               }
             >
@@ -308,11 +325,65 @@ export function PaymentHistoryScreen({
                   </Cell>
                   <Cell truncate={130}>{r.reportedByName ?? "—"}</Cell>
                   <Cell truncate={130}>{decidedByName(r) ?? "—"}</Cell>
+                  <Cell>
+                    {mayEdit(r) || (canDecide && r.status === "confirmed") ? (
+                      <RowMenu
+                        items={[
+                          ...(mayEdit(r)
+                            ? [
+                                {
+                                  label: "Edit payment",
+                                  title:
+                                    r.status === "confirmed"
+                                      ? "It has counted: saving reverses this entry and records the corrected one"
+                                      : "Correct it before Accounts decide it",
+                                  onSelect: () => setEditing(r.receiptId),
+                                },
+                              ]
+                            : []),
+                          ...(canDecide && r.status === "confirmed"
+                            ? [{ label: "Reverse payment", destructive: true, onSelect: () => setReversing(r) }]
+                            : []),
+                        ]}
+                      />
+                    ) : null}
+                  </Cell>
                 </Row>
               ))}
             </Table>
           </div>
         )}
+
+        {editing ? (
+          <EditPaymentDialog
+            key={editing}
+            receiptId={editing}
+            run={run}
+            onClose={() => setEditing(null)}
+            onDone={() => {
+              setEditing(null);
+              router.refresh();
+            }}
+          />
+        ) : null}
+        {reversing ? (
+          <ReasonImpactDialog
+            key={reversing.receiptId}
+            kind="accounts-receipt-reverse"
+            id={reversing.receiptId}
+            title={`Reverse ${money(reversing.amount)} from ${reversing.customerName}?`}
+            body="The payment keeps its row and the money goes back onto the bills it settled. Use this when a payment counted and then failed — a bounced cheque, a duplicate entry, money on the wrong customer. To fix a figure, use Edit payment instead."
+            reasonLabel="Reason — it goes on the statement"
+            confirmLabel="Reverse payment"
+            onClose={() => setReversing(null)}
+            onConfirm={(reason, confirmation) => reverseReceiptAction(reversing.receiptId, reason, confirmation)}
+            onDone={(res) => {
+              push(res.message ?? "Reversed");
+              setReversing(null);
+              router.refresh();
+            }}
+          />
+        ) : null}
       </div>
     </div>
   );

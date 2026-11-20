@@ -5,7 +5,7 @@ import { PaymentModeFields } from "@/components/crm/payment-mode-fields";
 import { VoiceTextarea } from "@/components/ui/dictate";
 import { Modal } from "@/components/ui/modal";
 import { Button, Field, Input, MoneyInput } from "@/components/ui/primitives";
-import { correctReceiptAction } from "@/lib/actions/payments";
+import { amendReceiptAction, correctReceiptAction } from "@/lib/actions/payments";
 import { money, parseRupees, rupeesFromPaise, stamp } from "@/lib/format";
 import type { Result } from "@/lib/result";
 import type { PaymentDetail } from "./queue-types";
@@ -35,9 +35,16 @@ export function CorrectReceiptDialog({
   run,
   onClose,
   onDone,
+  counted = false,
 }: {
   receiptId: string;
   detail: CorrectableReceipt;
+  /**
+   * The payment has already counted (Accounts' own entries are confirmed as
+   * they are saved). Saving then reverses it and records the corrected one
+   * in one step — `amendConfirmedReceipt` — so the statement shows both.
+   */
+  counted?: boolean;
   amount: number;
   customerName: string;
   run: <T extends { ok: boolean; message?: string; error?: string }>(p: Promise<T>) => Promise<T>;
@@ -78,7 +85,7 @@ export function CorrectReceiptDialog({
     setFieldErrors({});
     try {
       const r: Result = await run(
-        correctReceiptAction(
+        (counted ? amendReceiptAction : correctReceiptAction)(
           receiptId,
           {
             amount: paise,
@@ -107,21 +114,30 @@ export function CorrectReceiptDialog({
       open
       onClose={onClose}
       width={560}
-      title={`Correct ${money(amount)} from ${customerName}`}
+      title={`${counted ? "Edit" : "Correct"} ${money(amount)} from ${customerName}`}
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
           <Button variant="primary" onClick={() => void save()} disabled={Boolean(blocked) || busy} title={blocked}>
-            {busy ? "Saving…" : "Save correction"}
+            {busy ? "Saving…" : counted ? "Save the corrected payment" : "Save correction"}
           </Button>
         </>
       }
     >
       <p className="mb-3 text-[13px] text-pretty text-muted">
-        Reported {stamp(detail.reportedAt)}. It has not counted yet, so no balance moves. A new amount is spread over the
-        same bills it named; anything left over goes on account.
+        {counted ? (
+          <>
+            Recorded {stamp(detail.reportedAt)} and already counted. Saving marks this entry reversed — with your reason — and
+            records the corrected payment against the same bills, in one step; the balance is rebuilt and the statement shows both.
+          </>
+        ) : (
+          <>
+            Reported {stamp(detail.reportedAt)}. It has not counted yet, so no balance moves. A new amount is spread over the
+            same bills it named; anything left over goes on account.
+          </>
+        )}
       </p>
       {error ? (
         <p role="alert" className="mb-3 rounded-control border border-danger-soft bg-danger-soft px-3 py-2 text-[13px] text-ink">

@@ -61,6 +61,7 @@ import {
 import {
   confirmReceipt,
   correctReceipt,
+  amendConfirmedReceipt,
   holdReceipt,
   myReportedReceipts,
   customerLedger,
@@ -745,6 +746,85 @@ describe("Payments to confirm", () => {
 });
 
 /* ============================================================= credit notes */
+
+describe("Editing a payment that has already counted", () => {
+  async function accountsEntry(customerId: string, amount: number) {
+    setTestUser(deepa);
+    const r = await recordReceipt({
+      customerId,
+      amount,
+      receivedAt: TODAY,
+      mode: "Bank transfer",
+      reference: "UTR-1",
+      allocation: "auto",
+      source: "accounts",
+      idempotencyKey: randomUUID(),
+    });
+    assert.ok(r.ok, r.ok ? "" : r.error);
+    assert.equal(r.data.status, "confirmed", "Accounts' own entry counts at once");
+    return r.data.receiptId;
+  }
+
+  test("Accounts fix their own mistyped amount: the old entry reversed, the right one counted on the same bill", async () => {
+    const customer = await makeCustomer();
+    const bill = await makeBill(customer.id, 10_000_00);
+    const receiptId = await accountsEntry(customer.id, 9_000_00);
+    const [b0] = await db.select().from(bills).where(eq(bills.id, bill.id));
+    assert.equal(b0.paidAmount, 9_000_00);
+
+    setTestUser(deepa);
+    const r = await amendConfirmedReceipt(receiptId, { amount: 900_00 }, "Typed 9,000; the transfer is 900.");
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+
+    const [old] = await db.select().from(paymentReceipts).where(eq(paymentReceipts.id, receiptId));
+    assert.equal(old.status, "reversed");
+    assert.match(old.rejectReason ?? "", /Corrected: Typed 9,000/);
+    const newId = r.ok ? r.data.receiptId : "";
+    const [fresh] = await db.select().from(paymentReceipts).where(eq(paymentReceipts.id, newId));
+    assert.equal(fresh.status, "confirmed");
+    assert.equal(Number(fresh.amount), 900_00);
+    assert.equal(fresh.reference, "UTR-1", "what was not changed is carried over");
+    const lines = await db.select().from(payments).where(eq(payments.receiptId, newId));
+    assert.deepEqual(lines.map((l) => [l.billId, Number(l.amount)]), [[bill.id, 900_00]]);
+    const [b1] = await db.select().from(bills).where(eq(bills.id, bill.id));
+    assert.equal(b1.paidAmount, 900_00, "the bill counts only the corrected money");
+    const [audit] = await db.select().from(auditLog).where(and(eq(auditLog.entityId, newId), eq(auditLog.action, "payment.amended")));
+    assert.ok(audit, "audited, naming the entry it replaced");
+    assert.equal((audit.afterState as { replaces: string }).replaces, receiptId);
+  });
+
+  test("a larger corrected amount fills the same bill and puts the rest on account", async () => {
+    const customer = await makeCustomer();
+    const bill = await makeBill(customer.id, 5_000_00);
+    const receiptId = await accountsEntry(customer.id, 4_000_00);
+    setTestUser(deepa);
+    const r = await amendConfirmedReceipt(receiptId, { amount: 6_000_00 }, "Customer paid 6,000, not 4,000.");
+    assert.ok(r.ok, r.ok ? "" : r.error);
+    const lines = await db.select().from(payments).where(eq(payments.receiptId, r.ok ? r.data.receiptId : ""));
+    assert.deepEqual(lines.map((l) => [l.billId, Number(l.amount)]).sort(), [[bill.id, 5_000_00], [null, 1_000_00]].sort());
+  });
+
+  test("only Accounts; a pending claim is pointed at Correct; nothing changed is a no-op", async () => {
+    const customer = await makeCustomer();
+    await makeBill(customer.id, 10_000_00);
+    const receiptId = await accountsEntry(customer.id, 2_000_00);
+
+    setTestUser(priya);
+    await assert.rejects(amendConfirmedReceipt(receiptId, { amount: 1_00 }, "Not mine to change."));
+
+    setTestUser(deepa);
+    const same = await amendConfirmedReceipt(receiptId, { amount: 2_000_00 }, "No change really.");
+    assert.ok(same.ok && same.message === "Nothing to change.");
+
+    setTestUser(priya);
+    const claim = await recordReceipt({ customerId: customer.id, amount: 1_000_00, receivedAt: TODAY, mode: "Bank transfer", allocation: "auto", source: "collections_call", idempotencyKey: randomUUID() });
+    assert.ok(claim.ok);
+    setTestUser(deepa);
+    const pending = await amendConfirmedReceipt(claim.ok ? claim.data.receiptId : "", { amount: 900_00 }, "Wrong figure here.");
+    assert.equal(pending.ok, false);
+    assert.match(pending.ok ? "" : pending.error, /Correct/);
+  });
+});
 
 describe("Correcting a claim before it is decided", () => {
   async function claim(customerId: string, amount: number) {

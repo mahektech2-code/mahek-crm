@@ -5,6 +5,9 @@ import {
   confirmAsMatch,
   confirmReceipt,
   correctReceipt,
+  amendConfirmedReceipt,
+  receiptForEdit,
+  type ReceiptForEdit,
   holdReceipt,
   matchesForEntry,
   recordReceipt,
@@ -89,6 +92,34 @@ export async function confirmReceiptAction(
  * decided yet — instead of rejecting it ("never arrived") and recording it
  * again. Who may, and what moves, is `correctReceipt`'s.
  */
+/**
+ * Edit a payment that has already counted — what Accounts record themselves.
+ * The original is reversed and a corrected one recorded in one step; see
+ * `amendConfirmedReceipt`.
+ */
+/** What the Edit payment dialog opens with. */
+export async function receiptForEditAction(receiptId: string): Promise<Result<ReceiptForEdit>> {
+  try {
+    return await receiptForEdit(receiptId);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+export async function amendReceiptAction(
+  receiptId: string,
+  correction: ReceiptCorrection,
+  reason: string,
+): Promise<Result> {
+  try {
+    const r = await amendConfirmedReceipt(receiptId, correction, reason);
+    if (r.ok) refresh();
+    return r.ok ? { ok: true, data: undefined, message: r.message } : r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
 export async function correctReceiptAction(
   receiptId: string,
   correction: ReceiptCorrection,

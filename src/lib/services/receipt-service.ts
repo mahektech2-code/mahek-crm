@@ -687,11 +687,15 @@ export type PaymentHistoryRow = {
   mode: string;
   reference: string | null;
   note: string | null;
+  /** The date on a cheque, where the mode carries one — the Edit dialog starts from it. */
+  instrumentDate: string | null;
   status: "reported" | "held" | "confirmed" | "rejected" | "reversed";
   sentence: string;
   lines: Array<{ billId: string | null; billNo: string | null; amount: number }>;
 
   reportedByName: string | null;
+  /** Who recorded it — they may correct their own while it is still `reported`. */
+  reportedById: string | null;
   heldByName: string | null;
   holdReason: string | null;
   confirmedByName: string | null;
@@ -782,6 +786,7 @@ export async function paymentHistory(days = 90): Promise<PaymentHistoryRow[]> {
     mode: r.mode,
     reference: r.reference,
     note: r.note,
+    instrumentDate: (r.instrumentDate as string | null) ?? null,
     status: r.status,
     sentence: receiptStatusSentence({
       mode: r.mode,
@@ -793,6 +798,7 @@ export async function paymentHistory(days = 90): Promise<PaymentHistoryRow[]> {
     }),
     lines: byReceipt.get(r.id) ?? [],
     reportedByName: rest.reportedByName,
+    reportedById: r.reportedById,
     heldByName: rest.heldByName,
     holdReason: r.holdReason,
     confirmedByName: rest.confirmedByName,
@@ -1430,6 +1436,250 @@ export async function myReportedReceipts(
     })),
     correct: { modes: config["payments.modes"], datedModes: config["payments.datedModes"], today: day },
   };
+}
+
+/* ------------------------------------------------ correcting counted money */
+
+export type ReceiptForEdit = {
+  receiptId: string;
+  customerName: string;
+  amount: number;
+  status: "reported" | "held" | "confirmed" | "rejected" | "reversed";
+  receivedAt: string;
+  reportedAt: string;
+  mode: string;
+  reference: string | null;
+  instrumentDate: string | null;
+  note: string | null;
+  correct: { modes: string[]; datedModes: string[]; today: string };
+};
+
+/**
+ * What the Edit payment dialog opens with, wherever a payment is listed —
+ * Payment history, the customer statement. Accounts (`payment.confirm`) may
+ * open any; the person who recorded a still-`reported` one may open theirs.
+ */
+export async function receiptForEdit(receiptId: string): Promise<Result<ReceiptForEdit>> {
+  const ctx = await requireCapability("payment.record");
+  const accounts = await canFor(ctx.user, "payment.confirm");
+  const [r] = await db
+    .select({ receipt: paymentReceipts, customerName: customers.name })
+    .from(paymentReceipts)
+    .innerJoin(customers, eq(customers.id, paymentReceipts.customerId))
+    .where(eq(paymentReceipts.id, receiptId));
+  if (!r) return err("That payment no longer exists.", "not_found");
+  if (!accounts && !(r.receipt.reportedById === ctx.user.id && r.receipt.status === "reported")) {
+    return err("Only Accounts, or the person who recorded it while it waits, can edit this payment.", "not_permitted");
+  }
+  const config = await getConfig();
+  return ok({
+    receiptId,
+    customerName: r.customerName,
+    amount: Number(r.receipt.amount),
+    status: r.receipt.status,
+    receivedAt: String(r.receipt.receivedAt),
+    reportedAt: r.receipt.createdAt.toISOString(),
+    mode: r.receipt.mode,
+    reference: r.receipt.reference,
+    instrumentDate: (r.receipt.instrumentDate as string | null) ?? null,
+    note: r.receipt.note,
+    correct: { modes: config["payments.modes"], datedModes: config["payments.datedModes"], today: await today() },
+  });
+}
+
+/**
+ * EDIT A PAYMENT THAT HAS ALREADY COUNTED — what Accounts record themselves.
+ *
+ * Accounts' own entries are confirmed the moment they are saved, so the
+ * claim-only `correctReceipt` never reached them: a mistyped figure on money
+ * Accounts entered had no Edit anywhere, only Reverse on the customer
+ * statement and record it again by hand. This is that pair done as ONE act:
+ * the original is marked `reversed` with the reason, a corrected confirmed
+ * receipt is written against the SAME bills (filled in order, each up to what
+ * it would owe without the original, the rest on account), and the ledger is
+ * rebuilt. The statement shows both — the figure that was there and the one
+ * that replaced it — and the audit links them.
+ *
+ * Refused: a credit note's receipt (cancel it on Credit notes), and a payment
+ * matched to a bank statement line (undo the match first — the match names
+ * this receipt and its amount).
+ */
+export async function amendConfirmedReceipt(
+  receiptId: string,
+  raw: ReceiptCorrection,
+  reason: string,
+): Promise<Result<{ receiptId: string }>> {
+  const parsed = receiptCorrectionSchema.safeParse(raw ?? {});
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    return err(issue.message, "validation", [{ field: issue.path.join("."), message: issue.message }]);
+  }
+  const fix = parsed.data;
+  const why = (reason ?? "").trim();
+  if (why.length < 5) {
+    return err("Say what was wrong — it is kept with the change.", "validation", [
+      { field: "reason", message: "A few words on what was wrong." },
+    ]);
+  }
+  const ctx = await requireCapability("payment.confirm");
+  const config = await getConfig();
+
+  const [receipt] = await db.select().from(paymentReceipts).where(eq(paymentReceipts.id, receiptId));
+  if (!receipt) return err("That payment no longer exists.", "not_found");
+  if (receipt.status !== "confirmed") {
+    return err(
+      receipt.status === "reported" || receipt.status === "held"
+        ? "It has not counted yet — use Correct on it instead."
+        : "It no longer counts, so there is nothing to edit.",
+      "conflict",
+    );
+  }
+  if (receipt.idempotencyKey.startsWith("creditnote:")) {
+    return err("This is a credit note. Cancel it on Credit notes and issue the right one.", "rule_violation");
+  }
+  const [matched] = (await db.execute(sql`
+    select 1 as one from erp_bank_matches where receipt_id = ${receiptId} limit 1`)) as unknown as { one: number }[];
+  if (matched) {
+    return err("It is matched to a bank statement line. Undo the match on Bank statement management first.", "rule_violation");
+  }
+
+  const next = {
+    amount: fix.amount ?? Number(receipt.amount),
+    receivedAt: fix.receivedAt ?? String(receipt.receivedAt),
+    mode: fix.mode ?? receipt.mode,
+    reference: fix.reference === undefined ? receipt.reference : fix.reference || null,
+    instrumentDate: fix.instrumentDate === undefined ? ((receipt.instrumentDate as string | null) ?? null) : fix.instrumentDate || null,
+    note: fix.note === undefined ? receipt.note : fix.note || null,
+  };
+  const before = {
+    amount: Number(receipt.amount),
+    receivedAt: String(receipt.receivedAt),
+    mode: receipt.mode,
+    reference: receipt.reference,
+    instrumentDate: (receipt.instrumentDate as string | null) ?? null,
+    note: receipt.note,
+  };
+  const changed = (Object.keys(next) as (keyof typeof next)[]).filter((k) => next[k] !== before[k]);
+  if (!changed.length) return ok({ receiptId }, "Nothing to change.");
+
+  if (!config["payments.modes"].includes(next.mode)) {
+    return err("That is not a payment mode we record.", "validation", [{ field: "mode", message: "Pick one of the offered modes." }]);
+  }
+  if (next.receivedAt > (await today())) {
+    return err("Money cannot have arrived in the future.", "validation", [{ field: "receivedAt", message: "Pick today or a day already past." }]);
+  }
+  const dated = config["payments.datedModes"].includes(next.mode);
+  if (dated && !next.instrumentDate) {
+    return err(`A ${next.mode.toLowerCase()} needs the date written on it.`, "validation", [
+      { field: "instrumentDate", message: "Enter the date on the instrument — it may be past or future." },
+    ]);
+  }
+  if (!dated) next.instrumentDate = null;
+
+  /* The same bills, in the order it named them, each up to what it would owe
+     with the original's money taken off it again. */
+  const own = await db.select({ billId: payments.billId, amount: payments.amount }).from(payments).where(eq(payments.receiptId, receiptId));
+  const named = [...new Set(own.map((l) => l.billId).filter((b): b is string => Boolean(b)))];
+  const ownOn = new Map<string, number>();
+  for (const l of own) if (l.billId) ownOn.set(l.billId, (ownOn.get(l.billId) ?? 0) + Number(l.amount));
+  const billRows = named.length
+    ? await db.select({ id: bills.id, amount: bills.amount, paid: bills.paidAmount }).from(bills).where(inArray(bills.id, named))
+    : [];
+  const lines: { billId: string | null; amount: number }[] = [];
+  let left = next.amount;
+  for (const billId of named) {
+    const b = billRows.find((x) => x.id === billId);
+    if (!b || left <= 0) continue;
+    const room = Math.max(0, Number(b.amount) - (Number(b.paid) - (ownOn.get(billId) ?? 0)));
+    const take = Math.min(left, room);
+    if (take > 0) lines.push({ billId, amount: take });
+    left -= take;
+  }
+  if (left > 0) {
+    if (!config["payments.allowOnAccountRemainder"]) {
+      return err("The new amount is more than the bills it named still owe, and money on account is switched off.", "validation", [
+        { field: "amount", message: "More than those bills owe." },
+      ]);
+    }
+    lines.push({ billId: null, amount: left });
+  }
+
+  const newId = id("rcp");
+  const now = new Date();
+  try {
+    await db.transaction(async (tx) => {
+      const moved = await tx
+        .update(paymentReceipts)
+        .set({ status: "reversed", rejectReason: `Corrected: ${why}`, updatedById: ctx.user.id, updatedAt: now })
+        .where(and(eq(paymentReceipts.id, receiptId), eq(paymentReceipts.status, "confirmed")))
+        .returning({ id: paymentReceipts.id });
+      if (!moved.length) throw new Refused(err("Somebody changed this payment in the meantime.", "conflict"));
+
+      await tx.insert(paymentReceipts).values({
+        id: newId,
+        customerId: receipt.customerId,
+        amount: next.amount,
+        receivedAt: next.receivedAt,
+        mode: next.mode,
+        reference: next.reference,
+        instrumentDate: next.instrumentDate,
+        note: next.note,
+        status: "confirmed",
+        source: receipt.source,
+        reportedById: receipt.reportedById,
+        confirmedById: ctx.user.id,
+        confirmedAt: now,
+        idempotencyKey: `amend:${receiptId}`,
+        createdById: ctx.user.id,
+        updatedById: ctx.user.id,
+      });
+      for (const line of lines) {
+        await tx.insert(payments).values({
+          id: id("pay"),
+          receiptId: newId,
+          billId: line.billId,
+          customerId: receipt.customerId,
+          amount: line.amount,
+          paidAt: next.receivedAt,
+          mode: next.mode,
+          reference: next.reference,
+          externalRef: `amend:${newId}:${line.billId ?? "on-account"}`,
+          recordedById: ctx.user.id,
+          createdById: ctx.user.id,
+          updatedById: ctx.user.id,
+        });
+      }
+      await writeTimelineEvents(tx, [
+        {
+          customerId: receipt.customerId,
+          eventType: CRM_EVENT.payment,
+          sourceApp: "crm",
+          sourceRecordId: newId,
+          occurredAt: now,
+          actorUserId: ctx.user.id,
+          summary: `${money(before.amount)} payment corrected to ${money(next.amount)} by ${next.mode.toLowerCase()} — ${why}`,
+        },
+      ]);
+      await tx.insert(auditLog).values({
+        id: id("aud"),
+        actorId: ctx.user.id,
+        actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
+        action: "payment.amended",
+        entityType: "payment_receipt",
+        entityId: newId,
+        beforeState: { ...before, receiptId } as never,
+        afterState: { ...next, receiptId: newId, replaces: receiptId, changed, reason: why, lines } as never,
+      });
+    });
+  } catch (e) {
+    if (e instanceof Refused) return e.result;
+    throw e;
+  }
+
+  await applyToLedger(receipt.customerId);
+  const words: Record<string, string> = { amount: "amount", receivedAt: "date", mode: "mode", reference: "reference", instrumentDate: "cheque date", note: "note" };
+  return ok({ receiptId: newId }, `Corrected: ${changed.map((k) => words[k]).join(", ")}. The old entry shows as reversed on the statement.`);
 }
 
 export async function rejectReceipt(
