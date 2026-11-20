@@ -1,4 +1,5 @@
 import { DeadRecordBar } from "@/components/leads/dead/dead-record-bar";
+import { ActingOnBehalfBar } from "@/components/leads/acting-on-behalf-bar";
 import { deadFactsOf } from "@/lib/services/lead-dead-service";
 import { notFound } from "next/navigation";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
@@ -45,6 +46,7 @@ export async function Body({
 
   return (
     <>
+    <ActingOnBehalfBar leadId={id} />
     <DeadRecordBar leadId={id} />
     <RecordScreen
       lead={lead}

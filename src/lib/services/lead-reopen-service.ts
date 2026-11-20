@@ -12,6 +12,7 @@ import { reopenNote, reopenTarget } from "../engines/lead-reopen";
 import { err, ok, type Result } from "../result";
 import { MBOS_EVENT, writeTimelineEvent } from "../timeline";
 import type { LeadMoveActor } from "./lead-service";
+import { actingOnBehalfOf } from "./lead-manager-authority";
 
 /* ---------------------------------------------------------------------------
  * REOPENING A LOST LEAD — the ONE implementation, behind two thin doors.
@@ -167,16 +168,26 @@ export async function reopenLostLead(
     ]);
   }
 
-  const [owner] = await db
-    .select({ id: users.id, active: users.active })
-    .from(users)
-    .where(eq(users.id, input.nextAction.ownerId))
-    .limit(1);
-  if (!owner?.active) {
+  const activeUserId = async (id: string): Promise<string | null> => {
+    const [u] = await db.select({ id: users.id, active: users.active }).from(users).where(eq(users.id, id)).limit(1);
+    return u?.active ? u.id : null;
+  };
+  /* THE NEXT ACTION GOES TO WHOEVER THE DOOR NAMED — unless that person has
+     left, in which case it goes to the person doing the reopening, who is
+     signed in and so can be given work. A reopen is refused only where neither
+     can be given it. `owner_id` is not part of this and is never written. */
+  const nextOwnerId =
+    (await activeUserId(input.nextAction.ownerId)) ??
+    (input.nextAction.ownerId !== input.actor.userId ? await activeUserId(input.actor.userId) : null);
+  if (!nextOwnerId) {
     return err("That person cannot be given the next action — they have no active account.", "validation", [
       { field: "nextActionOwner", message: "Pick somebody who can sign in." },
     ]);
   }
+
+  /* Working this lead on a leaver's behalf is said on the record. Read from the
+     lead row, never from the request. */
+  const acting = await actingOnBehalfOf(input.customerId, input.actor.userId);
 
   const transitionId = `lst_${randomUUID().slice(0, 12)}`;
 
@@ -275,7 +286,7 @@ export async function reopenLostLead(
         leadLostReason: null,
         leadNextAction: action,
         leadNextActionDate: input.nextAction.date,
-        leadNextActionOwnerId: input.nextAction.ownerId,
+        leadNextActionOwnerId: nextOwnerId,
         leadNextActionOutcome: input.nextAction.outcome ?? null,
         /* "Not a Prospect" was a decision and this reverses it: left standing it
            would stop the visit cap asking the question again. */
@@ -314,13 +325,13 @@ export async function reopenLostLead(
         actorUserId: input.actor.userId,
         summary: `Lead reopened from Lost to ${stageLabel(target.stage)} — ${reason.label}${
           row.archived ? " (restored from the archive)" : ""
-        }`,
+        }${acting ? ` · on behalf of ${acting.ownerName}, who has left` : ""}`,
       });
 
-      if (input.nextAction.ownerId !== input.actor.userId) {
+      if (nextOwnerId !== input.actor.userId) {
         await tx.insert(notifications).values({
           id: `ntf_${randomUUID().slice(0, 12)}`,
-          userId: input.nextAction.ownerId,
+          userId: nextOwnerId,
           title: `${row.name} was reopened`,
           body: `${row.name} is back at ${stageLabel(target.stage)} (${reason.label}). Next: ${action}, ${input.nextAction.date}.`,
           kind: "info",
@@ -349,6 +360,7 @@ export async function reopenLostLead(
           seat: input.seat,
           restoredFromArchive: row.archived,
           source: input.actor.sourceApp,
+          ...(acting ? { actingFor: { ownerId: acting.ownerId, ownerName: acting.ownerName } } : {}),
         },
       });
 

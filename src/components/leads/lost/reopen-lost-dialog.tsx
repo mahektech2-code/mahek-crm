@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { Button, Textarea } from "@/components/ui/primitives";
+import { actingForLead } from "@/lib/actions/lead-manager-authority";
 import { reopenSalesManagerLead } from "@/lib/actions/lead-reopen";
 import { reopenDeskLead } from "@/lib/actions/lead-calling-desk";
 import { reopenTarget } from "@/lib/engines/lead-reopen";
@@ -45,6 +46,18 @@ export function ReopenLostDialog({
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const needsNote = reason === "other";
+  const [actingFor, setActingFor] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    let live = true;
+    actingForLead(lead.id)
+      .then((r) => {
+        if (live && r.ok) setActingFor(r.data?.ownerName ?? null);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [lead.id]);
   const target = reopenTarget({
     lostFrom: lead.fromStage,
     salesType: lead.salesType,
@@ -97,6 +110,12 @@ export function ReopenLostDialog({
         </>
       }
     >
+      {actingFor ? (
+        <p className="mb-3 rounded-[4px] border border-info bg-info-soft px-3 py-2 text-[13px] text-body" data-testid="acting-marker">
+          <b className="text-ink">Acting on behalf of {actingFor}</b>, who has left. It is recorded under your own name; the
+          lead is not transferred.
+        </p>
+      ) : null}
       <div className="mb-3 rounded-[4px] border border-line px-3 py-2 text-[13px]">
         <div>
           <b>Lost for:</b> {lead.lostReason ? labelOf(LOST_REASONS, lead.lostReason) : "No reason recorded"}

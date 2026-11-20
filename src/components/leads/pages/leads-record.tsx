@@ -5,6 +5,7 @@ import { nextActionOwnerCandidates } from "@/lib/services/lead-actions-service";
 import { sampleEligibility } from "@/lib/services/lead-qualification-flow-service";
 import { deadFactsOf } from "@/lib/services/lead-dead-service";
 import { DeadRecordBar } from "@/components/leads/dead/dead-record-bar";
+import { ActingOnBehalfBar } from "@/components/leads/acting-on-behalf-bar";
 import { type LeadWorkspace } from "@/lib/lead-workspace";
 import { qualificationAccess } from "@/lib/lead-qualification-access";
 import { canOpenModule } from "@/lib/access";
@@ -315,6 +316,7 @@ export async function Body({
 
   return (
     <>
+    <ActingOnBehalfBar leadId={id} />
     <DeadRecordBar leadId={id} />
     <LeadRecordScreen workspace={workspace}
       record={record}

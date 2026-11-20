@@ -386,12 +386,34 @@ const WORKING_RUNGS = ["qualification", "qualified"];
  * the sentence to refuse with. Only the lead's own Sales Manager is refused —
  * the Salesman who owns it, and any other writer the existing scope allows,
  * are untouched — and only while Qualification is the live job.
+ *
+ * ONE MORE PERSON IS REFUSED: a manager whose only claim on the lead is the Org
+ * Chart above an owner who has left (`lead-manager-authority`). The owner
+ * collects and a manager reviews; with the owner gone the lead waits for a new
+ * owner rather than the reviewer filling in what they will then be asked to
+ * approve. It is asked of an administrator too, but only one who actually holds
+ * authority over THIS owner — no other administrator is narrowed.
  */
 export async function qualificationCollectorRefusal(
   user: { id: string; role: string },
   lead: LeadSeats,
 ): Promise<string | null> {
   if (!lead.leadStage || !WORKING_RUNGS.includes(lead.leadStage)) return null;
+  const bySeat = await collectorRefusalBySeat(user, lead);
+  if (bySeat) return bySeat;
+  if (lead.ownerId && lead.ownerId !== user.id) {
+    const { holdsAuthorityOverOwner } = await import("./lead-manager-authority");
+    if (await holdsAuthorityOverOwner(user.id, lead.ownerId)) {
+      return "This lead's owner has left, so it is waiting for a new owner. You are working it on behalf of a colleague who has left, and the owner collects its Qualification. Assign the lead to a Salesman first; you review it afterwards.";
+    }
+  }
+  return null;
+}
+
+async function collectorRefusalBySeat(
+  user: { id: string; role: string },
+  lead: LeadSeats,
+): Promise<string | null> {
   if (user.role === "admin") return null;
   if (!(await holdsLeadSeat(user, lead.salesManagerId))) return null;
   /* Her own lead, with somebody else to approve it: she collects it. */

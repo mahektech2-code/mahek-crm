@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { Button, Textarea } from "@/components/ui/primitives";
+import { actingForLead } from "@/lib/actions/lead-manager-authority";
 import { previewDeadApprover, requestDeadLead, type DeadDialogFacts } from "@/lib/actions/lead-dead";
 
 /**
@@ -32,6 +33,18 @@ export function MarkDeadDialog({
   const [note, setNote] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [actingFor, setActingFor] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    let live = true;
+    actingForLead(lead.id)
+      .then((r) => {
+        if (live && r.ok) setActingFor(r.data?.ownerName ?? null);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [lead.id]);
 
   React.useEffect(() => {
     let live = true;
@@ -100,6 +113,12 @@ export function MarkDeadDialog({
         converted. Nothing is deleted — its history stays readable. Until then it stays Lost and nothing changes.
       </div>
 
+      {actingFor ? (
+        <p className="mb-3 rounded-[4px] border border-info bg-info-soft px-3 py-2 text-[13px] text-body" data-testid="acting-marker">
+          <b className="text-ink">Acting on behalf of {actingFor}</b>, who has left. It is recorded under your own name; the
+          lead is not transferred.
+        </p>
+      ) : null}
       {loadError ? (
         <p className="mb-3 text-[13px] text-danger">{loadError}</p>
       ) : !facts ? (
