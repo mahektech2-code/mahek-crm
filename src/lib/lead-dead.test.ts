@@ -16,11 +16,13 @@
 import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
 import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
   appAccess,
+  appModuleAccess,
   auditLog,
   calls,
   customers,
@@ -37,7 +39,7 @@ import {
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { advanceLeadStage } from "@/lib/actions/leads";
-import { decideDeadRequest, requestDeadLead, previewDeadApprover, withdrawDeadRequest } from "@/lib/actions/lead-dead";
+import { decideDeadRequest, requestDeadLead, requestDeadLeads, previewDeadApprover, withdrawDeadRequest } from "@/lib/actions/lead-dead";
 import { reopenSalesManagerLead } from "@/lib/actions/lead-reopen";
 import { ingestSyncBatch } from "@/lib/actions/mbos";
 import { ageLeads, mbosHourly, mbosNightly, raiseNurtureTasks } from "@/lib/mbos-jobs";
@@ -217,6 +219,81 @@ describe("A — eligibility is enforced on the server", () => {
     const r = await ask(lead.id);
     assert.equal(r.ok, false);
     assert.equal((await requestsOf(lead.id)).length, 0);
+  });
+});
+
+/**
+ * Runs `fn` as if the request came from the CRM — the app the proxy names from
+ * the URL. A lead action reads it (`requestAppId`) to decide whose lead list to
+ * ask, and a test has no request, so the header is supplied here and put back.
+ */
+async function inCrm<T>(fn: () => Promise<T>): Promise<T> {
+  const nextHeaders = createRequire(`${process.cwd()}/package.json`)("next/headers") as { headers: unknown };
+  const original = nextHeaders.headers;
+  Object.defineProperty(nextHeaders, "headers", {
+    value: async () => new Headers({ "x-mahek-app": "crm" }),
+    configurable: true,
+    writable: true,
+  });
+  try {
+    return await fn();
+  } finally {
+    Object.defineProperty(nextHeaders, "headers", { value: original, configurable: true, writable: true });
+  }
+}
+
+describe("A2 — a lead on the requester's list through her team is one she may ask about", () => {
+  /* The reported case: the lead is Lost and owned by a salesman who reports to
+     the Sales Manager. She sees it on /crm/leads through her team, and the
+     request used to be refused with "customer.read requires the associate
+     level" because the action asked the CRM's narrower scope, not the list's. */
+  async function salesManagerWithTeamLead() {
+    const seemaEmp = await makeEmployee("Seema Roy");
+    const seema = await makeUser("Seema Roy", "associate", { employeeId: seemaEmp.id });
+    // Her grant is the Sales Manager module, not a manager LEVEL.
+    for (const key of ["crm.leads", "crm.sales-manager"]) {
+      await db.insert(appModuleAccess).values({ id: id("ama"), userId: seema.id, app: "crm", module: key });
+    }
+    await db.insert(employeeReporting).values({ id: id("rep"), employeeId: seemaEmp.id, managerId: mgrEmp.id });
+    const prakash = await makeUser("Prakash Prasad", "associate");
+    await db.update(users).set({ reportsToId: seema.id }).where(eq(users.id, prakash.id));
+    // No seat names Seema: the team arm is the ONLY way this lead is hers.
+    const lead = await makeLead({ ownerId: prakash.id, leadManagerId: null, salesManagerId: null });
+    return { seema, prakash, lead };
+  }
+
+  test("the Sales Manager can ask for Dead on a Lost lead owned by her reporting-team salesman", async () => {
+    const { seema, lead } = await salesManagerWithTeamLead();
+    setTestUser(seema);
+    const r = await inCrm(() => ask(lead.id, { note: "Customer said never to call again" }));
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    const [req] = await requestsOf(lead.id);
+    assert.equal(req.requestedById, seema.id);
+    assert.equal(req.approverId, manager.id, "still routed to her Org Chart manager, nobody else");
+    assert.equal(req.state, "pending");
+  });
+
+  test("the same holds for several at once: her team's leads go, a stranger's lead is named as refused", async () => {
+    const { seema, lead } = await salesManagerWithTeamLead();
+    const foreign = await makeLead({ ownerId: otherManager.id, leadManagerId: otherManager.id, salesManagerId: null });
+    setTestUser(seema);
+    const r = await inCrm(() => requestDeadLeads({ customerIds: [lead.id, foreign.id], reasonCode: "no_response" }));
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    assert.equal(r.ok && r.data.requested, 1);
+    assert.deepEqual(r.ok ? r.data.refused.map((x) => x.id) : [], [foreign.id]);
+    assert.equal((await requestsOf(lead.id)).length, 1);
+    assert.equal((await requestsOf(foreign.id)).length, 0);
+  });
+
+  test("an unrelated associate still cannot ask about that lead", async () => {
+    const { lead } = await salesManagerWithTeamLead();
+    const stranger = await makeUser("Sam Stranger", "associate", { employeeId: (await makeEmployee("Sam")).id });
+    await db.insert(employeeReporting).values({ id: id("rep"), employeeId: stranger.employeeId!, managerId: mgrEmp.id });
+    setTestUser(stranger);
+    const r = await inCrm(() => ask(lead.id));
+    assert.equal(r.ok, false);
+    assert.match(!r.ok ? r.error : "", /customer\.read/);
+    assert.equal((await requestsOf(lead.id)).length, 0, "nothing was written");
   });
 });
 
