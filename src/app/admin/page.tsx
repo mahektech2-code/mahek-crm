@@ -67,7 +67,7 @@ export default async function AdminHome() {
       sub: jobsFailed ? `${jobsFailed} failed` : jobsTotal ? "All ran" : "Nothing has run here",
       href: ADMIN.jobs,
     },
-    { label: "WhatsApp (Wati)", dot: wa.active ? "ok" : "muted", value: wa.active ? "On" : "Off", sub: "Founder switch" },
+    { label: "WhatsApp (Wati)", dot: wa.active ? "ok" : "muted", value: wa.active ? "On" : "Off", sub: "HQ switch" },
     {
       label: "Ola key pool",
       dot: ola.keys.length === 0 ? "muted" : ola.allSpent ? "danger" : live < ola.keys.length ? "warn" : "ok",

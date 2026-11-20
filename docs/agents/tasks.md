@@ -6,7 +6,7 @@
 who owes it and `tasks.app` is where its work happens (`crm`, `accounts`…, or
 `tasks` for a personal one), so one row is on the Tasks app (`/tasks`) and on
 that app's own My tasks screen — TeleCRM's at `/crm/tasks` (module
-`crm.tasks`), Accounts', Sales', the ERP's and Founder's at
+`crm.tasks`), Accounts', Sales', the ERP's and HQ's at
 `/<app>/my-tasks`. Rules are pure in `lib/tasks/rules.ts`, reads in
 `lib/tasks/service.ts`, every write in `lib/actions/tasks.ts`; each action asks
 `taskDetail` — the answer the screen drew its buttons from — before it writes.
@@ -156,7 +156,7 @@ of the follow-up engine does not); a My tasks on the Factory phone app.
 
 **EVERY APP HAS ITS OWN MY TASKS, AND IT IS ALWAYS OPEN.** `APP_TASKS_PATH` in
 `lib/tasks/rules.ts` is where each lives — `/crm/tasks`, and `/<app>/my-tasks`
-for Accounts, Sales, ERP and Founder, and for now no other app (`my-tasks`
+for Accounts, Sales, ERP and HQ, and for now no other app (`my-tasks`
 because Sales already had a `tasks` meaning something else). A NEW task or
 routine may be filed only under Personal or one of those apps (`canFileUnder`,
 `TASK_FILE_APPS`), on the pickers and in the actions; a task or routine filed

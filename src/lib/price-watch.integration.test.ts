@@ -315,7 +315,7 @@ describe("the actions", () => {
     assert.equal(a.entityId, lineId);
   });
 
-  test("send to founder tells whoever holds the Founder Dashboard", async () => {
+  test("send to founder tells whoever holds HQ", async () => {
     await bookWithRevision();
     await sheetLine({ date: addDays(TODAY, -5), productId: nano20.id, rate: v2Ex - 1_000, cans: 2 });
     const report = await watchReport({ from: addDays(TODAY, -7), to: TODAY });
@@ -323,7 +323,7 @@ describe("the actions", () => {
     assert.ok(r.ok, r.ok ? "" : r.error);
     const told = await db.select().from(notifications);
     assert.deepEqual(told.map((n) => n.userId), [founder.id]);
-    assert.ok(told[0].href?.startsWith("/founder/price-lists/watch"));
+    assert.ok(told[0].href?.startsWith("/hq/price-lists/watch"));
 
     setTestUser(telecaller);
     assert.equal((await sendToFounder({ from: addDays(TODAY, -7), to: TODAY })).ok, false);

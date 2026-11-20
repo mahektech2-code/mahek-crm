@@ -63,7 +63,7 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 function refresh() {
   try {
-    for (const base of ["/sales", "/crm", "/accounts", "/founder"]) revalidatePath(`${base}/price-lists`, "layout");
+    for (const base of ["/sales", "/crm", "/accounts", "/hq"]) revalidatePath(`${base}/price-lists`, "layout");
   } catch {
     /* No request context — a job or a test. */
   }

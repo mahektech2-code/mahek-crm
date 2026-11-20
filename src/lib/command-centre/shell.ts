@@ -40,7 +40,7 @@ export async function shellChrome(access: Awaited<ReturnType<typeof founderAcces
   if ("staleCount" in freshness && freshness.staleCount) navCounts.system = Math.max(navCounts.system ?? 0, freshness.staleCount);
 
   return {
-    user: { name: access.user.name, initials: initials(access.user.name), hatLabel: `${hat.label} · Founder` },
+    user: { name: access.user.name, initials: initials(access.user.name), hatLabel: `${hat.label} · HQ` },
     switcherApps: webApps(apps),
     inbox,
     liveCount: live.length,

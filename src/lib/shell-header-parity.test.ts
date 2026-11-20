@@ -3,7 +3,7 @@
  *
  * Mahek's instruction is that those three are mandatory in every MahekOne app.
  * They were written out by hand in each shell and drifted — the Sales
- * Dashboard had no collapse, Accounts and the Founder desks no switcher, the
+ * Dashboard had no collapse, Accounts and HQ desks no switcher, the
  * CRM hid its switcher from anybody holding one app — and nothing noticed,
  * because a missing control is not an error anywhere. `HeaderLead` draws all
  * three; this reads every shell as TEXT and fails on one that does not render
@@ -29,7 +29,7 @@ const SHELLS: Partial<Record<AppId, string[]>> = {
   hrms: ["src/app/hrms/_ui/hrms-shell.tsx"],
   admin: ["src/app/admin/_shell/admin-shell.tsx"],
   /* The desks draw the Command Centre's own FounderHeader, from chrome.tsx. */
-  founder: ["src/app/founder/(command)/chrome.tsx"],
+  founder: ["src/app/hq/(command)/chrome.tsx"],
   enquiries: ["src/app/enquiries/enquiries-shell.tsx"],
   erp: ["src/app/erp/_ui/erp-shell.tsx"],
   website: ["src/app/website/website-shell.tsx"],

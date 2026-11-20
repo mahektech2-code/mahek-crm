@@ -45,7 +45,7 @@ import { replyText } from "@/lib/whatsapp-delivery";
  * ------------------------------------------------------------------------- */
 
 const TITLE = "WhatsApp";
-const DESK = "/founder/whatsapp";
+const DESK = "/hq/whatsapp";
 
 const READINESS_DEF: TableDef = {
   key: "readiness",

@@ -346,7 +346,7 @@ async function record(ctx: Ctx, table: string, id: string): Promise<RecordView> 
     reports: "Reports",
     people: "People",
     enquiries: "Enquiries",
-    founder: "Founder",
+    founder: "HQ",
   };
   const acct = accounts[0];
   const v = (s: string | null | undefined) => (s && s.trim() ? s : "Not recorded");

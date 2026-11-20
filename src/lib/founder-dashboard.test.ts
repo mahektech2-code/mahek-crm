@@ -1,5 +1,5 @@
 /**
- * The Founder Dashboard, end to end.
+ * HQ, end to end.
  *
  *   npm run test:integration
  *

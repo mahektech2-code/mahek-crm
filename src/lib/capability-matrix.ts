@@ -640,13 +640,13 @@ const PRICE_DESK: ReadonlySet<Capability> = new Set<Capability>(["pricelist.mana
  * WHETHER WHATSAPP LEAVES THE BUILDING THROUGH THE API — the founder's, and
  * nobody else's. Mahek's instruction: a message goes out through Wati only if
  * the founder has switched the service on, and the switch lives on the
- * Founder Dashboard alone.
+ * HQ alone.
  *
  * An administrator holds every capability by construction, so the capability
  * by itself would hand the switch to anybody holding the Admin Console. The
  * actions behind it therefore also demand that the hat which granted it is
  * the FOUNDER app's (`requireFounderDesk` in `whatsapp-switch-service.ts`) —
- * an admin who has been given the Founder Dashboard can use it, and an admin
+ * an admin who has been given HQ can use it, and an admin
  * who has not cannot reach it through the side door.
  */
 const FOUNDER_DESK: ReadonlySet<Capability> = new Set<Capability>(["whatsapp.activate"]);

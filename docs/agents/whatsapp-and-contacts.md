@@ -21,13 +21,13 @@ personal-or-group only; nothing writes `both` to it.
 
 **WHATSAPP GOES THROUGH WATI ONLY WHILE THE FOUNDER HAS IT SWITCHED ON.** The
 switch is `whatsapp_service_events` — one row per decision, the newest wins, no
-row means OFF — on the Founder Dashboard's WhatsApp screen and nowhere else. It
+row means OFF — on HQ's WhatsApp screen and nowhere else. It
 is deliberately not an `app_settings` key: settings are edited by anybody with
 `config.write`, and this is the one messaging decision Mahek gave to the
-founder alone. `whatsapp.activate` sits in the Founder app's row of the matrix,
+founder alone. `whatsapp.activate` sits in HQ's row of the matrix,
 and because an administrator holds every capability by construction,
-`requireFounderDesk` also demands that the hat which granted it is the
-Founder's. The old `whatsapp.mode` setting is retired and read by nothing.
+`requireFounderDesk` also demands that the hat which granted it is
+HQ's. The old `whatsapp.mode` setting is retired and read by nothing.
 
 **It replaced a stub that marked messages sent without sending them.**
 `sendAutomatic` used to set `sent` and stamp `lastConfirmedWhatsappDate` with a

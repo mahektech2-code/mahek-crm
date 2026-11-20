@@ -19,7 +19,7 @@ import {
 import { rankPerformance, type Ranked } from "@/lib/engines/performance";
 
 /* ---------------------------------------------------------------------------
- * The Founder Dashboard, read off four apps that already compute everything
+ * HQ, read off four apps that already compute everything
  * it shows.
  *
  * This file decides NOTHING — every number is `ownerDashboard()`,

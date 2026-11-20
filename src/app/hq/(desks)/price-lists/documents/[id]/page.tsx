@@ -1,0 +1,51 @@
+import { priceListDoorCanManage } from "@/lib/price-list-door";
+/*
+ * ONE DOCUMENT, READ BACK — the Sales Dashboard's door.
+ *
+ * Everything the screen needs comes from two reads: the document with its
+ * staged rows and the grid they form, and the pricing options the modals pick
+ * from. A document that does not exist is a 404 rather than an empty screen —
+ * a review page with nothing on it reads as a sync that has not finished.
+ */
+import { notFound } from "next/navigation";
+import { requireUser } from "@/lib/auth";
+import { documentDetail, pricingOptions } from "@/lib/services/price-list-service";
+import { today } from "@/lib/recompute";
+import { importFactsFor } from "@/lib/services/price-import-service";
+import { PricingSubNav } from "@/components/pricing/sub-nav";
+import { DocumentReviewScreen } from "@/components/pricing/document-review-screen";
+
+export const metadata = { title: "Review a price list — HQ — MahekOne" };
+
+export default async function Page({ params }: { params: Promise<{ id: string }> }) {
+  const user = await requireUser();
+  const { id } = await params;
+
+  const [detail, options, canManage, todayIso, importFacts] = await Promise.all([
+    documentDetail(id),
+    pricingOptions(),
+    priceListDoorCanManage(user, "founder"),
+    today(),
+    importFactsFor(id),
+  ]);
+
+  if (!detail) notFound();
+
+  return (
+    <div className="p-6">
+      <PricingSubNav basePath="/hq/price-lists" current="documents" />
+      <DocumentReviewScreen
+        app="founder"
+        basePath="/hq/price-lists"
+        canManage={canManage}
+        todayIso={todayIso}
+        document={detail.document}
+        rows={detail.rows}
+        grid={detail.grid}
+        options={options}
+        lists={options.lists}
+        importFacts={importFacts}
+      />
+    </div>
+  );
+}

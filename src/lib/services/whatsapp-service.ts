@@ -1219,7 +1219,7 @@ export async function listReplies() {
     .where(and(eq(waReplies.actioned, false), scopedToUsers(ids)))
     .orderBy(desc(waReplies.receivedAt));
   // The inner join already drops replies from numbers the book does not know;
-  // those are listed on the Founder Dashboard's WhatsApp screen instead.
+  // those are listed in HQ's WhatsApp screen instead.
   return rows.map(({ reply, customerName }) => ({
     ...reply,
     message: replyText(reply.message, reply.mediaType),

@@ -60,7 +60,7 @@ export const SLA_HREF: Record<SlaKind, string> = {
   to: "/accounts/approvals",
 };
 
-export const FOUNDER_DEADLINES_HREF = "/founder/accounts-deadlines";
+export const FOUNDER_DEADLINES_HREF = "/hq/accounts-deadlines";
 
 type Pending = SlaCandidate & {
   customerName: string | null;

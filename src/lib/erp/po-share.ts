@@ -155,7 +155,7 @@ async function poWatiRoute(): Promise<WatiRoute> {
   const name = ((await getConfig())["erp.purchase.poWatiTemplate"] ?? "").trim();
   if (!name) return { ok: false, why: "No PO template is named in ERP settings, so WhatsApp opens on your phone." };
   const { whatsappServiceState } = await import("@/lib/services/whatsapp-switch-service");
-  if (!(await whatsappServiceState()).active) return { ok: false, why: "WhatsApp through Wati is switched off on the Founder Dashboard." };
+  if (!(await whatsappServiceState()).active) return { ok: false, why: "WhatsApp through Wati is switched off in HQ." };
   const { listWatiTemplates, isApproved, watiConfig } = await import("@/lib/wati");
   if (!(await watiConfig())) return { ok: false, why: "No Wati key is configured." };
   const list = await listWatiTemplates();

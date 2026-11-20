@@ -130,7 +130,7 @@ describe("dates", () => {
 describe("every app's own My tasks", () => {
   it("each path has a page that renders the shared screen for its own app", () => {
     for (const [app, path] of Object.entries(APP_TASKS_PATH)) {
-      const dir = app === "founder" ? join("src", "app", "founder", "(desks)", "my-tasks") : join("src", "app", ...path!.split("/").filter(Boolean));
+      const dir = app === "founder" ? join("src", "app", "hq", "(desks)", "my-tasks") : join("src", "app", ...path!.split("/").filter(Boolean));
       const page = join(process.cwd(), dir, "page.tsx");
       assert.ok(existsSync(page), `${path} has no page`);
       assert.match(readFileSync(page, "utf8"), new RegExp(`<AppTasksPage app="${app}"`), `${path} must render AppTasksPage for ${app}`);

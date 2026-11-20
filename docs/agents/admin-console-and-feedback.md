@@ -179,7 +179,7 @@ reporter's side was `/feedback`, a bare page outside every app with no header
 or sidebar, which read as being thrown out of MahekOne. Each app with a
 sidebar now has a **Feedback** page under Support (or its last group) —
 `FEEDBACK_APP_PATHS`: the CRM, Accounts, the Sales Dashboard, the ERP, HRMS and
-the Founder Command Centre — all rendering `MyFeedbackPage`, and every one is
+the HQ (the command centre) — all rendering `MyFeedbackPage`, and every one is
 in `ALWAYS_OPEN_MODULES`, for the reason My tasks is: a reply has to be
 readable wherever somebody is. `/feedback` FORWARDS (with `?r=`) to the first of
 those apps they hold, which is why every notification links there — the link
@@ -243,3 +243,15 @@ stay, Mahek's call. The hourly `feedback-fixes` step reads each issue's
 timeline for the pull request that mentions it and closes the report only
 once GitHub's compare says the merge commit is in `MAHEK_BUILD`, the build
 now serving — never at the merge — and tells everybody who reported it.
+
+**HQ'S SLUG IS /hq; ITS APP ID IS STILL `founder`.** The Founder Command
+Centre was renamed HQ in every word a person reads (Nov 2026), and then its
+URL moved too: `src/app/hq`, `/hq?s=<section>`, `/hq/price-lists`,
+`/hq/whatsapp`, `/hq/margins`, `/hq/my-tasks`, `/hq/feedback`. `next.config.ts`
+redirects `/founder` and `/founder/:path*` to the same path under `/hq`
+permanently, so bookmarks and the links already stored in notifications,
+tasks and automations keep landing. The app id `founder` was deliberately
+NOT renamed: it is a Postgres enum value held in every `app_access` grant,
+every `founder.*` module key, audit rows and settings, and nobody sees it.
+`app-routes.ts` maps `/hq` to it; tests that walk `src/app/<folder>` list the
+folder `hq`, not the id.

@@ -370,7 +370,7 @@ const STOPS: Record<SecretName, Felt> = {
   },
   "msg91.authKey": { app: "MahekOne", label: "nothing", note: "Nothing uses it — WhatsApp goes through Wati." },
   "wati.apiToken": {
-    app: "Founder",
+    app: "HQ",
     label: "WhatsApp sending through the API",
     note: "Nothing can go through the API until a key is set again; every screen falls back to copy and paste, and live automation rules stop sending. The webhook address changes with the next key.",
   },

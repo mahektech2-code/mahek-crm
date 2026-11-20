@@ -116,7 +116,7 @@ export async function channels(): Promise<Channel[]> {
     {
       name: "WhatsApp",
       on: wa.active && wati,
-      line: !wati ? "No Wati key" : wa.active ? "Switched on by the founder" : "Switched off on the Founder Dashboard",
+      line: !wati ? "No Wati key" : wa.active ? "Switched on in HQ" : "Switched off in HQ",
       setHref: wati ? undefined : ADMIN.integrations,
     },
   ];

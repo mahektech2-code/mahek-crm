@@ -27,7 +27,7 @@ const NotificationModal = React.lazy(() => import("./notification-modal").then((
 
 /* ---------------------------------------------------------------------------
  * THE LIVE BELL — one per tab, mounted in the root layout so every app gets
- * it: the CRM, Accounts, the Sales Dashboard, the Founder desk, all of them.
+ * it: the CRM, Accounts, the Sales Dashboard, HQ, all of them.
  *
  * It asks `/api/notifications` on a cadence, keeps the answer in a small store
  * the header bells read, and for whatever is NEW:

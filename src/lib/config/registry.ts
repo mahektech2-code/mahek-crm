@@ -5068,7 +5068,7 @@ export const SETTINGS = [
     category: "erp",
     label: "Purchase orders · Wati template",
     description:
-      "The name of the APPROVED Wati template a PO goes out as when it is shared on WhatsApp. It may use {{name}} (who it is sent to), {{vendor}}, {{po}}, {{items}}, {{total}}, {{deliver_to}}, {{delivery}}, {{link}} (the PO's PDF) and {{message}} (what the sender wrote, link included). A template asking for anything else is not used. Blank, or WhatsApp switched off on the Founder Dashboard: WhatsApp opens on the sender's own phone with the message written.",
+      "The name of the APPROVED Wati template a PO goes out as when it is shared on WhatsApp. It may use {{name}} (who it is sent to), {{vendor}}, {{po}}, {{items}}, {{total}}, {{deliver_to}}, {{delivery}}, {{link}} (the PO's PDF) and {{message}} (what the sender wrote, link included). A template asking for anything else is not used. Blank, or WhatsApp switched off in HQ: WhatsApp opens on the sender's own phone with the message written.",
     default: "",
   },
   {

@@ -146,7 +146,7 @@ pair amounts to, not a value stored anywhere.
 | `anjali@mahek.in` | 9820011003 | associate (telecaller) | CRM | straight into the CRM |
 | `suresh@mahek.in` | 9820011004 | associate (telecaller) | CRM | straight into the CRM |
 | `neha@mahek.in` | 9820011005 | associate | CRM | straight into the CRM |
-| `vikram@mahek.in` | 9820011006 | admin (platform administrator — Admin on the Admin Console; associate on Accounts) | CRM, Accounts, HRMS, Founder, Admin (and the retired People) | the launcher |
+| `vikram@mahek.in` | 9820011006 | admin (platform administrator — Admin on the Admin Console; associate on Accounts) | CRM, Accounts, HRMS, HQ, Admin (and the retired People) | the launcher |
 | `mahesh@mahek.in` | 9820011007 | associate (field salesman) | Salesman App | signs in on the web to `/apps`, which says there is nothing for him there — his app is MBOS, the mobile handset, not a browser |
 | `deepa@mahek.in` | 9820011008 | manager (the ledger desk) | Accounts | straight into order approvals |
 

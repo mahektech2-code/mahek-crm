@@ -212,11 +212,11 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
             </KeyRow>
             <KeyRow label="Switch">
               <Pill tone={wa.active ? "ok" : "muted"}>{wa.active ? "On" : "Off"}</Pill>
-              <span className="flex-1 text-right text-muted">Founder only</span>
+              <span className="flex-1 text-right text-muted">HQ only</span>
             </KeyRow>
             <KeyRow label="Templates">
               <span className="flex-1">{n(tpl?.n ?? 0)} linked</span>
-              <Link href="/founder/whatsapp" className="font-medium text-brand">
+              <Link href="/hq/whatsapp" className="font-medium text-brand">
                 Open
               </Link>
             </KeyRow>

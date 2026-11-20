@@ -34,7 +34,7 @@ import {
 } from "@/lib/services/wati-reply-backfill-service";
 
 /* ---------------------------------------------------------------------------
- * The Founder Dashboard's WhatsApp screen — its two writes.
+ * HQ's WhatsApp screen — its two writes.
  *
  * Both are checked in the service (`requireFounderDesk`), not here and not by
  * hiding the control: a server action is a URL, and the switch that decides
@@ -42,7 +42,7 @@ import {
  * ------------------------------------------------------------------------- */
 
 function refresh() {
-  revalidatePath("/founder/whatsapp");
+  revalidatePath("/hq/whatsapp");
   revalidatePath("/crm/whatsapp");
   revalidatePath("/crm/payments");
 }
@@ -115,7 +115,7 @@ export async function findCustomersAction(
 
 
 function refreshAutomation() {
-  revalidatePath("/founder/whatsapp/automation");
+  revalidatePath("/hq/whatsapp/automation");
 }
 
 export async function saveWindowAction(w: WindowSettings): Promise<Result> {
@@ -205,7 +205,7 @@ export async function runLiveNowAction(): Promise<Result<RunSummary>> {
 export async function setWhatsappDndAction(customerIds: string[], dnd: boolean, reason: string): Promise<Result> {
   try {
     const r = await setWhatsappDnd({ customerIds, dnd, reason });
-    revalidatePath("/founder/whatsapp/contacts");
+    revalidatePath("/hq/whatsapp/contacts");
     refresh();
     return r;
   } catch (e) {

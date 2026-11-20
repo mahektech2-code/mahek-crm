@@ -25,7 +25,7 @@ import type { Resolution, ValidityState } from "@/lib/engines/price-resolution";
  * WHICH DOOR A PRICE LIST SCREEN WAS OPENED THROUGH.
  *
  * One feature, three mounts: the CRM, which READS them, and the Accounts desk
- * and the Founder Dashboard, which issue them. The Sales Dashboard had a
+ * and HQ, which issue them. The Sales Dashboard had a
  * read-only door too and it was removed — prices are not its subject. It changes the links
  * and a sentence or two and nothing else, because a second copy of the screens
  * would be a second answer to what a shop pays.
