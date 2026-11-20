@@ -6,12 +6,13 @@ import { z } from "zod";
 
 import { db } from "@/db";
 import { notifications } from "@/db/schema";
-import { assertCustomerInScope, requireCapability } from "@/lib/access-control";
+import { requireCapability } from "@/lib/access-control";
 import { requireUser } from "@/lib/auth";
 import { getConfig } from "@/lib/config/store";
 import { BULK_DEAD_MAX, deadRequestEligibility } from "@/lib/lead-dead";
 import { REASON_CODE_NEEDING_REMARKS } from "@/lib/lead-labels";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
+import { assertLeadInScope } from "@/lib/services/lead-scope";
 import { leadRow } from "@/lib/services/lead-service";
 import {
   decideLeadDead,
@@ -110,7 +111,10 @@ async function requestOne(
   try {
     const lead = await leadRow(customerId);
     if (!lead) return err("That lead is not on MahekOne.", "not_found");
-    await assertCustomerInScope({
+    /* Asked the way the lead LISTS ask it (`assertLeadInScope`): a lead on this
+       person's list — through her team or her Sales Manager seat — is one she may
+       work. The bare CRM scope check refused it with a sentence about levels. */
+    await assertLeadInScope(customerId, {
       kind: lead.kind,
       ownerId: lead.ownerId,
       salesAmId: lead.salesAmId,
