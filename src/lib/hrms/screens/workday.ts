@@ -11,7 +11,7 @@ import { attendanceRows } from "../services/attendance";
 import { approvedSpans, sessionsOf, settledToday, workdayCfg } from "../services/workday";
 import { breaksOf, phaseOf, workedMs } from "../engines/workday";
 import { addDaysISO, fdShort, hm, nowHM } from "../time";
-import { decideClaim } from "../workday-ops";
+import { decideClaim, editClaim, withdrawClaim } from "../workday-ops";
 
 /* ---------------------------------------------------------------------------
  * The workday clock's two HRMS tabs, under Attendance: TEAM TODAY, who is
@@ -109,8 +109,30 @@ const teamToday: HrmsScreenModule = {
   },
 };
 
+const CLAIM_CATEGORIES = ["On a call", "In a meeting", "On the floor or godown", "Other"];
+const CLAIM_STATUS: Record<string, string> = { pending: "Pending", approved: "Approved", declined: "Rejected", withdrawn: "Withdrawn" };
+
 function claimActions(ctx: HrmsContext, c: typeof hrmsWorkdayClaims.$inferSelect): ActionSpec[] {
   if (c.status !== "pending") return [];
+  /* The claimant fixes what they said, or takes it back, while it waits. */
+  if (ctx.employee?.id === c.employeeId)
+    return [
+      {
+        id: "editClaim",
+        l: "Edit",
+        prompt: {
+          title: "Edit your claim",
+          sub: `${hhmm(c.fromAt.getTime())}–${hhmm(c.toAt.getTime())} on ${fdShort(c.date)}`,
+          submit: "Save",
+          init: { category: CLAIM_CATEGORIES.includes(c.category) ? c.category : "Other", note: c.note },
+          fields: [
+            { k: "category", l: "Doing", t: "select", req: true, opts: CLAIM_CATEGORIES },
+            { k: "note", l: "What you were doing", t: "area", req: true },
+          ],
+        },
+      },
+      { id: "withdraw", l: "Withdraw", confirm: "Withdraw this claim? The time stays a break." },
+    ];
   const may = (has(ctx, "editAtt") || ctx.administrator || managesFor(ctx, c.employeeId)) && ctx.employee?.id !== c.employeeId;
   const why = may ? undefined : ctx.employee?.id === c.employeeId ? "Somebody else decides your own claims" : "Only their manager or HR can decide this";
   return [
@@ -160,7 +182,7 @@ const workdayClaims: HrmsScreenModule = {
           kind: c.kind === "auto_out" ? "Away after an automatic punch-out" : "Automatic break",
           category: c.category,
           note: c.note,
-          status: c.status === "pending" ? "Pending" : c.status === "approved" ? "Approved" : "Rejected",
+          status: CLAIM_STATUS[c.status] ?? "Rejected",
         },
         flags: [],
         title: `${pb.get(c.employeeId)?.name ?? ""} · ${fdShort(c.date)}`,
@@ -172,6 +194,8 @@ const workdayClaims: HrmsScreenModule = {
   actions: {
     approve: (ctx, id) => decideClaim(ctx, id, true, ""),
     decline: (ctx, id, values) => decideClaim(ctx, id, false, values.note ?? ""),
+    editClaim: (ctx, id, values) => editClaim(ctx, id, { category: values.category ?? "", note: values.note ?? "" }),
+    withdraw: (ctx, id) => withdrawClaim(ctx, id),
   },
 };
 

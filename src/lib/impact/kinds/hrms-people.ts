@@ -272,7 +272,7 @@ export const assetLotImpact: ImpactSource = {
 
 export const assetAssignmentImpact: ImpactSource = {
   authorize: async () => {
-    await hrmsMayAct(["assignments"], (ctx) => (has(ctx, "admin") ? null : "Deleting an assignment needs the HRMS administration power"));
+    await hrmsMayAct(["assignments"], (ctx) => (has(ctx, "hr") ? null : "Deleting an assignment needs the HR power"));
   },
 
   async report(id) {

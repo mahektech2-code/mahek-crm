@@ -14,7 +14,7 @@ import { HRMS_TABS, hrmsLink, hrmsListLabel } from "../registry";
 import { fdShort, tmin } from "../time";
 import { calendarDate } from "@/lib/business-date";
 import { personFrom, personOption } from "./attendance";
-import { GRIEVANCE_ANSWERED, HELP } from "../values";
+import { GRIEVANCE_ANSWERED, GRIEVANCE_WITHDRAWN, HELP } from "../values";
 import { hrmsUserIds, managerUserIdsOf, powerHolderUserIds, tell, usersOfEmployees } from "../services/notify";
 import { announce, bellsOf, markAnnouncementSeen, rewordAnnouncement, withdrawAnnouncement } from "@/lib/services/announcement-service";
 import { confirmImpact } from "@/lib/impact/registry";
@@ -122,6 +122,23 @@ function helpActions(ctx: HrmsContext, r: HelpRow, attendanceId: string | undefi
       href: attendanceId ? hrmsLink("attendance", { scope: "all", open: attendanceId }) : hrmsLink("attendance", { scope: "all", from: r.date }),
     });
   const own = r.employeeId === ctx.employee?.id;
+  /* The asker fixes a time or the words while nobody has decided it; the type stays — ask again for another. */
+  if (own && r.status === "Pending")
+    a.push({
+      id: "edit",
+      l: "Edit",
+      prompt: {
+        title: "Edit your help request",
+        sub: `${r.type} · ${fdShort(r.date)}`,
+        submit: "Save",
+        init: { inTime: r.inTime ?? "", outTime: r.outTime ?? "", text: r.text ?? "" },
+        fields: [
+          ...(IN_TYPES.includes(r.type) ? [{ k: "inTime", l: "In time", t: "time" as const, req: true }] : []),
+          ...(OUT_TYPES.includes(r.type) ? [{ k: "outTime", l: "Out time", t: "time" as const, req: true }] : []),
+          { k: "text", l: "Details", t: "area", req: true, mic: true },
+        ],
+      },
+    });
   if ((own && r.status === "Pending") || has(ctx, "admin")) a.push({ id: "delete", l: "Delete", impact: { kind: "hrms-help", id: r.id } });
   return a;
 }
@@ -278,6 +295,22 @@ const help: HrmsScreenModule = {
       await hrmsAudit(ctx, "hrms.help.remark", "hrms_help", id, null, { remark });
       return okVoid("Remark saved");
     },
+    async edit(ctx, id, v) {
+      const [r] = await db.select().from(hrmsHelp).where(eq(hrmsHelp.id, id));
+      if (!r) return err("That request no longer exists.", "not_found");
+      if (r.employeeId !== ctx.employee?.id) return err("Only the person who asked edits a help request.", "not_permitted");
+      if (r.status !== "Pending") return err("This help request is already decided; ask again if something changed.");
+      const body = text(v.text);
+      if (!body) return fieldErr("text", "Write the details");
+      const inTime = IN_TYPES.includes(r.type) ? text(v.inTime) : r.inTime;
+      const outTime = OUT_TYPES.includes(r.type) ? text(v.outTime) : r.outTime;
+      if (IN_TYPES.includes(r.type) && !inTime) return fieldErr("inTime", "Required");
+      if (OUT_TYPES.includes(r.type) && !outTime) return fieldErr("outTime", "Required");
+      const after = { inTime: inTime ?? null, outTime: outTime ?? null, text: body };
+      await db.update(hrmsHelp).set({ ...after, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(hrmsHelp.id, id));
+      await hrmsAudit(ctx, "hrms.help.edit", "hrms_help", id, { inTime: r.inTime, outTime: r.outTime, text: r.text }, after);
+      return okVoid("Help request updated");
+    },
     async delete(ctx, id, values) {
       const [r] = await db.select().from(hrmsHelp).where(eq(hrmsHelp.id, id));
       if (!r) return err("That request no longer exists.", "not_found");
@@ -380,6 +413,9 @@ function grievanceActions(ctx: HrmsContext, r: GrievanceRow): ActionSpec[] {
       prompt: { title: "How was it solved?", sub: r.solution ?? "", submit: "Send feedback", fields: [{ k: "stars", l: "Stars", t: "select", req: true, opts: STAR_OPTS }] },
     });
   if (mayEditGrievance(ctx, r)) a.push({ id: "edit", l: "Edit", loadsForm: true });
+  /* The raiser takes it back while it waits; kept, marked withdrawn, so whoever it was addressed to sees it closed. */
+  if (raiser && r.status === "Pending")
+    a.push({ id: "withdraw", l: "Withdraw", prompt: { title: "Withdraw this grievance?", sub: r.issue, submit: "Withdraw", fields: [{ k: "reason", l: "Why (optional)", t: "area" }] } });
   if (has(ctx, "admin")) a.push({ id: "delete", l: "Delete", impact: { kind: "hrms-grievance", id: r.id } });
   return a;
 }
@@ -460,6 +496,22 @@ const grievances: HrmsScreenModule = {
       await db.update(hrmsGrievances).set({ stars: n, feedbackAt: new Date(), updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(hrmsGrievances.id, id));
       await hrmsAudit(ctx, "hrms.grievance.feedback", "hrms_grievances", id, null, { stars: n });
       return okVoid("Thanks for the feedback");
+    },
+    async withdraw(ctx, id, v) {
+      const [r] = await db.select().from(hrmsGrievances).where(eq(hrmsGrievances.id, id));
+      if (!r || !mayReadGrievance(ctx, r)) return err("That grievance no longer exists.", "not_found");
+      if (r.byEmployeeId !== ctx.employee?.id) return err("Only the person who raised a grievance withdraws it.", "not_permitted");
+      if (r.status !== "Pending") return err(`Grievance #${r.no} has already been answered.`);
+      const reason = text(v.reason);
+      await db
+        .update(hrmsGrievances)
+        .set({ status: GRIEVANCE_WITHDRAWN, solution: reason ? `Withdrawn: ${reason}` : "Withdrawn by the person who raised it", updatedAt: new Date(), updatedById: ctx.user.id })
+        .where(eq(hrmsGrievances.id, id));
+      await hrmsAudit(ctx, "hrms.grievance.withdraw", "hrms_grievances", id, { status: r.status }, { status: GRIEVANCE_WITHDRAWN, reason });
+      const to = new Set([...(await resolverUserIds()), ...(await userIdsFor([r.toEmployeeId]))]);
+      to.delete(ctx.user.id);
+      await tell([...to].map((userId) => ({ userId, title: `Grievance #${r.no} withdrawn`, body: reason ?? r.issue, href: hrmsLink("grievances", { open: id }) })));
+      return okVoid(`Grievance #${r.no} withdrawn`);
     },
     async delete(ctx, id, values) {
       if (!has(ctx, "admin")) return err("Deleting a grievance needs the HRMS administration power", "not_permitted");
@@ -626,6 +678,22 @@ const documents: HrmsScreenModule = {
         const href = docHref(d);
         const named = d.audienceEmployeeIds.map((id) => people.get(id)?.name).filter(Boolean).join(", ");
         const actions: ActionSpec[] = [href ? { id: "open", l: "Open", primary: true, href } : { id: "open", l: "Open", primary: true, why: "Nothing was attached to this document" }];
+        if (manager && d.active)
+          actions.push({
+            id: "edit",
+            l: "Edit",
+            prompt: {
+              title: "Edit the document",
+              sub: "The file or link stays; withdraw it and add another to replace it.",
+              submit: "Save",
+              init: { title: d.title, desc: d.description ?? "", tagged: d.audience ?? EVERYONE },
+              fields: [
+                { k: "title", l: "Title", t: "text", req: true },
+                { k: "desc", l: "Description", t: "area" },
+                { k: "tagged", l: "Who it is for", t: "select", req: true, opts: [EVERYONE, FIELD, ...officeNames] },
+              ],
+            },
+          });
         if (manager && d.active) actions.push({ id: "delete", l: "Withdraw", impact: { kind: "hrms-document", id: d.id } });
         const fields: RowField[] = [
           { l: "File or link", v: d.media === "Link" ? (d.linkUrl ?? "") : d.attachmentId ? "Attached" : "None" },
@@ -647,6 +715,25 @@ const documents: HrmsScreenModule = {
     };
   },
   actions: {
+    /* Title, description and audience. Who it reaches on the handsets follows the audience; a document that leaves
+       them gets the same tombstone a withdrawal does, so a phone that already pulled it drops it. */
+    async edit(ctx, id, v) {
+      if (!manageDocs(ctx)) return err("Editing a document needs the HR or HRMS administration power", "not_permitted");
+      const [d] = await db.select().from(mbosDocuments).where(and(eq(mbosDocuments.id, id), isNotNull(mbosDocuments.audience)));
+      if (!d) return err("That document no longer exists.", "not_found");
+      if (!d.active) return err(`${d.title} is withdrawn; add it again instead.`);
+      const title = text(v.title);
+      if (!title) return fieldErr("title", "Give the document a title");
+      const tagged = text(v.tagged) ?? d.audience ?? EVERYONE;
+      if (![EVERYONE, FIELD, ...(await offices()).map((o) => o.name)].includes(tagged)) return fieldErr("tagged", "Choose who should see it: all employees, field staff, or an office");
+      const roles = handsetRoles(d.media ?? "", d.attachmentId, tagged);
+      const leaves = d.visibleToRoles.length === 0 && roles.length > 0;
+      const after = { title, description: text(v.desc), audience: tagged, visibleToRoles: roles };
+      await db.update(mbosDocuments).set({ ...after, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(mbosDocuments.id, id));
+      if (leaves) await db.insert(mbosDeletions).values({ id: hrmsId("del"), entity: "documents", entityId: id, userId: null, reason: "audience changed" });
+      await hrmsAudit(ctx, "hrms.document.edit", "mbos_documents", id, { title: d.title, description: d.description, audience: d.audience }, { title, description: after.description, audience: tagged });
+      return okVoid(leaves ? `${title} saved · it leaves the field app` : `${title} saved`);
+    },
     /* Withdrawn, never deleted — the library's rule: a policy somebody quoted
        in March is a fact about March. The tombstone is what takes it off the
        handsets that already pulled it. */
