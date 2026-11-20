@@ -18531,9 +18531,13 @@ export const lockerRenewals = pgTable("locker_renewals", {
   startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
   completedAt: timestamp("completed_at", { withTimezone: true }),
   completedById: text("completed_by_id").references(() => users.id),
+  /** Abandoned before it completed (0369): kept, with who and why. A cancelled task is not open. */
+  cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+  cancelledById: text("cancelled_by_id").references(() => users.id),
+  cancelReason: text("cancel_reason"),
 }, (t) => [
   index("locker_renewals_asset_idx").on(t.assetId),
-  uniqueIndex("locker_renewals_one_open").on(t.assetId).where(sql`${t.completedAt} is null`),
+  uniqueIndex("locker_renewals_one_open").on(t.assetId).where(sql`${t.completedAt} is null and ${t.cancelledAt} is null`),
 ]);
 
 /** Reminder schedules, one per importance: offsets in days from the action day. */

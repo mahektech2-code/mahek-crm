@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { addDays, daysBetween } from "@/lib/format";
-import { markChecked, setAssetText, setSeat, setStage, startRenewal, type Seat } from "@/lib/actions/locker-assets";
+import { markChecked, removeDocument, setAssetText, setSeat, setStage, startRenewal, type Seat } from "@/lib/actions/locker-assets";
 import { DEFAULT_STEPS, type TimeModel } from "@/lib/locker/catalogue";
 import { CRIT, MODEL_LABEL, RENEWAL_STEPS, checkIntervalDays, daysColour, daysLabel, type Stage } from "@/lib/locker/engine";
 import type { AssetLite } from "@/lib/locker/lite";
@@ -76,6 +76,8 @@ export function AssetScreen({ vm, initialTab }: { vm: AssetVM; initialTab: strin
   const [editing, setEditing] = useState(false);
   const [upBusy, setUpBusy] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
+  const replaceRef = useRef<HTMLInputElement>(null);
+  const [replacing, setReplacing] = useState<string | null>(null);
   const ro = !vm.canEdit;
   const hasCase = !!vm.openRenewal;
   const superseded = vm.stage === "superseded";
@@ -301,8 +303,19 @@ export function AssetScreen({ vm, initialTab }: { vm: AssetVM; initialTab: strin
   add("Site", a.siteName ? `${a.siteName}${a.siteState ? `, ${a.siteState}` : ""}` : "Company-wide");
   add("Department", vm.department);
 
+  /* The current version's documents are replaced or removed from their own row; an earlier version's are its record. */
+  const docEditable = (x: AssetVM["docs"][number]) => x.current && !ro && !superseded;
+  const removeDoc = (x: AssetVM["docs"][number]) =>
+    modal({
+      title: `Remove ${x.filename}?`,
+      sub: "It comes off this asset and is kept on the record with its hash and your reason — nothing is destroyed.",
+      fields: [{ k: "r", l: "Why", type: "area", min: 10 }],
+      okL: "Remove document",
+      done: (v) => act(removeDocument(a.id, x.id, v.r), "Document removed"),
+    });
   const doc = (x: AssetVM["docs"][number]) => (
-    <a key={x.id} href={`/api/locker/assets/${x.assetId}/documents/${x.id}`} target="_blank" rel="noreferrer" className="flex w-full items-center gap-3 border-t border-divider bg-surface px-5 py-3 text-left no-underline first:border-t-0 hover:bg-canvas hover:no-underline">
+    <div key={x.id} className="flex items-center border-t border-divider bg-surface first:border-t-0">
+    <a href={`/api/locker/assets/${x.assetId}/documents/${x.id}`} target="_blank" rel="noreferrer" className="flex min-w-0 flex-1 items-center gap-3 px-5 py-3 text-left no-underline hover:bg-canvas hover:no-underline">
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-2">
           <span className="text-sm font-medium text-ink">{x.filename}</span>
@@ -317,13 +330,33 @@ export function AssetScreen({ vm, initialTab }: { vm: AssetVM; initialTab: strin
         {x.hash ? `✓ SHA-256 ${x.hash.slice(0, 8)}…` : "no hash"}
       </span>
     </a>
+      {docEditable(x) ? (
+        <span className="flex shrink-0 gap-1.5 pr-4">
+          <Btn
+            small
+            disabled={!!upBusy}
+            why="An upload is under way"
+            onClick={() => {
+              setReplacing(x.id);
+              replaceRef.current?.click();
+            }}
+          >
+            Replace
+          </Btn>
+          <Btn small kind="d" onClick={() => removeDoc(x)}>
+            Remove
+          </Btn>
+        </span>
+      ) : null}
+    </div>
   );
 
-  const upload = async (file: File) => {
+  const upload = async (file: File, replaces?: string | null) => {
     setUpBusy(`Uploading ${file.name}…`);
     const fd2 = new FormData();
     fd2.append("file", file);
-    const r = await fetch(`/api/locker/assets/${a.id}/documents`, { method: "POST", body: fd2 }).then((x) => x.json()).catch(() => ({ ok: false, error: "The upload did not reach the server." }));
+    const q = replaces ? `?replaces=${encodeURIComponent(replaces)}` : "";
+    const r = await fetch(`/api/locker/assets/${a.id}/documents${q}`, { method: "POST", body: fd2 }).then((x) => x.json()).catch(() => ({ ok: false, error: "The upload did not reach the server." }));
     setUpBusy("");
     if (!r.ok) return toast(r.error);
     toast(r.message ?? "Uploaded · hash recorded");
@@ -528,6 +561,18 @@ export function AssetScreen({ vm, initialTab }: { vm: AssetVM; initialTab: strin
                     onChange={(e) => {
                       const f = e.target.files?.[0];
                       if (f) void upload(f);
+                      e.target.value = "";
+                    }}
+                  />
+                  <input
+                    ref={replaceRef}
+                    type="file"
+                    accept="application/pdf,image/png,image/jpeg,image/webp"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f && replacing) void upload(f, replacing);
+                      setReplacing(null);
                       e.target.value = "";
                     }}
                   />

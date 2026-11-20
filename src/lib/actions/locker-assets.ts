@@ -306,6 +306,33 @@ export async function recordDocument(assetId: string, attachmentId: string): Pro
   return ok(undefined, `${f.filename} added · hash recorded`);
 }
 
+/**
+ * Take a document off an asset: wrongly uploaded, or replaced by a better
+ * scan. Never deleted — it is marked removed (with where it was, for the
+ * recycle bin) and the hash chain records the file, its SHA-256 and why.
+ * Only the current version's documents: an earlier version's are its record.
+ */
+export async function removeDocument(assetId: string, attachmentId: string, reason: string): Promise<Result> {
+  const { user } = await actor();
+  const a = await loadAsset(db, assetId);
+  if (!a) return err("That asset no longer exists.", "not_found");
+  const refusal = await editable(user.id, a.category);
+  if (refusal) return err(refusal, "not_permitted");
+  if (a.stage === "superseded") return err("This version has been replaced; its documents are its record.", "validation");
+  if ((reason ?? "").trim().length < 10) return err("Say why in a sentence — it is kept on the record.", "validation", [{ field: "reason", message: "At least 10 characters." }]);
+  const [f] = await db.select().from(attachments).where(and(eq(attachments.id, attachmentId), eq(attachments.parentType, "locker_asset"), eq(attachments.parentId, assetId), eq(attachments.status, "available")));
+  if (!f) return err("That document is not on this asset any more.", "not_found");
+  await db.transaction(async (tx) => {
+    await tx
+      .update(attachments)
+      .set({ status: "removed", parentType: null, parentId: null, removedParentType: "locker_asset", removedParentId: assetId, removedAt: new Date(), updatedAt: new Date(), updatedById: user.id } as never)
+      .where(eq(attachments.id, attachmentId));
+    await audit(tx, user, "locker.asset.document_removed", a, `Removed ${f.filename} · SHA-256 ${String(f.contentHash ?? "").slice(0, 12)}…`, { reason: reason.trim(), detail: { attachmentId, sha256: f.contentHash } });
+  });
+  refresh(`/locker/assets/${assetId}`);
+  return ok(undefined, `${f.filename} removed · kept on the record`);
+}
+
 /* ------------------------------------------------------------------ renewals */
 
 export async function startRenewal(assetId: string): Promise<Result<{ id: string }>> {
@@ -315,7 +342,7 @@ export async function startRenewal(assetId: string): Promise<Result<{ id: string
   const refusal = await editable(user.id, a.category);
   if (refusal) return err(refusal, "not_permitted");
   if (a.stage === "superseded" || a.stage === "cancelled") return err("This asset has been replaced or cancelled; renew the current version instead.", "validation");
-  const [open] = await db.select({ id: lockerRenewals.id }).from(lockerRenewals).where(and(eq(lockerRenewals.assetId, assetId), isNull(lockerRenewals.completedAt)));
+  const [open] = await db.select({ id: lockerRenewals.id }).from(lockerRenewals).where(and(eq(lockerRenewals.assetId, assetId), isNull(lockerRenewals.completedAt), isNull(lockerRenewals.cancelledAt)));
   if (open) return ok({ id: open.id }, "The renewal task is already open");
   const [type] = await db.select().from(lockerAssetTypes).where(eq(lockerAssetTypes.code, a.typeCode));
   const steps = type?.steps?.length ? type.steps : DEFAULT_STEPS;
@@ -350,7 +377,7 @@ export type RenewalPatch = {
 export async function updateRenewal(renewalId: string, patch: RenewalPatch): Promise<Result> {
   const { user } = await actor();
   const [r] = await db.select().from(lockerRenewals).where(eq(lockerRenewals.id, renewalId));
-  if (!r || r.completedAt) return err("That renewal task is closed.", "not_found");
+  if (!r || r.completedAt || r.cancelledAt) return err("That renewal task is closed.", "not_found");
   const a = await loadAsset(db, r.assetId);
   if (!a) return err("That asset no longer exists.", "not_found");
   const refusal = await editable(user.id, a.category);
@@ -416,6 +443,34 @@ export async function updateRenewal(renewalId: string, patch: RenewalPatch): Pro
 }
 
 /**
+ * Abandon a started renewal — decided not to renew, or started on the wrong
+ * asset. The task is kept (who, when, why) and stops being open; the asset
+ * goes back to its dates, and its next reminder comes from them.
+ */
+export async function cancelRenewal(renewalId: string, reason: string): Promise<Result> {
+  const { user } = await actor();
+  const [r] = await db.select().from(lockerRenewals).where(eq(lockerRenewals.id, renewalId));
+  if (!r || r.completedAt || r.cancelledAt) return err("That renewal task is already closed.", "not_found");
+  const a = await loadAsset(db, r.assetId);
+  if (!a) return err("That asset no longer exists.", "not_found");
+  const refusal = await editable(user.id, a.category);
+  if (refusal) return err(refusal, "not_permitted");
+  if ((reason ?? "").trim().length < 10) return err("Say why in a sentence — it is kept on the record.", "validation", [{ field: "reason", message: "At least 10 characters." }]);
+  await db.transaction(async (tx) => {
+    const moved = await tx
+      .update(lockerRenewals)
+      .set({ cancelledAt: new Date(), cancelledById: user.id, cancelReason: reason.trim() })
+      .where(and(eq(lockerRenewals.id, renewalId), isNull(lockerRenewals.completedAt), isNull(lockerRenewals.cancelledAt)))
+      .returning({ id: lockerRenewals.id });
+    if (!moved.length) return;
+    await tx.update(lockerAssets).set({ stage: null, updatedAt: new Date() }).where(eq(lockerAssets.id, a.id));
+    await audit(tx, user, "locker.renewal.cancelled", a, `Cancelled the renewal of ${a.title} at ${RENEWAL_STEPS[r.step] ?? `step ${r.step}`}`, { reason: reason.trim(), detail: { renewalId, step: r.step } });
+  });
+  refresh(`/locker/assets/${a.id}`, "/locker/renewals");
+  return ok(undefined, "Renewal cancelled · the asset is back on its dates");
+}
+
+/**
  * COMPLETING A RENEWAL MAKES A NEW VERSION (spec §7.2). The renewed document
  * is a new asset carrying everything the old one did, with the new dates and
  * number and `replaces_id` pointing back; the old one is marked replaced and
@@ -424,7 +479,7 @@ export async function updateRenewal(renewalId: string, patch: RenewalPatch): Pro
 export async function completeRenewal(renewalId: string, input: { newEndDate: string | null; newDocNo: string; issuedOn?: string | null; attachmentId?: string | null }): Promise<Result<{ id: string }>> {
   const { user } = await actor();
   const [r] = await db.select().from(lockerRenewals).where(eq(lockerRenewals.id, renewalId));
-  if (!r || r.completedAt) return err("That renewal task is already closed.", "not_found");
+  if (!r || r.completedAt || r.cancelledAt) return err("That renewal task is already closed.", "not_found");
   const a = await loadAsset(db, r.assetId);
   if (!a) return err("That asset no longer exists.", "not_found");
   const refusal = await editable(user.id, a.category);

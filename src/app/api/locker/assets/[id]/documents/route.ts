@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { ACCEPTED_UPLOAD_TYPES } from "@/lib/file-types";
-import { recordDocument } from "@/lib/actions/locker-assets";
+import { recordDocument, removeDocument } from "@/lib/actions/locker-assets";
 import { canReadLockerAsset } from "@/lib/locker/register-service";
 import { createAttachment } from "@/lib/services/attachment-service";
 
@@ -33,5 +33,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (new URL(request.url).searchParams.get("bind") === "0") return NextResponse.json({ ok: true, data: { id: created.data.id } });
   const bound = await recordDocument(id, created.data.id);
   if (!bound.ok) return NextResponse.json({ ok: false, error: bound.error }, { status: 400 });
+  /* `?replaces=<attachment>`: the new scan is on the asset first, then the old one comes off — never a moment with neither. */
+  const replaces = new URL(request.url).searchParams.get("replaces");
+  if (replaces) {
+    const off = await removeDocument(id, replaces, `Replaced by ${file.name || "a new scan"}`);
+    if (!off.ok) return NextResponse.json({ ok: true, data: { id: created.data.id }, message: `${bound.message} · the old one is still there: ${off.error}` });
+    return NextResponse.json({ ok: true, data: { id: created.data.id }, message: `${bound.message} · the old one removed` });
+  }
   return NextResponse.json({ ok: true, data: { id: created.data.id }, message: bound.message });
 }

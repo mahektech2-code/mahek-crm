@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { addDays } from "@/lib/format";
-import { completeRenewal, startRenewal, updateRenewal, type RenewalPatch } from "@/lib/actions/locker-assets";
+import { cancelRenewal, completeRenewal, startRenewal, updateRenewal, type RenewalPatch } from "@/lib/actions/locker-assets";
 import { CRIT, RENEWAL_STEPS, daysLabel, endFromValidity } from "@/lib/locker/engine";
 import type { TimeModel } from "@/lib/locker/catalogue";
 import type { AssetLite } from "@/lib/locker/lite";
@@ -145,7 +145,31 @@ export function RenewalScreen(p: {
         crumb="Locker · Renewals"
         title={`Renewal task · ${a.title}`}
         sub={`RC-${a.code.slice(4)} · ${daysLabel(a.d)} · ${CRIT[a.crit].label}${a.consequence ? ` · If this runs out: ${a.consequence}` : ""}`}
-        actions={<Btn onClick={() => router.push(`/locker/assets/${a.id}?tab=renewal`)}>Open asset</Btn>}
+        actions={
+          <>
+            {ro ? null : (
+              <Btn
+                onClick={() =>
+                  modal({
+                    title: "Cancel this renewal?",
+                    sub: "For a renewal that will not go ahead, or was started on the wrong asset. The task is kept with your reason; the asset goes back to its dates and its reminders.",
+                    fields: [{ k: "r", l: "Why", type: "area", min: 10 }],
+                    okL: "Cancel renewal",
+                    done: async (v) => {
+                      const res = await cancelRenewal(r.id, v.r);
+                      if (!res.ok) return res.error;
+                      toast(res.message ?? "Renewal cancelled");
+                      router.push(`/locker/assets/${a.id}?tab=renewal`);
+                    },
+                  })
+                }
+              >
+                Cancel renewal
+              </Btn>
+            )}
+            <Btn onClick={() => router.push(`/locker/assets/${a.id}?tab=renewal`)}>Open asset</Btn>
+          </>
+        }
       />
       <div className="flex flex-col gap-5 px-6 pb-12">
         <StatGrid n={4}>

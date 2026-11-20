@@ -14,11 +14,11 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appAccess, appModuleAccess, auditLog, lockerAssets, lockerAudit, lockerPaymentMethods, lockerRenewals, notifications, users } from "@/db/schema";
+import { appAccess, appModuleAccess, attachments, auditLog, lockerAssets, lockerAudit, lockerPaymentMethods, lockerRenewals, notifications, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { addDays, today } from "@/lib/format";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
-import { completeRenewal, createAsset, markChecked, setSeat, startRenewal, updateRenewal } from "@/lib/actions/locker-assets";
+import { cancelRenewal, completeRenewal, createAsset, markChecked, removeDocument, setSeat, startRenewal, updateRenewal } from "@/lib/actions/locker-assets";
 import { verifyAuditChain } from "./audit";
 import { canReadLockerAsset } from "./register-service";
 import { runLockerReminders } from "./reminders";
@@ -151,6 +151,59 @@ describe("A renewal", () => {
     assert.equal(fresh.replacesId, old.id);
     assert.equal(fresh.stage, null);
     assert.equal(fresh.endDate, addDays(today(), 1142));
+    assert.equal((await verifyAuditChain()).ok, true);
+  });
+
+  test("a started renewal is cancelled with a reason: kept, no longer open, the asset back on its dates", async () => {
+    setTestUser(compliance);
+    const a = await createAsset(pesoInput());
+    assert.ok(a.ok);
+    const started = await startRenewal(a.data.id);
+    assert.ok(started.ok);
+    assert.ok((await updateRenewal(started.data.id, { appliedOn: today() })).ok);
+
+    setTestUser(auditor);
+    assert.equal((await cancelRenewal(started.data.id, "Not renewing this licence after all.")).ok, false, "a reader cannot cancel");
+    setTestUser(compliance);
+    const short = await cancelRenewal(started.data.id, "no");
+    assert.equal(short.ok ? "ok" : short.code, "validation");
+    const done = await cancelRenewal(started.data.id, "Started on the wrong licence by mistake.");
+    assert.ok(done.ok, done.ok ? "" : done.error);
+    const [r] = await db.select().from(lockerRenewals).where(eq(lockerRenewals.id, started.data.id));
+    assert.ok(r.cancelledAt && r.cancelledById === compliance.id && r.completedAt == null);
+    assert.equal((await asset(a.data.id)).stage, null, "back on its dates");
+    assert.equal((await updateRenewal(started.data.id, { ackNo: "X" })).ok, false, "a cancelled task is closed");
+    assert.equal((await completeRenewal(started.data.id, { newEndDate: addDays(today(), 900), newDocNo: "N" })).ok, false);
+    assert.equal((await cancelRenewal(started.data.id, "Started on the wrong licence by mistake.")).ok, false, "only once");
+    const again = await startRenewal(a.data.id);
+    assert.ok(again.ok && again.data.id !== started.data.id, "a new renewal can start");
+    const [row] = await db.select().from(lockerAudit).where(eq(lockerAudit.action, "locker.renewal.cancelled"));
+    assert.equal(row?.reason, "Started on the wrong licence by mistake.");
+    const chain = await verifyAuditChain();
+    assert.equal(chain.ok, true, JSON.stringify(chain));
+  });
+});
+
+describe("A document", () => {
+  test("is removed from the current version with a reason: kept, off the asset, on the chain", async () => {
+    setTestUser(compliance);
+    const a = await createAsset(pesoInput());
+    assert.ok(a.ok);
+    const fid = id("att");
+    await db.insert(attachments).values({ id: fid, parentType: "locker_asset", parentId: a.data.id, filename: "peso-scan.pdf", storedRef: `ref/${randomUUID()}`, contentType: "application/pdf", sizeBytes: 2048, status: "available", uploadedById: compliance.id, contentHash: "ab".repeat(32) } as never);
+
+    setTestUser(auditor);
+    assert.equal((await removeDocument(a.data.id, fid, "Wrong file uploaded here.")).ok, false, "a reader cannot remove");
+    setTestUser(compliance);
+    assert.equal((await removeDocument(a.data.id, fid, "no")).ok, false, "a reason is required");
+    const done = await removeDocument(a.data.id, fid, "Wrong file uploaded here.");
+    assert.ok(done.ok, done.ok ? "" : done.error);
+    const [f] = await db.select().from(attachments).where(eq(attachments.id, fid));
+    assert.equal(f.status, "removed");
+    assert.equal(f.parentId, null);
+    assert.equal((await removeDocument(a.data.id, fid, "Wrong file uploaded here.")).ok, false, "already off");
+    const [row] = await db.select().from(lockerAudit).where(eq(lockerAudit.action, "locker.asset.document_removed"));
+    assert.equal(row?.reason, "Wrong file uploaded here.");
     assert.equal((await verifyAuditChain()).ok, true);
   });
 });

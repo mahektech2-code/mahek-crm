@@ -196,7 +196,7 @@ export async function assetDetail(userId: string, id: string) {
     newer,
     older,
     renewals,
-    openRenewal: renewals.find((r) => !r.completedAt) ?? null,
+    openRenewal: renewals.find((r) => !r.completedAt && !r.cancelledAt) ?? null,
     history: renewals.filter((r) => r.completedAt),
     activity,
     docs,

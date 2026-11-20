@@ -106,3 +106,26 @@ expire; open emergency access over it blocks it. An account that is a login's
 and connections stay; Restore (the login's page; Retired sign-in accounts on
 the accounts screen) puts it back. Both write `locker.*.retired/restored` on the
 hash chain as security events.
+
+**A STARTED RENEWAL CAN BE CANCELLED; A DOCUMENT CAN BE REMOVED OR REPLACED.**
+Cancel renewal on the renewal page (`cancelRenewal`, reason of 10+ characters)
+keeps the task with `cancelled_at`/`cancelled_by_id`/`cancel_reason`
+(`0369_locker_renewal_cancel`), takes the asset's stage back to null (its
+dates decide again), and writes `locker.renewal.cancelled` on the chain. A
+cancelled task is not open: `openRenewal`, `startRenewal`'s check, update and
+complete all read `cancelled_at`, and the one-open index leaves it out, so a
+new renewal can start. It is not history either (history is completed ones).
+A current version's document is Removed (`removeDocument`: status `removed`,
+`removed_parent_*` for the recycle bin, `locker.asset.document_removed` with
+file, SHA-256 and reason) or Replaced (upload with `?replaces=<id>`: the new
+file is bound first, then the old one removed). An earlier version's
+documents are its record and are never removed.
+
+**THE CHAIN HASHES `detail` IN JSONB ORDER.** jsonb hands keys back shorter
+first, then bytewise, so a detail written `{ attachmentId, sha256 }` was read
+back reordered and the row failed `verifyAuditChain` the moment it was saved —
+every document upload broke "Check for changes". `rowHash` now hashes
+`jsonbOrder(detail)`; rows that verified still do, rows written before the fix
+with multi-key details out of that order still read as altered (their hash was
+taken over the other order) and are left as they are.
+
