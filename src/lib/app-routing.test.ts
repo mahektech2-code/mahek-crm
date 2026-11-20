@@ -18,12 +18,20 @@ test("every browser app id is reachable from some URL prefix", () => {
      all, and the API the handset calls carries its principal on a bearer token
      rather than on a path — so it is the one id that must NOT appear here. */
   const reachable = new Set(
-    APP_IDS.filter((id) => id !== "field").map((id) => appFor(`/${id}`)),
+    /* HQ keeps the app id `founder` (stored in every grant and module key)
+       while its URL is /hq — the one app whose slug is not its id. */
+    APP_IDS.filter((id) => id !== "field").map((id) => appFor(id === "founder" ? "/hq" : `/${id}`)),
   );
   const missing = APP_IDS.filter(
     (id) => id !== "field" && !reachable.has(id),
   );
   assert.deepEqual(missing, [], `no URL prefix resolves to: ${missing.join(", ")}`);
+});
+
+test("HQ answers at /hq; the old /founder is only a redirect", () => {
+  assert.equal(appFor("/hq"), "founder");
+  assert.equal(appFor("/hq/price-lists"), "founder");
+  assert.equal(appFor("/hqx"), null);
 });
 
 test("the handset app is deliberately not routable", () => {

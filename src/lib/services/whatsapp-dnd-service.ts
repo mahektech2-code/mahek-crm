@@ -7,7 +7,7 @@ import { err, okVoid, type Result } from "../result";
 import { requireFounderDesk } from "./whatsapp-switch-service";
 
 /* ---------------------------------------------------------------------------
- * WhatsApp DND — the Founder desk's contact list, and who gets no messages.
+ * WhatsApp DND — HQ's contact list, and who gets no messages.
  *
  * A customer on DND receives no WhatsApp message by any path: the automation
  * rules leave them out of the audience, and prepare, preview and send all

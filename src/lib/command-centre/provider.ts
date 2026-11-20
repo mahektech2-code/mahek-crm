@@ -115,7 +115,7 @@ const HAT_WORD: Record<string, string> = {
   accounts: "Accounts",
   sales: "Sales Dashboard",
   field: "Salesman App",
-  founder: "Founder",
+  founder: "HQ",
   hrms: "HRMS",
   admin: "Admin",
   enquiries: "Enquiries",
@@ -243,7 +243,7 @@ export async function notesFor(
     .filter((r) => !deleted.has(r.id))
     .map((r) => ({
       what: edited.get(r.id) ?? String((r.after as { note?: string } | null)?.note ?? ""),
-      when: `${stampIST(r.at)} · ${r.name ?? "Someone"}, under the Founder hat${edited.has(r.id) ? " · edited" : ""}`,
+      when: `${stampIST(r.at)} · ${r.name ?? "Someone"}, in HQ${edited.has(r.id) ? " · edited" : ""}`,
       note: { id: r.id, mine: Boolean(viewer && r.actorId === viewer.id) },
     }));
 }

@@ -81,7 +81,7 @@ counts every hour of a working day (Saturday 4 pm is due Monday 4 pm),
 `sweepAccountsSla` (hourly as `accounts-sla`, and at most once a minute from
 the Accounts layout) writes one `accounts_sla_breaches` row per item (0342),
 resolves it the moment the record leaves its queue, and tells — each claimed
-by a conditional update so nobody is told twice — every platform and Founder
+by a conditional update so nobody is told twice — every platform and HQ
 administrator plus the desk at the deadline, then the admins again every
 `accountsSla.escalateEveryHours` with the desk's latest reason. Nothing is
 reassigned: admins are informed, accounts decide.

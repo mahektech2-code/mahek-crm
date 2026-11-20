@@ -27,7 +27,7 @@ export const APP_ROUTES: ReadonlyArray<readonly [string, string]> = [
   ["/reports", "reports"], // retired — next.config redirects it to /apps
   ["/hrms", "hrms"],
   ["/admin", "admin"],
-  ["/founder", "founder"],
+  ["/hq", "founder"],
   ["/enquiries", "enquiries"],
   ["/erp", "erp"],
   ["/website", "website"],

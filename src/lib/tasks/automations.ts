@@ -156,7 +156,7 @@ const APP_HOME: Record<string, string> = {
   sales: "/sales",
   erp: "/erp",
   hrms: "/hrms",
-  founder: "/founder",
+  founder: "/hq",
   enquiries: "/enquiries",
   website: "/website",
   hire: "/hire",

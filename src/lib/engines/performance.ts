@@ -635,7 +635,7 @@ export type PerformanceRankInput = {
 export type Ranked<T> = T & { rank: number | null };
 
 /**
- * Everybody, ordered best first — for the Founder Dashboard's company-wide
+ * Everybody, ordered best first — for HQ's company-wide
  * roster, which has no manager scoping it down to a size somebody can just
  * read down the page in target order.
  *

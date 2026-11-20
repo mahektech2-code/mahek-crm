@@ -2214,7 +2214,7 @@ export const customers = pgTable(
      * automatic or by hand. Deliberately NOT `do_not_contact`: that one takes
      * the customer off the calling list as well, and a shop that asked us to
      * stop messaging it has not asked us to stop ringing. Set and cleared on
-     * the Founder desk's Contacts tab, always with a remark; the history is
+     * HQ's Contacts tab, always with a remark; the history is
      * `whatsapp_dnd_events`, and these four columns are its newest row.
      */
     whatsappDnd: boolean("whatsapp_dnd").notNull().default(false),
@@ -4124,7 +4124,7 @@ export const waTemplates = pgTable("wa_templates", {
    * The Meta-approved template in Wati this one is sent as. Null means it is
    * never sent through the API — WhatsApp refuses a business-initiated message
    * that is not an approved template, so an unlinked template can only ever go
-   * out the manual way. Set from the Founder Dashboard, beside the switch.
+   * out the manual way. Set from HQ, beside the switch.
    */
   watiTemplateName: text("wati_template_name"),
   /**

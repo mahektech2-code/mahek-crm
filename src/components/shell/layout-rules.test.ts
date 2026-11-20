@@ -25,7 +25,8 @@ import { join } from "node:path";
  * ------------------------------------------------------------------------- */
 
 /** The apps with a browser shell. `field` is MBOS and has no web route. */
-const APPS = ["crm", "accounts", "sales", "admin", "hrms", "enquiries", "founder", "erp"];
+/* Folders under src/app, not app ids: HQ (id `founder`) lives at /hq. */
+const APPS = ["crm", "accounts", "sales", "admin", "hrms", "enquiries", "hq", "erp"];
 
 function filesUnder(dir: string, ext = ".tsx"): string[] {
   if (!existsSync(dir)) return [];

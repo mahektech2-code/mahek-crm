@@ -451,7 +451,7 @@ export function WhatsappScreen(props: {
                         title={
                           t.watiTemplateName
                             ? "Sent as this approved Wati template when API sending is on"
-                            : "Not linked — only the founder links templates, on the Founder Dashboard"
+                            : "Not linked — templates are linked in HQ"
                         }
                       >
                         {t.watiTemplateName ? (
@@ -1923,7 +1923,7 @@ type ConnectionProps = {
  * What the connection IS, and where it is decided. This used to let a manager
  * flip sending to automatic from here — a setting, behind a stub that marked
  * messages sent without sending them. The decision is the founder's now, on the
- * Founder Dashboard, so this says which way it stands and nothing more.
+ * HQ, so this says which way it stands and nothing more.
  */
 function ConnectionModal({ open, mode, apiOffReason, onClose }: ConnectionProps) {
   if (!open) return null;
@@ -1953,7 +1953,7 @@ function ConnectionModal({ open, mode, apiOffReason, onClose }: ConnectionProps)
       </p>
       <p className="text-[13px] text-muted">
         Only the founder can switch API sending on or off, and link templates to
-        Wati - on the Founder Dashboard, under WhatsApp. Manual sending always
+        Wati - in HQ, under WhatsApp. Manual sending always
         works, whichever way it is set.
       </p>
     </Modal>

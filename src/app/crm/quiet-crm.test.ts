@@ -38,9 +38,9 @@ test("the CRM shell asks for the v4 look, and the ERP and the CRM read one sheet
   /* Accounts and the Founder Command Centre wear it through their own shells. */
   assert.match(read("src/app/accounts/layout.tsx"), /@\/styles\/v4-theme\.css/);
   assert.match(read("src/app/accounts/accounts-shell.tsx"), /data-v4-app="accounts"/);
-  assert.match(read("src/app/founder/layout.tsx"), /@\/styles\/v4-theme\.css/);
-  assert.match(read("src/app/founder/(command)/command-centre.tsx"), /data-v4-app="founder"/);
-  assert.match(read("src/app/founder/(desks)/desk-shell.tsx"), /data-v4-app="founder"/);
+  assert.match(read("src/app/hq/layout.tsx"), /@\/styles\/v4-theme\.css/);
+  assert.match(read("src/app/hq/(command)/command-centre.tsx"), /data-v4-app="founder"/);
+  assert.match(read("src/app/hq/(desks)/desk-shell.tsx"), /data-v4-app="founder"/);
 });
 
 /** A selector list split on its own commas, not the ones inside `:is(…)`. */

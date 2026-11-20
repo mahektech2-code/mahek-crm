@@ -105,7 +105,7 @@ export async function shopPeople(customerId: string): Promise<{ name: string; us
   return { name: row.name, userIds: [row.sales, row.back].filter((u): u is string => !!u) };
 }
 
-/** Everybody active who holds the Founder Dashboard. */
+/** Everybody active who holds HQ. */
 export async function founderHolders(): Promise<string[]> {
   const rows = await db.execute<{ id: string }>(sql`
     select distinct u.id from users u join app_access a on a.user_id = u.id

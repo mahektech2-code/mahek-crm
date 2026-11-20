@@ -1,0 +1,12 @@
+import { ShopPricesPage } from "@/components/pricing/shops/shops-page";
+
+export const metadata = { title: "What a shop pays — HQ — MahekOne" };
+
+export default async function Page({ params }: { params: Promise<{ customerId: string }> }) {
+  const { customerId } = await params;
+  return (
+    <div className="p-6">
+      <ShopPricesPage basePath="/hq/price-lists" customerId={customerId} />
+    </div>
+  );
+}

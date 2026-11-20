@@ -37,7 +37,7 @@ const gen = (prefix: string) => `${prefix}_${randomUUID().slice(0, 12)}`;
 
 function refresh(documentId: string, bookId?: string) {
   try {
-    for (const base of ["/accounts/price-lists", "/founder/price-lists", "/crm/price-lists"]) {
+    for (const base of ["/accounts/price-lists", "/hq/price-lists", "/crm/price-lists"]) {
       revalidatePath(base, "layout");
       revalidatePath(`${base}/documents/${documentId}`);
       if (bookId) revalidatePath(`${base}/books/${bookId}`);

@@ -177,11 +177,11 @@ const founder = (
   app: "founder",
   label,
   group,
-  href: `/founder/${slug}`,
+  href: `/hq/${slug}`,
   note,
 });
 
-/** A Command Centre section, addressed `/founder?s=<section>`. */
+/** A Command Centre section, addressed `/hq?s=<section>`. */
 const cc = (
   slug: string,
   section: string,
@@ -193,7 +193,7 @@ const cc = (
   app: "founder",
   label,
   group,
-  href: `/founder?s=${section}`,
+  href: `/hq?s=${section}`,
   note,
 });
 
@@ -970,7 +970,7 @@ export const APP_MODULES: AppModule[] = [
     note: "Retired into HQ. Kept only so a grant somebody still holds can be taken away.",
   },
 
-  /* --------------------------------------------------- the Founder Dashboard */
+  /* --------------------------------------------------- HQ */
   /*
    * Five modules for one reason: whoever reads company revenue is not always
    * whoever reads the roster, and `app_module_access` is what lets that be
@@ -982,9 +982,9 @@ export const APP_MODULES: AppModule[] = [
    * keys that existed before it are KEPT — a module key is stored in grants and
    * renaming one silently revokes it — even where the section behind it grew:
    * `founder.crm` opens Sales & order book. Sections are addressed `?s=` on
-   * `/founder`; Price lists and WhatsApp keep their own desk pages as well.
+   * `/hq`; Price lists and WhatsApp keep their own desk pages as well.
    */
-  { key: "founder.overview", app: "founder", label: "Company", group: "Today", href: "/founder", exact: true },
+  { key: "founder.overview", app: "founder", label: "Company", group: "Today", href: "/hq", exact: true },
   cc("inbox", "inbox", "Needs you", "Today", "Every decision waiting on the founder, every alarm, and what was handed on."),
   cc("crm", "sales", "Sales & order book", "Sell", "Every order from every source, and deciding them."),
   founder(
@@ -1010,13 +1010,13 @@ export const APP_MODULES: AppModule[] = [
   founder(
     "price-lists",
     "Price lists",
-    "Founder desks",
+    "HQ desks",
     "Mahek's price lists — create, duplicate, import, publish and export them. The founder's desk is one of the two that may change a price; the CRM and the Sales Dashboard only read them.",
   ),
   founder(
     "whatsapp",
     "WhatsApp",
-    "Founder desks",
+    "HQ desks",
     "The switch that decides whether WhatsApp messages go to customers through the API at all, which approved Wati template each message is sent as, and what has gone out. Nothing is sent through the API unless it is switched on here.",
   ),
   cc("people", "people", "People & organisation", "Organisation", "Headcount, the employee master, reporting lines and the business calendar."),

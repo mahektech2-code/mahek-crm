@@ -127,7 +127,7 @@ export const TASK_APP_LABEL: Record<TaskApp, string> = {
   sales: "Sales Dashboard",
   erp: "ERP",
   hrms: "HRMS",
-  founder: "Founder",
+  founder: "HQ",
   enquiries: "Website Enquiries",
   website: "Website",
   hire: "Hire",
@@ -149,7 +149,7 @@ export const APP_TASKS_PATH: Partial<Record<TaskApp, string>> = {
   accounts: "/accounts/my-tasks",
   sales: "/sales/my-tasks",
   erp: "/erp/my-tasks",
-  founder: "/founder/my-tasks",
+  founder: "/hq/my-tasks",
 };
 
 /**

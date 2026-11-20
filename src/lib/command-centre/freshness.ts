@@ -743,7 +743,7 @@ export async function freshnessSources(): Promise<FreshSource[]> {
       job: null,
       dryRun: false,
       history: { kind: "none" },
-      href: { label: "WhatsApp desk", url: "/founder/whatsapp" },
+      href: { label: "WhatsApp desk", url: "/hq/whatsapp" },
     });
   }
 

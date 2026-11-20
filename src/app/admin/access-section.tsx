@@ -1056,7 +1056,7 @@ const SHORT: Partial<Record<AppId, string>> = {
   crm: "CRM",
   sales: "Sales",
   admin: "Admin",
-  founder: "Founder",
+  founder: "HQ",
   enquiries: "Enquiries",
   docs: "Docs",
 };

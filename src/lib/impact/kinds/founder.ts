@@ -31,7 +31,7 @@ export const waRuleImpact: ImpactSource = {
 
     const items: ImpactItem[] = [
       {
-        app: "Founder",
+        app: "HQ",
         label: "automation rule",
         effect: "deleted",
         count: 1,
@@ -57,7 +57,7 @@ export const waRuleImpact: ImpactSource = {
 
     const [sent] = await db.execute<{ n: number }>(sql`select count(*)::int as n from wa_messages where trigger_id = ${id}`);
     items.push({
-      app: "Founder",
+      app: "HQ",
       label: Number(sent?.n) === 1 ? "message it already sent" : "messages it already sent",
       effect: "kept",
       count: Number(sent?.n ?? 0),

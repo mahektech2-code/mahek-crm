@@ -330,7 +330,7 @@ const APP_WORD: Record<string, string> = {
   field: "the field app",
   hrms: "HRMS",
   admin: "Admin",
-  founder: "the Founder desk",
+  founder: "HQ",
   erp: "the Factory app",
 };
 

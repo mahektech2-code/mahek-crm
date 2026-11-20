@@ -8,7 +8,7 @@ and the field team has MBOS on a handset rather than a browser — so the
 question is not whether it reaches a phone. It is whether it is honest between
 a 1366 laptop and a 2560 monitor, and it was not: eight app roots each stated
 their own floor and three of them stated none, so HRMS, Enquiries, Reports and
-Founder simply crushed. `components/shell/app-frame.tsx` owns the full-height
+HQ simply crushed. `components/shell/app-frame.tsx` owns the full-height
 column, the scroll model, the sidebar row, the floor
 (`--container-shell-floor`) and the measure (`--container-measure`), and every
 app renders it. It is deliberately NOT the header: a scope switch, a team line

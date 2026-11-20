@@ -6,7 +6,7 @@
  *   1. Nothing is sent while the founder's switch is off — not by the button,
  *      not by the service, and Wati is never even called.
  *   2. Only the founder's desk can switch it — not a telecaller, and not an
- *      administrator who was never given the Founder Dashboard.
+ *      administrator who was never given HQ.
  *   3. Switched on, a linked template goes to the right number with the right
  *      variables, and the customer is stamped only once Wati accepts it.
  *   4. Webhooks move status forward, file replies, and a failure takes the
@@ -230,7 +230,7 @@ test("a telecaller cannot switch it on", async () => {
   assert.equal((await db.select().from(whatsappServiceEvents)).length, 0);
 });
 
-test("an administrator without the Founder Dashboard cannot switch it on", async () => {
+test("an administrator without HQ cannot switch it on", async () => {
   setTestUser(adminOnly);
   await assert.rejects(() => setWhatsappService({ active: true }));
   assert.equal((await db.select().from(whatsappServiceEvents)).length, 0);
@@ -520,7 +520,7 @@ test("the same order follow-up is refused while the cycle is only the default", 
   assert.equal(sends.length, 0);
 });
 
-test("an administrator who also holds the Founder Dashboard can switch it — whichever hat is credited", async () => {
+test("an administrator who also holds HQ can switch it — whichever hat is credited", async () => {
   const both = await makeUser("Owner", "admin", [
     { app: "crm", role: "admin" },
     { app: "admin", role: "admin" },

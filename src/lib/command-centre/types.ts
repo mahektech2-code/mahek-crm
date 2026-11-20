@@ -24,15 +24,15 @@ export type SectionKey =
   | "field"
   | "service"
   | "money"
-  /** Accounts deadlines — a desk at /founder/accounts-deadlines. */
+  /** Accounts deadlines — a desk at /hq/accounts-deadlines. */
   | "deadlines"
   | "prices"
   | "whatsapp"
   | "people"
   | "system"
-  /** The founder's own My tasks — a desk at /founder/my-tasks, always open. */
+  /** The founder's own My tasks — a desk at /hq/my-tasks, always open. */
   | "tasks"
-  /** Their own feedback and the replies — a desk at /founder/feedback, always open. */
+  /** Their own feedback and the replies — a desk at /hq/feedback, always open. */
   | "feedback";
 
 export const SECTION_KEYS: readonly SectionKey[] = [

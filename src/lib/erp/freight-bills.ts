@@ -36,7 +36,7 @@ import { inr, nf } from "./ui";
  * it paid; a manager can move a paid bill back to pending with a reason.
  *
  * The share an order line carries is read by `detailRows`, so it reaches the
- * line's costing, its margin and the Founder's Margins desk with no typing.
+ * line's costing, its margin and HQ's Margins desk with no typing.
  * The rules are `engines/freight-bill.ts`.
  * ------------------------------------------------------------------------- */
 

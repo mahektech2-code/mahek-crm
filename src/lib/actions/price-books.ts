@@ -68,7 +68,7 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 function refresh(bookId?: string) {
   try {
-    for (const base of ["/accounts/price-lists", "/founder/price-lists", "/crm/price-lists"]) {
+    for (const base of ["/accounts/price-lists", "/hq/price-lists", "/crm/price-lists"]) {
       revalidatePath(base, "layout");
       if (bookId) revalidatePath(`${base}/books/${bookId}`);
     }

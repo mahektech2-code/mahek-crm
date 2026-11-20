@@ -233,7 +233,7 @@ export async function searchRecord(kind: SearchKind, id: string): Promise<Record
       timeline: await notesFor("price_list", id),
       audit: await auditFor("price_list", id),
       acts: [],
-      href: { label: "Open the list", url: `/founder/price-lists/${id}` },
+      href: { label: "Open the list", url: `/hq/price-lists/${id}` },
       noteTarget: { kind: "price_list", id },
     };
   }

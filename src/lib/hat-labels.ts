@@ -33,7 +33,7 @@ import type { AppId } from "./apps";
  * not stored anywhere, and reads as a job title the company does not issue. An
  * associate granted the Sales Dashboard was greeted as a national manager.
  *
- * And Reports and the Founder Dashboard printed nothing at all, which at least
+ * And Reports and HQ printed nothing at all, which at least
  * had the merit of not being wrong.
  *
  * PURE AND CLIENT-SAFE, like `seat-labels` and `complaint-labels` beside it:
