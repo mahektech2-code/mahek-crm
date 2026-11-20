@@ -303,13 +303,14 @@ export function AppFrame({
      the status bar — see the pinned bar below. Set only when it flips, so a
      scroll is not a render per frame. */
   const [scrolledUnder, setScrolledUnder] = React.useState(false);
+  const trackOffset = reveal.onScroll;
   const onScroll = React.useCallback(
-    (e: Parameters<typeof reveal.onScroll>[0]) => {
-      reveal.onScroll(e);
+    (e: Parameters<typeof trackOffset>[0]) => {
+      trackOffset(e);
       const under = e.nativeEvent.contentOffset.y > PINNED_BAR_HEIGHT;
       setScrolledUnder((was) => (was === under ? was : under));
     },
-    [reveal],
+    [trackOffset],
   );
   const [footerHeight, setFooterHeight] = React.useState(0);
   const unreadOrNull = useUnreadCountOrNull();
