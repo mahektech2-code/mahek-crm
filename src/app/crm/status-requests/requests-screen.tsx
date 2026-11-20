@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { decideDeactivation, decideReactivation } from "@/lib/actions/crm";
+import { decideDeactivation, decideReactivation, withdrawStatusRequest } from "@/lib/actions/crm";
 import {
   Badge,
   Card,
@@ -44,6 +44,7 @@ export type Row = {
   kind: "deactivate" | "reactivate";
   reason: string | null;
   askedBy: string | null;
+  askedById: string | null;
   askedOn: string | null;
   assignedTo: string | null;
   status: string;
@@ -53,10 +54,23 @@ export type Row = {
 
 type Pending = { row: Row; approve: boolean } | null;
 
-export function RequestsScreen({ rows, today }: { rows: Row[]; today: string }) {
+export function RequestsScreen({
+  rows,
+  today,
+  userId,
+  canDecide,
+}: {
+  rows: Row[];
+  today: string;
+  /** Whoever is reading — the asker of a row may Withdraw it. */
+  userId: string;
+  /** `customer.deactivate`. Without it the reader is here only for their own requests. */
+  canDecide: boolean;
+}) {
   const router = useRouter();
   const { run, push } = useToast();
   const [pending, setPending] = React.useState<Pending>(null);
+  const [withdrawing, setWithdrawing] = React.useState<Row | null>(null);
   const [busy, setBusy] = React.useState(false);
 
   const deactivations = rows.filter((r) => r.kind === "deactivate");
@@ -180,6 +194,19 @@ export function RequestsScreen({ rows, today }: { rows: Row[]; today: string }) 
 
                     <Td align="right">
                       <span className="flex justify-end gap-2">
+                        {r.askedById === userId ? (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            title="You asked for this — take the request back before anybody decides it"
+                            onClick={() => setWithdrawing(r)}
+                            className="h-8 cursor-pointer rounded-[4px] border border-line bg-surface px-3 text-[13px] font-medium text-body hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Withdraw
+                          </button>
+                        ) : null}
+                        {canDecide ? (
+                        <>
                         <button
                           type="button"
                           disabled={busy}
@@ -196,6 +223,8 @@ export function RequestsScreen({ rows, today }: { rows: Row[]; today: string }) 
                         >
                           Reject
                         </button>
+                        </>
+                        ) : null}
                       </span>
                     </Td>
                   </Tr>
@@ -213,6 +242,27 @@ export function RequestsScreen({ rows, today }: { rows: Row[]; today: string }) 
       {/* Approving a deactivation is the one decision here that moves other
           screens — the Call Log, Monthly targets, the ERP's order form, the
           phones — so it opens the impact modal and asks for the name. */}
+      {withdrawing ? (
+        <ConfirmDialog
+          key={`${withdrawing.customerId}-${withdrawing.kind}-withdraw`}
+          open
+          onClose={() => setWithdrawing(null)}
+          title={`Withdraw your request for ${withdrawing.customerName}?`}
+          body={`Nothing changes about ${withdrawing.customerName}. The request to ${
+            withdrawing.kind === "deactivate" ? "close" : "reopen"
+          } the account leaves this list, and the record says you withdrew it.`}
+          confirmLabel="Withdraw the request"
+          onConfirm={async () => {
+            setBusy(true);
+            const result = await run(withdrawStatusRequest(withdrawing.customerId, withdrawing.kind));
+            setBusy(false);
+            if (result.ok) {
+              setWithdrawing(null);
+              router.refresh();
+            }
+          }}
+        />
+      ) : null}
       {pending && pending.approve && pending.row.kind === "deactivate" ? (
         <ImpactDialog
           key={`${pending.row.customerId}-deactivate`}

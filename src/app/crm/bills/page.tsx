@@ -1,4 +1,5 @@
 import { requireUser } from "@/lib/auth";
+import { canFor } from "@/lib/access-control";
 import { getScope, scopeLabel, managesHere } from "@/lib/scope";
 import { getCustomer } from "@/lib/queries";
 import {
@@ -6,6 +7,7 @@ import {
   billLedgerTotals,
   earliestBillDate,
   openBillAges,
+  undecidedReceiptsForBills,
   type BillSort,
   type BillSortKey,
 } from "@/lib/services/payment-service";
@@ -126,6 +128,8 @@ export default async function BillsPage({
     customerId ? getCustomer(customerId) : null,
   ]);
 
+  const reported = await undecidedReceiptsForBills(ledger.rows.map((r) => r.id));
+
   return (
     <BillsScreen
       modes={config["payments.modes"]}
@@ -147,6 +151,9 @@ export default async function BillsPage({
       customerFilter={customer ? { id: customer.id, name: customer.name } : null}
       year={year}
       years={years}
+      reported={Object.fromEntries(reported)}
+      userId={user.id}
+      canConfirmPayments={await canFor(user, "payment.confirm")}
     />
   );
 }

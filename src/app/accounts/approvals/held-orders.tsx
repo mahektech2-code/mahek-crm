@@ -1,22 +1,46 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/primitives";
+import { RowMenu } from "@/components/ui/overlays";
+import { ReasonImpactDialog } from "@/components/ui/reason-impact-dialog";
 import { useToast } from "@/components/ui/toast";
-import { releaseOrderAction } from "@/lib/actions/orders";
+import { declineOrderAction, releaseOrderAction } from "@/lib/actions/orders";
 import { money, stamp } from "@/lib/format";
+import { EditOrderDialog } from "./edit-order-dialog";
 
-export type HeldRow = { orderId: string; orderNo: number; customerName: string; amount: number; reason: string; note: string | null; heldBy: string | null; heldAt: string };
+export type HeldRow = { orderId: string; orderNo: number; customerId: string; customerName: string; amount: number; reason: string; note: string | null; heldBy: string | null; heldAt: string };
 
 /**
  * ORDERS ON HOLD WITH ACCOUNTS — the Order Hub's accounts hold. Releasing one
  * puts it back in the queue above, to be approved, held or declined again.
+ *
+ * A held order is still waiting for Accounts (`pending_approval`), so what
+ * Order approvals offers on a waiting order is offered here too: Edit order
+ * (its lines, Accounts' own — `EditOrderDialog`), Decline (the reason, then
+ * the `accounts-order-decline` impact modal; the decision ends the hold), the
+ * order in the ERP's Billing & dispatch for whoever holds the ERP, and the
+ * customer's ledger.
  */
-export function HeldOrders({ rows, canDecide, standalone = false }: { rows: HeldRow[]; canDecide: boolean; standalone?: boolean }) {
+export function HeldOrders({
+  rows,
+  canDecide,
+  standalone = false,
+  erpOrders = false,
+}: {
+  rows: HeldRow[];
+  canDecide: boolean;
+  standalone?: boolean;
+  /** Whether the reader holds the ERP, so the order number opens the order there. */
+  erpOrders?: boolean;
+}) {
   const router = useRouter();
-  const { run } = useToast();
+  const { run, push } = useToast();
   const [open, setOpen] = React.useState<string | null>(null);
+  const [editingId, setEditingId] = React.useState<string | null>(null);
+  const [declining, setDeclining] = React.useState<HeldRow | null>(null);
   const [note, setNote] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   if (!rows.length)
@@ -65,8 +89,20 @@ export function HeldOrders({ rows, canDecide, standalone = false }: { rows: Held
             {rows.map((r) => (
               <React.Fragment key={r.orderId}>
                 <tr className="align-middle">
-                  <td className="border-b border-divider px-4 py-3 font-semibold">{r.orderNo}</td>
-                  <td className="border-b border-divider px-4 py-3">{r.customerName}</td>
+                  <td className="border-b border-divider px-4 py-3 font-semibold">
+                    {erpOrders ? (
+                      <Link href={orderHref(r.orderNo)} className="text-ink hover:text-brand" title="Open the order in the ERP">
+                        {r.orderNo}
+                      </Link>
+                    ) : (
+                      r.orderNo
+                    )}
+                  </td>
+                  <td className="border-b border-divider px-4 py-3">
+                    <Link href={`/accounts/ledger?customer=${r.customerId}`} className="text-ink hover:text-brand" title="The customer's ledger">
+                      {r.customerName}
+                    </Link>
+                  </td>
                   <td className="border-b border-divider px-4 py-3 text-right tabular-nums">{money(r.amount)}</td>
                   <td className="border-b border-divider px-4 py-3">
                     <div className="font-medium">{r.reason}</div>
@@ -77,9 +113,30 @@ export function HeldOrders({ rows, canDecide, standalone = false }: { rows: Held
                     <div className="text-muted">{stamp(new Date(r.heldAt))}</div>
                   </td>
                   <td className="border-b border-divider px-4 py-3 text-right">
-                    <Button variant="secondary" size="sm" disabled={!canDecide} title={canDecide ? undefined : "Only the accounts team can release an order"} onClick={() => setOpen(open === r.orderId ? null : r.orderId)}>
-                      Release
-                    </Button>
+                    <span className="inline-flex items-center gap-1.5">
+                      <Button variant="secondary" size="sm" disabled={!canDecide} title={canDecide ? undefined : "Only the accounts team can release an order"} onClick={() => setOpen(open === r.orderId ? null : r.orderId)}>
+                        Release
+                      </Button>
+                      <RowMenu
+                        items={[
+                          {
+                            label: "Edit order",
+                            disabled: !canDecide,
+                            title: canDecide ? "Change the products, cans, rates or discounts — it stays on hold" : "Only the accounts team edits an order while approving it",
+                            onSelect: () => setEditingId(r.orderId),
+                          },
+                          {
+                            label: "Decline order…",
+                            destructive: true,
+                            disabled: !canDecide,
+                            title: canDecide ? "Refuse it with a reason — whoever took it is told, and the hold ends" : "Only the accounts team can decline an order",
+                            onSelect: () => setDeclining(r),
+                          },
+                          ...(erpOrders ? [{ label: `Open order ${r.orderNo}`, onSelect: () => router.push(orderHref(r.orderNo)) }] : []),
+                          { label: "Customer account", onSelect: () => router.push(`/accounts/ledger?customer=${r.customerId}`) },
+                        ]}
+                      />
+                    </span>
                   </td>
                 </tr>
                 {open === r.orderId ? (
@@ -102,6 +159,39 @@ export function HeldOrders({ rows, canDecide, standalone = false }: { rows: Held
           </tbody>
         </table>
       </div>
+      {editingId ? (
+        <EditOrderDialog
+          key={editingId}
+          orderId={editingId}
+          onClose={() => setEditingId(null)}
+          onSaved={() => {
+            setEditingId(null);
+            router.refresh();
+          }}
+        />
+      ) : null}
+      {declining ? (
+        <ReasonImpactDialog
+          key={declining.orderId}
+          kind="accounts-order-decline"
+          id={declining.orderId}
+          title={`Decline order ${declining.orderNo}`}
+          reasonLabel="Why is it declined? Whoever took it is told."
+          confirmLabel="Decline"
+          onClose={() => setDeclining(null)}
+          onConfirm={(reason, confirmation) => declineOrderAction(declining.orderId, reason, confirmation)}
+          onDone={(r) => {
+            setDeclining(null);
+            if (r.message) push(r.message);
+            router.refresh();
+          }}
+        />
+      ) : null}
     </section>
   );
+}
+
+/** The order in the ERP's Billing & dispatch, searched by its number. */
+function orderHref(orderNo: number): string {
+  return `/erp/orders?view=orderDetails&q=${orderNo}`;
 }

@@ -3,6 +3,9 @@ import { cx } from "@/components/ui/primitives";
 import { ADMIN } from "@/lib/admin-routes";
 import { requireHireScreen } from "@/lib/hire/access";
 import { listHumanInterviews, listVoiceScreens, voiceSetup, type InterviewRow } from "@/lib/hire/services/interview";
+import { hireStaff, istYmd } from "@/lib/hire/services/schedule";
+import { nowMs } from "@/lib/format";
+import { InterviewMenu } from "./interview-menu";
 import { AiMark, BtnLink, Callout, Empty, Label, PageHead, Panel, Pill, fd, fdt, type Tone } from "../_ui/kit";
 
 export const dynamic = "force-dynamic";
@@ -44,16 +47,28 @@ export default async function InterviewsPage({ searchParams }: { searchParams: P
           </Link>
         ))}
       </div>
-      {tab === "human" ? <Human rows={await listHumanInterviews(ctx)} /> : tab === "voice" ? <Voice ctx={ctx} /> : <Setup />}
+      {tab === "human" ? (
+        <Human
+          rows={await listHumanInterviews(ctx)}
+          /* Reschedule and Cancel are the Calendar's, behind the same capability. */
+          menu={ctx.can("addCandidate") ? { staff: await hireStaff(), meId: ctx.user.id, today: istYmd(nowMs()) } : null}
+        />
+      ) : tab === "voice" ? (
+        <Voice ctx={ctx} />
+      ) : (
+        <Setup />
+      )}
     </div>
   );
 }
 
-function Human({ rows }: { rows: InterviewRow[] }) {
+type MenuData = { staff: { id: string; name: string; role: string | null }[]; meId: string; today: string };
+
+function Human({ rows, menu }: { rows: InterviewRow[]; menu: MenuData | null }) {
   if (!rows.length) return <Empty title="No interviews on your list">Interviews appear here once a candidate reaches a scored stage you conduct.</Empty>;
   return (
     <div className="overflow-hidden rounded-[6px] border border-line bg-surface">
-      <div className="grid grid-cols-[150px_1.4fr_1fr_1fr_110px_150px_130px] gap-3 border-b border-divider bg-page px-4 py-2.5 text-xs font-medium tracking-[0.04em] text-muted uppercase">
+      <div className={cx("grid gap-3 border-b border-divider bg-page px-4 py-2.5 text-xs font-medium tracking-[0.04em] text-muted uppercase", menu ? "grid-cols-[150px_1.4fr_1fr_1fr_110px_150px_130px_36px]" : "grid-cols-[150px_1.4fr_1fr_1fr_110px_150px_130px]")}>
         <span>When</span>
         <span>Candidate</span>
         <span>Stage</span>
@@ -61,6 +76,7 @@ function Human({ rows }: { rows: InterviewRow[] }) {
         <span>Modality</span>
         <span>Status</span>
         <span />
+        {menu ? <span /> : null}
       </div>
       {rows.map((r) => {
         const [label, tone] = statusOf(r);
@@ -71,7 +87,7 @@ function Human({ rows }: { rows: InterviewRow[] }) {
               ? { href: `/hire/scoring/${r.execId}`, l: "Score" }
               : { href: `/hire/workspace/${r.execId}`, l: r.status === "in_progress" ? "Resume" : "Start" };
         return (
-          <div key={r.execId} className="hire-row grid grid-cols-[150px_1.4fr_1fr_1fr_110px_150px_130px] items-center gap-3 border-b border-divider px-4 text-sm last:border-b-0">
+          <div key={r.execId} className={cx("hire-row grid items-center gap-3 border-b border-divider px-4 text-sm last:border-b-0", menu ? "grid-cols-[150px_1.4fr_1fr_1fr_110px_150px_130px_36px]" : "grid-cols-[150px_1.4fr_1fr_1fr_110px_150px_130px]")}>
             <span className="text-muted tabular-nums">{r.when ? (r.whenKind === "completed" ? fd(r.when) : fdt(r.when)) : "—"}</span>
             <span className="min-w-0">
               <Link href={`/hire/c/${r.applicationId}`} className="block truncate font-medium text-heading">
@@ -90,6 +106,11 @@ function Human({ rows }: { rows: InterviewRow[] }) {
                 {run.l}
               </BtnLink>
             </span>
+            {menu ? (
+              <span className="text-right">
+                <InterviewMenu r={r} {...menu} />
+              </span>
+            ) : null}
           </div>
         );
       })}

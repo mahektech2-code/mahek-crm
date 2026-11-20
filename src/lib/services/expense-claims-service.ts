@@ -51,6 +51,8 @@ export type ExpenseLineRow = {
   decidedOn: string | null;
   /** Who entered it, where that was somebody other than him — the office. */
   enteredByName: string | null;
+  /** Who entered it, where that was the office — the one person who may edit or delete it while undecided. */
+  enteredById: string | null;
   /** Flags on this line or its day nobody has answered — Flagged expenses. */
   openFlags: number;
   raisedAt: string | null;
@@ -84,6 +86,7 @@ export async function expenseLines(opts: {
     decidedByName: string | null;
     decidedOn: string | null;
     enteredByName: string | null;
+    enteredById: string | null;
     openFlags: number;
     raisedAt: string | null;
     billPhotoId: string | null;
@@ -110,6 +113,9 @@ export async function expenseLines(opts: {
            (case when e.created_by_id is not null and e.created_by_id <> e.user_id
                       and coalesce(e.source_type, 'manual') = 'manual'
                  then (select eb.name from users eb where eb.id = e.created_by_id) end) as "enteredByName",
+           (case when e.created_by_id is not null and e.created_by_id <> e.user_id
+                      and coalesce(e.source_type, 'manual') = 'manual'
+                 then e.created_by_id end) as "enteredById",
            (select count(*)::int from mbos_expense_exceptions x
              where x.resolved_at is null
                and (x.expense_id = e.id

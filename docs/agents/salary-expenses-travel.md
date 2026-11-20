@@ -327,3 +327,17 @@ the standard policy's editor with `STANDARD_POLICY`'s rules and guidelines and
 is saved through `savePolicySet` like any edit, with its note. The unused
 `resetStandardToDefaults` action, which saved without showing anything first,
 was removed (Nov 2026).
+
+**AN EXPENSE THE OFFICE ENTERED IS ITS ENTERER'S TO FIX, UNTIL IT IS DECIDED
+(Nov 2026).** `editEnteredExpense` and `deleteEnteredExpense` (actions/sales.ts)
+accept only the person in `created_by_id` on a `manual` line entered for
+somebody else, under the same gate as `addExpenseFor`, while every approval on
+it is `pending`; once decided they refuse. Edit re-prices both days where the
+day moved and tells him; Delete needs a reason, removes the line and its
+pending approval, re-prices the day, audits `mbos.expense.deleted_for` and
+writes an `expenses` tombstone in `mbos_deletions`. The handset does NOT honour
+that tombstone yet (`DELETABLE` in mbos-app/src/sync/pull.ts lacks `expenses`,
+and `applyExpenseBook` never drops a non-allowance), so a deleted line can sit
+on his phone as pending until a build adds it. Offered on `/sales/expenses`
+and a salesman's ledger page via `entered-expense-actions.tsx`, keyed off
+`ExpenseLineRow.enteredById`.

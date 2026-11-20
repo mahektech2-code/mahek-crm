@@ -1,5 +1,6 @@
 import "server-only";
 import { CUSTOMER_EDIT_REFUSAL } from "@/lib/customer-edit-gate";
+import { ADMIN } from "@/lib/admin-routes";
 import { has, inTx, refuse, type Col } from "./common";
 import { and, asc, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import { foldName, renameValues } from "@/lib/customer-rename";
@@ -740,7 +741,11 @@ const productsScreen: ScreenModule = {
               v: (r.canUseId ? packNames.get(r.canUseId) : null) ?? "Not set — Edit packing to choose the can or drum this SKU is filled into",
             },
           ],
-          actions: [{ id: "packing", l: "Edit packing", primary: true, loadsForm: true }],
+          /* The SKU itself — name, size, cans per box, active — is the catalogue's, edited on Admin › Catalogue; packing is the ERP's. */
+          actions: [
+            { id: "packing", l: "Edit packing", primary: true, loadsForm: true },
+            { id: "catalogue", l: "Edit in Admin › Catalogue", href: `${ADMIN.catalogue("skus")}?${new URLSearchParams({ q: r.sku, open: r.id })}` },
+          ],
         };
       }),
     };
@@ -1028,7 +1033,8 @@ const customersScreen: ScreenModule = {
           actions.push({ id: "deactivate", l: "Deactivate", why, impact: { kind: "erp-party-deactivate", id: r.id } });
         if (st === "Active")
           actions.push({ id: "pend", l: "Mark pending", why, confirm: "Mark this party pending? Its orders wait until it is activated again." });
-        /* No "Edit details": a customer's details are edited in Accounts only (lib/customer-edit-gate.ts). */
+        /* No "Edit details": a customer's details are edited in Accounts only (lib/customer-edit-gate.ts) — so the row says where. */
+        actions.push({ id: "accounts", l: "Edit in Accounts", href: `/accounts/customers/${r.id}` });
         return {
           id: r.id,
           v: {

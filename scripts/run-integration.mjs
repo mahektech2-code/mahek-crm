@@ -71,6 +71,9 @@ const files = [
   "src/lib/order-decisions-impact.test.ts",
   // Correcting a promise, complaint, reminder or opportunity; cancelling and withdrawing.
   "src/lib/crm-edit-actions.test.ts",
+  // Edit/delete from the page that lists it: a sample request before dispatch,
+  // a close/reopen request withdrawn, an office-entered expense, reported payments on bills.
+  "src/lib/edit-delete-gaps.test.ts",
   // Adding a customer from Accounts, and it reaching every app on its own.
   "src/lib/customer-create.test.ts",
   // Converting a lead straight to a customer from Accounts — the bypass.

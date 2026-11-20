@@ -47,6 +47,7 @@ import {
   classifyDrum,
   correctDrumWeight,
   decideDrumAdjustment,
+  withdrawDrumAdjustment,
   editDrumReturn,
   editReceipt,
   editScrapSale,
@@ -760,7 +761,7 @@ const drumAdjustments: ScreenModule = {
           { l: "Corrections" },
           { l: "Pending approval", where: { k: "status", in: ["Pending approval"] }, tone: "warn" },
           { l: "Approved", where: { k: "status", in: ["Approved"] }, tone: "success" },
-          { l: "Rejected", where: { k: "status", in: ["Rejected"] }, tone: "muted" },
+          { l: "Rejected", where: { k: "status", in: ["Rejected", "Withdrawn"] }, tone: "muted" },
         ],
         filters: ["kind", "by", "decidedBy"],
         newForm: form,
@@ -782,7 +783,7 @@ const drumAdjustments: ScreenModule = {
             kind: ADJ_KIND[a.kind as keyof typeof ADJ_KIND],
             detail,
             reason: a.reason,
-            status: a.status === "pending" ? "Pending approval" : a.status === "approved" ? "Approved" : "Rejected",
+            status: a.status === "pending" ? "Pending approval" : a.status === "approved" ? "Approved" : a.status === "withdrawn" ? "Withdrawn" : "Rejected",
             by: r.by,
             decidedBy: a.decidedById ? (nameOf.get(a.decidedById) ?? null) : null,
           },
@@ -792,6 +793,10 @@ const drumAdjustments: ScreenModule = {
           actions: [
             { id: "approve", l: "Approve", primary: true, why: decideWhy, prompt: { title: "Approve this correction?", sub: detail, submit: "Approve", fields: [{ k: "note", l: "Note (optional)", t: "text" }] } },
             { id: "reject", l: "Reject", why: decideWhy, prompt: { title: "Reject this correction?", submit: "Reject", fields: [{ k: "note", l: "Why it is rejected", t: "area", req: true }] } },
+            /* The asker's own way back, while nobody has decided it. */
+            ...(a.status === "pending" && a.requestedById === ctx.user.id
+              ? [{ id: "withdraw", l: "Withdraw", prompt: { title: "Withdraw this correction?", sub: `${detail}. It stays on the list, marked withdrawn; nothing about the drums changes.`, submit: "Withdraw", fields: [{ k: "note", l: "Why (optional)", t: "text" as const }] } }]
+              : []),
           ],
           by: stampLine(r.by, a.requestedAt),
         };
@@ -818,6 +823,7 @@ const drumAdjustments: ScreenModule = {
       if (!can(ctx, "scrapApprove")) return refused("scrapApprove");
       return decideDrumAdjustment(actorOf(ctx), id, false, v.note ?? "", { administrator: ctx.administrator });
     },
+    withdraw: (ctx, id, v) => withdrawDrumAdjustment(actorOf(ctx), id, v.note ?? ""),
   },
 };
 

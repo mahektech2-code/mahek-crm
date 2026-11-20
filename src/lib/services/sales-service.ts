@@ -2871,6 +2871,12 @@ export async function archivedLeadsCount(): Promise<number> {
 export type FieldOrder = {
   id: string;
   orderNo: string | null;
+  /**
+   * The ERP order this field order became, where it became one — through its
+   * TO (`erp_order_intakes.origin_order_id`) or by the book adopting it. What
+   * the row links to: there is no other record of one order.
+   */
+  erpOrderNo: number | null;
   salesmanId: string | null;
   salesmanName: string | null;
   customerId: string;
@@ -3009,6 +3015,13 @@ export async function fieldOrders(
 
   const rows = (await db.execute<FieldOrder>(sql`
     select o.id, o.order_no as "orderNo",
+           coalesce(
+             (select e.order_no from erp_order_intakes i
+                join erp_orders e on e.intake_id = i.id
+               where i.origin_order_id = o.id
+               order by e.order_no limit 1),
+             case when o.external_ref ~ '^ERP-[0-9]+$' then substring(o.external_ref from 5)::int end
+           ) as "erpOrderNo",
            o.created_by_id as "salesmanId", u.name as "salesmanName",
            o.customer_id as "customerId", c.name as "customerName",
            o.ordered_at as "orderedAt",
@@ -3197,6 +3210,10 @@ export type FieldInvoice = {
   openPaise: number;
   overdueDays: number;
   paymentPosition: string;
+  /** Whose bill — for the link to their ledger. */
+  customerId: string;
+  /** The ERP order number the bill was raised against, where there is one. */
+  erpOrderNo: number | null;
 };
 
 /**
@@ -3277,6 +3294,9 @@ export async function fieldInvoicesPage(
   const [rows, counted] = await Promise.all([
     db.execute<FieldInvoice>(sql`
       select b.id, b.bill_no as "billNo", c.name as "customerName",
+             c.id as "customerId",
+             (select substring(o.external_ref from 5)::int from orders o
+               where o.id = b.order_id and o.source = 'erp' and o.external_ref ~ '^ERP-[0-9]+$') as "erpOrderNo",
              coalesce(c.sales_am_id, c.owner_id) as "salesmanId",
              u.name as "salesmanName",
              b.bill_date::text as "billDate",
