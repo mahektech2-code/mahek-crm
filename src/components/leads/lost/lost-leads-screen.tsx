@@ -22,6 +22,7 @@ import { shortDate } from "@/lib/format";
 import { SALES_TYPE_BUCKETS, type FilterOption } from "@/lib/lead-filters";
 import { BulkReopenDialog, ReopenLostDialog, type ReopenOffer } from "./reopen-lost-dialog";
 import { MarkDeadDialog } from "@/components/leads/dead/mark-dead-dialog";
+import { BulkMarkDeadDialog } from "@/components/leads/dead/bulk-mark-dead-dialog";
 import { deadRequestEligibility } from "@/lib/lead-dead";
 import {
   ALL_LEAD_STAGES,
@@ -108,6 +109,9 @@ export function LostLeadsScreen({
      that left, so a hidden selection can never be reversed by accident. */
   const [picked, setPicked] = React.useState<Set<string>>(new Set());
   const [bulkOpen, setBulkOpen] = React.useState(false);
+  /* The leads put to the Dead dialog, held WITH the dialog: its own result is
+     shown after the ticks are cleared, so it cannot read them from the screen. */
+  const [bulkDead, setBulkDead] = React.useState<Array<{ id: string; name: string }> | null>(null);
   const [marking, setMarking] = React.useState<LostLeadRow | null>(null);
   const hasActions = Boolean(reopen) || canMarkDead;
 
@@ -154,10 +158,19 @@ export function LostLeadsScreen({
 
   /* A lost lead the desk may not reverse (a failed verification belongs to the
      Sales Manager) is not offered a box: ticking it would only be refused. */
-  const selectable = leads.filter(
-    (l) => !(reopen?.seat === "calling_desk" && l.lostReason === VERIFICATION_FAILED_CODE),
-  );
+  const reversible = reopen
+    ? leads.filter((l) => !(reopen.seat === "calling_desk" && l.lostReason === VERIFICATION_FAILED_CODE))
+    : [];
+  /* A lead already Dead, or with a request waiting, cannot be asked about again:
+     it is not offered a box for Dead either, for the same reason. */
+  const killable = canMarkDead
+    ? leads.filter((l) => deadRequestEligibility({ stage: "lost", deadAt: l.deadAt, pending: l.deadRequestPending }).offer)
+    : [];
+  const canSelect = Boolean(reopen) || canMarkDead;
+  const selectable = leads.filter((l) => reversible.includes(l) || killable.includes(l));
   const chosen = selectable.filter((l) => picked.has(l.id));
+  const chosenReversible = chosen.filter((l) => reversible.includes(l));
+  const chosenKillable = chosen.filter((l) => killable.includes(l));
   const allOnPage = selectable.length > 0 && chosen.length === selectable.length;
   const someOnPage = chosen.length > 0 && !allOnPage;
 
@@ -231,10 +244,17 @@ export function LostLeadsScreen({
             </div>
           ) : (
             <>
-              {reopen && chosen.length > 0 ? (
+              {canSelect && chosen.length > 0 ? (
                 <div className="flex flex-wrap items-center gap-3 border-b border-line bg-canvas px-4 py-2 text-[13px]">
                   <span className="font-medium text-ink">{plural(chosen.length, "lead")} selected</span>
-                  <Button onClick={() => setBulkOpen(true)}>Reverse {chosen.length}</Button>
+                  {chosenReversible.length > 0 ? (
+                    <Button onClick={() => setBulkOpen(true)}>Reverse {chosenReversible.length}</Button>
+                  ) : null}
+                  {chosenKillable.length > 0 ? (
+                    <Button onClick={() => setBulkDead(chosenKillable.map((l) => ({ id: l.id, name: l.name })))}>
+                      Mark {chosenKillable.length} as Dead
+                    </Button>
+                  ) : null}
                   <Button onClick={() => setPicked(new Set())}>Clear selection</Button>
                 </div>
               ) : null}
@@ -243,7 +263,7 @@ export function LostLeadsScreen({
                 minWidth={hasActions ? 1424 : 1270}
                 head={
                   <>
-                    {reopen ? (
+                    {canSelect ? (
                       <HeadCell width={44}>
                         <input
                           type="checkbox"
@@ -272,7 +292,7 @@ export function LostLeadsScreen({
               >
                 {leads.map((l, i) => (
                   <Row key={l.id} striped={i % 2 === 1} selected={picked.has(l.id)}>
-                    {reopen ? (
+                    {canSelect ? (
                       <Cell>
                         {selectable.some((x) => x.id === l.id) ? (
                           <input
@@ -375,15 +395,23 @@ export function LostLeadsScreen({
           )}
         </div>
       )}
-      {bulkOpen && reopen && chosen.length > 0 ? (
+      {bulkOpen && reopen && chosenReversible.length > 0 ? (
         <BulkReopenDialog
-          key={chosen.map((l) => l.id).join(",")}
-          leads={chosen}
+          key={chosenReversible.map((l) => l.id).join(",")}
+          leads={chosenReversible}
           offer={reopen}
           onClose={() => {
             setBulkOpen(false);
             setPicked(new Set());
           }}
+        />
+      ) : null}
+      {bulkDead ? (
+        <BulkMarkDeadDialog
+          key={bulkDead.map((l) => l.id).join(",")}
+          leads={bulkDead}
+          onSent={() => setPicked(new Set())}
+          onClose={() => setBulkDead(null)}
         />
       ) : null}
       {marking ? <MarkDeadDialog key={marking.id} lead={marking} onClose={() => setMarking(null)} /> : null}

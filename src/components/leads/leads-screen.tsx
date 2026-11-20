@@ -67,6 +67,7 @@ import { setLeadPriority } from "@/lib/actions/lead-priority";
 import { OwnerOptions, UNASSIGNED, firstChoosable, ownerIdFor, type OwnerPerson } from "@/components/leads/owner-options";
 import type { LeadRow } from "@/lib/services/sales-service";
 import { MarkDeadDialog } from "@/components/leads/dead/mark-dead-dialog";
+import { BulkMarkDeadDialog } from "@/components/leads/dead/bulk-mark-dead-dialog";
 import { deadRequestEligibility } from "@/lib/lead-dead";
 import {
   ALL_LEAD_STAGES,
@@ -423,6 +424,10 @@ export function LeadsScreen({
   const [activity, setActivity] = React.useState<{ kind: "call" | "visit" | "history"; lead: LeadRow } | null>(null);
   const workable = React.useMemo(() => new Set(workableIds), [workableIds]);
   const [markingDead, setMarkingDead] = React.useState<LeadRow | null>(null);
+  /* The leads put to the bulk Dead dialog, held with it: its result is shown
+     after the ticks are cleared. A tick on another page has no name here, so it
+     is listed by what it is — the server still names every refusal. */
+  const [bulkDead, setBulkDead] = React.useState<Array<{ id: string; name: string }> | null>(null);
 
   /* "Mark as Dead" is drawn on EVERY lead and disabled, with the reason, on
      one that is not Lost — a control that vanishes teaches nobody why. The
@@ -844,6 +849,17 @@ export function LeadsScreen({
               canReassign={canReassign}
               canTrash={canTrash}
               onAct={beginBulk}
+              onMarkDead={
+                canMarkDead
+                  ? () =>
+                      setBulkDead(
+                        Array.from(picked).map((id) => ({
+                          id,
+                          name: leads.find((l) => l.id === id)?.name ?? "A lead on another page",
+                        })),
+                      )
+                  : undefined
+              }
             />
           ) : null}
 
@@ -1411,6 +1427,14 @@ export function LeadsScreen({
 
       {markingDead ? (
         <MarkDeadDialog key={markingDead.id} lead={markingDead} onClose={() => setMarkingDead(null)} />
+      ) : null}
+      {bulkDead ? (
+        <BulkMarkDeadDialog
+          key={bulkDead.map((l) => l.id).join(",")}
+          leads={bulkDead}
+          onSent={() => setPicked(new Set())}
+          onClose={() => setBulkDead(null)}
+        />
       ) : null}
 
       <ReasonModal
@@ -2271,6 +2295,7 @@ function BulkBar({
   canReassign,
   canTrash,
   onAct,
+  onMarkDead,
 }: {
   count: number;
   total: number;
@@ -2281,6 +2306,8 @@ function BulkBar({
   canReassign: boolean;
   canTrash: boolean;
   onAct: (kind: Bulk) => void;
+  /** Present only for somebody who may ask for Dead; the server asks again for every lead. */
+  onMarkDead?: () => void;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-line bg-brand-soft px-4 py-2.5">
@@ -2338,6 +2365,7 @@ function BulkBar({
             items={[
               { label: "Change stage", run: () => onAct("stage") },
               { label: "Chase the owners", run: () => onAct("chase") },
+              ...(onMarkDead ? [{ label: "Mark as Dead…", run: onMarkDead, danger: true }] : []),
               { label: "Archive them", run: () => onAct("archive"), danger: true },
               ...(canTrash ? [{ label: "Delete them — move to trash", run: () => onAct("trash"), danger: true }] : []),
             ]}
