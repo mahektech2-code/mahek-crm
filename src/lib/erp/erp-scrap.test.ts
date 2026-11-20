@@ -26,6 +26,7 @@ import {
   recordEmptyDrum,
   recordReceipt,
   requestDrumAdjustment,
+  drumsInUse,
   returnableInUse,
   returnDrums,
   saleRows,
@@ -426,10 +427,12 @@ describe("a supplier's drums are listed from the GRN, not only once emptied", ()
     await db.insert(erpSuppliers).values([
       { id: "sup_inuse", name: "Lent Drums Ltd", partyCode: "LD", drumOwnership: "returnable" },
       { id: "sup_inuse_own", name: "Sold With Drums", partyCode: "SW", drumOwnership: "mahek" },
+      { id: "sup_inuse_unk", name: "Terms Not Written", partyCode: "TN" },
     ]);
     await lotOn("LD-NEW-1", "sup_inuse", 3, "2026-11-01");
     await lotOn("LD-OLD-1", "sup_inuse", 2, "2026-09-15");
     await lotOn("SW-NEW-1", "sup_inuse_own", 4, "2026-11-01");
+    await lotOn("TN-NEW-1", "sup_inuse_unk", 2, "2026-11-01");
   });
 
   test("a returnable lot's drums are in use from the day the GRN is saved", async () => {
@@ -456,6 +459,27 @@ describe("a supplier's drums are listed from the GRN, not only once emptied", ()
     /* A full drum cannot go back: only the emptied one is returnable. */
     const over = await returnDrums(actor(head), { supplierId: "sup_inuse", date: "2026-11-20", quantity: 2, challanRef: null, remark: null });
     assert.equal(over.ok, false);
+  });
+
+  test("Mahek's full drums are on Mahek stock, never offered for sale", async () => {
+    const lots = (await drumsInUse()).filter((l) => l.supplierId === "sup_inuse_own");
+    assert.deepEqual(lots.map((l) => [l.lotNo, l.inUse, l.ownership]), [["SW-NEW-1", 4, "mahek"]]);
+    const rows = (await screenModule("emptyDrums")!.load(await ctxOf(admin))).rows.filter((r) => r.v.supplier === "Sold With Drums");
+    assert.equal(rows.length, 4);
+    assert.ok(rows.every((r) => r.flags.includes("drumInUse") && r.actions?.length === 1 && r.actions[0].id === "empty"), "Record empty only — no Sell as scrap");
+    /* Recording one empty puts it in stock, sellable, and leaves three in use. */
+    await empties(staff, "SW-NEW-1", 1);
+    const after = (await screenModule("emptyDrums")!.load(await ctxOf(admin))).rows.filter((r) => r.v.supplier === "Sold With Drums");
+    assert.equal(after.filter((r) => r.flags.includes("drumInUse")).length, 3);
+    assert.equal(after.find((r) => !r.flags.includes("drumInUse"))?.actions?.[0]?.id, "sell");
+  });
+
+  test("a lot whose owner nobody recorded is on Needs review while still full", async () => {
+    const rows = (await screenModule("drumReview")!.load(await ctxOf(admin))).rows.filter((r) => r.v.supplier === "Terms Not Written");
+    assert.equal(rows.length, 2);
+    assert.ok(rows.every((r) => r.flags.includes("drumInUse") && !r.flags.includes("drumReview") && r.v.reason));
+    const register = (await screenModule("drumRegister")!.load(await ctxOf(admin))).rows.filter((r) => r.flags.includes("drumInUse"));
+    assert.ok(["Lent Drums Ltd", "Sold With Drums", "Terms Not Written"].every((n) => register.some((r) => r.v.supplier === n)), "All drums lists every owner's");
   });
 
   test("moving the start date earlier brings older lots in", async () => {
