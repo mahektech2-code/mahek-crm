@@ -287,6 +287,7 @@ export const ERP_POWER_SINCE: Readonly<Record<string, string>> = {
   "approveParty": "2026-09-27",
   "verifyOrders": "2026-10-26",
   "productionCheck": "2026-11-16",
+  "editOrders": "2026-11-20",
   "checkInvoices": "2026-10-26",
   "decideRequests": "2026-09-27",
   "employeeAdmin": "2026-09-27",

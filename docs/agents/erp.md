@@ -781,3 +781,12 @@ screens) could not take back a line entered in error. `mayDeleteProduction`
 any ERP manager or administrator; associates still cannot. The impact modal's
 blockers — stock the entry made has been packed, moved or used — remain the
 real guard (Nov 2026, owner).
+
+**EDIT ORDER IS A GRANTABLE POWER, NOT ONLY THE PRODUCTION HEAD'S.** Edit
+order (goods, cans, rates, discounts, parties, transporter, dispatch day —
+until billed) was `administrator || productionCheck`, so the accounts desk
+that bills every order (Puja, ~500 bills a month) had no Edit on an unbilled
+order and asked for one in Feedback (2026-11-19). `editOrders` ("Edit orders
+before billing") now opens the same `editsOrders` gate without the MRP check
+that `productionCheck` carries; it maps to `erp.orders` in access-bulk.
+Granted per person on the Admin Console like any ERP power.
