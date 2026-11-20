@@ -376,7 +376,8 @@ function mrpActions(no: number, short: boolean, sentence: string, held: boolean,
     { id: "cancelOrder", l: "Cancel order…", href: erpLink("orders", { open: lineId }) },
   ];
   return held
-    ? [{ id: "toHold", l: "Open in To Hold", href: erpLink("toHold"), primary: true }, ...order]
+    ? /* Held: To Hold is where it is edited, cancelled or released — offered there, not twice. */
+      [{ id: "toHold", l: "Open in To Hold", href: erpLink("toHold"), primary: true }]
     : [
         {
           id: "clear",
