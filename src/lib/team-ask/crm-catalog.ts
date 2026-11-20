@@ -168,7 +168,7 @@ export const CRM_TABLES: TableSpec[] = [
   {
     table: "follow_up_attempts",
     about:
-      "Each collections attempt: customer_id, user_id, attempted_at, channel, outcome, promised_amount (paise), promised_date.",
+      "Each collections attempt: customer_id, user_id, attempted_at, channel, outcome, promised_amount (paise), promised_date, promise_cancelled_at, promise_cancel_reason. A promise counts only while promise_cancelled_at is null — a cancelled one was withdrawn and is not a promise taken (the call itself still happened).",
     modules: ["crm.payments"],
     scope: { kind: "customer", col: "customer_id", orUser: ["user_id"] },
   },
