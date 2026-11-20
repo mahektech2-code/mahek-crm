@@ -2149,7 +2149,7 @@ function lineHandlers(scope: Scope): Pick<ScreenModule, "actions" | "bulk" | "fo
       changeInvoice: (ctx, id, values) => doChangeInvoice(ctx, id, values),
       approveInvoice: (ctx, id) => doApproveInvoice(ctx, id),
       rejectInvoice: (ctx, id, values) => doRejectInvoice(ctx, id, values),
-      moveOut: async () => err("Goods, cans, prices and parties are changed with Edit order (the Production Head), until it is billed.", "rule_violation"),
+      moveOut: async () => err("Goods, cans, prices and parties are changed with Edit order (the Production Head, or whoever holds Edit orders), until it is billed.", "rule_violation"),
       approve: (ctx, id) => doApprove(ctx, [id]),
       async delete(ctx, id, values) {
         const [l] = await lines([id]);
@@ -2180,7 +2180,7 @@ function lineHandlers(scope: Scope): Pick<ScreenModule, "actions" | "bulk" | "fo
     },
     forms: {
       ...(scope === "orders" ? { new: (ctx, h, ls) => saveOrder(ctx, h, ls) } : {}),
-      more: async () => err("Goods, cans, prices and parties are changed with Edit order (the Production Head), until it is billed.", "rule_violation"),
+      more: async () => err("Goods, cans, prices and parties are changed with Edit order (the Production Head, or whoever holds Edit orders), until it is billed.", "rule_violation"),
       edit: (ctx, h, _l, id) => saveEdit(ctx, h, id),
       editOrder: (ctx, h, ls, id) => saveEditOrder(ctx, h, ls, id),
       allocate: (ctx, h, _l, id) => saveAllocation(ctx, h, id),
@@ -2384,8 +2384,14 @@ export async function saveOrder(ctx: ErpContext, h: Record<string, string>, ls: 
 /* ===================================================== edit until Bill it */
 
 /** Who edits a numbered order (Option A): the Production Head, or an ERP administrator. */
+/**
+ * WHO EDITS AN ORDER before it is billed: an administrator, the Production
+ * Head (`productionCheck`), or somebody given `editOrders` — the accounts desk
+ * that bills, who otherwise had to ask the Production Head for every changed
+ * rate or quantity (Nov 2026). `editOrders` carries no MRP check.
+ */
 function editsOrders(ctx: ErpContext): boolean {
-  return ctx.administrator || ctx.powers.has("productionCheck");
+  return ctx.administrator || ctx.powers.has("productionCheck") || ctx.powers.has("editOrders");
 }
 
 /**
@@ -2455,7 +2461,7 @@ async function releaseLine(tx: Tx0, l: OrderLine, userId: string, why: string): 
 }
 
 async function saveEditOrder(ctx: ErpContext, h: Record<string, string>, ls: Record<string, string>[], id?: string): Promise<Result<unknown>> {
-  if (!editsOrders(ctx)) return err("Only the Production Head edits an order.", "not_permitted");
+  if (!editsOrders(ctx)) return err("Only the Production Head, or somebody given Edit orders, changes an order.", "not_permitted");
   if (!id) return err("No order named.", "not_found");
   const [one] = await lines([id]);
   if (!one) return err("That order no longer exists.", "not_found");
@@ -2705,9 +2711,9 @@ async function saveEdit(ctx: ErpContext, h: Record<string, string>, id?: string)
      approved; a form or a crafted post that sends others is refused. */
   const qty = l.o.qtyCans;
   const typedQty = int(h.qty);
-  if (typedQty != null && typedQty !== qty) return fieldErr("qty", "Goods, cans, prices and parties are changed with Edit order (the Production Head), until it is billed.");
+  if (typedQty != null && typedQty !== qty) return fieldErr("qty", "Goods, cans, prices and parties are changed with Edit order (the Production Head, or whoever holds Edit orders), until it is billed.");
   if ((ctx.powers.has("viewSalesRate") && h.rate != null && paise(h.rate) !== (l.o.ratePaise ?? null)) || (ctx.powers.has("viewSalesAmounts") && h.discount != null && (num(h.discount) == null ? null : Math.round(num(h.discount)! * 100)) !== (l.o.discountBp ?? null)))
-    return err("Goods, cans, prices and parties are changed with Edit order (the Production Head), until it is billed.", "rule_violation");
+    return err("Goods, cans, prices and parties are changed with Edit order (the Production Head, or whoever holds Edit orders), until it is billed.", "rule_violation");
   /* Ready through the edit form is the same claim as the Ready button, checked the same way. */
   if (status === "Ready" && l.o.status !== "Ready") {
     if (l.o.orderCheck !== "Verified") return fieldErr("status", "The back office has not verified this order yet");

@@ -265,6 +265,31 @@ describe("the Production Head edits until Bill it", () => {
   });
 });
 
+describe("the accounts desk edits an order when given Edit orders", () => {
+  test("without the power Edit order is refused and not offered; with it, it is offered and saves", async () => {
+    const t = await createIntake(taker.id, intake([{ skuId: skuA, qtyCans: 6 }]));
+    const r = await approveIntake(ledger.id, t.id, null);
+    assert.ok(r.ok);
+    const [line] = await db.select().from(erpOrders).where(eq(erpOrders.orderNo, r.data.orderNo));
+    setTestUser(ledger);
+    await db.insert(appAccess).values({ id: id("aca"), userId: ledger.id, app: "erp", role: "manager" }).onConflictDoNothing();
+    const offered = async () => {
+      const row = (await mod("orders").load(await erpContext())).rows.find((x) => x.id === line.id);
+      return !!row?.actions?.some((a) => a.id === "editOrder");
+    };
+    const h = { billing: `OHA Paints ${tag}`, deliveredBy: "Transporter" };
+    const edit = async () => mod("orders").forms!.editOrder!(await erpContext(), h, [{ lineId: line.id, sku: SKU_A, qty: "5", rate: "300" }], line.id);
+    assert.equal(await offered(), false, "not offered without the power");
+    assert.equal((await edit()).ok, false, "refused without the power");
+    await db.insert(erpUserPowers).values({ userId: ledger.id, power: "editOrders", grantedById: head.id }).onConflictDoNothing();
+    assert.equal(await offered(), true, "offered with Edit orders");
+    const saved = await edit();
+    assert.ok(saved.ok, JSON.stringify(saved));
+    const [after] = await db.select().from(erpOrders).where(eq(erpOrders.id, line.id));
+    assert.equal(after.qtyCans, 5);
+  });
+});
+
 describe("Under Process plans the expected orders", () => {
   test("a TO waits for Accounts, moves to the MRP check on approval, and a held or declined one adds nothing", async () => {
     const fId = id("form");

@@ -27,6 +27,7 @@ export const ERP_POWERS = [
   "approveParty",
   "verifyOrders",
   "productionCheck",
+  "editOrders",
   "checkInvoices",
   "decideRequests",
   "employeeAdmin",
@@ -99,6 +100,10 @@ export const ERP_POWER_LABEL: Record<ErpPower, { label: string; source: string }
   productionCheck: {
     label: "Production Head checks (Order Hub and MRP)",
     source: "Makes the Production Head's check of a new TO — duplicate, product, quantity — and clears an approved order for production against materials and capacity, or holds it (new in MahekOne: the Order Hub).",
+  },
+  editOrders: {
+    label: "Edit orders before billing",
+    source: "Edit order on the Orders screen: goods, cans, rates, discounts, the parties, the transporter and the dispatch day, until the order is billed. The Production Head edits orders through their own check; this gives the same Edit order to somebody else — the accounts desk that bills — without the Production Head's MRP check (new in MahekOne, Nov 2026).",
   },
   checkInvoices: {
     label: "Check invoices before dispatch",

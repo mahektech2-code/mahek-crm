@@ -64,6 +64,7 @@ export const ERP_POWER_SCREENS: Record<ErpPower, string[]> = {
   approveParty: ["erp.orders"],
   verifyOrders: ["erp.orderHub", "erp.orders", "erp.toHold"],
   productionCheck: ["erp.orderHub", "erp.mrpCheck", "erp.toHold"],
+  editOrders: ["erp.orders"],
   checkInvoices: ["erp.orders"],
   decideRequests: ["erp.requests"],
   employeeAdmin: ["erp.godowns"],
