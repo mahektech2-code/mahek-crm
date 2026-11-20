@@ -17,6 +17,8 @@ import type { Result } from "@/lib/result";
 import { Field, PhotoTile } from "./field";
 import { checkField, optsFor } from "./form-check";
 import { GrnDialog } from "./grn-dialog";
+import { GrnReview } from "./grn-review";
+import { grnReview } from "@/lib/erp/engines/grn-review";
 import { ShareDialog } from "./share-dialog";
 import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { IMPACT_FIELD } from "@/lib/impact/types";
@@ -574,6 +576,8 @@ function FormDialog({
   );
   const [errs, setErrs] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  /* A goods receipt only: set the instant Save is pressed, because `busy` is state and a second click can land before it renders. */
+  const inFlight = useRef(false);
   const [topError, setTopError] = useState("");
   /* The duplicate check's answer (the New order form): the same order already punched today. */
   const [dup, setDup] = useState<DuplicateFound | null>(null);
@@ -665,9 +669,19 @@ function FormDialog({
     if (Object.keys(e).length) return land(e);
     setErrs({});
     const save = async () => {
+      const receipt = isGrnReview(spec);
+      if (receipt) {
+        if (inFlight.current) return;
+        inFlight.current = true;
+      }
       setBusy(true);
       setTopError("");
-      const res = await kit.submitForm(spec.screen, spec.id, h, ls, spec.recordId);
+      let res: Awaited<ReturnType<typeof kit.submitForm>>;
+      try {
+        res = await kit.submitForm(spec.screen, spec.id, h, ls, spec.recordId);
+      } finally {
+        if (receipt) inFlight.current = false;
+      }
       setBusy(false);
       if (res.ok) return onSaved(res.message ?? "Saved");
       if (res.code === "duplicate" && res.detail) {
@@ -812,7 +826,20 @@ function FormDialog({
   );
 
   /** What will be saved, page by page — each heading goes back to its page. */
-  const review = spec.review?.fields ? (
+  const linesAt = pages.findIndex((p) => p.kind === "lines");
+  const review = isGrnReview(spec) ? (
+    /* A goods receipt says back the same three sections whichever way it was opened (`grn-review.ts`). */
+    <GrnReview
+      model={grnReview({ header: spec.header, line: spec.line ?? [], h, lines: filledLines(), data })}
+      go={{
+        items: linesAt >= 0 ? () => setPage(linesAt) : undefined,
+        /* A PO opened from the PO, or added to on its PR, is fixed: there is nothing on the header to change it with. */
+        orders: spec.header.find((f) => f.k === "po")?.readOnly ? undefined : () => setPage(0),
+        lines: linesAt >= 0 ? () => setPage(linesAt) : undefined,
+        delivery: () => setPage(0),
+      }}
+    />
+  ) : spec.review?.fields ? (
     <CompactReview spec={spec} h={h} lines={filledLines()} header={shownHeader} />
   ) : (
     <div className="grid gap-3">
@@ -865,18 +892,26 @@ function FormDialog({
             <Evidence e={spec.evidence} />
           </aside>
         ) : null}
-        <DialogBody>
+        {/* A goods receipt starts each page at the top, and says a general refusal beside Save; every other form is as it was. */}
+        <DialogBody key={isGrnReview(spec) ? at : undefined}>
           {current.kind === "fields" ? fieldsPage(current.keys, pages.length > 1) : null}
           {current.kind === "lines" ? linesPage : null}
           {current.kind === "review" ? review : null}
           {last && summary ? <FormSummary text={summary} /> : null}
-          {topError ? (
+          {topError && !isGrnReview(spec) ? (
             <Callout tone="danger" className="mb-0 text-sm font-medium text-danger">
               {topError}
             </Callout>
           ) : null}
         </DialogBody>
       </div>
+      {topError && isGrnReview(spec) ? (
+        <div className="flex-none px-6 pt-3">
+          <Callout tone="danger" className="mb-0 text-sm font-medium text-danger">
+            {topError}
+          </Callout>
+        </div>
+      ) : null}
       <DialogFooter left={pages.length > 1 ? `Step ${at + 1} of ${pages.length}` : null}>
         {at === 0 ? (
           <Button variant="secondary" onClick={onClose}>
@@ -1017,6 +1052,11 @@ function CompactReview({ spec, h, lines, header }: { spec: FormSpec; h: Record<s
       ) : null}
     </div>
   );
+}
+
+/** The goods receipt form ("Receive goods" on a PO, "Add another" on a PR): not its edit or its transport form. */
+function isGrnReview(spec: FormSpec): boolean {
+  return spec.screen === "inward" && spec.id === "new" && !!spec.line;
 }
 
 /** A value as the review says it back: a photo is "Attached", a list is commas. */
