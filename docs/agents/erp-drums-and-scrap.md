@@ -24,6 +24,21 @@ receipt 0256 recorded) wins over both. Changing an
 already-classified drum's owner is an `erp_drum_adjustments` row of kind
 `ownership`, approved by somebody else holding `scrapApprove`.
 
+**A SUPPLIER'S DRUMS ARE LISTED FROM THE GRN, NOT ONLY ONCE EMPTIED (Nov
+2026).** Until then a returnable drum appeared nowhere until production
+scanned it empty, so a supplier's drums sitting full in the factory were
+invisible to the people who owe them back, and the module read as broken.
+`returnableInUse` (`lib/erp/drums.ts`) reads each Chemical lot whose owner
+resolves to `returnable` — by `ownershipOf(pOwn ?? iOwn, sOwn)`, the scan's own
+rule — and lists its drum count less its non-cancelled records. It is READ,
+never stored: no `erp_empty_drums` row exists until the scan, so FIFO, sales
+and returns are untouched and a full drum can never be returned. Supplier
+returnable, All drums, Pending by supplier and the dashboard tile draw them as
+"In use – not yet emptied" (flag `drumInUse`, row id `inuse:<purchase>:<n>`,
+whose one action is Record empty, prefilled with the lot). Lots received
+before `erp.drums.inUseFrom` (default 2026-10-11, the day `0257` shipped) are
+left out — every older GRN would otherwise read as drums still in the building.
+
 **ONE RECORD PER DRUM OF A LOT.** A label names a lot and a lot brings
 `drums` drums, so each emptied drum takes the next `seq` of its lot under an
 advisory lock, held at the database by a partial unique index on

@@ -776,6 +776,7 @@ export const FLAG: Record<string, [string, Tone]> = {
   drumReview: ["Ownership to decide", "warn"],
   drumWeightException: ["Weight outside limits, approved", "warn"],
   drumOpening: ["Opening stock — no GRN", "neutral"],
+  drumInUse: ["In use — not yet emptied", "info"],
   unmatched: ["Not matched to a sale", "warn"],
   ownerApproval: ["Owner approval needed", "warn"],
   quarantine: ["In quarantine", "danger"],
