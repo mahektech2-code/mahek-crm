@@ -5,6 +5,9 @@ import {
   type FieldInvoiceShow,
 } from "@/lib/services/sales-service";
 import { InvoicesScreen } from "./invoices-screen";
+import { requireUser } from "@/lib/auth";
+import { canFor } from "@/lib/access-control";
+import { listUserApps } from "@/lib/access";
 
 export const metadata = { title: "Invoices — Sales Dashboard — MahekOne" };
 
@@ -47,11 +50,18 @@ export default async function Page({
   const perPage = Math.min(Math.max(Number(params.per) || 25, 1), 200);
   const page = Math.max(Number(params.page) || 1, 1);
 
-  const [ledger, totals, ages] = await Promise.all([
+  const user = await requireUser();
+  const [ledger, totals, ages, apps, canCredit] = await Promise.all([
     fieldInvoicesPage({ show, q }, { page, perPage }),
     fieldInvoiceTotals(),
     fieldInvoiceAges(),
+    listUserApps(user.id),
+    canFor(user, "creditnote.issue"),
   ]);
+  /* The Sales Dashboard has no ledger of its own: a row leads to Accounts'
+     for whoever holds Accounts, and to the ERP order for whoever holds the
+     ERP — never to a screen that would refuse the reader. */
+  const accounts = apps.includes("accounts");
 
   return (
     <InvoicesScreen
@@ -68,6 +78,7 @@ export default async function Page({
       query={q ?? ""}
       page={page}
       perPage={perPage}
+      links={{ ledger: accounts, erp: apps.includes("erp"), credit: accounts && canCredit }}
     />
   );
 }

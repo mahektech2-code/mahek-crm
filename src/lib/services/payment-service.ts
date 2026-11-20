@@ -10,6 +10,8 @@ import {
   customers,
   followUpAttempts,
   followUpStates,
+  orders,
+  paymentReceipts,
   payments,
   reminders,
 } from "@/db/schema";
@@ -83,7 +85,29 @@ export type WorklistRow = {
   /** Paise reported paid and still waiting on accounts, and the day it was. */
   reportedAmount: number | null;
   reportedOn: string | null;
+  /**
+   * The undecided payments behind `reportedAmount`, newest first — what the
+   * row's Edit payment opens. Who may edit which is the server's
+   * (`receiptForEdit`); the screen offers it only where that would agree.
+   */
+  reportedReceipts: ReportedReceipt[];
 };
+
+export type ReportedReceipt = {
+  id: string;
+  amount: number;
+  status: "reported" | "held";
+  reportedById: string | null;
+};
+
+/** `id:amount:status:reportedBy` joined by commas — ids and user ids are text without either character. */
+function parseReportedReceipts(raw: string | null): ReportedReceipt[] {
+  if (!raw) return [];
+  return raw.split(",").map((part) => {
+    const [id, amount, status, by] = part.split(":");
+    return { id, amount: Number(amount), status: status === "held" ? "held" : "reported", reportedById: by || null };
+  });
+}
 
 const NEXT_ACTION: Record<number, Record<"whatsapp" | "call", string>> = {
   1: { whatsapp: "Send the stage 1 nudge", call: "Send the stage 1 nudge" },
@@ -148,6 +172,11 @@ const WORKLIST_SELECT = {
           from payment_receipts r
          where r.customer_id = customers.id and r.status in ('reported','held')
       )`,
+      reportedReceipts: sql<string | null>`(
+        select string_agg(r.id || ':' || r.amount::text || ':' || r.status::text || ':' || coalesce(r.reported_by_id, ''), ',' order by r.created_at desc)
+          from payment_receipts r
+         where r.customer_id = customers.id and r.status in ('reported','held')
+      )`,
 } as const;
 
 function toWorklistRows(
@@ -161,6 +190,7 @@ function toWorklistRows(
     promisedDate: string | null;
     reportedAmount: number | null;
     reportedOn: string | null;
+    reportedReceipts: string | null;
     paymentOnHold: boolean;
   }>,
   day: BusinessDate,
@@ -190,6 +220,7 @@ function toWorklistRows(
     reportedAmount:
       promise.reportedAmount === null ? null : Number(promise.reportedAmount),
     reportedOn: promise.reportedOn,
+    reportedReceipts: parseReportedReceipts(promise.reportedReceipts),
     nextAction: state.held
       ? "Held - dispute open"
       : promise.reportedAmount
@@ -1359,6 +1390,65 @@ function toBillRow(
 }
 
 export type BillRow = Awaited<ReturnType<typeof listBills>>[number];
+
+/**
+ * THE ERP ORDER NUMBER BEHIND EACH OF THESE ORDERS, where one was made in the
+ * ERP (`source = 'erp'`, `external_ref = 'ERP-<no>'`) — what a bill row links
+ * to. An order the ERP never took has no number and is left out.
+ */
+export async function erpOrderNosFor(orderIds: string[]): Promise<Record<string, number>> {
+  const ids = [...new Set(orderIds.filter(Boolean))];
+  if (!ids.length) return {};
+  const rows = await db
+    .select({ id: orders.id, ref: orders.externalRef })
+    .from(orders)
+    .where(and(inArray(orders.id, ids), eq(orders.source, "erp")));
+  const out: Record<string, number> = {};
+  for (const r of rows) {
+    const m = /^ERP-(\d+)$/.exec(r.ref ?? "");
+    if (m) out[r.id] = Number(m[1]);
+  }
+  return out;
+}
+
+/**
+ * THE PAYMENTS REPORTED AGAINST THESE BILLS AND NOT YET DECIDED — what the
+ * CRM bills page shows as "Paid ₹X?" on a row and offers Edit payment on.
+ * Keyed by bill; a receipt spread over two bills on the page appears under
+ * both. Only bills the caller already has (a page of them) are asked about.
+ */
+export async function undecidedReceiptsForBills(
+  billIds: string[],
+): Promise<Map<string, ReportedReceipt[]>> {
+  const out = new Map<string, ReportedReceipt[]>();
+  if (!billIds.length) return out;
+  const rows = await db
+    .select({
+      billId: payments.billId,
+      id: paymentReceipts.id,
+      amount: paymentReceipts.amount,
+      status: paymentReceipts.status,
+      reportedById: paymentReceipts.reportedById,
+    })
+    .from(payments)
+    .innerJoin(paymentReceipts, eq(paymentReceipts.id, payments.receiptId))
+    .where(and(inArray(payments.billId, billIds), inArray(paymentReceipts.status, ["reported", "held"])))
+    .orderBy(desc(paymentReceipts.createdAt));
+  for (const r of rows) {
+    if (!r.billId) continue;
+    const list = out.get(r.billId) ?? [];
+    if (!list.some((x) => x.id === r.id)) {
+      list.push({
+        id: r.id,
+        amount: Number(r.amount),
+        status: r.status === "held" ? "held" : "reported",
+        reportedById: r.reportedById,
+      });
+    }
+    out.set(r.billId, list);
+  }
+  return out;
+}
 
 
 /* ------------------------------------------- the due date, spelled in SQL */

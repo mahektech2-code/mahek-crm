@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { cx } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
 import { BillDetailPanel } from "@/components/bills/bill-detail-panel";
+import { BillRowLinks, type BillLinks } from "@/components/bills/bill-links";
 import { longDate, money } from "@/lib/format";
 import { YearFilter } from "@/components/ui/year-filter";
 import { yearLabel, yearSpanLabel } from "@/lib/year-period";
@@ -52,6 +53,8 @@ export type BillRow = {
   overdueDays: number;
   status: string;
   disputed: boolean;
+  /** The ERP order it was raised against, where there is one. */
+  erpOrderNo: number | null;
 };
 
 export function BillsScreen({
@@ -65,6 +68,7 @@ export function BillsScreen({
   years,
   year,
   today,
+  links,
 }: {
   /** ONE PAGE of the year. The figures beside it describe all of it. */
   rows: BillRow[];
@@ -80,6 +84,8 @@ export function BillsScreen({
   /** "26-27" (financial) or "2026" (calendar) — see year-period.ts. */
   year: string;
   today: string;
+  /** Where a row may lead this reader — see `BillRowLinks`. */
+  links: BillLinks;
 }) {
   const router = useRouter();
   const { push } = useToast();
@@ -199,6 +205,7 @@ export function BillsScreen({
                   <HeadCell align="right">Received</HeadCell>
                   <HeadCell align="right">Open</HeadCell>
                   <HeadCell>Status</HeadCell>
+                  <HeadCell width={48} />
                 </>
               }
             >
@@ -280,10 +287,13 @@ export function BillsScreen({
                       {statusWord(r)}
                     </Pill>
                   </Cell>
+                  <Cell align="right">
+                    <BillRowLinks customerId={r.customerId} erpOrderNo={r.erpOrderNo} links={links} />
+                  </Cell>
                 </Row>
                 {openBillId === r.id ? (
                   <tr>
-                    <td colSpan={8} className="p-0">
+                    <td colSpan={9} className="p-0">
                       {/* Keyed on the bill, so opening another row mounts a
                           fresh panel rather than resetting one in an effect. */}
                       <BillDetailPanel
@@ -312,6 +322,7 @@ export function BillsScreen({
                 <td className="px-4 py-2.5 text-right text-sm font-semibold tabular-nums text-ink">
                   {money(openTotal)}
                 </td>
+                <td />
                 <td />
               </tr>
             </Table>

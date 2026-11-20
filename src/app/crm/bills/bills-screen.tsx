@@ -26,6 +26,8 @@ import { yearLabel } from "@/lib/year-period";
 import { YearFilter } from "@/components/ui/year-filter";
 import { BillDetailPanel } from "@/components/bills/bill-detail-panel";
 import { recordPayment } from "@/lib/actions/crm";
+import { EditPaymentDialog } from "@/app/accounts/edit-payment-dialog";
+import type { ReportedReceipt } from "@/lib/services/payment-service";
 import { ageLabel, money, rupeesFromPaise, shortDate, today } from "@/lib/format";
 import { PaymentModeFields } from "@/components/crm/payment-mode-fields";
 
@@ -114,6 +116,9 @@ export function BillsScreen({
   customerFilter,
   year,
   years,
+  reported,
+  userId,
+  canConfirmPayments,
 }: {
   /** `payments.modes` — the list is configuration, never a literal on a screen. */
   modes: string[];
@@ -146,11 +151,25 @@ export function BillsScreen({
   year: string;
   /** Every year that has bills in it, both ways of counting. */
   years: { fy: string[]; cy: string[] };
+  /**
+   * Payments reported against the bills on this page and not yet decided,
+   * by bill id — the "Paid ₹X?" on a row. Who may edit which is the
+   * server's (`receiptForEdit`): Accounts any, the recorder theirs while it
+   * is still `reported`. The menu offers it only where that would agree.
+   */
+  reported: Record<string, ReportedReceipt[]>;
+  userId: string;
+  canConfirmPayments: boolean;
 }) {
   const router = useRouter();
   const { run, push } = useToast();
 
   const [paying, setPaying] = React.useState<Row | null>(null);
+  const [editingPayment, setEditingPayment] = React.useState<string | null>(null);
+  const editableOf = (billId: string) =>
+    (reported[billId] ?? []).filter(
+      (p) => canConfirmPayments || (p.reportedById === userId && p.status === "reported"),
+    );
   // One bill open at a time. A ledger with six rows expanded is a ledger you
   // have to scroll to compare two figures in.
   const [openBillId, setOpenBillId] = React.useState<string | null>(null);
@@ -468,6 +487,15 @@ export function BillsScreen({
                         Disputed
                       </Badge>
                     ) : null}
+                    {reported[r.id]?.length ? (
+                      <Badge
+                        tone="warn"
+                        className="ml-1.5"
+                        title="Reported paid — waiting for Accounts to find it. The balance moves when they confirm it."
+                      >
+                        Paid {money(reported[r.id].reduce((s, p) => s + p.amount, 0))}?
+                      </Badge>
+                    ) : null}
                   </Td>
                   <Td align="right">
                     <span className="flex justify-end">
@@ -479,6 +507,14 @@ export function BillsScreen({
                             disabled: r.balance <= 0,
                             title: r.balance <= 0 ? "Already settled" : undefined,
                           },
+                          ...editableOf(r.id).map((p, _i, all) => ({
+                            label: all.length > 1 ? `Edit payment of ${money(p.amount)}` : "Edit payment",
+                            title:
+                              p.status === "held"
+                                ? "On hold with Accounts — correct it before it is decided"
+                                : "Correct the amount, date, mode or reference before Accounts decide it",
+                            onSelect: () => setEditingPayment(p.id),
+                          })),
                           {
                             label: "Open customer record",
                             onSelect: () => router.push(`/crm/customers/${r.customerId}`),
@@ -582,6 +618,18 @@ export function BillsScreen({
           }
         }}
       />
+      {editingPayment ? (
+        <EditPaymentDialog
+          key={editingPayment}
+          receiptId={editingPayment}
+          run={run}
+          onClose={() => setEditingPayment(null)}
+          onDone={() => {
+            setEditingPayment(null);
+            router.refresh();
+          }}
+        />
+      ) : null}
     </div>
   );
 }

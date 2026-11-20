@@ -152,6 +152,8 @@ export default async function PaymentsPage({
       canBulk={await canFor(user, "whatsapp.bulk")}
       canExport={await canFor(user, "customer.export")}
       canCancelPromise={await canFor(user, "reminder.close")}
+      userId={user.id}
+      canConfirmPayments={await canFor(user, "payment.confirm")}
       aging={aging}
       workingDaysLeft={workingDaysLeft}
       plan={plan}

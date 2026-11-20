@@ -20,6 +20,10 @@ import {
 } from "@/components/console/words";
 import { CustomerName } from "@/components/console/customer-name";
 import { readSort, sortHref, sortRows, type SortColumns } from "@/components/console/sort";
+import { requireUser } from "@/lib/auth";
+import { canFor } from "@/lib/access-control";
+import { listUserApps } from "@/lib/access";
+import { ReceiptActions } from "./receipt-actions";
 
 export const metadata = { title: "Payments — Sales Dashboard — MahekOne" };
 
@@ -42,7 +46,14 @@ export default async function Page({
   searchParams: Promise<{ show?: string; sort?: string; dir?: string }>;
 }) {
   const params = await searchParams;
-  const [receipts, config] = await Promise.all([fieldReceipts(), getConfig()]);
+  const user = await requireUser();
+  const [receipts, config, canConfirm, apps] = await Promise.all([
+    fieldReceipts(),
+    getConfig(),
+    canFor(user, "payment.confirm"),
+    listUserApps(user.id),
+  ]);
+  const holdsAccounts = apps.includes("accounts");
 
   const slaDays = Math.max(1, Math.round(config["mbos.payments.cashDepositSlaHours"] / 24));
 
@@ -261,6 +272,7 @@ export default async function Page({
               {head("on", "On", 130)}
               <HeadCell width={140}>Photos</HeadCell>
               {head("state", "State")}
+              <HeadCell width={90} />
             </>
           }
         >
@@ -347,6 +359,17 @@ export default async function Page({
                       held {plural(r.heldDays, "day")}
                     </span>
                   ) : null}
+                </Cell>
+                <Cell align="right">
+                  <ReceiptActions
+                    receiptId={r.id}
+                    customerId={r.customerId}
+                    status={r.status}
+                    reportedById={r.salesmanId}
+                    userId={user.id}
+                    canConfirm={canConfirm}
+                    holdsAccounts={holdsAccounts}
+                  />
                 </Cell>
               </Row>
             );

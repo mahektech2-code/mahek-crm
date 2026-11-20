@@ -13,6 +13,7 @@ import type { SampleDeskRow, SampleFeedbackRow } from "@/lib/services/sample-ser
 import type { SampleTrialFacts } from "@/lib/services/sample-trials-service";
 import { Banner, Empty, Pill, ScreenHeader } from "@/components/console/parts";
 import { plural } from "@/components/console/words";
+import { SampleRecordActions } from "./sample-record-actions";
 
 /**
  * The journey, in the order it is walked.
@@ -69,7 +70,8 @@ type Approval = {
  * which date it is counting from.** Not from dispatch — that is the whole
  * reason the third date exists.
  *
- * A read-only server component. Every write this record can take lives on the
+ * A server component. Editing the request and cancelling the sample are on the
+ * header (`SampleRecordActions`); every step of the journey still lives on the
  * sample desk and on the review chase list, where somebody has just made the
  * call.
  */
@@ -87,6 +89,8 @@ export function SampleRecordScreen({
   trialOpenDays,
   trialRanDays,
   today,
+  canWork,
+  canEdit,
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
   workspace: LeadWorkspace;
@@ -112,6 +116,10 @@ export function SampleRecordScreen({
   /** Started and finished — how long it actually ran. */
   trialRanDays: number | null;
   today: string;
+  /** `lead.work` — Cancel, the desk's own hat. */
+  canWork: boolean;
+  /** The requester or the lead's manager, before dispatch — `sampleEditableBy`. */
+  canEdit: boolean;
 }) {
   const stopped = sample.state === "rejected" || sample.state === "cancelled";
   const reachedIndex = JOURNEY.findIndex((j) => j.state === sample.state);
@@ -124,6 +132,12 @@ export function SampleRecordScreen({
         subtitle={`${sample.quantityCans ? `${plural(sample.quantityCans, "can")} of ` : ""}${sample.productName ?? "a product nobody named"}${sample.salesmanName ? ` · asked for by ${sample.salesmanName}` : ""}${sample.city ? ` · ${sample.city}` : ""}`}
         actions={
           <>
+            <SampleRecordActions
+              sample={sample}
+              cancelReasons={cancelReasons}
+              canWork={canWork}
+              canEdit={canEdit}
+            />
             <Link
               href={leadHref(workspace, `leads/${sample.customerId}`)}
               className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"

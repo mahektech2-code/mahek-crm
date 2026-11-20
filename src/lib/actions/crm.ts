@@ -1529,6 +1529,77 @@ export async function decideReactivation(
   }
 }
 
+/**
+ * THE ASKER TAKES THEIR OWN REQUEST BACK, while nobody has decided it.
+ *
+ * A request raised on the wrong customer, or one the shop talked them out of
+ * the next morning, used to sit on every manager's queue until one of them
+ * rejected it — a "rejected" on the record for something nobody refused.
+ * Only the person stored as having asked may withdraw it; a request raised
+ * before the asker was recorded has nobody to withdraw it and is left to the
+ * managers. The request fields are cleared exactly as a rejection clears
+ * them, and the audit says withdrawn, not rejected.
+ */
+export async function withdrawStatusRequest(
+  customerId: string,
+  kind: "deactivate" | "reactivate",
+): Promise<Result> {
+  try {
+    const user = await requireUser();
+    const [existing] = await db
+      .select({
+        name: customers.name,
+        deactivationRequested: customers.deactivationRequested,
+        deactivationRequestedById: customers.deactivationRequestedById,
+        deactivationReason: customers.deactivationReason,
+        reactivationRequested: customers.reactivationRequested,
+        reactivationRequestedById: customers.reactivationRequestedById,
+        reactivationReason: customers.reactivationReason,
+      })
+      .from(customers)
+      .where(eq(customers.id, customerId));
+    if (!existing) return err("That customer no longer exists.", "not_found");
+
+    const pending = kind === "deactivate" ? existing.deactivationRequested : existing.reactivationRequested;
+    const askedBy = kind === "deactivate" ? existing.deactivationRequestedById : existing.reactivationRequestedById;
+    if (!pending) {
+      return err("That request has already been decided or withdrawn.", "conflict");
+    }
+    if (askedBy !== user.id) {
+      return err("Only the person who raised this request can withdraw it.", "not_permitted");
+    }
+
+    const now = new Date();
+    await db.transaction(async (tx) => {
+      await tx
+        .update(customers)
+        .set(
+          kind === "deactivate"
+            ? { deactivationRequested: false, deactivationReason: null, updatedAt: now, updatedById: user.id }
+            : { reactivationRequested: false, reactivationReason: null, updatedAt: now, updatedById: user.id },
+        )
+        .where(eq(customers.id, customerId));
+      await tx.insert(auditLog).values({
+        id: id("aud"),
+        actorId: user.id,
+        action: kind === "deactivate" ? "customer.deactivation_withdrawn" : "customer.reactivation_withdrawn",
+        entityType: "customer",
+        entityId: customerId,
+        beforeState: {
+          requested: true,
+          reason: kind === "deactivate" ? existing.deactivationReason : existing.reactivationReason,
+        } as never,
+        afterState: { requested: false } as never,
+      });
+    });
+
+    refreshAll();
+    return okVoid("Request withdrawn");
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
 /* ------------------------------------------------------------- complaints */
 
 /**

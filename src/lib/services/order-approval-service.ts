@@ -482,12 +482,12 @@ export async function releaseOrderForAccounts(orderId: string, note: string): Pr
   return okVoid(`Order ${no} is back in the queue`);
 }
 
-export type HeldOrder = { orderId: string; orderNo: number; customerName: string; amount: number; reason: string; note: string | null; heldBy: string | null; heldAt: Date };
+export type HeldOrder = { orderId: string; orderNo: number; customerId: string; customerName: string; amount: number; reason: string; note: string | null; heldBy: string | null; heldAt: Date };
 
 /** The orders Accounts hold, oldest first. */
 export async function heldOrders(): Promise<HeldOrder[]> {
   const rows = (await db.execute(sql`
-    select o.id as "orderId", h.order_no as "orderNo", c.name as "customerName", o.total_amount as amount, h.reason, h.internal_note as note, u.name as "heldBy", h.raised_at as "heldAt"
+    select o.id as "orderId", h.order_no as "orderNo", c.id as "customerId", c.name as "customerName", o.total_amount as amount, h.reason, h.internal_note as note, u.name as "heldBy", h.raised_at as "heldAt"
       from erp_order_holds h
       join orders o on o.external_ref = 'ERP-' || h.order_no and o.source = 'erp'
       join customers c on c.id = o.customer_id

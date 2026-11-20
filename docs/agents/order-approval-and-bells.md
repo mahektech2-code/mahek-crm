@@ -116,3 +116,14 @@ Hold is NOT routed through it — it moves nothing a person has to be warned
 about and is undone by Release. HQ's Decline calls `declineOrder` (the
 service) directly, behind its own reason form and confirm, because its row
 acts draw no impact modal; the Accounts action is the one that demands it.
+
+**A HELD ORDER IS STILL WAITING, SO ORDERS ON HOLD OFFERS WHAT APPROVALS DOES
+(Nov 2026).** An Accounts hold leaves `orders.status = 'pending_approval'`, so
+`held-orders.tsx` gives each row Edit order (`EditOrderDialog`, the order stays
+held) and Decline (`ReasonImpactDialog`, `accounts-order-decline`; the decision
+resolves the hold through `afterBookDecision`), the customer's ledger, and —
+for whoever holds the ERP app — the order in Billing & dispatch
+(`/erp/orders?view=orderDetails&q=<no>`, the nearest thing to an order record;
+there is no order page of its own). Bill rows on Accounts › Bills and Sales ›
+Invoices link the same way (`components/bills/bill-links.tsx`, numbers from
+`erpOrderNosFor`), each link only for a reader the destination admits.

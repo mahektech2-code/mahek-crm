@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { canFor } from "@/lib/access-control";
 import { requireModule } from "@/lib/access";
+import { hasOwnStatusRequest } from "@/lib/queries";
 
 /**
  * The route guard for Status Requests.
@@ -34,7 +35,16 @@ export default async function DeactivationsModuleLayout({
   // still `crm.deactivations` — see lib/modules.ts, where the two are written
   // out separately for exactly this reason.
   await requireModule(user.id, "crm.deactivations");
-  // To the dashboard rather than /apps: they hold the CRM, just not this.
-  if (!(await canFor(user, "customer.deactivate"))) redirect("/crm/dashboard");
+  /*
+   * THE ASKER MAY COME IN TO WITHDRAW THEIR OWN. Somebody who cannot decide
+   * still raised the request, and taking it back is theirs — so a person with
+   * an undecided request of their own is let in, and the page shows them only
+   * those, with Withdraw and no Approve. The sidebar entry stays manager-only;
+   * nobody else's request is ever on their screen.
+   */
+  if (!(await canFor(user, "customer.deactivate")) && !(await hasOwnStatusRequest(user.id))) {
+    // To the dashboard rather than /apps: they hold the CRM, just not this.
+    redirect("/crm/dashboard");
+  }
   return children;
 }
