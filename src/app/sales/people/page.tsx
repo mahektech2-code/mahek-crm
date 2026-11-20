@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { stamp } from "@/lib/format";
-import { fieldTeam, knownPlaces, knownRegions, managers } from "@/lib/services/sales-service";
+import { fieldTeam, knownRegions, managers, territoryPlaces } from "@/lib/services/sales-service";
 import { getCurrentUser } from "@/lib/auth";
 import { isPlatformAdmin } from "@/lib/access-control";
 import { Credentials } from "./credentials";
@@ -48,7 +48,7 @@ export default async function Page({
     fieldTeam(),
     managers(),
     knownRegions(),
-    knownPlaces(),
+    territoryPlaces(),
     hometownTree(),
     getCurrentUser(),
   ]);

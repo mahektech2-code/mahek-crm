@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/toast";
 import { Modal } from "@/components/ui/overlays";
 import { MultiSelect } from "@/components/ui/multi-select";
+import { offeredDistricts } from "@/lib/geography/territory-options";
 import { previewAreaHandover, setSalesmanTerritories, type AreaHandover } from "@/lib/actions/sales";
 import type { DistrictNode, PlaceTree, Salesman, StateNode } from "@/lib/services/sales-service";
 import { Button, Pill } from "@/components/console/parts";
@@ -121,6 +122,17 @@ export function Territories({
   const handover = preview.key === pickKey ? preview.data : null;
   const counting = open && picked.length > 0 && preview.key !== pickKey;
 
+  /* SHOPS A NARROWED TERRITORY LEAVES OUTSIDE, counted by the server for exactly
+     these picks. Saving needs the tick only when the areas change and something
+     would be left out; the tick belongs to the figures it was given for, so a
+     changed count un-ticks it and the server re-checks the number on Save. */
+  const outside = handover?.outside ?? [];
+  const outsideTotal = outside.reduce((t, o) => t + o.shops, 0);
+  const needsAck = !!handover && handover.changed && outsideTotal > 0;
+  const outsideSig = JSON.stringify(outside.map((o) => [o.state, o.shops]));
+  const [ackSig, setAckSig] = React.useState("");
+  const acknowledged = !needsAck || ackSig === outsideSig;
+
   function begin() {
     /* What is STORED is the leaves, so a town arrives with no district or
        state row beside it — and both have to be re-ticked here or their
@@ -152,6 +164,7 @@ export function Territories({
     setPicked(all);
     setError(null);
     setGiveShops(true);
+    setAckSig("");
     setOpen(true);
   }
 
@@ -250,6 +263,26 @@ export function Territories({
   }
   uncounted += earlierNowhere.filter((p) => p.kind === "city").length;
 
+  /* PLACES PICKED THAT HOLD NO SHOPS. Every state and district on the master is
+     offered whether or not a shop is in it, so picking an empty one is possible
+     — and says so here rather than blocking. A district whose count is not on
+     the tree (an earlier pick) is not called empty: its count is unknown. */
+  const emptyPlaces: string[] = [];
+  for (const state of pickedStates) {
+    const districts = districtsIn(state.state);
+    if (!districts.length) {
+      const earlier = earlierIn(state.state).filter((p) => p.kind === "city");
+      if (!earlier.length && state.shops === 0) emptyPlaces.push(state.state);
+      continue;
+    }
+    for (const d of districts) {
+      if (townsIn(d.value, state.state).length) continue;
+      const node = districtNode(state, d.value);
+      if (node && node.shops === 0) emptyPlaces.push(`${d.value} district`);
+    }
+  }
+  const nothingReached = covered === 0 && uncounted === 0;
+
   /** The sentence, in the shape somebody would say it out loud. */
   const summary = [
     ...pickedStates.map((state) => {
@@ -279,6 +312,7 @@ export function Territories({
         salesmanId: salesman.id,
         territories: picked,
         handOver: handover && handover.canMove && giveShops && handover.total > 0 ? handover.total : undefined,
+        acknowledgedOutside: needsAck ? outside.map((o) => ({ state: o.state, shops: o.shops })) : undefined,
       });
     } finally {
       setBusy(false);
@@ -292,16 +326,21 @@ export function Territories({
     router.refresh();
   }
 
-  const nothing = places.states.length === 0;
   const several = pickedStates.length > 1;
 
   /* The districts on offer: every district of every picked state, biggest
      first within a state. The state is named on each only when more than one
      state is picked — with one, it is noise on every row. */
+  /* `offeredDistricts` adds a district already allocated that nothing on offer
+     names, so it stays ticked and can be taken off, and is never dropped on Save. */
   const districtOptions = pickedStates.flatMap((s) =>
-    s.districts.map((d) => ({
+    offeredDistricts(s, picked).map((d) => ({
       value: districtKey(d.district, s.state),
-      label: `${d.district}${several ? ` · ${s.state}` : ""} · ${count(d.shops)}`,
+      label:
+        `${d.district}${several ? ` · ${s.state}` : ""}` +
+        (d.earlierPick ? " · earlier pick" : ` · ${count(d.shops)}`) +
+        (d.bookOnly ? " · in the book only" : "") +
+        (d.provisional ? " · provisional" : ""),
     })),
   );
   const pickedDistrictKeys = picked
@@ -346,6 +385,31 @@ export function Territories({
         title={`Where ${salesman.name} works`}
         width={680}
         footer={
+          <div className="flex flex-col gap-3">
+            {needsAck ? (
+              <label className="flex cursor-pointer items-start gap-2 text-[13px] text-pretty text-body">
+                <input
+                  type="checkbox"
+                  checked={acknowledged}
+                  onChange={(e) => setAckSig(e.target.checked ? outsideSig : "")}
+                  className="mt-[3px] size-3.5 shrink-0 accent-[#5223E0]"
+                />
+                <span>
+                  <span className="font-medium text-ink">
+                    {count(outsideTotal)} active {outsideTotal === 1 ? "shop is" : "shops are"} not placed in any
+                    district
+                  </span>{" "}
+                  ({outside.map((o) => `${count(o.shops)} in ${o.state}`).join(", ")}) and will be left
+                  outside this area
+                  {outside.some((o) => o.mine > 0)
+                    ? `; ${count(outside.reduce((t, o) => t + o.mine, 0))} of them ${
+                        outside.reduce((t, o) => t + o.mine, 0) === 1 ? "is" : "are"
+                      } on ${salesman.name}'s handset now and will leave it`
+                    : ""}
+                  . I understand.
+                </span>
+              </label>
+            ) : null}
           <div className="flex items-center justify-between gap-4">
             <p className="text-[12px] text-muted">
               {picked.length
@@ -356,10 +420,11 @@ export function Territories({
               <Button tone="quiet" onClick={() => setOpen(false)}>
                 Cancel
               </Button>
-              <Button tone="primary" onClick={save} disabled={busy || counting}>
+              <Button tone="primary" onClick={save} disabled={busy || counting || !acknowledged}>
                 {busy ? "Saving…" : counting ? "Counting…" : "Save"}
               </Button>
             </div>
+          </div>
           </div>
         }
       >
@@ -369,13 +434,7 @@ export function Territories({
           and move into theirs when you save unless you untick it.
         </p>
 
-        {nothing ? (
-          <p className="mt-4 text-[13px] text-muted">
-            No customer record names a state yet, so there is nothing to divide up. Places
-            come from the book itself rather than a list of their own — a separate list
-            would offer somewhere no customer is.
-          </p>
-        ) : (
+        {(
           <>
             <Step n={1} title="Pick the states they cover" />
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -445,8 +504,10 @@ export function Territories({
               <div className="mt-2 flex flex-col gap-3">
                 {pickedStates.flatMap((s) =>
                   districtsIn(s.state).map((d) => {
-                    const node = districtNode(s, d.value);
-                    return node ? (
+                    /* A district nothing on offer names still gets its section, at
+                       zero shops, so the pick can be seen and taken off. */
+                    const node = districtNode(s, d.value) ?? { district: d.value, towns: [], shops: 0 };
+                    return (
                       <DistrictSection
                         key={districtKey(d.value, s.state)}
                         state={s.state}
@@ -456,7 +517,7 @@ export function Territories({
                         add={add}
                         drop={drop}
                       />
-                    ) : null;
+                    );
                   }),
                 )}
               </div>
@@ -502,7 +563,7 @@ export function Territories({
                   <>
                     <p className="text-body">
                       <span className="font-medium text-ink">
-                        {count(handover.total)} {handover.total === 1 ? "shop" : "shops"} in these places{" "}
+                        {count(handover.total)} active {handover.total === 1 ? "shop" : "shops"} in these places{" "}
                         {handover.total === 1 ? "is" : "are"} in other books
                       </span>{" "}
                       — {handover.from.map(fromWords).join(", ")}.
@@ -559,6 +620,24 @@ export function Territories({
                 </>
               )}
             </div>
+
+            {emptyPlaces.length ? (
+              <div
+                role="alert"
+                className={
+                  "mt-3 rounded-[4px] border px-3 py-2.5 text-[13px] text-pretty " +
+                  (nothingReached ? "border-danger bg-danger-soft text-danger" : "border-line bg-canvas text-warn-ink")
+                }
+              >
+                <span className="font-medium">
+                  {emptyPlaces.join(", ")} {emptyPlaces.length === 1 ? "holds" : "hold"} no shops yet.
+                </span>{" "}
+                {nothingReached
+                  ? `As picked, ${salesman.name}'s handset will show no customers until shops are placed there.`
+                  : "Nothing is added to their list by those places until shops are placed in them."}{" "}
+                You can still save.
+              </div>
+            ) : null}
 
             {places.statelessShops > 0 ? (
               <p className="mt-3 text-[12px] text-pretty text-muted">

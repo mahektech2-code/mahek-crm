@@ -63,6 +63,11 @@ const PUNE = [
   { kind: "state", value: "Maharashtra", parent: "" },
   { kind: "city", value: "Pune", parent: "Maharashtra" },
 ];
+/* PUNE narrows Maharashtra to one typed city, and that leaves the Nashik shop
+   outside (the shops in Pune are reached; the closed one is in Pune too). Saving
+   a narrowed area asks for a yes to exactly that count, state by state — these
+   tests are about the hand-over, so they give it. */
+const ACK = [{ state: "Maharashtra", shops: 1 }];
 const seat = async (cid: string) => {
   const [r] = await db.select({ kind: customers.kind, owner: customers.ownerId, sales: customers.salesAmId }).from(customers).where(eq(customers.id, cid));
   return r.kind === "lead" ? r.owner : r.sales;
@@ -115,7 +120,7 @@ describe("the hand-over that comes with an area", () => {
 
   test("saving with the count shown moves exactly those shops, with history", async () => {
     setTestUser(admin);
-    const r = await setSalesmanTerritories({ salesmanId: salesman.id, territories: PUNE, handOver: 3 });
+    const r = await setSalesmanTerritories({ salesmanId: salesman.id, territories: PUNE, handOver: 3, acknowledgedOutside: ACK });
     assert.ok(saved(r), JSON.stringify(r));
     for (const cid of inPune) assert.equal(await seat(cid), salesman.id);
     assert.equal(await seat(nashik), holder.id, "outside the areas");
@@ -128,15 +133,16 @@ describe("the hand-over that comes with an area", () => {
 
   test("a count that no longer matches moves nothing and saves nothing", async () => {
     setTestUser(admin);
-    const r = await setSalesmanTerritories({ salesmanId: salesman.id, territories: PUNE, handOver: 2 });
+    const r = await setSalesmanTerritories({ salesmanId: salesman.id, territories: PUNE, handOver: 2, acknowledgedOutside: ACK });
     assert.ok(!r.ok && r.code === "conflict", JSON.stringify(r));
+    assert.doesNotMatch(r.error, /left outside/, "refused for the hand-over count, not for a missing acknowledgement");
     for (const cid of inPune) assert.equal(await seat(cid), holder.id);
     assert.deepEqual(await areasOf(salesman.id), []);
   });
 
   test("areas already set still hand over their shops", async () => {
     setTestUser(admin);
-    assert.ok(saved(await setSalesmanTerritories({ salesmanId: salesman.id, territories: PUNE })));
+    assert.ok(saved(await setSalesmanTerritories({ salesmanId: salesman.id, territories: PUNE, acknowledgedOutside: ACK })));
     for (const cid of inPune) assert.equal(await seat(cid), holder.id, "a plain save moves nothing");
     const r = await setSalesmanTerritories({ salesmanId: salesman.id, territories: PUNE, handOver: 3 });
     assert.ok(saved(r), JSON.stringify(r));
@@ -148,10 +154,11 @@ describe("the hand-over that comes with an area", () => {
     const p = await previewAreaHandover({ salesmanId: salesman.id, territories: PUNE });
     assert.ok(p.ok, JSON.stringify(p));
     assert.equal(p.data.canMove, false);
-    const refused = await setSalesmanTerritories({ salesmanId: salesman.id, territories: PUNE, handOver: 3 });
+    const refused = await setSalesmanTerritories({ salesmanId: salesman.id, territories: PUNE, handOver: 3, acknowledgedOutside: ACK });
     assert.ok(!refused.ok && !/static generation store/.test(refused.error), JSON.stringify(refused));
+    assert.doesNotMatch(refused.error, /left outside/, "refused for moving books, not for a missing acknowledgement");
     for (const cid of inPune) assert.equal(await seat(cid), holder.id);
-    assert.ok(saved(await setSalesmanTerritories({ salesmanId: salesman.id, territories: PUNE })));
+    assert.ok(saved(await setSalesmanTerritories({ salesmanId: salesman.id, territories: PUNE, acknowledgedOutside: ACK })));
     assert.deepEqual(await areasOf(salesman.id), ["city:Pune"]);
   });
 });
