@@ -98,3 +98,6 @@ export const DEAD_REQUEST_STATE_LABEL: Record<DeadRequestState, string> = {
   rejected: "Rejected",
   withdrawn: "Withdrawn",
 };
+
+/** More than a page of ticks is a mistake or a script; the bulk dialog never sends more. */
+export const BULK_DEAD_MAX = 200;
