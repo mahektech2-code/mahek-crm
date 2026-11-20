@@ -185,7 +185,7 @@ export function CalendarView({
  * made — the same ways every Hire message lands on the Communication tab. The
  * interviewer is told on their bell by the server.
  */
-function CancelDialog({ e, onClose }: { e: CalEvent; onClose: () => void }) {
+export function CancelDialog({ e, onClose }: { e: CalEvent; onClose: () => void }) {
   const router = useRouter();
   const toast = useToast();
   const [reason, setReason] = useState("");
@@ -262,15 +262,37 @@ function CancelDialog({ e, onClose }: { e: CalEvent; onClose: () => void }) {
   );
 }
 
-function Booker({ item, staff, meId, today, onDone }: { item: ToSchedule; staff: { id: string; name: string; role: string | null }[]; meId: string; today: string; onDone: () => void }) {
+/** The booking a Reschedule starts from, so the form opens on what is booked now. */
+export type BookingNow = { startIso: string; minutes: number; modality: string; place: string | null };
+
+export function Booker({
+  item,
+  staff,
+  meId,
+  today,
+  onDone,
+  current,
+  framed = true,
+}: {
+  item: ToSchedule;
+  staff: { id: string; name: string; role: string | null }[];
+  meId: string;
+  today: string;
+  onDone: () => void;
+  /** Rescheduling: the booking as it stands. Booking again moves it (`bookInterview` records "rescheduled"). */
+  current?: BookingNow;
+  /** False inside a modal, which brings its own title. */
+  framed?: boolean;
+}) {
   const router = useRouter();
   const toast = useToast();
+  const was = current ? istParts(current.startIso) : null;
   const [interviewerId, setInterviewer] = useState(item.interviewerId ?? (staff.some((s) => s.id === meId) ? meId : (staff[0]?.id ?? "")));
-  const [minutes, setMinutes] = useState(45);
-  const [modality, setModality] = useState("in_person");
-  const [place, setPlace] = useState(item.location ? `${item.location} office` : "");
-  const [date, setDate] = useState(today);
-  const [time, setTime] = useState("11:00");
+  const [minutes, setMinutes] = useState(current?.minutes ?? 45);
+  const [modality, setModality] = useState(current?.modality && current.modality !== "ai_voice" ? current.modality : "in_person");
+  const [place, setPlace] = useState(current ? (current.place ?? "") : item.location ? `${item.location} office` : "");
+  const [date, setDate] = useState(was ? was.ymd : today);
+  const [time, setTime] = useState(was ? `${String(was.h).padStart(2, "0")}:${String(was.m).padStart(2, "0")}` : "11:00");
   const [slots, setSlots] = useState<Slot[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
@@ -296,16 +318,7 @@ function Booker({ item, staff, meId, today, onDone }: { item: ToSchedule; staff:
       else setSlots(r.data);
     });
 
-  return (
-    <Panel
-      title={`Schedule ${item.name}`}
-      sub={`${item.stage} · ${item.role}`}
-      actions={
-        <Btn size="sm" kind="ghost" onClick={onDone}>
-          Back
-        </Btn>
-      }
-    >
+  const body = (
       <div className="flex flex-col gap-3.5">
         <Field label="Interviewer">
           <Select value={interviewerId} onChange={(e) => { setInterviewer(e.target.value); setSlots(null); }} className="w-full">
@@ -368,11 +381,24 @@ function Booker({ item, staff, meId, today, onDone }: { item: ToSchedule; staff:
             <Input type="time" value={time} step={900} onChange={(e) => setTime(e.target.value)} />
           </div>
           <Btn className="mt-2.5" size="sm" disabled={pending || !date || !time} onClick={() => book(new Date(`${date}T${time}:00+05:30`).toISOString())}>
-            Book {date && time ? `${dayLabel(date)}, ${time}` : ""}
+            {current ? "Move to" : "Book"} {date && time ? `${dayLabel(date)}, ${time}` : ""}
           </Btn>
         </div>
         {error ? <Callout tone="danger">{error}</Callout> : null}
       </div>
+  );
+  if (!framed) return body;
+  return (
+    <Panel
+      title={`Schedule ${item.name}`}
+      sub={`${item.stage} · ${item.role}`}
+      actions={
+        <Btn size="sm" kind="ghost" onClick={onDone}>
+          Back
+        </Btn>
+      }
+    >
+      {body}
     </Panel>
   );
 }

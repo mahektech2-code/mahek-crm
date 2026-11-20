@@ -1933,6 +1933,11 @@ const register: ScreenModule = {
     const wide = tooWide(Number(n), sc);
     const [rows, pairs, landings, prCosts] = await Promise.all([wide ? Promise.resolve([] as RegRow[]) : registerRows(where), refValues("shortLabel"), lotLandings(), db.select({ pr: erpPrCosts.prNumber }).from(erpPrCosts)]);
     const costed = new Set(prCosts.map((c) => c.pr));
+    /* The GRN line each lot came from — its own, or its test's — so Void line is offered here as on the GRN tab. */
+    const viaTest = rows.filter((r) => !r.p.inwardId && r.p.testId).map((r) => r.p.testId!);
+    const testInward = new Map(
+      (viaTest.length ? await db.select({ id: erpTests.id, inward: erpTests.inwardId }).from(erpTests).where(inArray(erpTests.id, viaTest)) : []).map((t) => [t.id, t.inward]),
+    );
     const lineIds = rows.map((r) => r.p.poLineId).filter((x): x is string => !!x);
     const poRate = new Map(
       (lineIds.length ? await db.select({ id: erpPoLines.id, rate: erpPoLines.ratePaise }).from(erpPoLines).where(inArray(erpPoLines.id, lineIds)) : []).map((l) => [l.id, l.rate]),
@@ -2120,6 +2125,19 @@ const register: ScreenModule = {
         }
         actions.push({ id: "edit", l: "Edit", loadsForm: true });
         actions.push({ id: "addMore", l: "Add another", loadsForm: true });
+        const inwardId = p.inwardId ?? (p.testId ? (testInward.get(p.testId) ?? null) : null);
+        actions.push({
+          id: "void",
+          l: "Void line",
+          why: !inwardId ? "This lot was entered on the register, not received on a GRN — Edit it instead." : mayVoidInward(ctx) ? "" : VOID_WHY,
+          prompt: {
+            title: `Void ${r.item} on PR ${p.prNumber}?`,
+            sub: "Voids the GRN line this lot was received on, for a line received in error. The modal that follows says what goes with it; anything that already used the lot stops it.",
+            submit: "Next",
+            fields: [{ k: "reason", l: "Why is this line void?", t: "area", req: true }],
+          },
+          ...(inwardId ? { impact: { kind: "erp-inward-void", id: inwardId } } : {}),
+        });
         actions.push({ id: "label", l: "Print drum label", href: erpLabelsHref({ purchase: p.id }) });
         const moneyFields = money
           ? [
@@ -2278,6 +2296,16 @@ const register: ScreenModule = {
         .where(eq(erpPurchases.id, id));
       await erpAudit(ctx, "erp.purchase.status", "erp_purchase", id, null, { status });
       return okVoid(`Status is ${status}`);
+    },
+    /** The GRN tab's Void line, reached from the lot: the act is the GRN line's, so it is named by the line the lot came from. */
+    async void(ctx, id, values) {
+      if (!mayVoidInward(ctx)) return err(VOID_WHY, "not_permitted");
+      const [p] = await db.select({ inwardId: erpPurchases.inwardId, testId: erpPurchases.testId }).from(erpPurchases).where(eq(erpPurchases.id, id));
+      if (!p) return err("That lot no longer exists.", "not_found");
+      const [t] = !p.inwardId && p.testId ? await db.select({ inward: erpTests.inwardId }).from(erpTests).where(eq(erpTests.id, p.testId)) : [];
+      const inwardId = p.inwardId ?? t?.inward ?? null;
+      if (!inwardId) return err("This lot was entered on the register, not received on a GRN — Edit it instead.", "rule_violation");
+      return voidInward(ctx, inwardId, values);
     },
     async reopen(ctx, id) {
       if (!ctx.powers.has("reopenPurchase")) return err("Only an admin sets a verified purchase back to Pending.", "not_permitted");

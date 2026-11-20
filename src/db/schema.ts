@@ -14455,7 +14455,7 @@ export const erpStockAdjustments = pgTable(
     quantity: erpQty("quantity").notNull(),
     reasonCode: text("reason_code").notNull(),
     reason: text("reason").notNull(),
-    /** pending | approved | rejected. */
+    /** pending | approved | rejected | withdrawn (by whoever asked, 0367). */
     status: text("status").notNull().default("pending"),
     requestedById: text("requested_by_id").references(() => users.id),
     requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
@@ -14467,7 +14467,7 @@ export const erpStockAdjustments = pgTable(
   (t) => [
     uniqueIndex("erp_stock_adjustments_one_pending_key").on(t.countId).where(sql`${t.status} = 'pending'`),
     index("erp_stock_adjustments_status_idx").on(t.status, t.requestedAt),
-    check("erp_stock_adjustments_status_check", sql`${t.status} in ('pending', 'approved', 'rejected')`),
+    check("erp_stock_adjustments_status_check", sql`${t.status} in ('pending', 'approved', 'rejected', 'withdrawn')`),
     check(
       "erp_stock_adjustments_reason_check",
       sql`${t.reasonCode} in ('damage', 'spillage', 'evaporation', 'theft', 'unrecorded_issue', 'unrecorded_receipt', 'measurement', 'other')`,
@@ -14639,7 +14639,7 @@ export const erpDrumAdjustments = pgTable(
     drumId: text("drum_id"),
     newOwnership: text("new_ownership"),
     reason: text("reason").notNull(),
-    /** pending | approved | rejected. */
+    /** pending | approved | rejected | withdrawn (by whoever asked, 0367). */
     status: text("status").notNull().default("pending"),
     requestedById: text("requested_by_id").references(() => users.id),
     requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
@@ -14651,7 +14651,7 @@ export const erpDrumAdjustments = pgTable(
   (t) => [
     index("erp_drum_adjustments_status_idx").on(t.status, t.requestedAt),
     check("erp_drum_adjustments_kind_check", sql`${t.kind} in ('opening', 'write_off', 'ownership')`),
-    check("erp_drum_adjustments_status_check", sql`${t.status} in ('pending', 'approved', 'rejected')`),
+    check("erp_drum_adjustments_status_check", sql`${t.status} in ('pending', 'approved', 'rejected', 'withdrawn')`),
     check("erp_drum_adjustments_reason_check", sql`length(trim(${t.reason})) >= 10`),
   ],
 );
@@ -15330,7 +15330,12 @@ export const hrmsWorkdayClaims = pgTable(
     decidedNote: text("decided_note"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("hrms_workday_claims_emp_idx").on(t.employeeId, t.date), index("hrms_workday_claims_status_idx").on(t.status)],
+  (t) => [
+    index("hrms_workday_claims_emp_idx").on(t.employeeId, t.date),
+    index("hrms_workday_claims_status_idx").on(t.status),
+    /* pending | approved | declined | withdrawn (by the claimant, 0368). */
+    check("hrms_workday_claims_status", sql`${t.status} in ('pending','approved','declined','withdrawn')`),
+  ],
 );
 
 /** A leave or half-day request (spec §7.1). */

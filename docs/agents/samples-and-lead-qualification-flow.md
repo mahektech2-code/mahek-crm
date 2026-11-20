@@ -109,3 +109,16 @@ account was won. What has gone is only the refusal.
 interaction save calls.** Two copies of "what happens when a lead orders" would
 drift within a release, and the half that drifts is the one nobody is watching
 — which here is the handset.
+
+**A SAMPLE REQUEST IS EDITED, NOT CANCELLED, WHILE NOTHING HAS GONE OUT (Nov
+2026).** The sample record (`/crm/samples/[id]`, `/sales/samples/[id]`) carries
+Edit request and Cancel in its header (`sample-record-actions.tsx`); Cancel is
+the desk's own `CancelSample` (coded reason, then `lead-sample-cancel`).
+`editSampleRequest` lets the requester (`salesman_id`) or the lead's manager
+(`lead_manager_id`) change product, cans, the application note, the sending
+date and mode while the sample is `requested` or `approved`; dispatched and
+later is refused. On an APPROVED sample the product and cans are what the
+manager approved, so changing them is refused (cancel and ask again); the rest
+may move. The pending approval's one-line reason is rewritten so the manager
+reads what is now asked. `sampleEditableBy` (sample-service) is the same rule
+for the button. Audited `sample.edited`, before and after.

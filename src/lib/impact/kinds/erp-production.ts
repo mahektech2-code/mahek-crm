@@ -40,8 +40,9 @@ import { erpMayDelete, many, present, qty } from "./erp-common";
  * report's blocker, worked out with the same stock read the act uses.
  * ------------------------------------------------------------------------- */
 
-const onlyAdmin = (what: string) => (ctx: { administrator: boolean }) =>
-  ctx.administrator ? null : `Only an administrator deletes a ${what}.`;
+/* The act's own gate (production.ts `mayDeleteProduction`): an ERP manager or administrator. */
+const onlyAdmin = (what: string) => (ctx: { administrator: boolean; level: string | null }) =>
+  ctx.administrator || ctx.level === "manager" ? null : `Only an ERP manager or administrator deletes a ${what}.`;
 
 /* ================================================================ SFG line */
 

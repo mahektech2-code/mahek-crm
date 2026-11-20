@@ -747,6 +747,10 @@ const stockAdjustments: ScreenModule = {
                   { id: "approve", l: "Approve and post", primary: true, why, confirm: `Post ${signed(a.qty)} ${a.unit} of ${a.item} at ${a.godown}? This changes the stock book and cannot be edited afterwards.` },
                   { id: "reject", l: "Reject", why, prompt: { title: "Reject the adjustment", sub: "The count goes back to being investigated.", submit: "Reject", fields: [{ k: "note", l: "Why", t: "area", req: true }] } },
                   { id: "openCount", l: `Open ${countLabel(a.countNo)}`, href: erpLink("stockFlags", { open: a.countId }) },
+                  /* The requester's own way back — a wrong figure or reason — while nobody has decided it. */
+                  ...(a.requestedById === ctx.user.id
+                    ? [{ id: "withdraw", l: "Withdraw", prompt: { title: "Withdraw this adjustment?", sub: "The count goes back to being investigated; ask again with the right figure.", submit: "Withdraw", fields: [{ k: "note", l: "Why (optional)", t: "text" as const }] } }]
+                    : []),
                 ]
               : [{ id: "openCount", l: `Open ${countLabel(a.countNo)}`, href: erpLink("stockCounts", { open: a.countId }) }],
           by: stampLine(a.requester, a.requestedAt),
@@ -755,6 +759,19 @@ const stockAdjustments: ScreenModule = {
     };
   },
   actions: {
+    async withdraw(ctx, id, v) {
+      const r = (await db.execute(sql`
+        update erp_stock_adjustments set status = 'withdrawn', decided_by_id = ${ctx.user.id}, decided_at = now(), decision_note = ${text(v.note) ?? "Withdrawn by the requester"}
+         where id = ${id} and status = 'pending' and requested_by_id = ${ctx.user.id} returning id`)) as unknown as { id: string }[];
+      if (!r.length) {
+        const [a] = await adjustmentRows(sql`a.id = ${id}`);
+        if (!a) return err("That adjustment no longer exists.", "not_found");
+        if (a.requestedById !== ctx.user.id) return err("Only whoever asked for an adjustment withdraws it.", "not_permitted");
+        return err("That adjustment has already been decided.", "conflict");
+      }
+      await erpAudit(ctx, "erp.stockAdjustment.withdraw", "erp_stock_adjustment", id, null, { note: text(v.note) });
+      return okVoid("Withdrawn — the count is back under investigation");
+    },
     approve: (ctx, id) => decideAdjustment(ctx, id, "approved", null),
     reject: async (ctx, id, v) => {
       const note = text(v.note);
@@ -764,7 +781,7 @@ const stockAdjustments: ScreenModule = {
   },
 };
 
-const STATUS_WORD: Record<string, string> = { pending: "Pending approval", approved: "Approved", rejected: "Rejected" };
+const STATUS_WORD: Record<string, string> = { pending: "Pending approval", approved: "Approved", rejected: "Rejected", withdrawn: "Withdrawn" };
 
 /**
  * Approving POSTS the adjustment, in one transaction with the decision: a
@@ -895,7 +912,7 @@ const missingRecordsScreen: ScreenModule = {
 
 const stockCounts: ScreenModule = {
   key: "stockCounts",
-  async load() {
+  async load(ctx) {
     const [rows, adjs] = await Promise.all([countRows(), adjustmentRows()]);
     const cols: ColSpec[] = [
       { k: "no", l: "Count", t: "mono" },
@@ -955,10 +972,20 @@ const stockCounts: ScreenModule = {
           title: `${countLabel(c.no)} · ${c.item}`,
           header: `${c.godown} · ${COUNT_KIND_LABEL[c.kind]} · ${c.reason}`,
           panel: c.parent ? undefined : panelFor(c, rows, null, adjs.find((a) => a.countId === c.id) ?? null),
+          /* An open count is cancelled here as on To count; a flagged one from Red flags, where its recount and adjustment are. */
+          actions:
+            c.status === "open"
+              ? [{ id: "cancel", l: "Cancel count", why: runsCounts(ctx) ? "" : "A manager or somebody who controls stock accuracy cancels a count.", prompt: { title: "Cancel this count", sub: `${countLabel(c.no)} · ${c.item} at ${c.godown}`, submit: "Cancel count", fields: [{ k: "reason", l: "Why", t: "area" as const, req: true }] }, impact: { kind: "erp-stock-count", id: c.id } }]
+              : c.status === "flagged" || c.status === "recount" || c.status === "investigating"
+                ? [{ id: "openFlag", l: "Open in Red flags", href: erpLink("stockFlags", { open: c.parent ?? c.id }) }]
+                : [],
           by: stampLine(c.createdBy, c.createdAt),
         };
       }),
     };
+  },
+  actions: {
+    cancel: (ctx, id, v) => countTasks.actions!.cancel(ctx, id, v),
   },
 };
 
@@ -1031,6 +1058,12 @@ const floorChecks: ScreenModule = {
       rows: rows.map((c): ListRow => {
         const result = resultOf(c);
         const actions: ActionSpec[] = [];
+        /* Whoever checked, or anybody running counts, corrects or removes a check until somebody has reviewed it or raised it into a count. */
+        if (!c.reviewedAt && !c.stockCountId) {
+          const mayChange = c.counterId === ctx.user.id || runsCounts(ctx) ? "" : "Whoever checked it, or somebody running stock accuracy, changes a check";
+          actions.push({ id: "edit", l: "Edit", why: mayChange, prompt: { title: `Edit the check · ${c.item}`, sub: `${c.godown}. The book stays what it was when the check was made: ${nf(c.book)} ${c.unit}.`, submit: "Save check", init: { qty: String(c.counted), bin: c.bin ?? "", reason: c.reason ?? "" }, fields: [{ k: "qty", l: "Counted", t: "num", req: true, min: 0 }, { k: "bin", l: "Where", t: "text" }, { k: "reason", l: "If it differs, why", t: "area", mic: true }] } });
+          actions.push({ id: "delete", l: "Delete", why: mayChange, confirm: `Delete the check of ${c.item} at ${c.godown} (counted ${nf(c.counted)} ${c.unit})? Nothing else changes: a check never moves the book.` });
+        }
         if (!c.matched && !c.reviewedAt && runsCounts(ctx)) {
           actions.push({ id: "review", l: "Mark reviewed", primary: true, prompt: { title: "Mark this mismatch reviewed", sub: `${c.item} at ${c.godown}: counted ${nf(c.counted)}, book ${nf(c.book)} ${c.unit}`, submit: "Mark reviewed", fields: [{ k: "note", l: "What you found or did", t: "area", mic: true }] } });
           if (c.stage === "rm" && !c.stockCountId)
@@ -1089,6 +1122,30 @@ const floorChecks: ScreenModule = {
     },
   },
   actions: {
+    async edit(ctx, id, v) {
+      const qty = num(v.qty);
+      if (qty == null || qty < 0) return fieldErr("qty", "Enter what you counted — zero if there is none");
+      const [c] = await floorCheckRows(sql`f.id = ${id}`, 1);
+      if (!c) return err("That check no longer exists.", "not_found");
+      if (c.counterId !== ctx.user.id && !runsCounts(ctx)) return err("Whoever checked it, or somebody running stock accuracy, changes a check.", "not_permitted");
+      const difference = r3(qty - c.book);
+      const matched = Math.abs(difference) <= c.tolerance + 1e-9;
+      const r = (await db.execute(sql`
+        update erp_floor_checks set counted_qty = ${qty}, difference = ${difference}, matched = ${matched}, bin = ${text(v.bin)}, reason = ${matched ? null : text(v.reason)}
+         where id = ${id} and reviewed_at is null and stock_count_id is null returning id`)) as unknown as { id: string }[];
+      if (!r.length) return err("That check has been reviewed or raised into a count since; it is no longer changed.", "conflict");
+      await erpAudit(ctx, "erp.floorCheck.edit", "erp_floor_check", id, { counted: c.counted, bin: c.bin, reason: c.reason }, { counted: qty, bin: text(v.bin), reason: text(v.reason) });
+      return okVoid(matched ? `Matches the book: counted ${nf(qty)}, book ${nf(c.book)} ${c.unit}` : `Mismatch: counted ${nf(qty)}, book ${nf(c.book)} ${c.unit} (${difference > 0 ? "+" : ""}${nf(difference)})`);
+    },
+    async delete(ctx, id) {
+      const [c] = await floorCheckRows(sql`f.id = ${id}`, 1);
+      if (!c) return err("That check no longer exists.", "not_found");
+      if (c.counterId !== ctx.user.id && !runsCounts(ctx)) return err("Whoever checked it, or somebody running stock accuracy, deletes a check.", "not_permitted");
+      const r = (await db.execute(sql`delete from erp_floor_checks where id = ${id} and reviewed_at is null and stock_count_id is null returning id`)) as unknown as { id: string }[];
+      if (!r.length) return err("That check has been reviewed or raised into a count since; it is kept.", "conflict");
+      await erpAudit(ctx, "erp.floorCheck.delete", "erp_floor_check", id, { item: c.item, godown: c.godown, counted: c.counted, book: c.book }, null);
+      return okVoid("Check deleted");
+    },
     async review(ctx, id, v) {
       if (!runsCounts(ctx)) return err("A manager or somebody who controls stock accuracy reviews a mismatch.", "not_permitted");
       const r = (await db.execute(sql`

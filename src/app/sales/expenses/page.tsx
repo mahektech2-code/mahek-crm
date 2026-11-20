@@ -10,6 +10,8 @@ import {
 import { canDecideExpenseLines, canRecordExpensePayouts } from "@/lib/actions/sales";
 import { AddExpense } from "./add-expense";
 import { DecideExpense } from "./decide-expense";
+import { EnteredExpenseActions } from "./entered-expense-actions";
+import { requireUser } from "@/lib/auth";
 import { ExpenseTabs } from "./tabs";
 import { FilterRow, PeriodPicker } from "./filters";
 import { hrefWith, keepString, queryOf } from "./query";
@@ -76,6 +78,7 @@ export default async function Page({
 }) {
   const query = queryOf(await searchParams, KEYS);
   const now = await today();
+  const me = await requireUser();
   const period = readPeriod(query, now);
 
   const [inPeriodRows, claimants, canDecide, canAdd, payees] = await Promise.all([
@@ -415,6 +418,23 @@ export default async function Page({
                     billNumber={r.billNumber}
                     files={r.files}
                   />
+                ) : null}
+                {r.enteredById === me.id && r.state === "pending" ? (
+                  <span className="mt-1 block">
+                    <EnteredExpenseActions
+                      today={now}
+                      line={{
+                        id: r.id,
+                        who: r.userName,
+                        day: r.day,
+                        kind: r.kind,
+                        claimedPaise: r.claimedPaise,
+                        vendorName: r.vendorName,
+                        billNumber: r.billNumber,
+                        remarks: r.remarks,
+                      }}
+                    />
+                  </span>
                 ) : null}
               </Cell>
             </Row>

@@ -490,6 +490,29 @@ describe("the order to the bill to the lorry (Order-to-Delivery PRD)", () => {
     assert.notEqual((await det()).verification, "Verified", "and has not left");
   });
 
+  test("Billing & dispatch undoes a bill and changes an invoice from its own row, as the Orders tabs do", async () => {
+    const ctx = await as(admin);
+    assert.ok((await placeOrder(ctx, { source: "WhatsApp", date: TODAY, godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: LOOSE, qty: "17" }])).ok);
+    const [line] = await db.select().from(erpOrders).where(and(eq(erpOrders.skuId, looseId), eq(erpOrders.qtyCans, 17)));
+    /* The suite's loose stock is spent by now; Ready's stock rule is tested above, so the line is put there directly. */
+    await db.update(erpOrders).set({ status: "Ready" }).where(eq(erpOrders.id, line.id));
+    const billed = await mod("orders").actions!.bill(ctx, line.id, { invoiceNo: "MMI/26-27/930", invoiceDate: TODAY });
+    assert.ok(billed.ok, JSON.stringify(billed));
+    const row = (await mod("orderDetails").load(ctx)).rows.find((r) => r.id === line.id)!;
+    assert.deepEqual(row.actions?.find((a) => a.id === "unbill")?.impact, { kind: "erp-order-unbill", id: line.id });
+    assert.equal(row.actions?.find((a) => a.id === "changeInvoice")?.prompt?.init?.invoiceNo, "MMI/26-27/930");
+    const d = mod("orderDetails").actions!;
+    assert.ok((await d.changeInvoice(ctx, line.id, { invoiceNo: "MMI/26-27/931", invoiceDate: TODAY })).ok);
+    assert.equal((await db.select().from(erpOrders).where(eq(erpOrders.id, line.id)))[0].tallyBillNo, "MMI/26-27/931");
+    const bare = await d.unbill(ctx, line.id, {});
+    assert.equal(bare.ok, false, "undoing a bill is confirmed in the impact modal first");
+    const { values } = await confirmed("erp-order-unbill", line.id);
+    const done = await d.unbill(ctx, line.id, values);
+    assert.ok(done.ok, JSON.stringify(done));
+    assert.equal((await db.select().from(erpOrderDetails).where(eq(erpOrderDetails.orderId, line.id))).length, 0, "back out of billing");
+    assert.ok(!(await mod("orderDetails").load(ctx)).rows.some((r) => r.id === line.id));
+  });
+
   test("the bill: 20 × ₹400, 5% off, 18% GST, and the month's sale against the target", async () => {
     const ctx = await as(admin);
     const loose = await orderFor(looseId);

@@ -316,3 +316,14 @@ to the supplier's drum and QC, forward to every refill lot, batch, box,
 customer and what is still on a shelf. With nothing searched it is the
 traceability dashboard: today's production and dispatch, and every exception.
 A link that is missing is said to be missing, never guessed.
+
+**A stock check is corrected or deleted until somebody looks at it.** Whoever
+checked it, or anybody running counts, may Edit (counted figure, where, why)
+or Delete a check on Stock checks while it is unreviewed and not raised into a
+count. The book stays the snapshot taken when it was made — an edit re-judges
+the new figure against THAT book with the stored tolerance; it never re-reads
+the ledger. A check never moves the book, so a delete has no impact modal.
+Every count cancels an open count with the To count tab's own handler and
+modal; a flagged count links to Red flags. A pending adjustment is withdrawn by
+its requester (status `withdrawn`, 0367) and the count is back under
+investigation, as after a rejection.

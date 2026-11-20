@@ -19,6 +19,8 @@
 export const LEAVE_WAITING = "Waiting";
 
 export const GRIEVANCE_ANSWERED = "Answered";
+/** Taken back by the person who raised it while it was Pending (no solution, no feedback). */
+export const GRIEVANCE_WITHDRAWN = "Withdrawn";
 
 export const BUDDY_DONE = "Done";
 

@@ -71,6 +71,9 @@ const files = [
   "src/lib/order-decisions-impact.test.ts",
   // Correcting a promise, complaint, reminder or opportunity; cancelling and withdrawing.
   "src/lib/crm-edit-actions.test.ts",
+  // Edit/delete from the page that lists it: a sample request before dispatch,
+  // a close/reopen request withdrawn, an office-entered expense, reported payments on bills.
+  "src/lib/edit-delete-gaps.test.ts",
   // Adding a customer from Accounts, and it reaching every app on its own.
   "src/lib/customer-create.test.ts",
   // Converting a lead straight to a customer from Accounts — the bypass.
@@ -139,6 +142,7 @@ const files = [
   // The workday clock: punch in, breaks, idle, claims, the lock and a holiday
   // worked as extra.
   "src/lib/hrms/integration/workday.test.ts",
+  "src/lib/hrms/integration/row-gaps.test.ts",
   // Hire: identity is the phone, gating is enforced, an override is a named
   // act, an interviewer's scope is narrow, and the record is append-only.
   "src/lib/hire/integration/core.test.ts",

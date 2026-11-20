@@ -20,6 +20,8 @@ import {
 } from "@/components/console/words";
 import { CustomerName } from "@/components/console/customer-name";
 import { readSort, sortHref, sortRows, type SortColumns } from "@/components/console/sort";
+import { requireUser } from "@/lib/auth";
+import { listUserApps } from "@/lib/access";
 
 export const metadata = { title: "Orders — Sales Dashboard — MahekOne" };
 
@@ -58,7 +60,20 @@ export default async function Page({
      order stuck in approval longer than 300 orders ago was missing from the
      waiting count as well as from the queue. A queue that loses its oldest
      item is the worst possible direction for that. */
-  const [result, summary] = await Promise.all([fieldOrders(show), fieldOrderSummary()]);
+  const user = await requireUser();
+  const [result, summary, apps] = await Promise.all([fieldOrders(show), fieldOrderSummary(), listUserApps(user.id)]);
+  /* WHERE AN ORDER LEADS. A field order has no record page of its own: once
+     it is numbered it is an ERP order, and that is its record — for whoever
+     holds the ERP. Still waiting, it is on Accounts' approvals, for whoever
+     holds Accounts. Anybody else reads it here. */
+  const holdsErp = apps.includes("erp");
+  const holdsAccounts = apps.includes("accounts");
+  const orderHref = (o: { erpOrderNo: number | null; status: string }): string | null =>
+    holdsErp && o.erpOrderNo != null
+      ? `/erp/orders?view=orderDetails&q=${o.erpOrderNo}`
+      : holdsAccounts && o.status === "pending_approval"
+        ? "/accounts/approvals"
+        : null;
   const rows = result.rows;
 
   const waiting = summary.waiting;
@@ -183,9 +198,19 @@ export default async function Page({
             return (
               <Row key={o.id} striped={i % 2 === 1}>
                 <Cell truncate={170} title={stamp(o.orderedAt)}>
-                  <span className="font-medium text-ink">
-                    {o.orderNo ?? "Not yet numbered"}
-                  </span>
+                  {orderHref(o) ? (
+                    <Link
+                      href={orderHref(o)!}
+                      className="font-medium text-ink no-underline hover:text-brand"
+                      title={o.erpOrderNo != null && holdsErp ? `Open ERP order ${o.erpOrderNo}` : "Open it on Accounts › Order approvals"}
+                    >
+                      {o.orderNo ?? "Not yet numbered"}
+                    </Link>
+                  ) : (
+                    <span className="font-medium text-ink">
+                      {o.orderNo ?? "Not yet numbered"}
+                    </span>
+                  )}
                   <span className="block text-[12px] text-muted">
                     {shortDate(o.orderedAt)}
                   </span>

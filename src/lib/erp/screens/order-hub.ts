@@ -369,9 +369,15 @@ const holdPrompt = (no: number): PromptSpec => ({
 });
 
 /** What an order on the MRP check offers: shared by the list and the MRP board. */
-function mrpActions(no: number, short: boolean, sentence: string, held: boolean, decider: boolean): ActionSpec[] {
+function mrpActions(no: number, short: boolean, sentence: string, held: boolean, decider: boolean, lineId: string): ActionSpec[] {
+  /* Changing or cancelling the order is the Orders list's (Edit order, Cancel), opened on this order — the same two To Hold offers. */
+  const order: ActionSpec[] = [
+    { id: "editOrder", l: "Edit order", href: erpLink("orders", { open: lineId }) },
+    { id: "cancelOrder", l: "Cancel order…", href: erpLink("orders", { open: lineId }) },
+  ];
   return held
-    ? [{ id: "toHold", l: "Open in To Hold", href: erpLink("toHold"), primary: true }]
+    ? /* Held: To Hold is where it is edited, cancelled or released — offered there, not twice. */
+      [{ id: "toHold", l: "Open in To Hold", href: erpLink("toHold"), primary: true }]
     : [
         {
           id: "clear",
@@ -389,6 +395,7 @@ function mrpActions(no: number, short: boolean, sentence: string, held: boolean,
           },
         },
         { id: "hold", l: "Hold", why: decider ? "" : "Only the Production Head holds an order here", prompt: holdPrompt(no) },
+        ...order,
       ];
 }
 
@@ -457,7 +464,7 @@ export const mrpCheckScreen: ScreenModule = {
         title: `Order ${no} · ${head.billing}${head.toNo ? ` · TO-${head.toNo}` : ""}`,
         header: sentence,
         fields,
-        actions: mrpActions(no, answer.short.length > 0, sentence, !!h, decider),
+        actions: mrpActions(no, answer.short.length > 0, sentence, !!h, decider, head.id),
       });
     }
     return {
@@ -1226,7 +1233,7 @@ export async function mrpBoard(ctx: ErpContext): Promise<MrpBoardOrder[]> {
       materials,
       batchLine,
       unknown: answer.unknown,
-      actions: mrpActions(no, answer.short.length > 0, sentence, held, decider),
+      actions: mrpActions(no, answer.short.length > 0, sentence, held, decider, head.id),
     };
   });
 }

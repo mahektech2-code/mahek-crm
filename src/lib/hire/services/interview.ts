@@ -34,12 +34,20 @@ export type InterviewRow = {
   when: string | null;
   whenKind: "scheduled" | "started" | "completed" | "none";
   toConfirm: number;
+  /* What Reschedule and Cancel need on the Interviews list: the booking as it stands, and how the candidate may be told. */
+  minutes: number;
+  place: string | null;
+  interviewerId: string | null;
+  location: string | null;
+  hasEmail: boolean;
+  doNotContact: boolean;
 };
 
 export async function listHumanInterviews(ctx: HireContext): Promise<InterviewRow[]> {
   const rows = (await db.execute(sql`
     select x.id, x.application_id, x.stage_key, x.status, x.modality, x.scheduled_at, x.started_at, x.completed_at,
-           c.full_name, b.title, b.definition, u.name as conductor,
+           c.full_name, b.title, b.definition, u.name as conductor, coalesce(x.scheduled_minutes, 45) as minutes, x.place,
+           coalesce(x.conducted_by_id, a.interviewer_id) as interviewer_id, a.location, c.email, c.do_not_contact,
            (select s.status from hire_sessions s where s.execution_id = x.id and s.modality <> 'ai_voice' order by s.started_at desc limit 1) as session_status,
            (select count(*)::int from hire_answers w where w.execution_id = x.id and w.superseded_by_id is null and w.confirmed_at is null) as to_confirm
     from hire_stage_executions x
@@ -73,6 +81,12 @@ export async function listHumanInterviews(ctx: HireContext): Promise<InterviewRo
       when: when ? new Date(when).toISOString() : null,
       whenKind: r.completed_at ? "completed" : r.started_at ? "started" : r.scheduled_at ? "scheduled" : "none",
       toConfirm: Number(r.to_confirm ?? 0),
+      minutes: Number(r.minutes ?? 45),
+      place: (r.place as string) ?? null,
+      interviewerId: (r.interviewer_id as string) ?? null,
+      location: (r.location as string) ?? null,
+      hasEmail: !!r.email,
+      doNotContact: r.do_not_contact === true,
     });
   }
   /* Today's work first: running, then scheduled soonest, then the rest. */

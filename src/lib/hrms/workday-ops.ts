@@ -199,6 +199,31 @@ async function tellManagers(ctx: HrmsContext, employeeId: string, msg: { title: 
   await notifyUsers(ids.filter((id) => id !== ctx.user.id).map((userId) => ({ userId, ...msg, kind: "warn" })));
 }
 
+/** The claimant's own pending claim, corrected: what they were doing. The span is the clock's and stays. */
+export async function editClaim(ctx: HrmsContext, id: string, claim: { category: string; note: string }): Promise<Result<undefined>> {
+  const [c] = await db.select().from(hrmsWorkdayClaims).where(eq(hrmsWorkdayClaims.id, id));
+  if (!c) return err("That claim no longer exists.");
+  if (ctx.employee?.id !== c.employeeId) return err("Only the person who asked edits a claim.", "not_permitted");
+  if (c.status !== "pending") return err(`That claim was already ${c.status}.`);
+  const note = claim.note.trim();
+  if (!note) return err("Write what you were doing.", "validation", [{ field: "note", message: "Write what you were doing." }]);
+  const after = { category: claim.category.trim().slice(0, 60) || "Other", note: note.slice(0, 500) };
+  await db.update(hrmsWorkdayClaims).set(after).where(and(eq(hrmsWorkdayClaims.id, id), eq(hrmsWorkdayClaims.status, "pending")));
+  await hrmsAudit(ctx, "hrms.workday.claimEdit", "hrms_workday_claims", id, { category: c.category, note: c.note }, after);
+  return okVoid("Claim updated");
+}
+
+/** The claimant takes a pending claim back: the time stays a break, and the row says withdrawn. */
+export async function withdrawClaim(ctx: HrmsContext, id: string): Promise<Result<undefined>> {
+  const [c] = await db.select().from(hrmsWorkdayClaims).where(eq(hrmsWorkdayClaims.id, id));
+  if (!c) return err("That claim no longer exists.");
+  if (ctx.employee?.id !== c.employeeId) return err("Only the person who asked withdraws a claim.", "not_permitted");
+  if (c.status !== "pending") return err(`That claim was already ${c.status}.`);
+  await db.update(hrmsWorkdayClaims).set({ status: "withdrawn", decidedById: ctx.user.id, decidedAt: new Date(), decidedNote: "Withdrawn by the person who asked" }).where(eq(hrmsWorkdayClaims.id, id));
+  await hrmsAudit(ctx, "hrms.workday.claimWithdraw", "hrms_workday_claims", id, { status: "pending" }, { status: "withdrawn" });
+  return okVoid("Claim withdrawn · the time stays a break");
+}
+
 /** A manager decides a claim. Approving counts the span as work and rebuilds the day. */
 export async function decideClaim(ctx: HrmsContext, id: string, approve: boolean, note: string): Promise<Result<undefined>> {
   const [c] = await db.select().from(hrmsWorkdayClaims).where(eq(hrmsWorkdayClaims.id, id));

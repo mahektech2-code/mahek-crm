@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { cx } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
@@ -84,14 +85,13 @@ export function OnAccountScreen({
                 return (
                   <Row key={h.customerId} striped={i % 2 === 1}>
                     <Cell className="font-medium text-ink">
-                      <button
-                        onClick={() =>
-                          router.push(`/accounts/ledger?customer=${h.customerId}`)
-                        }
-                        className="cursor-pointer border-none bg-transparent p-0 text-sm font-medium text-ink hover:text-brand"
+                      <Link
+                        href={`/accounts/ledger?customer=${h.customerId}`}
+                        className="text-sm font-medium text-ink no-underline hover:text-brand"
+                        title="The customer's ledger — every receipt behind this credit, with Edit and Reverse"
                       >
                         {h.customerName}
-                      </button>
+                      </Link>
                       <span className="mt-px block text-[13px] font-normal text-muted">
                         across {plural(h.receipts, "receipt")}
                       </span>
@@ -110,6 +110,18 @@ export function OnAccountScreen({
                         : "Offered against their next bill"}
                     </Cell>
                     <Cell align="right">
+                      <span className="inline-flex items-center gap-2">
+                      {/* A credit that is wrong — a mistyped figure, money on
+                          the wrong customer — is fixed on the receipt that
+                          made it, and the ledger is where the receipts are,
+                          each with Edit payment and Reverse. */}
+                      <Link
+                        href={`/accounts/ledger?customer=${h.customerId}`}
+                        className="h-7.5 rounded-[4px] border border-line-strong bg-surface px-3 text-[13px] leading-7 font-medium whitespace-nowrap text-body no-underline hover:bg-canvas"
+                        title="Open the ledger to edit or reverse the receipt behind this credit"
+                      >
+                        Receipts
+                      </Link>
                       <button
                         disabled={!can || busy === h.customerId}
                         title={why}
@@ -128,6 +140,7 @@ export function OnAccountScreen({
                       >
                         {busy === h.customerId ? "Applying…" : "Apply to a bill"}
                       </button>
+                      </span>
                     </Cell>
                   </Row>
                 );

@@ -4,8 +4,12 @@ import {
   billLedgerPage,
   billLedgerTotals,
   earliestBillDate,
+  erpOrderNosFor,
   openBillAges,
 } from "@/lib/services/payment-service";
+import { requireUser } from "@/lib/auth";
+import { canFor } from "@/lib/access-control";
+import { listUserApps } from "@/lib/access";
 import { bucketise } from "@/lib/services/accounts-home-service";
 import { today } from "@/lib/recompute";
 import { BillsScreen } from "./bills-screen";
@@ -54,6 +58,12 @@ export default async function Page({
   ]);
 
   const aging = bucketise(ages, config["bills.agingBuckets"]);
+  const user = await requireUser();
+  const [orderNos, apps, canCredit] = await Promise.all([
+    erpOrderNosFor(ledger.rows.map((r) => r.orderId ?? "")),
+    listUserApps(user.id),
+    canFor(user, "creditnote.issue"),
+  ]);
 
   return (
     <BillsScreen
@@ -70,7 +80,9 @@ export default async function Page({
         overdueDays: r.overdueDays,
         status: r.status,
         disputed: r.disputed,
+        erpOrderNo: r.orderId ? (orderNos[r.orderId] ?? null) : null,
       }))}
+      links={{ ledger: true, erp: apps.includes("erp"), credit: canCredit }}
       total={ledger.total}
       page={page}
       perPage={perPage}

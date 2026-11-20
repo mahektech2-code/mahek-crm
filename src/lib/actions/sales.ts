@@ -866,6 +866,196 @@ export async function addExpenseFor(
   }
 }
 
+/* ═══════════════════════════════ correcting what the office entered */
+
+/**
+ * The line the office entered, still undecided, and entered by THIS person —
+ * or the reason it is not. Shared by Edit and Delete so the two refuse alike.
+ */
+async function ownUndecidedEntry(
+  expenseId: string,
+  userId: string,
+): Promise<
+  | { ok: true; line: typeof mbosExpenses.$inferSelect; approvalId: string | null }
+  | { ok: false; error: ReturnType<typeof err> }
+> {
+  const [line] = await db.select().from(mbosExpenses).where(eq(mbosExpenses.id, expenseId)).limit(1);
+  if (!line || line.supersededById) return { ok: false, error: err("That expense no longer exists.", "not_found") };
+  if (await salesmanOutsideScope(line.userId)) return { ok: false, error: err(NOT_YOUR_TEAM, "not_permitted") };
+  if (line.createdById !== userId || line.createdById === line.userId || (line.sourceType ?? "manual") !== "manual") {
+    return {
+      ok: false,
+      error: err("Only the person who entered this expense for him can change it. What he logged himself is decided, not edited.", "not_permitted"),
+    };
+  }
+  const approvals = await db
+    .select({ id: mbosApprovals.id, state: mbosApprovals.state })
+    .from(mbosApprovals)
+    .where(and(eq(mbosApprovals.subjectType, "expense"), eq(mbosApprovals.subjectId, expenseId)));
+  if (approvals.some((a) => a.state !== "pending")) {
+    return {
+      ok: false,
+      error: err("This expense has been decided, so it can no longer be changed. Ask whoever decided it to look again.", "conflict"),
+    };
+  }
+  return { ok: true, line, approvalId: approvals[0]?.id ?? null };
+}
+
+const editEnteredSchema = enteredExpenseSchema.pick({
+  day: true,
+  kind: true,
+  amountPaise: true,
+  vendorName: true,
+  billNumber: true,
+  billDate: true,
+  remarks: true,
+});
+
+/**
+ * FIX AN EXPENSE THE OFFICE ENTERED, before anybody decides it.
+ *
+ * The person who keyed it in with `addExpenseFor` — and only them — may
+ * correct the day, the kind, the amount, the bill's details and the remarks
+ * while its approval is still pending. Once decided it is refused: a decision
+ * was made on the figure that was there. The day is re-priced (both days,
+ * where it moved), the approval's reason follows the remarks, he is told on
+ * his phone, and the change is audited with before and after.
+ */
+export async function editEnteredExpense(
+  expenseId: string,
+  input: z.input<typeof editEnteredSchema>,
+): Promise<Result<null>> {
+  try {
+    const user = await requireSalesAccess({ modules: ["sales.expenses"], manager: true });
+    const parsed = editEnteredSchema.safeParse(input);
+    if (!parsed.success) return err(parsed.error.issues[0]?.message ?? "Check the expense.", "validation");
+    const p = parsed.data;
+    if (p.day > (await today())) return err("An expense cannot be dated in the future.", "validation");
+    const own = await ownUndecidedEntry(expenseId, user.id);
+    if (!own.ok) return own.error;
+    const before = own.line;
+
+    const expenseDayId = p.day === before.expenseDate ? before.expenseDayId : await ensureDay(before.userId, p.day, null);
+    await db
+      .update(mbosExpenses)
+      .set({
+        category: ENTERED_KINDS[p.kind],
+        kind: p.kind,
+        amountPaise: p.amountPaise,
+        expenseDate: p.day,
+        expenseDayId,
+        remarks: p.remarks || null,
+        vendorName: p.vendorName || null,
+        billNumber: p.billNumber || null,
+        billDate: p.billDate ?? null,
+        updatedById: user.id,
+        updatedAt: new Date(),
+      })
+      .where(eq(mbosExpenses.id, expenseId));
+    if (own.approvalId) {
+      await db
+        .update(mbosApprovals)
+        .set({ reason: p.remarks || null, updatedById: user.id, updatedAt: new Date() })
+        .where(eq(mbosApprovals.id, own.approvalId));
+    }
+    await refreshDayMoney(before.userId, p.day).catch(() => {});
+    if (before.expenseDate !== p.day) await refreshDayMoney(before.userId, before.expenseDate).catch(() => {});
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.expense.edited_for",
+      entityType: "mbos_expense",
+      entityId: expenseId,
+      beforeState: {
+        userId: before.userId,
+        day: before.expenseDate,
+        kind: before.kind,
+        amountPaise: Number(before.amountPaise),
+        vendorName: before.vendorName,
+        billNumber: before.billNumber,
+        billDate: before.billDate,
+        remarks: before.remarks,
+      } as never,
+      afterState: { userId: before.userId, ...p } as never,
+    });
+    const rupees = `₹${(p.amountPaise / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+    await tell(before.userId, "An expense entered for you was corrected", `${user.name} corrected it to ${rupees} for ${p.day}. It is still waiting for approval.`, "/expenses");
+    try {
+      revalidatePath("/sales/expenses");
+    } catch {
+      /* no request context */
+    }
+    return ok(null, "Expense corrected. It is still waiting to be decided.");
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * TAKE BACK AN EXPENSE THE OFFICE ENTERED BY MISTAKE, before anybody decides
+ * it — the wrong salesman, a bill entered twice. Only the person who entered
+ * it; refused once decided (that is a decision to reverse, not an entry to
+ * delete). The line, its pending approval and its policy flags go; the day is
+ * re-priced; the reason is audited and he is told.
+ *
+ * His phone: an `expenses` tombstone is written, but handsets up to this
+ * release keep expense rows they hold (`applyDeletions` only drops reference
+ * data), so the line can linger there as pending until a build that honours
+ * the tombstone. The office's record and every figure are right either way.
+ */
+export async function deleteEnteredExpense(expenseId: string, reason: string): Promise<Result<null>> {
+  try {
+    const user = await requireSalesAccess({ modules: ["sales.expenses"], manager: true });
+    const why = (reason ?? "").trim();
+    if (!why) return err("Say why it is being deleted.", "validation");
+    const own = await ownUndecidedEntry(expenseId, user.id);
+    if (!own.ok) return own.error;
+    const line = own.line;
+
+    await db.transaction(async (tx) => {
+      await tx
+        .delete(mbosApprovals)
+        .where(and(eq(mbosApprovals.subjectType, "expense"), eq(mbosApprovals.subjectId, expenseId), eq(mbosApprovals.state, "pending")));
+      await tx.delete(mbosExpenses).where(eq(mbosExpenses.id, expenseId));
+      await tx.insert(mbosDeletions).values({
+        id: gen("del"),
+        entity: "expenses",
+        entityId: expenseId,
+        userId: line.userId,
+        reason: "deleted_by_office",
+      });
+      await tx.insert(auditLog).values({
+        id: gen("aud"),
+        actorId: user.id,
+        action: "mbos.expense.deleted_for",
+        entityType: "mbos_expense",
+        entityId: expenseId,
+        beforeState: {
+          userId: line.userId,
+          day: line.expenseDate,
+          kind: line.kind,
+          amountPaise: Number(line.amountPaise),
+          vendorName: line.vendorName,
+          remarks: line.remarks,
+        } as never,
+        afterState: { reason: why } as never,
+      });
+    });
+    await refreshDayMoney(line.userId, line.expenseDate).catch(() => {});
+    const rupees = `₹${(Number(line.amountPaise) / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+    await tell(line.userId, "An expense entered for you was taken off", `${user.name} took off the ${rupees} entered for ${line.expenseDate}: ${why}`, "/expenses");
+    try {
+      revalidatePath("/sales/expenses");
+    } catch {
+      /* no request context */
+    }
+    return ok(null, "Expense deleted.");
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
 /* ═══════════════════════════════════════════ reimbursements handed over */
 
 /** Whether the reader may record and void reimbursements — the screen asks, the actions re-check. */

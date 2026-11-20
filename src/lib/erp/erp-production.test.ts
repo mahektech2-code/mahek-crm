@@ -50,7 +50,7 @@ import { testPhone } from "@/lib/test-phone";
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const TODAY = "2026-09-20";
 
-async function makeUser(name: string, level: "associate" | "admin") {
+async function makeUser(name: string, level: "associate" | "manager" | "admin") {
   const [u] = await db
     .insert(users)
     .values({
@@ -568,6 +568,20 @@ describe("a production delete says what moves first, and takes its own stock wit
     assert.ok((await mod("fgLevels").actions!.delete(ctx, boxed.id, fgLevel.values)).ok);
   });
 
+  test("an ERP manager — the Production Head — may delete a wrong production entry, a clerk may not", async () => {
+    const head = await makeUser("Ankit Head", "manager");
+    const ctx = await as(head);
+    const [line] = await db.select().from(erpSfgLines).limit(1);
+    const row = (await mod("sfgBatches").load(ctx)).rows.find((x) => x.id === line.id);
+    const del = row?.actions?.find((a) => a.id === "delete");
+    assert.ok(del, "the Delete action is on the row");
+    assert.equal(del?.why ?? "", "", "and not disabled for a manager");
+    const r = await impactReport("erp-sfg-line", line.id);
+    assert.ok(r.ok, r.ok ? "" : r.error);
+    await as(clerk);
+    assert.equal((await mod("sfgBatches").actions!.delete(await as(clerk), line.id, {})).ok, false, "a clerk is refused");
+  });
+
   test("a clerk cannot read what an administrator's delete would touch", async () => {
     await as(clerk);
     const [line] = await db.select().from(erpSfgLines).limit(1);
@@ -670,5 +684,46 @@ describe("a whole recipe is retired and restored, and nothing made to it changes
     assert.ok((await mod("recipes").actions!.restore(ctx, rcp.id, {})).ok);
     assert.equal((await db.select().from(erpRecipes))[0].retiredAt, null);
     assert.ok(await mod("recipes").formLoaders!.start(ctx, rcp.id));
+  });
+});
+
+describe("a filling is edited from its row: its cans and its losses", () => {
+  test("more cans need the SFG; fewer give it back; the row offers Edit and the form is the filling's own", async () => {
+    const ctx = await as(admin);
+    /* The suite has drawn the lot and the cans down by now: top both up, as a later batch and purchase would. */
+    await db.execute(sql`insert into erp_sfg_entries (id, source_type, source_id, entry_date, formulation_id, lot_code, godown_id, quantity)
+      select ${id("sfe")}, 'manual', ${id("src")}, ${TODAY}, formulation_id, lot_code, godown_id, 200 from erp_sfg_entries where lot_code = '1ASTOL1' limit 1`);
+    await db.execute(sql`insert into erp_rm_entries (id, source_type, source_id, entry_date, raw_material_id, lot_no, godown_id, quantity)
+      select ${id("rme")}, 'purchase', ${id("pur")}, ${TODAY}, 'rm_can', 'TOPUP-CAN', godown_id, 50 from erp_sfg_entries where lot_code = '1ASTOL1' limit 1`);
+    const made = await mod("fgFill").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", sfg: SFG, sfgLot: "1ASTOL1", fg: FG, size: "5", canUse: "Tin can 5L", cans: "4" }, []);
+    assert.ok(made.ok, JSON.stringify(made));
+    const [fill] = await db.select().from(erpFgFills).orderBy(sql`created_at desc`).limit(1);
+    const row = (await mod("fgFill").load(ctx)).rows.find((x) => x.id === fill.id);
+    assert.ok(row?.actions?.some((a) => a.id === "edit" && a.loadsForm));
+    const form = await mod("fgFill").formLoaders!.edit(ctx, fill.id);
+    assert.deepEqual(form?.init, { cans: "4", adjusted: "0" });
+
+    const sfgBefore = (await sfgLots()).find((l) => l.lotCode === "1ASTOL1")!.stock;
+    assert.match(fieldMsg(await mod("fgFill").forms!.edit(ctx, { cans: "100000", adjusted: "0" }, [], fill.id)), /not enough SFG/);
+    assert.match(fieldMsg(await mod("fgFill").forms!.edit(ctx, { cans: "4", adjusted: "5" }, [], fill.id)), /between 0 and the cans filled/);
+
+    const grown = await mod("fgFill").forms!.edit(ctx, { cans: "6", adjusted: "1" }, [], fill.id);
+    assert.ok(grown.ok, JSON.stringify(grown));
+    assert.equal((await sfgLots()).find((l) => l.lotCode === "1ASTOL1")!.stock, sfgBefore - 10, "two more 5 L cans of SFG");
+    assert.equal((await fgLots()).find((l) => l.lotCode === fill.lotCode)?.stock, 5);
+
+    const shrunk = await mod("fgFill").forms!.edit(ctx, { cans: "2", adjusted: "0" }, [], fill.id);
+    assert.ok(shrunk.ok, JSON.stringify(shrunk));
+    assert.equal((await sfgLots()).find((l) => l.lotCode === "1ASTOL1")!.stock, sfgBefore + 10);
+    assert.equal((await fgLots()).find((l) => l.lotCode === fill.lotCode)?.stock, 2);
+    const [a] = (await db.execute(sql`select count(*)::int as n from audit_log where action = 'erp.fg.edit' and entity_id = ${fill.id}`)) as unknown as { n: number }[];
+    assert.equal(Number(a.n), 2);
+  });
+
+  test("a filling whose cans were packed cannot shrink below what was packed", async () => {
+    const ctx = await as(admin);
+    const [packed] = await db.select().from(erpFgFills).where(eq(erpFgFills.lotCode, "FG2BH"));
+    const r = await mod("fgFill").forms!.edit(ctx, { cans: "1", adjusted: "0" }, [], packed.id);
+    assert.match(fieldMsg(r), /already been packed or moved on/);
   });
 });

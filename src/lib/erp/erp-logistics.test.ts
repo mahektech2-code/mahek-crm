@@ -589,6 +589,29 @@ describe("complaints and credit notes are the CRM's complaints", () => {
     if (before != null && after != null) assert.equal(before - after, Math.round((10000 * 10000) / 11800), "the margin gives it back before GST");
     assert.equal((await mod("issueCn").load(a)).rows[0].v.status, "Resolved");
   });
+
+  test("whoever raised a request withdraws it while it waits; it is closed, not deleted, and says so", async () => {
+    const c = await as(clerk);
+    assert.ok((await mod("requests").forms!.new(c, { salesman: clerk.id, customer: "Shree Paints", type: "Leakage / Packaging", description: "Raised on the wrong customer", cn: "No" }, [])).ok);
+    const [r] = await db.select().from(complaints).where(eq(complaints.description, "Raised on the wrong customer"));
+    const row = (await mod("requests").load(c)).rows.find((x) => x.id === r.id)!;
+    assert.equal(row.actions?.find((x) => x.id === "withdraw")?.why, "");
+    const a = await as(admin);
+    const theirs = await mod("requests").actions!.withdraw(a, r.id, { reason: "not mine" });
+    assert.equal(theirs.ok ? "ok" : theirs.code, "not_permitted", "the office rejects; it does not withdraw somebody else's");
+    assert.equal(msg(await mod("requests").actions!.withdraw(c, r.id, {})), "Say why it is withdrawn — the office reads it");
+    const done = await mod("requests").actions!.withdraw(c, r.id, { reason: "Wrong customer picked" });
+    assert.ok(done.ok, JSON.stringify(done));
+    const [after] = await db.select().from(complaints).where(eq(complaints.id, r.id));
+    assert.equal(after.status, "closed");
+    assert.match(after.resolutionNotes ?? "", /^Withdrawn by Ravi Sales — Wrong customer picked/);
+    assert.equal((await db.select().from(complaintStatusHistory).where(eq(complaintStatusHistory.complaintId, r.id))).length, 2);
+    const shown = (await mod("requests").load(c)).rows.find((x) => x.id === r.id)!;
+    assert.equal(shown.v.status, "Withdrawn");
+    assert.ok(!shown.actions?.some((x) => x.id === "withdraw"), "nothing left to withdraw");
+    const again = await mod("requests").actions!.withdraw(c, r.id, { reason: "again" });
+    assert.equal(again.ok ? "ok" : again.code, "rule_violation");
+  });
 });
 
 describe("transporters", () => {

@@ -298,6 +298,24 @@ describe("ownership, review and corrections", () => {
     assert.equal(await db.$count(erpEmptyDrums, sql`status = 'available'`), before + 5);
   });
 
+  test("whoever asked withdraws a correction while it is pending; nothing about the drums moves", async () => {
+    const before = await db.$count(erpEmptyDrums, sql`status = 'available'`);
+    assert.ok((await requestDrumAdjustment(actor(head), { kind: "opening", ownership: "mahek", supplierId: null, godownId: BHW, quantity: 3, reason: "Counted the wrong yard by mistake" })).ok);
+    const [adj] = (await db.execute(sql`select id from erp_drum_adjustments where kind = 'opening' and status = 'pending'`)) as unknown as { id: string }[];
+    const screen = screenModule("drumAdjustments")!;
+    assert.ok((await screen.load(await ctxOf(head))).rows.find((r) => r.id === adj.id)?.actions?.some((a) => a.id === "withdraw"));
+    assert.ok(!(await screen.load(await ctxOf(admin))).rows.find((r) => r.id === adj.id)?.actions?.some((a) => a.id === "withdraw"), "offered only to the asker");
+    const theirs = await screen.actions!.withdraw(await ctxOf(admin), adj.id, {});
+    assert.equal(theirs.ok ? "ok" : theirs.code, "not_permitted");
+    const done = await screen.actions!.withdraw(await ctxOf(head), adj.id, { note: "Wrong yard" });
+    assert.ok(done.ok, done.ok ? "" : done.error);
+    assert.equal((await screen.load(await ctxOf(head))).rows.find((r) => r.id === adj.id)?.v.status, "Withdrawn");
+    assert.equal((await decideDrumAdjustment(actor(admin), adj.id, true, "", { administrator: true })).ok, false, "a withdrawn correction is not approved");
+    assert.equal(await db.$count(erpEmptyDrums, sql`status = 'available'`), before);
+    const [audit] = (await db.execute(sql`select action from audit_log where entity_id = ${adj.id} and action = 'erp.drum.adjust.withdraw'`)) as unknown as { action: string }[];
+    assert.ok(audit);
+  });
+
   test("a drum's history cannot be rewritten", async () => {
     await assert.rejects(db.execute(sql`delete from erp_drum_events`), (e: unknown) => /append-only/.test(String((e as { cause?: unknown }).cause ?? e)));
   });
