@@ -12,7 +12,7 @@ import { CommandCentre } from "./command-centre";
 export async function generateMetadata({ searchParams }: { searchParams: Promise<{ s?: string }> }) {
   const { s } = await searchParams;
   const title = isSectionKey(s) ? SECTION_TITLE[s] : "Company";
-  return { title: `${title} - Founder Command Centre - MahekOne` };
+  return { title: `${title} - HQ - MahekOne` };
 }
 
 /**

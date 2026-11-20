@@ -360,7 +360,7 @@ export async function getThread(key: string): Promise<Result<Thread>> {
   const ends = sessionWindowEnds(lastInboundAt);
   const delivery = await deliveryContext();
   const blockedWhy = !delivery.serviceOn
-    ? "WhatsApp sending is switched off in the Founder Command Centre, so nothing can go from the business number."
+    ? "WhatsApp sending is switched off in HQ, so nothing can go from the business number."
     : !delivery.hasToken
       ? "No Wati key is configured, so nothing can go from the business number."
       : t.kind === "customer" && t.customer.whatsappDnd
@@ -443,7 +443,7 @@ export async function sendChatMessage(input: {
   if (isRefusal(t)) return t;
 
   const delivery = await deliveryContext();
-  if (!delivery.serviceOn) return err("WhatsApp sending is switched off in the Founder Command Centre.", "rule_violation");
+  if (!delivery.serviceOn) return err("WhatsApp sending is switched off in HQ.", "rule_violation");
   if (!delivery.hasToken) return err("No Wati key is configured, so nothing can be sent from the business number.", "rule_violation");
   if (t.kind === "customer" && t.customer.whatsappDnd) {
     return err(`${t.customer.name} is on WhatsApp DND${t.customer.whatsappDndReason ? ` — ${t.customer.whatsappDndReason}` : ""}.`, "rule_violation");

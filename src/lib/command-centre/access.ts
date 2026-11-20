@@ -1,5 +1,4 @@
 import "server-only";
-import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { listUserApps, listUserModules } from "@/lib/access";
 import { levelInApp } from "@/lib/access-control";
@@ -45,7 +44,7 @@ export class NotAllowedHere extends Error {}
 export async function founderAccess() {
   const user = await requireUser();
   const apps = await listUserApps(user.id);
-  if (!apps.includes("founder")) throw new NotAllowedHere("The Founder Command Centre is not on your account.");
+  if (!apps.includes("founder")) throw new NotAllowedHere("HQ is not on your account.");
   const modules = await listUserModules(user.id, "founder");
   const keys = new Set(modules.map((m) => m.key));
   const allowed = (Object.keys(SECTION_MODULE) as SectionKey[]).filter((s) => keys.has(SECTION_MODULE[s]));
@@ -66,7 +65,12 @@ export async function founderAccess() {
  */
 export async function founderPageAccess() {
   const user = await requireUser();
-  if (!(await listUserApps(user.id)).includes("founder")) redirect("/apps");
+  if (!(await listUserApps(user.id)).includes("founder")) {
+    // Imported lazily, as `requireUser` does: next/navigation pulls in the
+    // client React runtime, which a test importing this file cannot load.
+    const { redirect } = await import("next/navigation");
+    redirect("/apps");
+  }
   return founderAccess();
 }
 
@@ -84,7 +88,7 @@ export async function requireActIn(section: SectionKey) {
   if (a.level === "admin") return a;
   if (a.level === "manager") return a;
   if (section === "prices" || section === "whatsapp") return a;
-  throw new NotAllowedHere("Your access to the Command Centre is read-only here. The founder or a manager-level delegate can do this.");
+  throw new NotAllowedHere("Your access to HQ is read-only here. The founder or a manager-level delegate can do this.");
 }
 
 /**

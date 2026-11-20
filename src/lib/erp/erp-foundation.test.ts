@@ -280,4 +280,52 @@ describe("powers and godowns", () => {
     const n = await as(narrowed);
     assert.equal(n.workingGodown, null, "nobody assigned means no working location, not a guess");
   });
+
+  test("two people with one name are told apart on a godown's staff — ticking one gives it to that one", async () => {
+    const twin = async (email: string) =>
+      (
+        await db
+          .insert(users)
+          .values({ id: id("usr"), name: "Ravi Kumar", email, phone: testPhone(), passwordHash: "x", role: "associate", initials: "RK" })
+          .returning()
+      )[0];
+    const [r1, r2] = [await twin("ravi.one@erp.test"), await twin("ravi.two@erp.test")];
+    for (const u of [r1, r2]) await db.insert(appAccess).values({ id: id("aca"), userId: u.id, app: "erp", role: "associate" });
+    const a = await as(admin);
+    const r = await mod("godowns").actions!.staff(a, "erpg_bhiwandi", { people: "Ravi Kumar (ravi.two@erp.test)" });
+    assert.ok(r.ok, r.ok ? "" : r.error);
+    const staff = await db.select().from(erpGodownStaff).where(eq(erpGodownStaff.godownId, "erpg_bhiwandi"));
+    assert.deepEqual(staff.map((s) => s.userId), [r2.id], "only the Ravi who was ticked");
+    /* The bare shared name no longer names anybody. */
+    await mod("godowns").actions!.staff(a, "erpg_bhiwandi", { people: "Ravi Kumar" });
+    assert.equal((await db.select().from(erpGodownStaff).where(eq(erpGodownStaff.godownId, "erpg_bhiwandi"))).length, 0);
+  });
+});
+
+describe("retiring a reference list value", () => {
+  test("the modal names the records that carry the value, which keep it", async () => {
+    const ctx = await as(admin);
+    const part = JSON.stringify(["materialType", "Can"]);
+    const report = await impactReport("erp-ref-value-retire", part);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    const kept = report.data.items.find((i) => i.effect === "kept" && /raw materials/.test(i.label));
+    assert.ok((kept?.count ?? 0) >= 1, JSON.stringify(report.data.items));
+    assert.equal(report.data.items.find((i) => i.effect === "changed")?.count, 1);
+
+    const refused = await mod("refLists").actions!.retire(ctx, "materialType", { v: "Can" });
+    assert.equal(refused.ok ? "ok" : refused.error, "Check what this affects and confirm it first.");
+    setTestUser(outsider);
+    const peek = await impactReport("erp-ref-value-retire", part);
+    assert.equal(peek.ok ? "ok" : peek.code, "not_permitted", "somebody without the ERP cannot read it");
+
+    const done = await mod("refLists").actions!.retire(await as(admin), "materialType", { v: "Can", [IMPACT_FIELD]: JSON.stringify({ typed: "Can", fingerprint: report.data.fingerprint }) });
+    assert.ok(done.ok, JSON.stringify(done));
+    const [row] = (await db.execute(sql`select active from erp_ref_values where list_key = 'materialType' and value = 'Can'`)) as unknown as { active: boolean }[];
+    assert.equal(row.active, false);
+    const [m] = (await db.execute(sql`select material_type from erp_raw_materials where name = '1 L Tin Can'`)) as unknown as { material_type: string }[];
+    assert.equal(m.material_type, "Can", "the record keeps it");
+    const again = await impactReport("erp-ref-value-retire", part);
+    assert.ok(again.ok && again.data.blockers.length === 1, "already retired");
+    assert.ok((await mod("refLists").actions!.restore(ctx, "materialType", { v: "Can" })).ok);
+  });
 });

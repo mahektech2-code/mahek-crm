@@ -20,6 +20,7 @@ import {
   ASSIGNED_TO_SQL,
   assertCustomerInScope,
   BACK_OFFICE_SQL,
+  canFor,
   requireCapability,
   resolveScope,
   scopedToUsers,
@@ -29,6 +30,8 @@ import {
 import { getConfig } from "../config/store";
 import {
   COMPLAINT_PRIORITIES,
+  categoryLabel,
+  categoryValue,
   priorityLabel,
 } from "../complaint-labels";
 import { resolveTarget } from "../engines/targets";
@@ -364,9 +367,10 @@ export const reminderSchema = z.object({
 });
 
 /**
- * `skipCustomerScope` exists for exactly one caller —
- * `enquiry-service.ts`'s `createEnquiryReminder` — and nobody else may set
- * it: it is a plain TypeScript parameter, never part of `reminderSchema`,
+ * `skipCustomerScope` exists for exactly two callers —
+ * `enquiry-service.ts`'s `createEnquiryReminder` and, through
+ * `rescheduleReminder`, its `rescheduleEnquiryReminder` — and nobody else may
+ * set it: it is a plain TypeScript parameter, never part of `reminderSchema`,
  * so it can never arrive from a request body, form data, a URL, or any
  * other client-controlled payload.
  *
@@ -649,6 +653,9 @@ export async function rescheduleReminder(
   reminderId: string,
   newDate: string,
   note?: string,
+  /* `enquiry-service.ts`'s `rescheduleEnquiryReminder` only, for the reason
+     `CreateReminderOptions` gives: the Enquiries grant is not the CRM book. */
+  opts?: CreateReminderOptions,
 ): Promise<Result> {
   const ctx = await resolveScope();
   const config = await getConfig();
@@ -658,7 +665,7 @@ export async function rescheduleReminder(
   /* Anybody's own promise is theirs to move; anybody else's needs the
      customer in their book. Nothing was checked, so any signed-in user could
      move any reminder by id. */
-  if (existing.assignedUserId !== ctx.user.id && existing.createdByUserId !== ctx.user.id) {
+  if (!opts?.skipCustomerScope && existing.assignedUserId !== ctx.user.id && existing.createdByUserId !== ctx.user.id) {
     const [customer] = await db.select().from(customers).where(eq(customers.id, existing.customerId));
     if (!customer) return err("That customer no longer exists.", "not_found");
     await assertCustomerInScope(customer);
@@ -686,6 +693,88 @@ export async function rescheduleReminder(
     .where(eq(reminders.id, reminderId));
 
   return okVoid(`Moved to ${due}`);
+}
+
+/** The kinds a person may file a reminder under. A payment-promise reminder is
+ *  the system's chase of a recorded promise, so it is neither offered as a
+ *  kind nor moved out of. */
+export const EDITABLE_REMINDER_TYPES = [
+  "call_back",
+  "order_confirmation",
+  "send_information",
+  "check_stock",
+  "other",
+] as const;
+
+/**
+ * WHAT A REMINDER SAYS, corrected — its note and its kind, never its date.
+ *
+ * Moving the date is rescheduling, which counts (`rescheduleCount`) because a
+ * reminder pushed back five times says something about the account; fixing a
+ * typo in the note says nothing and must not look like a sixth push. The same
+ * people may do it as may reschedule: whoever it is for or whoever set it,
+ * otherwise anybody with the customer in their book. Only while pending — a
+ * closed reminder is a record of what was done.
+ *
+ * A system-generated reminder keeps its kind: a promise's chase is found by
+ * its kind, and a chase re-filed as a call-back would stop being one.
+ */
+export async function editReminder(input: {
+  reminderId: string;
+  note: string;
+  type?: string;
+}): Promise<Result> {
+  const note = input.note.trim();
+  if (!note) {
+    return err("A reminder needs a note — what was promised.", "validation", [
+      { field: "note", message: "Required." },
+    ]);
+  }
+  const ctx = await resolveScope();
+  const [existing] = await db.select().from(reminders).where(eq(reminders.id, input.reminderId));
+  if (!existing) return err("That reminder no longer exists.", "not_found");
+  if (existing.assignedUserId !== ctx.user.id && existing.createdByUserId !== ctx.user.id) {
+    const [customer] = await db.select().from(customers).where(eq(customers.id, existing.customerId));
+    if (!customer) return err("That customer no longer exists.", "not_found");
+    await assertCustomerInScope(customer);
+  }
+  if (existing.status !== "pending") {
+    return err("That reminder is closed — it records what was done.", "rule_violation");
+  }
+
+  let type = existing.type;
+  if (input.type && input.type !== existing.type) {
+    if (existing.systemGenerated || existing.type === "payment_promise") {
+      return err(
+        "This reminder was set by the system to chase a promise, so its kind stays.",
+        "rule_violation",
+      );
+    }
+    if (!(EDITABLE_REMINDER_TYPES as readonly string[]).includes(input.type)) {
+      return err("That is not a kind of reminder.", "validation", [
+        { field: "type", message: "Pick a kind." },
+      ]);
+    }
+    type = input.type as typeof existing.type;
+  }
+  if (note === existing.note && type === existing.type) return okVoid("Nothing changed");
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(reminders)
+      .set({ note, type, updatedAt: new Date(), updatedById: ctx.user.id })
+      .where(eq(reminders.id, existing.id));
+    await tx.insert(auditLog).values({
+      id: id("aud"),
+      actorId: ctx.user.id,
+      action: "reminder.edit",
+      entityType: "reminder",
+      entityId: existing.id,
+      beforeState: { note: existing.note, type: existing.type } as never,
+      afterState: { note, type } as never,
+    });
+  });
+  return okVoid("Reminder updated");
 }
 
 /**
@@ -1086,6 +1175,172 @@ export async function resolveComplaint(input: {
   });
 
   return okVoid("Complaint resolved");
+}
+
+/* ------------------------------------------------- correcting a complaint */
+
+/**
+ * WHAT THE CUSTOMER REPORTED, corrected — the words and the heading.
+ *
+ * Somebody taking a call types fast, and a complaint filed under the wrong
+ * category goes to the wrong desk. Whoever logged it may put that right, and
+ * so may anybody who resolves complaints; the customer still has to be in
+ * their book. A finished complaint is not edited: its resolution answered
+ * what it said, and changing what it said afterwards would make the answer
+ * read as though it addressed something else.
+ *
+ * The category is a business LABEL, mapped through `categoryValue` exactly as
+ * `createComplaint` maps it. The change is a line in the status history —
+ * the only per-complaint timeline there is — as well as an audit row.
+ */
+export async function editComplaint(input: {
+  complaintId: string;
+  description: string;
+  category: string;
+}): Promise<Result> {
+  const description = input.description.trim();
+  if (!description) {
+    return err("Describe the complaint in the customer's words.", "validation", [
+      { field: "description", message: "Required." },
+    ]);
+  }
+  const ctx = await resolveScope();
+  const [existing] = await db.select().from(complaints).where(eq(complaints.id, input.complaintId));
+  if (!existing) return err("That complaint no longer exists.", "not_found");
+  await customerOfComplaintInScope(existing.customerId);
+  if (existing.loggedByUserId !== ctx.user.id && !(await canFor(ctx.user, "complaint.resolve"))) {
+    return err(
+      "Only whoever logged this complaint, or somebody who resolves complaints, may change what it says.",
+      "not_permitted",
+    );
+  }
+  if (FINISHED_COMPLAINT.has(existing.status)) {
+    return err("This complaint is finished with — its resolution answered what it said.", "rule_violation");
+  }
+
+  const category = categoryValue(input.category);
+  if (description === existing.description && category === existing.category) {
+    return okVoid("Nothing changed");
+  }
+  const changed = [
+    category !== existing.category
+      ? `category ${categoryLabel(existing.category)} → ${categoryLabel(category)}`
+      : null,
+    description !== existing.description ? "description" : null,
+  ].filter(Boolean);
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(complaints)
+      .set({
+        description,
+        category: category as never,
+        updatedAt: new Date(),
+        updatedById: ctx.user.id,
+      })
+      .where(eq(complaints.id, existing.id));
+    await tx.insert(complaintStatusHistory).values({
+      id: id("csh"),
+      complaintId: existing.id,
+      fromStatus: existing.status,
+      toStatus: existing.status,
+      changedById: ctx.user.id,
+      note: `Corrected: ${changed.join(", ")}`,
+    });
+    await tx.insert(auditLog).values({
+      id: id("aud"),
+      actorId: ctx.user.id,
+      action: "complaint.edit",
+      entityType: "complaint",
+      entityId: existing.id,
+      beforeState: { description: existing.description, category: existing.category } as never,
+      afterState: { description, category } as never,
+    });
+  });
+  return okVoid("Complaint updated");
+}
+
+/**
+ * A COMPLAINT RAISED BY MISTAKE OR TWICE is withdrawn, never deleted.
+ *
+ * It is closed with the reason as the last line of its history, so the
+ * customer's record still shows one was raised and why it went. Withdrawing
+ * finishes a complaint, which is the resolver's decision (`complaint.resolve`,
+ * as `changeComplaintStatus` asks of any finishing move). A credit note still
+ * waiting on accounts leaves their list as refused with the same reason; one
+ * accounts have already approved or issued blocks the withdrawal outright —
+ * that money is undone in Accounts, not by closing the complaint under it.
+ * The impact source says both before it happens.
+ */
+export async function withdrawComplaint(input: {
+  complaintId: string;
+  reason: string;
+}): Promise<Result> {
+  const reason = input.reason.trim();
+  if (!reason) {
+    return err("Say why the complaint is being withdrawn.", "validation", [
+      { field: "reason", message: "Give a reason." },
+    ]);
+  }
+  const ctx = await requireCapability("complaint.resolve");
+  const [existing] = await db.select().from(complaints).where(eq(complaints.id, input.complaintId));
+  if (!existing) return err("That complaint no longer exists.", "not_found");
+  await customerOfComplaintInScope(existing.customerId);
+  if (FINISHED_COMPLAINT.has(existing.status)) {
+    return err("This complaint is already finished with.", "rule_violation");
+  }
+  if (existing.requestCn && (existing.cnStatus === "approved" || existing.cnStatus === "issued")) {
+    return err(
+      "Its credit note has already been decided by accounts. Undo that in Accounts first.",
+      "rule_violation",
+    );
+  }
+  const cnWaiting =
+    existing.requestCn &&
+    (existing.cnStatus === null ||
+      existing.cnStatus === "requested" ||
+      existing.cnStatus === "under_review");
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(complaints)
+      .set({
+        status: "closed",
+        resolutionNotes: [existing.resolutionNotes, `Withdrawn: ${reason}`]
+          .filter(Boolean)
+          .join("\n"),
+        ...(cnWaiting ? { cnStatus: "rejected" as const } : {}),
+        updatedAt: new Date(),
+        updatedById: ctx.user.id,
+      })
+      .where(eq(complaints.id, existing.id));
+    await tx.insert(complaintStatusHistory).values({
+      id: id("csh"),
+      complaintId: existing.id,
+      fromStatus: existing.status,
+      toStatus: "closed",
+      changedById: ctx.user.id,
+      note: `Withdrawn: ${reason}`,
+    });
+    await tx.insert(auditLog).values({
+      id: id("aud"),
+      actorId: ctx.user.id,
+      actorRole: ctx.authorisedBy,
+      actorApp: ctx.authorisedIn,
+      action: "complaint.withdraw",
+      entityType: "complaint",
+      entityId: existing.id,
+      beforeState: { status: existing.status, cnStatus: existing.cnStatus } as never,
+      afterState: {
+        status: "closed",
+        reason,
+        cnStatus: cnWaiting ? "rejected" : existing.cnStatus,
+      } as never,
+    });
+  });
+  return okVoid(
+    cnWaiting ? "Complaint withdrawn, and its credit-note request with it" : "Complaint withdrawn",
+  );
 }
 
 /* ========================================================= inactive watch */

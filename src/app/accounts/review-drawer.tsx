@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Button, PaiseInput, cx } from "@/components/ui/primitives";
 import { Drawer, DrawerHeader } from "@/components/ui/overlays";
+import { ReasonImpactDialog } from "@/components/ui/reason-impact-dialog";
 import { VoiceTextarea } from "@/components/ui/dictate";
 import type { useToast } from "@/components/ui/toast";
 import { cleanDecimal, longDate, money, parseRupees, rupeesFromPaise, stamp } from "@/lib/format";
@@ -20,6 +21,7 @@ import {
   refuseCreditNoteAction,
 } from "@/lib/actions/accounts";
 import { Banner } from "./parts";
+import { CorrectReceiptDialog } from "./correct-receipt-dialog";
 import {
   QUEUE_COPY,
   SOURCE_WORDS,
@@ -91,6 +93,10 @@ export function ReviewDrawer({
   const [alloc, setAlloc] = React.useState<AllocationChoice | null>(null);
   /** Which of the two negative paths the reason box is collecting for. */
   const [reasonFor, setReasonFor] = React.useState<"reject" | "hold">("reject");
+  /** Declining an order: the reason typed here, then the impact modal before it is sent. */
+  const [declining, setDeclining] = React.useState<number | null>(null);
+  /** The Correct dialog, for a payment nobody has decided yet. */
+  const [correcting, setCorrecting] = React.useState(false);
 
   React.useEffect(() => {
     const controller = new AbortController();
@@ -167,14 +173,17 @@ export function ReviewDrawer({
   }
 
   async function decideNegative() {
+    if (kind === "orders" && reasonFor !== "hold") {
+      setConflict(null);
+      setDeclining(Date.now());
+      return;
+    }
     setBusy(true);
     setConflict(null);
     try {
       const result =
         kind === "orders"
-          ? reasonFor === "hold"
-            ? await run(holdOrderAction(row.id, holdCode, reason))
-            : await run(declineOrderAction(row.id, reason))
+          ? await run(holdOrderAction(row.id, holdCode, reason))
           : kind === "payments"
             ? // Hold and reject collect the same thing — a sentence somebody
               // downstream repeats — so they share the box and differ only in
@@ -341,6 +350,17 @@ export function ReviewDrawer({
               </Button>
             ) : null}
 
+            {kind === "payments" && detail?.kind === "payments" ? (
+              <Button
+                variant="secondary"
+                disabled={!canDecide || busy}
+                title={canDecide ? "Fix the amount, date, mode or reference before deciding — instead of rejecting and recording it again" : "Only the accounts team can decide this"}
+                onClick={() => setCorrecting(true)}
+              >
+                Correct
+              </Button>
+            ) : null}
+
             {kind === "orders" && onEditOrder ? (
               <Button variant="secondary" disabled={busy} title="Change the products, cans, rates or discounts — it stays here to approve" onClick={onEditOrder}>
                 Edit order
@@ -359,6 +379,34 @@ export function ReviewDrawer({
           </>
         )}
       </div>
+      {declining ? (
+        <ReasonImpactDialog
+          key={declining}
+          kind="accounts-order-decline"
+          id={row.id}
+          title="Decline this order"
+          initialReason={reason}
+          confirmLabel="Decline"
+          onClose={() => setDeclining(null)}
+          onConfirm={(why, confirmation) => declineOrderAction(row.id, why, confirmation)}
+          onDone={() => onDecided()}
+        />
+      ) : null}
+      {correcting && detail?.kind === "payments" ? (
+        <CorrectReceiptDialog
+          receiptId={row.id}
+          detail={detail}
+          amount={row.amount}
+          customerName={row.customerName}
+          run={run}
+          onClose={() => setCorrecting(false)}
+          onDone={() => {
+            setCorrecting(false);
+            /* The queue row carries the amount; it is read again with the list. */
+            onDecided();
+          }}
+        />
+      ) : null}
     </Drawer>
   );
 }

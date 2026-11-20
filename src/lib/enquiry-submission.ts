@@ -61,6 +61,38 @@ export function readSubmissionFields(raw: unknown): EnquirySubmissionFields {
   };
 }
 
+/** The fields a person may correct, each under the key `readSubmissionFields` reads first for it. */
+export const CORRECTABLE_FIELDS = ["name", "phone", "email", "company", "message"] as const;
+export type CorrectableField = (typeof CORRECTABLE_FIELDS)[number];
+
+const SPELLINGS: Record<CorrectableField, string[]> = {
+  name: [...NAME_KEYS, ...FIRST_NAME_KEYS, ...LAST_NAME_KEYS],
+  phone: PHONE_KEYS,
+  email: EMAIL_KEYS,
+  company: COMPANY_KEYS,
+  message: MESSAGE_KEYS,
+};
+
+/**
+ * The submission as it now stands: what the visitor sent, with what a person
+ * corrected read over it. `raw_submission` is never rewritten — a correction
+ * lives in `enquiries.corrections` under the key `readSubmissionFields` tries
+ * FIRST for that field, and every other spelling of that field the source
+ * sent is dropped from the reading, so a corrected name is not beaten by a
+ * split first/last name. A correction to an empty string clears the field.
+ */
+export function effectiveSubmission(raw: unknown, corrections: unknown): Record<string, unknown> {
+  const obj = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const fix = corrections && typeof corrections === "object" ? (corrections as Record<string, unknown>) : {};
+  const out: Record<string, unknown> = { ...obj };
+  for (const key of CORRECTABLE_FIELDS) {
+    if (!(key in fix)) continue;
+    for (const k of SPELLINGS[key]) delete out[k];
+    out[key] = fix[key];
+  }
+  return out;
+}
+
 /**
  * The plain-text VALUES worth searching, joined into one string — never the
  * JSON's own key names. `enquiries.search_text` is exactly this, computed

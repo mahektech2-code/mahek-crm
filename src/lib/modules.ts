@@ -571,7 +571,7 @@ export const APP_MODULES: AppModule[] = [
     "price-lists",
     "Price lists",
     "Accounts",
-    "Mahek's price lists end to end — create, duplicate, import PDFs in bulk, review what they read, publish, export, and say who each applies to. THE DESK THAT ISSUES THESE LISTS IS THIS ONE: `pricelist.manage` is the Price Desk's (Accounts and the Founder Command Centre), and the CRM and Sales Dashboard doors are read-only.",
+    "Mahek's price lists end to end — create, duplicate, import PDFs in bulk, review what they read, publish, export, and say who each applies to. THE DESK THAT ISSUES THESE LISTS IS THIS ONE: `pricelist.manage` is the Price Desk's (Accounts and HQ), and the CRM and Sales Dashboard doors are read-only.",
   ),
   accounts("record", "Record a payment", "Money"),
   accounts(
@@ -967,7 +967,7 @@ export const APP_MODULES: AppModule[] = [
     label: "Reports (retired)",
     group: "App",
     href: "/reports",
-    note: "Retired into the Founder Command Centre. Kept only so a grant somebody still holds can be taken away.",
+    note: "Retired into HQ. Kept only so a grant somebody still holds can be taken away.",
   },
 
   /* --------------------------------------------------- the Founder Dashboard */
@@ -1123,6 +1123,14 @@ export const APP_MODULES: AppModule[] = [
     note: "Upload a finished poster and forward the same picture, unchanged, to many of their own leads and customers. They send each message themselves.",
   },
   { key: "studio.posters", app: "studio", label: "My posters", group: "Studio", href: "/studio/posters", note: "Every poster they made, to open, download or share again." },
+  {
+    key: "studio.inbox",
+    app: "studio",
+    label: "WhatsApp Inbox",
+    group: "Studio",
+    href: "/studio/inbox",
+    note: "Every WhatsApp conversation on the company number, read and answered inside the Studio — text replies, and posters sent from My posters. Everybody holding it sees every conversation.",
+  },
   { key: "studio.dates", app: "studio", label: "Dates", group: "Studio", href: "/studio/dates", note: "The festival calendar, and the birthdays and anniversaries everybody shares." },
   { key: "studio.designs", app: "studio", label: "Designs", group: "Designs", href: "/studio/designs", note: "The approved designs, and uploading their own artwork as a private draft." },
   {

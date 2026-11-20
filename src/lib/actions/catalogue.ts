@@ -566,24 +566,6 @@ export async function moveFinishedGood(goodId: string, brandId: string): Promise
   }
 }
 
-export async function setFormulationNotes(
-  rowId: string,
-  notes: string,
-): Promise<Result<undefined>> {
-  try {
-    const user = await actor();
-    await db
-      .update(productFormulations)
-      .set({ notes: notes.trim() || null, updatedAt: new Date() })
-      .where(eq(productFormulations.id, rowId));
-    await audit(user.id, "catalogue.formulationNotes", rowId, null, { notes });
-    refresh();
-    return ok(undefined, "Saved.");
-  } catch (e) {
-    return fail(e instanceof Error ? e.message : "That did not save.");
-  }
-}
-
 /**
  * WHETHER A MIX TARGET MAY BE AIMED AT THIS LIQUID.
  *

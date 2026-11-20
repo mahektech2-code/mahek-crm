@@ -46,7 +46,7 @@ export function DeadlinesDesk({
     <div className="w-full min-w-0">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <div className="text-xs font-medium tracking-[0.04em] text-muted uppercase">Command Centre · Operate</div>
+          <div className="text-xs font-medium tracking-[0.04em] text-muted uppercase">HQ · Operate</div>
           <h1 className="mt-0.5 text-[26px] leading-8 font-semibold text-ink">Accounts deadlines</h1>
           <p className="mt-1 text-sm text-muted">
             Anything the accounts desk has not decided within {overview.hours} {clockWords}. It stays with accounts until they decide

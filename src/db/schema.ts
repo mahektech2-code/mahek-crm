@@ -467,6 +467,8 @@ export const creditNoteStatusEnum = pgEnum("credit_note_status", [
   "approved",
   "rejected",
   "issued",
+  /* Issued, then taken back: its receipt is reversed, never deleted (0360). */
+  "cancelled",
 ]);
 
 export const messageStatusEnum = pgEnum("message_status", [
@@ -3840,6 +3842,16 @@ export const followUpAttempts = pgTable(
     promisedDate: date("promised_date"),
     reminderId: text("reminder_id"),
     idempotencyKey: text("idempotency_key"),
+    /**
+     * Set when the promise above no longer stands — entered by mistake, or
+     * withdrawn by the customer. The attempt itself is a call that happened
+     * and stays; a cancelled promise is simply never the live one, is never
+     * judged kept or broken, and its chase reminder is dismissed. See
+     * `cancelPromise` in `lib/services/payment-service.ts`.
+     */
+    promiseCancelledAt: timestamp("promise_cancelled_at", { withTimezone: true }),
+    promiseCancelledById: text("promise_cancelled_by_id").references(() => users.id),
+    promiseCancelReason: text("promise_cancel_reason"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id"),
   },
@@ -10550,6 +10562,10 @@ export const enquiryStageEnum = pgEnum("enquiry_stage", [
   "qualified",
   "converted",
   "closed",
+  /* Not an enquiry at all — junk, a bot, a sales pitch. A stage rather than a
+     delete: the website retransmits, and a deleted row would let the same
+     submission arrive again as new (0361). */
+  "spam",
 ]);
 
 export const enquiryPriorityEnum = pgEnum("enquiry_priority", [
@@ -10600,6 +10616,14 @@ export const enquiries = pgTable(
     category: text("category"),
     /** The visitor's own submitted fields, kept exactly as sent regardless of how parsing changes later. */
     rawSubmission: jsonb("raw_submission").$type<Record<string, unknown>>().notNull(),
+    /**
+     * What a person CORRECTED of the submission — `{ name, phone, email,
+     * company, message }`, only the keys somebody changed (0361). Read OVER
+     * `rawSubmission` (`effectiveSubmission`), never written into it: the raw
+     * stays exactly as the visitor sent it, and the enquiry's activity carries
+     * each correction's before and after. Null until somebody corrects one.
+     */
+    corrections: jsonb("corrections").$type<Record<string, string>>(),
     /**
      * The name/phone/email/company/message VALUES `readSubmissionFields`
      * already reads off `rawSubmission` — joined into one string, at write
@@ -10671,6 +10695,24 @@ export const enquiryActivity = pgTable(
  * enquiry and an order are each real independently of whether the other
  * still exists.
  */
+/**
+ * WHAT WAS DELETED, SO IT STAYS DELETED. The website retransmits a submission
+ * until it is acknowledged, and `createEnquiryFromWebsite` recognises a resend
+ * by its (source, external ref). A deleted enquiry takes that row with it, so
+ * the ref is kept here and a resend is answered "already received" instead of
+ * arriving again as new. Nothing else about the enquiry is kept.
+ */
+export const enquiryDeletions = pgTable(
+  "enquiry_deletions",
+  {
+    source: text("source").notNull(),
+    externalRef: text("external_ref").notNull(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }).notNull().defaultNow(),
+    deletedById: text("deleted_by_id").references(() => users.id),
+  },
+  (t) => [primaryKey({ name: "enquiry_deletions_pk", columns: [t.source, t.externalRef] })],
+);
+
 export const enquiryOrders = pgTable(
   "enquiry_orders",
   {
@@ -12738,6 +12780,9 @@ export const erpRecipes = pgTable(
       .references(() => erpRawMaterials.id),
     qtyPerBatch: erpQty("qty_per_batch").notNull(),
     note: text("note"),
+    /** Set on every line of the product when its recipe is retired (0365); every reader filters it out. */
+    retiredAt: timestamp("retired_at", { withTimezone: true }),
+    retiredById: text("retired_by_id").references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id").references(() => users.id),
@@ -17992,6 +18037,9 @@ export const studioBatches = pgTable(
     requested: integer("requested").notNull(),
     /** The recipients that could not be made into a poster, each with the reason said in words. */
     skipped: jsonb("skipped").$type<{ customerId: string; name: string; reason: string }[]>().notNull().default([]),
+    /** Cancelled by its maker (0366): its unshared posters left the lists; shared ones stayed. */
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    cancelledById: text("cancelled_by_id").references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -18206,12 +18254,14 @@ export const studioForwards = pgTable(
     caption: text("caption").notNull().default(""),
     status: text("status").notNull().default("draft"),
     startedAt: timestamp("started_at", { withTimezone: true }),
+    /** Set with status `cancelled` (0366): the list stops; every recipient keeps its status. */
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index("studio_forwards_created_by_idx").on(t.createdById, t.createdAt),
     index("studio_forwards_sha_idx").on(t.sha256),
-    check("studio_forwards_status", sql`${t.status} in ('draft','started')`),
+    check("studio_forwards_status", sql`${t.status} in ('draft','started','cancelled')`),
     check("studio_forwards_format", sql`${t.format} in ('png','jpeg','webp')`),
   ],
 );
@@ -18239,6 +18289,85 @@ export const studioForwardRecipients = pgTable(
     check("studio_forward_recipients_status", sql`${t.status} in ('pending','opened','sent','skipped')`),
   ],
 );
+
+/**
+ * The Studio's WhatsApp Inbox: what Kapso says about the company number, kept
+ * so the screen opens without a round trip. A conversation is Kapso's own id;
+ * a message is one row per WhatsApp message id, however many webhooks or
+ * refreshes report it. `phone_key` is the last ten digits, the key a CRM
+ * customer's phone is matched on at read time — nothing about the match is
+ * stored, so a corrected CRM phone corrects the name at once.
+ */
+export const studioWaConversations = pgTable(
+  "studio_wa_conversations",
+  {
+    /** Kapso's conversation id. */
+    id: text("id").primaryKey(),
+    phoneNumberId: text("phone_number_id").notNull(),
+    phone: text("phone"),
+    phoneKey: text("phone_key"),
+    contactName: text("contact_name"),
+    lastMessageText: text("last_message_text"),
+    lastMessageAt: timestamp("last_message_at", { withTimezone: true }),
+    /** The customer's last message — the start of WhatsApp's 24-hour window. */
+    lastInboundAt: timestamp("last_inbound_at", { withTimezone: true }),
+    /** Inbound messages nobody has opened. Shared: the inbox belongs to everybody holding it. */
+    unread: integer("unread").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("studio_wa_conversations_recent_idx").on(t.phoneNumberId, t.lastMessageAt.desc()),
+    index("studio_wa_conversations_phone_key_idx").on(t.phoneKey),
+  ],
+);
+
+export const studioWaMessages = pgTable(
+  "studio_wa_messages",
+  {
+    id: text("id").primaryKey(),
+    conversationId: text("conversation_id")
+      .notNull()
+      .references(() => studioWaConversations.id, { onDelete: "cascade" }),
+    /** WhatsApp's message id. A message being sent holds `pending:<client key>` until Kapso answers. */
+    wamid: text("wamid").notNull(),
+    direction: text("direction").notNull(),
+    type: text("type").notNull().default("text"),
+    body: text("body"),
+    caption: text("caption"),
+    hasMedia: boolean("has_media").notNull().default(false),
+    mediaType: text("media_type"),
+    mediaUrl: text("media_url"),
+    /** Outbound only: pending, sent, delivered, read, failed — exactly what Kapso reported. */
+    status: text("status"),
+    errorCode: text("error_code"),
+    errorText: text("error_text"),
+    /** cloud_api, business_app (written on the phone) or history_sync. */
+    origin: text("origin"),
+    /** Who pressed Send in the Studio, and the poster they attached. Null for anything written elsewhere. */
+    sentById: text("sent_by_id").references(() => users.id),
+    posterId: text("poster_id").references(() => studioPosters.id, { onDelete: "set null" }),
+    /** The browser's own key for one press of Send, so a double click is one message. */
+    clientKey: text("client_key"),
+    at: timestamp("at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("studio_wa_messages_wamid_key").on(t.wamid),
+    uniqueIndex("studio_wa_messages_client_key").on(t.clientKey),
+    index("studio_wa_messages_thread_idx").on(t.conversationId, t.at),
+    check("studio_wa_messages_direction", sql`${t.direction} in ('inbound','outbound')`),
+    check("studio_wa_messages_status", sql`${t.status} is null or ${t.status} in ('pending','sent','delivered','read','failed')`),
+  ],
+);
+
+/** Every webhook delivery Kapso made, by its idempotency key, so a retry is recognised and does nothing twice. */
+export const studioWaEvents = pgTable("studio_wa_events", {
+  key: text("key").primaryKey(),
+  event: text("event").notNull(),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 /* ===========================================================================
  * LOCKER — the company's licences, policies, contracts, subscriptions and

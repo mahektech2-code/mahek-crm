@@ -6,6 +6,8 @@ import {
   addNoteAction,
   askAction,
   clearMarkAction,
+  deleteNoteAction,
+  editNoteAction,
   figureAction,
   handOnAction,
   optionsAction,
@@ -314,11 +316,16 @@ export function CommandCentre({ section, shell, canAct, switcherApps, company, p
   const periodView = period.views.find((v) => v.key === period.key) ?? period.views[2]!;
 
   return (
-    <div className="fcc-root" style={{ position: "fixed", inset: 0, overflowX: "auto", overflowY: "hidden", zIndex: 1 }}>
+    /* `data-v4` puts the ERP's look (styles/v4-theme.css) on everything this
+       page renders through the shared components, and on what they portal to
+       <body>. The page's own furniture draws in `C`, which carries the same
+       tokens. */
+    <div className="fcc-root" data-v4="" data-v4-app="founder" style={{ position: "fixed", inset: 0, overflowX: "auto", overflowY: "hidden", zIndex: 1 }}>
       <DesignStyles />
       <AppFrame
         bleed
         fade={false}
+        sidebarFirst
         header={
           <FounderHeader
             switcherApps={switcherApps}
@@ -342,7 +349,7 @@ export function CommandCentre({ section, shell, canAct, switcherApps, company, p
                 />
                 {gq.trim().length >= 2 && gResults.length > 0 ? (
                   <div
-                    style={{ position: "absolute", top: 40, left: 0, right: 0, background: C.white, border: `1px solid ${C.line}`, borderRadius: 6, boxShadow: "0 8px 24px rgba(22,22,22,0.12)", overflow: "hidden", animation: `fd-fade 120ms ${EASE}` }}
+                    style={{ position: "absolute", top: 40, left: 0, right: 0, background: C.white, border: `1px solid ${C.line}`, borderRadius: 7, boxShadow: "0 8px 24px rgba(22,22,22,0.12)", overflow: "hidden", animation: `fd-fade 120ms ${EASE}` }}
                   >
                     {gResults.map((r) => (
                       <Hov
@@ -378,7 +385,7 @@ export function CommandCentre({ section, shell, canAct, switcherApps, company, p
                   </Hov>
                   {qa ? (
                     <div
-                      style={{ position: "absolute", top: 40, right: 0, width: 280, background: C.white, border: `1px solid ${C.line}`, borderRadius: 6, boxShadow: "0 8px 24px rgba(22,22,22,0.12)", padding: "6px 0", animation: `fd-fade 120ms ${EASE}` }}
+                      style={{ position: "absolute", top: 40, right: 0, width: 280, background: C.white, border: `1px solid ${C.line}`, borderRadius: 7, boxShadow: "0 8px 24px rgba(22,22,22,0.12)", padding: "6px 0", animation: `fd-fade 120ms ${EASE}` }}
                     >
                       <div style={{ ...upper, padding: "6px 14px" }}>Start from anywhere</div>
                       {quickItems.map((q, i) => (
@@ -419,7 +426,7 @@ export function CommandCentre({ section, shell, canAct, switcherApps, company, p
           right={
             PERIOD_SECTIONS.includes(section) ? (
               <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
-                <div style={{ display: "flex", gap: 2, padding: 3, background: C.white, border: `1px solid ${C.line}`, borderRadius: 6 }}>
+                <div style={{ display: "flex", gap: 2, padding: 3, background: C.white, border: `1px solid ${C.line}`, borderRadius: 7 }}>
                   {period.views.map((p) => {
                     const on = p.key === period.key;
                     return (
@@ -452,7 +459,7 @@ export function CommandCentre({ section, shell, canAct, switcherApps, company, p
                             startTransition(() => router.push(href(section, { key: p.key })));
                           }
                         }}
-                        style={{ height: 28, padding: "0 10px", border: "none", borderRadius: 4, background: on ? C.brand : "transparent", color: on ? C.white : C.body, fontSize: 13, fontWeight: on ? 500 : 400, cursor: "pointer", whiteSpace: "nowrap" }}
+                        style={{ height: 28, padding: "0 10px", border: "none", borderRadius: 7, background: on ? C.brand : "transparent", color: on ? C.white : C.body, fontSize: 13, fontWeight: on ? 500 : 400, cursor: "pointer", whiteSpace: "nowrap" }}
                       >
                         {p.label}
                       </button>
@@ -621,6 +628,41 @@ export function CommandCentre({ section, shell, canAct, switcherApps, company, p
                 },
               );
             }}
+            editNote={(n) => {
+              openForm(
+                {
+                  title: "Edit your note",
+                  sub: rec.data!.title,
+                  submit: "Save note",
+                  init: { n: n.text },
+                  fields: [{ k: "n", label: "Note", type: "area", req: true }],
+                },
+                async (v) => {
+                  const r = await editNoteAction(n.id, v.n ?? "");
+                  if (r.ok) {
+                    notify(`Note updated on ${rec.data!.title}`);
+                    void openRecord(rec.ref.section, rec.ref.table, rec.ref.id, rec.ref.subject);
+                  }
+                  return r;
+                },
+              );
+            }}
+            deleteNote={(n) => {
+              setConfirm({
+                title: "Delete your note?",
+                body: `“${n.text.length > 140 ? `${n.text.slice(0, 140)}…` : n.text}” comes off ${rec.data!.title}'s timeline. The audit log keeps that it was written and deleted.`,
+                label: "Delete note",
+                danger: true,
+                run: () => {
+                  void deleteNoteAction(n.id).then((r) => {
+                    setConfirm(null);
+                    if (!r.ok) return notify(r.error);
+                    notify("Note deleted");
+                    void openRecord(rec.ref.section, rec.ref.table, rec.ref.id, rec.ref.subject);
+                  });
+                },
+              });
+            }}
             runAct={(a) => {
               const ref = rec.ref;
               setRec(null);
@@ -649,13 +691,13 @@ export function CommandCentre({ section, shell, canAct, switcherApps, company, p
             <div style={{ padding: "12px 22px", borderTop: `1px solid ${C.soft}`, display: "flex", justifyContent: "flex-end", gap: 10 }}>
               <button
                 onClick={() => setConfirm(null)}
-                style={{ height: 36, padding: "0 16px", border: `1px solid ${C.line}`, background: C.white, borderRadius: 4, fontSize: 14, fontWeight: 500, color: C.body, cursor: "pointer" }}
+                style={{ height: 36, padding: "0 16px", border: `1px solid ${C.line}`, background: C.white, borderRadius: 7, fontSize: 14, fontWeight: 500, color: C.body, cursor: "pointer" }}
               >
                 Cancel
               </button>
               <button
                 onClick={confirm.run}
-                style={{ height: 36, padding: "0 16px", border: "none", borderRadius: 4, fontSize: 14, fontWeight: 500, color: C.white, cursor: "pointer", background: confirm.danger ? C.bad : C.brand }}
+                style={{ height: 36, padding: "0 16px", border: "none", borderRadius: 7, fontSize: 14, fontWeight: 500, color: C.white, cursor: "pointer", background: confirm.danger ? C.bad : C.brand }}
               >
                 {confirm.label}
               </button>
@@ -682,13 +724,13 @@ export function CommandCentre({ section, shell, canAct, switcherApps, company, p
           <div style={{ flex: 1, overflowY: "auto", padding: "18px 22px", display: "flex", flexDirection: "column", gap: 12 }}>
             {askThread.length === 0 ? (
               <div>
-                <div style={{ fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: C.muted, marginBottom: 8 }}>Try asking</div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: C.muted, marginBottom: 8 }}>Try asking</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {askSuggestions.map((q) => (
                     <Hov
                       key={q}
                       onClick={() => void doAsk(q)}
-                      style={{ padding: "10px 12px", border: `1px solid ${C.line}`, background: C.white, borderRadius: 6, fontSize: 14, color: C.ink, cursor: "pointer", textAlign: "left" }}
+                      style={{ padding: "10px 12px", border: `1px solid ${C.line}`, background: C.white, borderRadius: 7, fontSize: 14, color: C.ink, cursor: "pointer", textAlign: "left" }}
                       hover={{ borderColor: C.brand, background: C.canvas }}
                     >
                       {q}
@@ -735,12 +777,12 @@ export function CommandCentre({ section, shell, canAct, switcherApps, company, p
                 if (e.key === "Enter" && askQ.trim().length >= 3) void doAsk(askQ.trim());
               }}
               placeholder={askSuggestions[0]}
-              style={{ flex: 1, minWidth: 0, height: 38, padding: "0 12px", border: `1px solid ${C.line}`, borderRadius: 4, fontSize: 14 }}
+              style={{ flex: 1, minWidth: 0, height: 38, padding: "0 12px", border: `1px solid ${C.line}`, borderRadius: 7, fontSize: 14 }}
               focus={{ borderColor: C.brand }}
             />
             <button
               onClick={() => askQ.trim().length >= 3 && void doAsk(askQ.trim())}
-              style={{ height: 38, padding: "0 16px", border: "none", background: C.brand, borderRadius: 4, fontSize: 14, fontWeight: 500, color: C.white, cursor: "pointer" }}
+              style={{ height: 38, padding: "0 16px", border: "none", background: C.brand, borderRadius: 7, fontSize: 14, fontWeight: 500, color: C.white, cursor: "pointer" }}
             >
               Ask
             </button>
@@ -756,7 +798,7 @@ export function CommandCentre({ section, shell, canAct, switcherApps, company, p
             <span style={{ flex: 1, fontSize: 13 }}>Viewing as {viewAs.name} · read-only · anything you do is done as you</span>
             <button
               onClick={() => setViewAs(null)}
-              style={{ height: 28, padding: "0 10px", border: "1px solid rgba(255,255,255,0.3)", background: "transparent", borderRadius: 4, color: C.white, fontSize: 13, cursor: "pointer" }}
+              style={{ height: 28, padding: "0 10px", border: "1px solid rgba(255,255,255,0.3)", background: "transparent", borderRadius: 7, color: C.white, fontSize: 13, cursor: "pointer" }}
             >
               Stop viewing
             </button>
@@ -783,10 +825,10 @@ export function CommandCentre({ section, shell, canAct, switcherApps, company, p
             ) : viewAs.data ? (
               <>
                 {viewAs.data.held ? (
-                  <div style={{ padding: "10px 12px", background: C.warnTint, border: `1px solid ${C.warnLine}`, borderRadius: 6, fontSize: 13, color: C.warnInk, marginBottom: 14 }}>{viewAs.data.held}</div>
+                  <div style={{ padding: "10px 12px", background: C.warnTint, border: `1px solid ${C.warnLine}`, borderRadius: 7, fontSize: 13, color: C.warnInk, marginBottom: 14 }}>{viewAs.data.held}</div>
                 ) : null}
-                <div style={{ fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: C.muted, marginBottom: 8 }}>{viewAs.data.listLabel}</div>
-                <div style={{ border: `1px solid ${C.soft}`, borderRadius: 6, overflow: "hidden" }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: C.muted, marginBottom: 8 }}>{viewAs.data.listLabel}</div>
+                <div style={{ border: `1px solid ${C.soft}`, borderRadius: 7, overflow: "hidden" }}>
                   {viewAs.data.rows.length === 0 ? (
                     <div style={{ padding: "18px 14px", fontSize: 14, color: C.muted }}>Nothing on their list today.</div>
                   ) : (
@@ -972,7 +1014,7 @@ function CompanyView({
             hover={{ borderColor: C.brand }}
           >
             <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-              <span title={c.label} style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: C.muted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              <span title={c.label} style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 600, color: C.muted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                 {c.label}
               </span>
               <span style={{ fontSize: 11, fontWeight: 500, padding: "1px 7px", borderRadius: 9, background: C.brandTint, color: C.brandDark, flex: "none" }}>Period</span>
@@ -1016,7 +1058,7 @@ function CompanyView({
             <span>{pace.rightLine}</span>
           </div>
           <div style={{ borderTop: `1px solid ${C.soft}`, marginTop: 16, paddingTop: 14 }}>
-            <div style={{ fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: C.muted, marginBottom: 8 }}>{company.moversTitle}</div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: C.muted, marginBottom: 8 }}>{company.moversTitle}</div>
             {company.movers.length === 0 ? (
               <div style={{ fontSize: 14, color: C.muted, padding: "6px 0" }}>Nothing moved between the two periods.</div>
             ) : (
@@ -1093,7 +1135,7 @@ function CompanyView({
           <span style={{ flex: 1, minWidth: 0, fontSize: 14, color: C.ink }}>{company.unattributed.line}</span>
           <Hov
             onClick={() => openFigure("unattr")}
-            style={{ height: 32, padding: "0 12px", border: `1px solid ${C.line}`, background: C.white, borderRadius: 4, fontSize: 13, fontWeight: 500, color: C.body, cursor: "pointer", flex: "none" }}
+            style={{ height: 32, padding: "0 12px", border: `1px solid ${C.line}`, background: C.white, borderRadius: 7, fontSize: 13, fontWeight: 500, color: C.body, cursor: "pointer", flex: "none" }}
             hover={{ background: C.canvas }}
           >
             {company.unattributed.button}
@@ -1164,11 +1206,11 @@ function InboxView({
             <span style={{ flex: 1, minWidth: 0, padding: "14px 0" }}>
               <span style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <span
-                  style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em", padding: "1px 7px", borderRadius: 9, background: SEV[i.sev]![1], color: i.sev === "Soon" ? C.warnInk : SEV[i.sev]![0] }}
+                  style={{ fontSize: 12, fontWeight: 600, padding: "1px 7px", borderRadius: 9, background: SEV[i.sev]![1], color: i.sev === "Soon" ? C.warnInk : SEV[i.sev]![0] }}
                 >
                   {i.sev}
                 </span>
-                <span style={{ fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: C.muted }}>{i.area}</span>
+                <span style={{ fontSize: 12, fontWeight: 600, color: C.muted }}>{i.area}</span>
                 <span style={{ fontSize: 12, color: C.muted }}>· since {i.since}</span>
               </span>
               <span style={{ display: "block", fontSize: 15, fontWeight: 600, color: C.ink, marginTop: 4 }}>{i.title}</span>
@@ -1188,7 +1230,7 @@ function InboxView({
               </Hov>
               <Hov
                 onClick={() => go(i.go)}
-                style={{ height: 34, padding: "0 14px", border: `1px solid ${C.brand}`, background: C.brand, borderRadius: 4, fontSize: 13, fontWeight: 500, color: C.white, cursor: "pointer", whiteSpace: "nowrap" }}
+                style={{ height: 34, padding: "0 14px", border: `1px solid ${C.brand}`, background: C.brand, borderRadius: 7, fontSize: 13, fontWeight: 500, color: C.white, cursor: "pointer", whiteSpace: "nowrap" }}
                 hover={{ background: C.brandDark }}
               >
                 {i.action}
@@ -1237,7 +1279,7 @@ function SectionView({
             {c.act ? (
               <Hov
                 onClick={() => onCallout(c)}
-                style={{ height: 32, padding: "0 12px", border: `1px solid ${C.line}`, background: C.white, borderRadius: 4, fontSize: 13, fontWeight: 500, color: C.body, cursor: "pointer", flex: "none", whiteSpace: "nowrap" }}
+                style={{ height: 32, padding: "0 12px", border: `1px solid ${C.line}`, background: C.white, borderRadius: 7, fontSize: 13, fontWeight: 500, color: C.body, cursor: "pointer", flex: "none", whiteSpace: "nowrap" }}
                 hover={{ background: C.canvas }}
               >
                 {c.act}
@@ -1255,7 +1297,7 @@ function SectionView({
             hover={{ borderColor: C.brand }}
           >
             <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-              <span style={{ fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.label}</span>
+              <span style={{ fontSize: 12, fontWeight: 600, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.label}</span>
               <span style={{ fontSize: 11, fontWeight: 500, padding: "1px 7px", borderRadius: 9, flex: "none", background: KIND[m.kind]![0], color: KIND[m.kind]![1] }}>{m.kind}</span>
             </span>
             <span
@@ -1347,16 +1389,16 @@ function TableCard({
               value={q}
               onChange={(e: React.ChangeEvent<HTMLInputElement>) => setQ(e.target.value)}
               placeholder={`Search ${many(page.total)}`}
-              style={{ width: 240, height: 32, padding: "0 10px", border: `1px solid ${C.line}`, borderRadius: 4, background: C.canvas, fontSize: 13 }}
+              style={{ width: 240, height: 32, padding: "0 10px", border: `1px solid ${C.line}`, borderRadius: 7, background: C.canvas, fontSize: 13 }}
               focus={{ background: C.white, borderColor: C.brand }}
             />
           </span>
         ) : null}
       </div>
       <div style={{ overflowX: "auto", opacity: loading ? 0.6 : 1, transition: `opacity 120ms ${EASE}` }}>
-        <div style={{ display: "grid", gridTemplateColumns: tpl, gap: 12, padding: "9px 18px", background: C.canvas, borderBottom: `1px solid ${C.soft}`, minWidth: minW }}>
+        <div style={{ display: "grid", gridTemplateColumns: tpl, gap: 12, padding: "10px 18px", background: C.ink, borderBottom: `1px solid ${C.ink}`, minWidth: minW }}>
           {table.cols.concat(hasActs ? [["", ""]] : []).map((c, i) => (
-            <span key={i} style={{ fontSize: 11, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: C.muted, textAlign: c[2] ? "right" : "left", whiteSpace: "nowrap" }}>
+            <span key={i} style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: C.white, textAlign: c[2] ? "right" : "left", whiteSpace: "nowrap" }}>
               {c[0]}
             </span>
           ))}
@@ -1406,7 +1448,7 @@ function TableCard({
                           e.stopPropagation();
                           runAct(table.key, a, r.id, subject);
                         }}
-                        style={{ height: 30, padding: "0 10px", borderRadius: 4, fontSize: 13, fontWeight: 500, cursor: "pointer", whiteSpace: "nowrap", border: `1px solid ${ai === 0 ? C.brand : C.line}`, background: ai === 0 ? C.brand : C.white, color: ai === 0 ? C.white : a.tone === "bad" ? C.bad : C.body }}
+                        style={{ height: 30, padding: "0 10px", borderRadius: 7, fontSize: 13, fontWeight: 500, cursor: "pointer", whiteSpace: "nowrap", border: `1px solid ${ai === 0 ? C.brand : C.line}`, background: ai === 0 ? C.brand : C.white, color: ai === 0 ? C.white : a.tone === "bad" ? C.bad : C.body }}
                       >
                         {a.label}
                       </button>
@@ -1434,7 +1476,7 @@ function TableCard({
               <button
                 key={z}
                 onClick={() => void load({ size: z, page: 1 })}
-                style={{ height: 26, padding: "0 8px", borderRadius: 4, border: `1px solid ${page.size === z ? C.brand : C.line}`, background: page.size === z ? C.brandTint : C.white, color: page.size === z ? C.brandDark : C.body, fontSize: 12, fontWeight: page.size === z ? 600 : 400, cursor: "pointer" }}
+                style={{ height: 26, padding: "0 8px", borderRadius: 7, border: `1px solid ${page.size === z ? C.brand : C.line}`, background: page.size === z ? C.brandTint : C.white, color: page.size === z ? C.brandDark : C.body, fontSize: 12, fontWeight: page.size === z ? 600 : 400, cursor: "pointer" }}
               >
                 {z}
               </button>
@@ -1443,7 +1485,7 @@ function TableCard({
           <span style={{ flex: 1 }} />
           <button
             onClick={() => page.page > 1 && void load({ page: page.page - 1 })}
-            style={{ height: 28, padding: "0 10px", borderRadius: 4, border: `1px solid ${C.line}`, background: C.white, fontSize: 13, cursor: page.page > 1 ? "pointer" : "not-allowed", color: page.page > 1 ? C.body : C.faint }}
+            style={{ height: 28, padding: "0 10px", borderRadius: 7, border: `1px solid ${C.line}`, background: C.white, fontSize: 13, cursor: page.page > 1 ? "pointer" : "not-allowed", color: page.page > 1 ? C.body : C.faint }}
           >
             ‹ Previous
           </button>
@@ -1455,7 +1497,7 @@ function TableCard({
                 ) : null}
                 <button
                   onClick={() => void load({ page: x })}
-                  style={{ minWidth: 28, height: 28, padding: "0 6px", borderRadius: 4, border: `1px solid ${x === page.page ? C.brand : "transparent"}`, background: x === page.page ? C.brandTint : "transparent", color: x === page.page ? C.brandDark : C.body, fontSize: 13, fontWeight: x === page.page ? 600 : 400, cursor: "pointer" }}
+                  style={{ minWidth: 28, height: 28, padding: "0 6px", borderRadius: 7, border: `1px solid ${x === page.page ? C.brand : "transparent"}`, background: x === page.page ? C.brandTint : "transparent", color: x === page.page ? C.brandDark : C.body, fontSize: 13, fontWeight: x === page.page ? 600 : 400, cursor: "pointer" }}
                 >
                   {x.toLocaleString("en-IN")}
                 </button>
@@ -1464,7 +1506,7 @@ function TableCard({
           </span>
           <button
             onClick={() => page.page < pages && void load({ page: page.page + 1 })}
-            style={{ height: 28, padding: "0 10px", borderRadius: 4, border: `1px solid ${C.line}`, background: C.white, fontSize: 13, cursor: page.page < pages ? "pointer" : "not-allowed", color: page.page < pages ? C.body : C.faint }}
+            style={{ height: 28, padding: "0 10px", borderRadius: 7, border: `1px solid ${C.line}`, background: C.white, fontSize: 13, cursor: page.page < pages ? "pointer" : "not-allowed", color: page.page < pages ? C.body : C.faint }}
           >
             Next ›
           </button>
@@ -1507,37 +1549,37 @@ function FigureDrawerView({
     <>
       <div style={{ flex: "none", padding: "18px 22px", borderBottom: `1px solid ${C.soft}`, display: "flex", alignItems: "flex-start", gap: 12 }}>
         <span style={{ flex: 1, minWidth: 0 }}>
-          <span style={{ display: "block", fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: C.muted }}>{f?.kind ?? (d.loading ? "Reading" : "Figure")}</span>
+          <span style={{ display: "block", fontSize: 12, fontWeight: 600, color: C.muted }}>{f?.kind ?? (d.loading ? "Reading" : "Figure")}</span>
           <span style={{ display: "block", fontSize: 20, fontWeight: 600, color: C.ink, marginTop: 2 }}>{f?.title ?? (d.loading ? <Pulse w="50%" h={20} /> : "Could not be read")}</span>
           <span style={{ display: "block", fontSize: 28, lineHeight: "34px", fontWeight: 600, color: C.ink, marginTop: 6 }}>{f?.value ?? (d.loading ? <Pulse w="35%" h={28} /> : "—")}</span>
         </span>
         <CloseX onClick={close} />
       </div>
       <div style={{ flex: 1, overflowY: "auto", padding: "18px 22px" }}>
-        {d.error ? <div style={{ padding: 14, background: C.badTint, borderRadius: 6, fontSize: 14, color: C.bad }}>{d.error}</div> : null}
+        {d.error ? <div style={{ padding: 14, background: C.badTint, borderRadius: 7, fontSize: 14, color: C.bad }}>{d.error}</div> : null}
         {f ? (
           <>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 12 }}>
               {f.facts.map((x) => (
-                <span key={x.label} style={{ display: "block", padding: "10px 12px", background: C.canvas, borderRadius: 6 }}>
+                <span key={x.label} style={{ display: "block", padding: "10px 12px", background: C.canvas, borderRadius: 7 }}>
                   <span style={{ ...upper, display: "block" }}>{x.label}</span>
                   <span style={{ display: "block", fontSize: 14, color: C.ink, marginTop: 2 }}>{x.value}</span>
                 </span>
               ))}
             </div>
-            <div style={{ fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: C.muted, margin: "20px 0 6px 0" }}>How it is counted</div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: C.muted, margin: "20px 0 6px 0" }}>How it is counted</div>
             <div style={{ fontSize: 14, lineHeight: "21px", color: C.body }}>{f.def}</div>
-            <div style={{ fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: C.muted, margin: "20px 0 8px 0" }}>{f.barsLabel}</div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: C.muted, margin: "20px 0 8px 0" }}>{f.barsLabel}</div>
             {f.bars.length ? (
               <LabelledBars bars={f.bars} />
             ) : null}
-            <div style={{ fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: C.muted, margin: "20px 0 8px 0" }}>{f.rowsLabel}</div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: C.muted, margin: "20px 0 8px 0" }}>{f.rowsLabel}</div>
             {f.rows.length === 0 ? (
-              <div style={{ padding: 14, background: C.canvas, borderRadius: 6, fontSize: 14, lineHeight: "20px", color: C.body }}>
+              <div style={{ padding: 14, background: C.canvas, borderRadius: 7, fontSize: 14, lineHeight: "20px", color: C.body }}>
                 {f.noRowsLine ?? "No list on this dashboard holds the records behind this figure yet. The definition above is how it is counted."}
               </div>
             ) : (
-              <div style={{ border: `1px solid ${C.soft}`, borderRadius: 6, overflow: "hidden" }}>
+              <div style={{ border: `1px solid ${C.soft}`, borderRadius: 7, overflow: "hidden" }}>
                 {f.rows.map((r, i) => (
                   <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderTop: `1px solid ${C.canvas}` }}>
                     <span style={{ flex: 1, minWidth: 0 }}>
@@ -1560,13 +1602,13 @@ function FigureDrawerView({
       </div>
       <div style={{ flex: "none", borderTop: `1px solid ${C.soft}`, padding: "12px 22px", display: "flex", gap: 10, justifyContent: "flex-end" }}>
         {f && f.rows.length ? (
-          <button onClick={exportRows} style={{ height: 34, padding: "0 14px", border: `1px solid ${C.line}`, background: C.white, borderRadius: 4, fontSize: 13, fontWeight: 500, color: C.body, cursor: "pointer" }}>
+          <button onClick={exportRows} style={{ height: 34, padding: "0 14px", border: `1px solid ${C.line}`, background: C.white, borderRadius: 7, fontSize: 13, fontWeight: 500, color: C.body, cursor: "pointer" }}>
             Export these rows
           </button>
         ) : null}
         <button
           onClick={() => (f?.section ? goSection(f.section) : close())}
-          style={{ height: 34, padding: "0 14px", border: `1px solid ${C.brand}`, background: C.brand, borderRadius: 4, fontSize: 13, fontWeight: 500, color: C.white, cursor: "pointer" }}
+          style={{ height: 34, padding: "0 14px", border: `1px solid ${C.brand}`, background: C.brand, borderRadius: 7, fontSize: 13, fontWeight: 500, color: C.white, cursor: "pointer" }}
         >
           {f?.sectionLabel ?? "Done"}
         </button>
@@ -1581,12 +1623,17 @@ function RecordDrawer({
   rec,
   close,
   addNote,
+  editNote,
+  deleteNote,
   runAct,
   open,
 }: {
   rec: { loading: boolean; data: RecordView | null; error?: string; ref: { subject: string } };
   close: () => void;
   addNote: () => void;
+  /** One's own note only — the server refuses anybody else's. */
+  editNote: (n: { id: string; text: string }) => void;
+  deleteNote: (n: { id: string; text: string }) => void;
   runAct: (a: ActSpec) => void;
   open: (url: string) => void;
 }) {
@@ -1595,14 +1642,14 @@ function RecordDrawer({
     <>
       <div style={{ flex: "none", padding: "18px 22px", borderBottom: `1px solid ${C.soft}`, display: "flex", alignItems: "flex-start", gap: 12 }}>
         <span style={{ flex: 1, minWidth: 0 }}>
-          <span style={{ display: "block", fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: C.muted }}>{r?.kind ?? "Record · Command Centre"}</span>
+          <span style={{ display: "block", fontSize: 12, fontWeight: 600, color: C.muted }}>{r?.kind ?? "Record · HQ"}</span>
           <span style={{ display: "block", fontSize: 20, fontWeight: 600, color: C.ink, marginTop: 2 }}>{r?.title ?? rec.ref.subject}</span>
           <span style={{ display: "block", fontSize: 14, color: C.muted, marginTop: 2 }}>{r?.sub ?? (rec.loading ? "Reading the record…" : "")}</span>
         </span>
         <CloseX onClick={close} />
       </div>
       <div style={{ flex: 1, overflowY: "auto", padding: "18px 22px" }}>
-        {rec.error ? <div style={{ padding: 14, background: C.badTint, borderRadius: 6, fontSize: 14, color: C.bad }}>{rec.error}</div> : null}
+        {rec.error ? <div style={{ padding: 14, background: C.badTint, borderRadius: 7, fontSize: 14, color: C.bad }}>{rec.error}</div> : null}
         {rec.loading ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <Pulse />
@@ -1614,13 +1661,13 @@ function RecordDrawer({
           <>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 10 }}>
               {r.fields.map((f) => (
-                <span key={f.label} style={{ display: "block", padding: "10px 12px", background: C.canvas, borderRadius: 6, minWidth: 0 }}>
+                <span key={f.label} style={{ display: "block", padding: "10px 12px", background: C.canvas, borderRadius: 7, minWidth: 0 }}>
                   <span style={{ ...upper, display: "block" }}>{f.label}</span>
                   <span style={{ display: "block", fontSize: 14, color: C.ink, marginTop: 2 }}>{f.value}</span>
                 </span>
               ))}
             </div>
-            <div style={{ fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: C.muted, margin: "22px 0 8px 0" }}>Timeline</div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: C.muted, margin: "22px 0 8px 0" }}>Timeline</div>
             {r.timeline.length === 0 ? <div style={{ fontSize: 14, color: C.muted, paddingBottom: 14 }}>Nothing has happened on this record yet.</div> : null}
             {r.timeline.map((e, i) => (
               <div key={i} style={{ display: "flex", gap: 12, padding: "0 0 14px 0" }}>
@@ -1631,11 +1678,27 @@ function RecordDrawer({
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <span style={{ display: "block", fontSize: 14, color: C.ink }}>{e.what}</span>
                   <span style={{ display: "block", fontSize: 12, color: C.muted }}>{e.when}</span>
+                  {e.note?.mine ? (
+                    <span style={{ display: "flex", gap: 12, marginTop: 4 }}>
+                      <button
+                        onClick={() => editNote({ id: e.note!.id, text: e.what })}
+                        style={{ border: "none", background: "none", padding: 0, fontSize: 12, fontWeight: 500, color: C.brand, cursor: "pointer" }}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => deleteNote({ id: e.note!.id, text: e.what })}
+                        style={{ border: "none", background: "none", padding: 0, fontSize: 12, fontWeight: 500, color: C.bad, cursor: "pointer" }}
+                      >
+                        Delete
+                      </button>
+                    </span>
+                  ) : null}
                 </span>
               </div>
             ))}
-            <div style={{ fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: C.muted, margin: "8px 0 8px 0" }}>Who changed what</div>
-            <div style={{ border: `1px solid ${C.soft}`, borderRadius: 6, overflow: "hidden" }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: C.muted, margin: "8px 0 8px 0" }}>Who changed what</div>
+            <div style={{ border: `1px solid ${C.soft}`, borderRadius: 7, overflow: "hidden" }}>
               {r.audit.length === 0 ? <div style={{ padding: "10px 12px", fontSize: 14, color: C.muted }}>No recorded changes.</div> : null}
               {r.audit.map((u, i) => (
                 <div key={i} style={{ padding: "10px 12px", borderTop: `1px solid ${C.canvas}` }}>
@@ -1649,14 +1712,14 @@ function RecordDrawer({
       </div>
       <div style={{ flex: "none", borderTop: `1px solid ${C.soft}`, padding: "12px 22px", display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap" }}>
         {r?.href ? (
-          <button onClick={() => open(r.href!.url)} style={{ height: 34, padding: "0 14px", border: `1px solid ${C.line}`, background: C.white, borderRadius: 4, fontSize: 13, fontWeight: 500, color: C.body, cursor: "pointer" }}>
+          <button onClick={() => open(r.href!.url)} style={{ height: 34, padding: "0 14px", border: `1px solid ${C.line}`, background: C.white, borderRadius: 7, fontSize: 13, fontWeight: 500, color: C.body, cursor: "pointer" }}>
             {r.href.label}
           </button>
         ) : null}
         <button
           onClick={addNote}
           disabled={!r}
-          style={{ height: 34, padding: "0 14px", border: `1px solid ${C.line}`, background: C.white, borderRadius: 4, fontSize: 13, fontWeight: 500, color: C.body, cursor: r ? "pointer" : "not-allowed" }}
+          style={{ height: 34, padding: "0 14px", border: `1px solid ${C.line}`, background: C.white, borderRadius: 7, fontSize: 13, fontWeight: 500, color: C.body, cursor: r ? "pointer" : "not-allowed" }}
         >
           Add a note
         </button>
@@ -1664,7 +1727,7 @@ function RecordDrawer({
           <button
             key={a.key}
             onClick={() => runAct(a)}
-            style={{ height: 34, padding: "0 14px", borderRadius: 4, fontSize: 13, fontWeight: 500, cursor: "pointer", border: `1px solid ${ai === 0 ? C.brand : C.line}`, background: ai === 0 ? C.brand : C.white, color: ai === 0 ? C.white : a.tone === "bad" ? C.bad : C.body }}
+            style={{ height: 34, padding: "0 14px", borderRadius: 7, fontSize: 13, fontWeight: 500, cursor: "pointer", border: `1px solid ${ai === 0 ? C.brand : C.line}`, background: ai === 0 ? C.brand : C.white, color: ai === 0 ? C.white : a.tone === "bad" ? C.bad : C.body }}
           >
             {a.label}
           </button>
@@ -1703,7 +1766,7 @@ function FormModal({ form, setForm }: { form: FormState; setForm: React.Dispatch
       );
     }
   };
-  const inputStyle = (bad: boolean): React.CSSProperties => ({ width: "100%", height: 38, padding: "0 10px", border: `1px solid ${bad ? C.bad : C.line}`, borderRadius: 4, fontSize: 14, background: C.white });
+  const inputStyle = (bad: boolean): React.CSSProperties => ({ width: "100%", height: 38, padding: "0 10px", border: `1px solid ${bad ? C.bad : C.line}`, borderRadius: 7, fontSize: 14, background: C.white });
   return (
     <div
       onClick={() => !form.busy && setForm(null)}
@@ -1723,7 +1786,7 @@ function FormModal({ form, setForm }: { form: FormState; setForm: React.Dispatch
             const value = form.values[x.k] ?? "";
             return (
               <label key={x.k} style={{ display: "block" }}>
-                <span style={{ display: "block", fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: C.muted, marginBottom: 5 }}>
+                <span style={{ display: "block", fontSize: 12, fontWeight: 600, color: C.muted, marginBottom: 5 }}>
                   {x.label + (x.req ? "" : x.cond ? ` · ${x.cond}` : " · optional")}
                 </span>
                 {x.type === "area" ? (
@@ -1761,22 +1824,22 @@ function FormModal({ form, setForm }: { form: FormState; setForm: React.Dispatch
             );
           })}
           {f.consequence ? (
-            <div style={{ padding: "10px 12px", background: C.brandTint, border: `1px solid ${C.brandTint2}`, borderRadius: 6, fontSize: 13, lineHeight: "19px", color: C.brandDeep }}>{f.consequence}</div>
+            <div style={{ padding: "10px 12px", background: C.brandTint, border: `1px solid ${C.brandTint2}`, borderRadius: 7, fontSize: 13, lineHeight: "19px", color: C.brandDeep }}>{f.consequence}</div>
           ) : null}
-          {form.errors.__form ? <div style={{ padding: "10px 12px", background: C.badTint, borderRadius: 6, fontSize: 13, color: C.bad }}>{form.errors.__form}</div> : null}
+          {form.errors.__form ? <div style={{ padding: "10px 12px", background: C.badTint, borderRadius: 7, fontSize: 13, color: C.bad }}>{form.errors.__form}</div> : null}
         </div>
         <div style={{ flex: "none", padding: "12px 22px", borderTop: `1px solid ${C.soft}`, display: "flex", justifyContent: "flex-end", gap: 10 }}>
           <button
             onClick={() => setForm(null)}
             disabled={form.busy}
-            style={{ height: 36, padding: "0 16px", border: `1px solid ${C.line}`, background: C.white, borderRadius: 4, fontSize: 14, fontWeight: 500, color: C.body, cursor: "pointer" }}
+            style={{ height: 36, padding: "0 16px", border: `1px solid ${C.line}`, background: C.white, borderRadius: 7, fontSize: 14, fontWeight: 500, color: C.body, cursor: "pointer" }}
           >
             Cancel
           </button>
           <Hov
             onClick={() => void submit()}
             disabled={form.busy}
-            style={{ height: 36, padding: "0 16px", border: "none", background: C.brand, borderRadius: 4, fontSize: 14, fontWeight: 500, color: C.white, cursor: form.busy ? "wait" : "pointer", opacity: form.busy ? 0.7 : 1 }}
+            style={{ height: 36, padding: "0 16px", border: "none", background: C.brand, borderRadius: 7, fontSize: 14, fontWeight: 500, color: C.white, cursor: form.busy ? "wait" : "pointer", opacity: form.busy ? 0.7 : 1 }}
             hover={{ background: C.brandDark }}
           >
             {form.busy ? "Working…" : f.submit ?? "Save"}
@@ -1818,12 +1881,12 @@ function SearchPick({ field, value, bad, onPick }: { field: FieldSpec; value: st
         onBlur={() => setTimeout(() => setOpen(false), 150)}
         onChange={(e: React.ChangeEvent<HTMLInputElement>) => setQ(e.target.value)}
         placeholder={field.ph ?? (kind === "product" ? "Search the catalogue" : "Search by name")}
-        style={{ width: "100%", height: 38, padding: "0 10px", border: `1px solid ${bad ? C.bad : C.line}`, borderRadius: 4, fontSize: 14, background: C.white }}
+        style={{ width: "100%", height: 38, padding: "0 10px", border: `1px solid ${bad ? C.bad : C.line}`, borderRadius: 7, fontSize: 14, background: C.white }}
         focus={{ borderColor: C.brand }}
       />
       {open ? (
         <span
-          style={{ position: "absolute", top: 42, left: 0, right: 0, zIndex: 5, maxHeight: 220, overflowY: "auto", background: C.white, border: `1px solid ${C.line}`, borderRadius: 6, boxShadow: "0 8px 24px rgba(22,22,22,0.12)" }}
+          style={{ position: "absolute", top: 42, left: 0, right: 0, zIndex: 5, maxHeight: 220, overflowY: "auto", background: C.white, border: `1px solid ${C.line}`, borderRadius: 7, boxShadow: "0 8px 24px rgba(22,22,22,0.12)" }}
         >
           {opts.length === 0 ? (
             <span style={{ display: "block", padding: "9px 12px", fontSize: 13, color: C.muted }}>

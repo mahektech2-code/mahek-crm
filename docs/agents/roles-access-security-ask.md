@@ -404,3 +404,96 @@ are the `salesAsk.*` ones. The ERP keeps its own engine — tools that call each
 screen's loader, `lib/erp/ai-ask.ts` — behind `/api/erp/ask`, which speaks the
 same stream and adds the records it read as links. The next app is an
 endpoint that streams those events and an `AskSetup` in `ask-setups.ts`.
+
+**AN ACCESS SAVE IS ONE TRANSACTION, AND ITS AUDIT ROW IS A PICTURE.**
+`setAccess` (new person and edit alike) writes the apps, levels, screens, ERP /
+HRMS / Tasks powers, ERP designation, Hire role and factory place inside ONE
+transaction — the powers and the rest used to be written one by one after it,
+so a refusal half way left the new apps beside the old powers. Its
+`set-app-access` / `create-user` audit row carries `accessSnapshot()`
+(`lib/services/access-snapshot.ts`) as `beforeState.access` and
+`afterState.access` beside the old `detail` sentence: what the person held
+either side, sorted so two equal pictures compare equal. That is what answers
+"what did she hold on the 1st" and what a future restore reads.
+
+**A LEAVER IS OFFBOARDED, NOT ONLY DISABLED.** Disabling stays the sign-in
+alone (leave comes back to what it left). `offboardPerson` (lib/actions/people.ts)
+is for somebody who has LEFT: one transaction turns the sign-in off, ends the
+sessions and removes every grant — apps and screens, ERP / HRMS / Tasks powers,
+ERP designation, Hire role, factory place and crew seats, godown staff,
+territories and regions — and revokes website assignments (kept on the record).
+It goes through the `admin-offboard` impact modal, which also names the
+customers still in their book, and its `offboard-user` audit row carries the
+access picture they held. People & access has a **Left, still enabled** tab and
+tile: HRMS says they left (`employeeStatus` inactive) and the account still
+signs in. Never yourself; never the last platform administrator.
+
+**THE PERSON PAGE NAMES EVERY SCOPE SET ELSEWHERE.** Its "Set elsewhere" card
+(`person-access-extras-service.ts`) now also reads the Sales Dashboard's
+oversight regions and working places, and live website assignments. A person
+whose manager-level grant in the CRM, the Sales Dashboard or Founder makes
+regions decide what they see (`managerScope`), and who has none, gets a warning
+line: no region means the WHOLE COUNTRY, and that used to be invisible. ERP
+godown staff are offered and saved under a label that names one person (the
+name, or name with email where two share it) and mapped to the id — matching on
+names gave a godown to every namesake.
+
+**THE DOORS ROUND THE CONSOLE ARE SHUT (Nov 2026).** Three places granted apps
+without a platform administrator, and each now defers to one:
+- **Locker's own access screen** (`setLockerModules`) changes the screens of
+  somebody who already holds the Locker, and takes it away; GIVING the app to
+  somebody new needs `isPlatformAdmin`. Every change is also written to
+  `audit_log` as `locker.access.changed`, so the person's Audit tab sees it.
+- **Hire's provisioning** refuses a blueprint that grants `NEVER_PROVISIONED`
+  (`lib/apps.ts`: admin, founder, hire) on the server, as a blocker — the
+  blueprint editor hiding them was the only guard before.
+- **`hire:deploy`** gives each platform admin Hire ONCE: the `installed` line
+  on `hire_audit` is its memory, so Hire taken away on the console stays away
+  through later deploys.
+And **a template never carries platform Admin** (`grantsPlatformAdmin`, refused
+on save and on apply): it is given one person at a time on their Manage page.
+Bulk take-away on Powers has a review step naming the people, and designation
+Sync names who it brings up before it runs.
+
+**COPYING, TEMPLATES AND TAKING AWAY IN BULK.** The Manage dialog has **Copy
+from** a person: it fills the draft (apps, levels, screens, powers, ERP
+designation, Hire role) and the review still compares against what THIS person
+holds, so whatever the copy removes is named and confirmed. Platform Admin and
+the factory seat are never copied. Job templates carry the ERP designation and
+Hire role too (`AccessTemplateShape.hireRole` / `erpDesignationId`), applied only
+to somebody the template gives that app. People & access's selection bar can
+**Take an app away** (`takeAppFrom`): the names that lose it are listed and the
+app's name is typed — checked on the server — and each person is then saved
+through `setAccess` with their own impact confirmation read for them. Never the
+Admin Console, never yourself.
+
+**EVERYBODY HOLDS HRMS, AS AN ASSOCIATE — and `hrms-for-everyone` fills the
+gap.** The Access dialog starts every person with HRMS ticked (`startingDraft`
+in `app/admin/access-section.tsx`). Accounts set up before that rule are given
+it by `npm run jobs -- hrms-for-everyone` (`--dry-run` lists and writes
+nothing): every ACTIVE account without HRMS, at associate level, its default
+screens, an `access.hrms-for-everyone` audit row each (no actor — a terminal).
+It skips, and counts, accounts linked to no HRMS record (`setAccess` refuses
+HRMS there too — link them first), accounts marked not an employee, and those
+whose HRMS record is not active. Idempotent: a held HRMS, at any level, is
+never touched. Not scheduled — run by hand after a dry run.
+
+**A PERSON IS TOLD WHEN THEIR ACCESS CHANGES.** `setAccess` rings one general
+bell ("Your MahekOne access changed", to `/apps`) on an existing account, in the
+words the save is said in plus a Hire role or factory place that moved, naming
+who changed it. Not for a save that changed nothing, not for somebody saving
+their own access, and not for a brand-new account (that one gets a password on
+the next step).
+
+**A HIRE ROLE IS HELD AT ITS LEVEL, ON THE SERVER TOO.** `setAccess` refuses a
+Hire role whose `LEVEL_FOR_ROLE` is not the Hire level being saved (an HR Head
+at associate level would be an HR Head the level checks never see). Checked
+only when the role or Hire's level moves, so an old mismatch does not block an
+unrelated save.
+
+**POWERS & SCREENS → ROLES & SEATS** is read-only: who holds each Hire role
+(stored, or "by level"), each factory department's crew seats (and who works
+there with no seat, and a department with no one in charge or operator), each
+ERP godown's staff, and each Sales Dashboard oversight region. Active accounts
+only. `seatsOverview()` in `access-overview-service.ts`; each kind is changed
+where it is set, named under its heading.

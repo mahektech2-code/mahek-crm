@@ -94,3 +94,15 @@ defect it is rather than hiding it.
 a client module; a value exported from it — `C`, `btnStyle()`, `when()` — is
 only a reference on the server, so `C.ink` is undefined and `btnStyle()`
 throws. Components cross the boundary fine; values do not.
+
+**RETIRING A LOGIN OR A SIGN-IN ACCOUNT KEEPS EVERYTHING.** `active = false` is
+the whole of it, and every list, count, reuse check and the reveal path already
+read `active`. Retire goes through the impact report (`locker-credential-retire`,
+`locker-identity-retire`), drawn inside the Locker's own `useModal()` by
+`_ui/impact-modal.ts` (the report's groups as notes, then the name to type); the
+act re-checks the fingerprint. A login's waiting or approved reveal requests
+expire; open emergency access over it blocks it. An account that is a login's
+`sole` way in is refused until that login has another. Values, previous values
+and connections stay; Restore (the login's page; Retired sign-in accounts on
+the accounts screen) puts it back. Both write `locker.*.retired/restored` on the
+hash chain as security events.

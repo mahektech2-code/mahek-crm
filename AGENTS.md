@@ -75,6 +75,10 @@ npm run jobs -- person-ids-backfill --dry-run
                            # from the names beside them, through the person
                            # directory. Never guesses; counts what it leaves
 npm run jobs -- person-ids-backfill        # write them — idempotent
+npm run jobs -- hrms-for-everyone --dry-run
+                           # every active account without HRMS, as associate —
+                           # skips (and counts) unlinked and inactive records
+npm run jobs -- hrms-for-everyone          # write them — idempotent, audited
 npm run jobs -- customer-master-sync        # the EMP 2.0 shop master -> staging
 npm run jobs -- customer-master-project --dry-run
                            # what the shop master would create, writing nothing

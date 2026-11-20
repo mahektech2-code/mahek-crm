@@ -219,7 +219,7 @@ export async function masters(): Promise<Masters> {
   const recipe = await q<{ fid: string; fname: string; rm: string | null; qty: number | null }>(sql`
     select f.id as fid, f.name as fname, r.raw_material_id as rm, r.qty_per_batch::float8 as qty
       from product_formulations f
-      left join erp_recipes r on r.formulation_id = f.id
+      left join erp_recipes r on r.formulation_id = f.id and r.retired_at is null
      where f.active
      order by f.name, r.qty_per_batch desc nulls last, r.raw_material_id`);
   const sfg: Record<string, SfgProduct> = {};

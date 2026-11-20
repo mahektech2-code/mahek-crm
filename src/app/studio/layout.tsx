@@ -39,6 +39,7 @@ export default async function StudioLayout({ children }: { children: React.React
       ...(held.has("studio.bulk") ? [{ href: "/studio/bulk", label: "Bulk posters", icon: "grid" }] : []),
       ...(held.has("studio.forward") ? [{ href: "/studio/forward", label: "Upload & Bulk Forward", icon: "image" }] : []),
       ...(held.has("studio.posters") ? [{ href: "/studio/posters", label: "My posters", icon: "history" }] : []),
+      ...(held.has("studio.inbox") ? [{ href: "/studio/inbox", label: "WhatsApp Inbox", icon: "chat" }] : []),
       ...(held.has("studio.dates") ? [{ href: "/studio/dates", label: "Dates", icon: "calendar" }] : []),
       /* A group of one is a heading over a single link; without Approve the
          Designs screen sits with the rest. */

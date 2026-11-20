@@ -161,3 +161,18 @@ failure leaves the columns null and the screen says plainly that it could not
 work it out. Calls logged before this existed have no sentence and nothing
 reconstructs one — a reconstruction would be today's answer wearing an old
 call's date.
+
+**Editing a reminder is not rescheduling it.** `editReminder` changes the note
+and the kind of a PENDING reminder and nothing else; `rescheduleCount` is left
+alone, because "moved five times" is a signal about the account and a fixed
+typo is not a sixth move. The date is Reschedule's alone. A system-generated
+reminder (a promise's chase) keeps its kind — the promise's edit and cancel
+find their chase by `type = 'payment_promise'`. The same people may edit as may
+reschedule.
+
+**An opportunity's value and expected day are corrected only while it is being
+worked** (`editOpportunity`, the same visibility `setOpportunityStatus` asks).
+A won or lost one is a record of how it ended; reopening is the way back. Either
+figure may be cleared — "nobody put a number on it" is already an answer the
+list says out loud. The product and quantity are the customer's words on the
+call and are not edited.

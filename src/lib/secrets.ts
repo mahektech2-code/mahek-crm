@@ -116,6 +116,10 @@ export const SECRET_NAMES = {
    * issue, labels it for Claude, and reads the pull requests that fix it.
    */
   "github.token": "GITHUB_FEEDBACK_TOKEN",
+  /** The Studio's WhatsApp inbox: Kapso's project API key. Server-to-server only — it never reaches a browser. */
+  "kapso.apiKey": "KAPSO_API_KEY",
+  /** What Kapso signs each webhook body with (HMAC-SHA256). Set the same value on the Kapso webhook; without it every webhook is refused. */
+  "kapso.webhookSecret": "KAPSO_WEBHOOK_SECRET",
 } as const;
 
 export type SecretName = keyof typeof SECRET_NAMES;

@@ -39,7 +39,7 @@ Off, the ERP writes nothing into the book: the ERP runs on its own, and orders a
 <SettingsTable keys={["erp.orders.live", "erp.orders.partySheet"]} />
 
 <Rule title="A retired tab is not read, whoever asks">
-The droplet's schedule, the Admin Console and a terminal all come through one job runner, and it answers a retired read with the reason instead of running it — it still records a job run carrying that sentence, so the schedule keeps getting a success and the job history says why nothing happened. Once the ERP takes the orders, Admin Console → Sheets and Accounts → Sheet import show a banner and draw their import buttons disabled with the reason. The Command Centre shows a retired source as **Retired · last read … ago** — never *Stale*, with nothing to run — and Admin Console → Integrations lists it as **Retired**.
+The droplet's schedule, the Admin Console and a terminal all come through one job runner, and it answers a retired read with the reason instead of running it — it still records a job run carrying that sentence, so the schedule keeps getting a success and the job history says why nothing happened. Once the ERP takes the orders, Admin Console → Sheets and Accounts → Sheet import show a banner and draw their import buttons disabled with the reason. HQ shows a retired source as **Retired · last read … ago** — never *Stale*, with nothing to run — and Admin Console → Integrations lists it as **Retired**.
 </Rule>
 
 <Callout kind="note" title="Nothing the sheet wrote is deleted">

@@ -155,6 +155,7 @@ async function mergeValuesFor(customerId: string): Promise<MergeValues> {
       and(
         eq(followUpAttempts.customerId, customerId),
         sql`${followUpAttempts.promisedDate} is not null`,
+        sql`${followUpAttempts.promiseCancelledAt} is null`,
       ),
     )
     .orderBy(desc(followUpAttempts.attemptedAt))
@@ -914,7 +915,7 @@ export async function sendRunViaApi(
 ): Promise<Result<{ sent: number; left: number; problems: string[] }>> {
   await requireCapability("whatsapp.bulk");
   const delivery = await deliveryContext();
-  if (!delivery.serviceOn) return err("WhatsApp sending is switched off in the Founder Command Centre.", "rule_violation");
+  if (!delivery.serviceOn) return err("WhatsApp sending is switched off in HQ.", "rule_violation");
   if (!delivery.hasToken) return err("No Wati key is configured.", "rule_violation");
 
   const waiting = await db

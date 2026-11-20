@@ -169,4 +169,5 @@ export const CN_STATUS_LABEL: Record<string, string> = {
   approved: "Approved",
   rejected: "Rejected",
   issued: "Issued",
+  cancelled: "Cancelled",
 };

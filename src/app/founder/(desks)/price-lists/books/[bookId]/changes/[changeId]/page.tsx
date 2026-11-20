@@ -4,7 +4,7 @@ import { requireUser } from "@/lib/auth";
 import { changePageData } from "@/lib/services/price-change-page";
 import { ChangeScreen } from "@/components/pricing/books/change-screen";
 
-export const metadata = { title: "Price change — Founder Command Centre — MahekOne" };
+export const metadata = { title: "Price change — HQ — MahekOne" };
 
 export default async function Page({ params }: { params: Promise<{ bookId: string; changeId: string }> }) {
   const { bookId, changeId } = await params;

@@ -24,6 +24,17 @@ export type PersonAccessExtras = {
   orgManagers: string[];
   /** The ERP godowns whose staff list carries them. */
   godowns: string[];
+  /**
+   * The Sales Dashboard's oversight regions on them (`kind = 'region'`), and
+   * how many working places (cities, beats) a salesman is allocated besides.
+   * EMPTY REGIONS MEAN NATIONAL for a manager-level reader — `managerScope`.
+   */
+  regions: string[];
+  workingPlaces: number;
+  /** Whether a manager-level grant in the CRM, the Sales Dashboard or Founder makes the regions decide what they see. */
+  regionScoped: boolean;
+  /** Live website review assignments: the kind, and the one item where it is narrowed to one. */
+  websiteAssignments: string[];
 };
 
 export async function personAccessExtras(userId: string): Promise<PersonAccessExtras> {
@@ -49,7 +60,7 @@ export async function personAccessExtras(userId: string): Promise<PersonAccessEx
      limit 1
   `)) as unknown as Array<{ id: string; code: string; name: string; position: string | null }>;
 
-  const [managers, godowns] = await Promise.all([
+  const [managers, godowns, places, website, scoped] = await Promise.all([
     emp
       ? (db.execute(sql`
           select m.name
@@ -66,11 +77,32 @@ export async function personAccessExtras(userId: string): Promise<PersonAccessEx
        where s.user_id = ${userId}
        order by g.name
     `) as unknown as Promise<Array<{ name: string }>>,
+    db.execute(sql`
+      select kind, region from mbos_user_territories where user_id = ${userId} order by region
+    `) as unknown as Promise<Array<{ kind: string; region: string }>>,
+    db.execute(sql`
+      select a.kind, c.slug as key
+        from website_assignment a
+        left join website_content c on c.id = a.content_id
+       where a.employee_id = ${userId} and a.revoked_at is null
+       order by a.kind
+    `) as unknown as Promise<Array<{ kind: string; key: string | null }>>,
+    /* The arm of scopeStanding that reads regions: a manager — not admin —
+       on an app whose screens the region scope draws, and not a platform admin. */
+    db.execute(sql`
+      select exists (select 1 from app_access where user_id = ${userId} and app in ('crm', 'sales', 'founder') and role = 'manager')
+         and not exists (select 1 from app_access where user_id = ${userId} and app in ('crm', 'sales', 'founder') and role = 'admin')
+         and not exists (select 1 from app_access where user_id = ${userId} and app = 'admin' and role = 'admin') as scoped
+    `) as unknown as Promise<Array<{ scoped: boolean }>>,
   ]);
 
   return {
     employee: emp ?? null,
     orgManagers: managers.map((m) => m.name),
     godowns: godowns.map((g) => g.name),
+    regions: places.filter((p) => p.kind === "region").map((p) => p.region),
+    workingPlaces: places.filter((p) => p.kind !== "region").length,
+    regionScoped: Boolean(scoped[0]?.scoped),
+    websiteAssignments: website.map((w) => (w.key ? `${w.kind} · ${w.key}` : `every ${w.kind}`)),
   };
 }

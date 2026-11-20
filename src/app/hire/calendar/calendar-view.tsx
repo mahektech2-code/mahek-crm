@@ -4,11 +4,12 @@ import { useState, useTransition } from "react";
 import { addDays } from "@/lib/format";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Field, Input, Select } from "@/components/ui/primitives";
+import { Field, Input, Select, Textarea } from "@/components/ui/primitives";
+import { Modal } from "@/components/ui/modal";
 import { cx } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
-import { scheduleInterview, suggestInterviewTimes } from "@/lib/hire/actions/pipeline";
-import type { CalEvent, Slot, ToSchedule } from "@/lib/hire/services/schedule";
+import { cancelInterview, scheduleInterview, suggestInterviewTimes } from "@/lib/hire/actions/pipeline";
+import type { CalEvent, CancelTell, Slot, ToSchedule } from "@/lib/hire/services/schedule";
 import { Btn, BtnLink, Callout, Empty, hs, Label, Panel } from "../_ui/kit";
 
 const HOURS = [9, 10, 11, 12, 13, 14, 15, 16, 17];
@@ -49,6 +50,9 @@ export function CalendarView({
   const [pick, setPick] = useState<string | null>(null);
   const picked = waiting.find((w) => w.applicationId === pick) ?? null;
   const sunday = events.filter((e) => istParts(e.startIso).ymd === addYmd(monday, 6)).length;
+  /* Only a booking that has not started can be cancelled; the dialog remounts per booking. */
+  const booked = events.filter((e) => e.status === "scheduled");
+  const [cancelling, setCancelling] = useState<CalEvent | null>(null);
 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)_340px] items-start gap-4">
@@ -149,8 +153,112 @@ export function CalendarView({
             )}
           </Panel>
         )}
+        {canSchedule && booked.length ? (
+          <Panel title="Booked this week" sub="Cancel one that will not happen. The candidate goes back to To schedule; the trail keeps the booking." pad={false}>
+            <div className="max-h-[360px] overflow-y-auto">
+              {booked.map((e) => (
+                <div key={e.execId} className="flex items-center gap-2 border-b border-divider px-4 py-2.5 last:border-b-0">
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium text-heading">{e.name}</span>
+                    <span className="block truncate text-xs text-muted tabular-nums">
+                      {whenLabel(e.startIso)} · {e.stage}
+                      {e.interviewer ? ` · ${e.interviewer}` : ""}
+                    </span>
+                  </span>
+                  <Btn size="sm" onClick={() => setCancelling(e)}>
+                    Cancel
+                  </Btn>
+                </div>
+              ))}
+            </div>
+          </Panel>
+        ) : null}
       </div>
+      {cancelling ? <CancelDialog key={cancelling.execId} e={cancelling} onClose={() => setCancelling(null)} /> : null}
     </div>
+  );
+}
+
+/**
+ * CANCELLING A BOOKING asks why (kept on the record), and how the candidate is
+ * told — emailed from here, or a WhatsApp, SMS or call the person says they
+ * made — the same ways every Hire message lands on the Communication tab. The
+ * interviewer is told on their bell by the server.
+ */
+function CancelDialog({ e, onClose }: { e: CalEvent; onClose: () => void }) {
+  const router = useRouter();
+  const toast = useToast();
+  const [reason, setReason] = useState("");
+  const [tell, setTell] = useState<CancelTell>(e.doNotContact ? "none" : e.hasEmail ? "email" : "whatsapp");
+  const [message, setMessage] = useState(`Dear ${e.name}, your ${e.stage} interview on ${whenLabel(e.startIso)} has been cancelled. We will be in touch with a new time. — Mahek Marketing`);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, start] = useTransition();
+  const short = reason.trim().length < 10;
+  const noMessage = tell !== "none" && message.trim().length < 10;
+  const submit = () =>
+    start(async () => {
+      setError(null);
+      const r = await cancelInterview({ applicationId: e.applicationId, execId: e.execId, reason, tell, message });
+      if (!r.ok) {
+        setError(r.error);
+        return;
+      }
+      toast.push(r.message ?? "Cancelled.");
+      onClose();
+      router.refresh();
+    });
+  const opts: { v: CancelTell; l: string }[] = [
+    ...(e.hasEmail ? [{ v: "email" as const, l: "Email it from here" }] : []),
+    { v: "whatsapp", l: "I sent it on WhatsApp myself" },
+    { v: "sms", l: "I sent it by SMS myself" },
+    { v: "phone", l: "I told them on a call" },
+    { v: "none", l: "Not yet — I will tell them" },
+  ];
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Cancel ${e.name}’s interview`}
+      footer={
+        <>
+          <Btn onClick={onClose}>Keep it</Btn>
+          <Btn kind="danger" disabled={short || noMessage || pending} title={short ? "Give a reason of at least 10 characters" : noMessage ? "Write the message the candidate is sent" : undefined} onClick={submit}>
+            {pending ? "Cancelling…" : "Cancel interview"}
+          </Btn>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-3.5">
+        <p className="m-0 text-sm text-body">
+          {e.stage} · {e.role} · {whenLabel(e.startIso)}
+          {e.interviewer ? ` with ${e.interviewer}, who is told on their bell` : ""}. Nothing is deleted: the booking stays on the trail and the candidate is back on To schedule.
+        </p>
+        <Field label="Why is it cancelled?" hint="Kept on the record — at least 10 characters." hintShown>
+          <Textarea value={reason} onChange={(x) => setReason(x.target.value)} rows={3} />
+        </Field>
+        {e.doNotContact ? (
+          <Callout tone="warn">{e.name} is marked do-not-contact, so no message is sent or recorded.</Callout>
+        ) : (
+          <>
+            <Field label="Telling the candidate">
+              <Select value={tell} onChange={(x) => setTell(x.target.value as CancelTell)} className="w-full">
+                {opts.map((o) => (
+                  <option key={o.v} value={o.v}>
+                    {o.l}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            {tell !== "none" ? (
+              <Field label="Message" hint="Recorded on their Communication tab exactly as written." hintShown>
+                <Textarea value={message} onChange={(x) => setMessage(x.target.value)} rows={4} />
+              </Field>
+            ) : null}
+          </>
+        )}
+        {error ? <Callout tone="danger">{error}</Callout> : null}
+      </div>
+    </Modal>
   );
 }
 

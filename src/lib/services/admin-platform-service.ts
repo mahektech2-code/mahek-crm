@@ -351,8 +351,8 @@ export async function integrationStatus(): Promise<Integration[]> {
       state: held("wati.apiToken") ? "Healthy" : "Not connected",
       last: "—",
       note: held("wati.apiToken")
-        ? "A key is held. Whether anything is actually sent is the founder's switch, on the Founder Command Centre's WhatsApp desk, where the key is also changed."
-        : "No key. Messages are prepared and copied by a person, and only a confirmed send counts. The key is set on the Founder Command Centre's WhatsApp desk.",
+        ? "A key is held. Whether anything is actually sent is the founder's switch, on HQ's WhatsApp desk, where the key is also changed."
+        : "No key. Messages are prepared and copied by a person, and only a confirmed send counts. The key is set on HQ's WhatsApp desk.",
     },
     {
       name: "Website enquiry form",

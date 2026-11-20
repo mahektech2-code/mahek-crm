@@ -83,6 +83,35 @@ and the loser is undone with its lead. The sales type is asked in the dialog and
 never guessed, which is what makes the new lead a literal Suspect: with none the
 foot of the legacy ladder is `new`, the same first band, but not the word.
 
+**AN ENQUIRY IS CORRECTED OVER ITS SUBMISSION, NEVER IN IT, AND SPAM IS A STAGE,
+NOT A DELETE (0361).** `raw_submission` stays exactly as the visitor sent it; a
+person's corrections to name, phone, email, company and requirement go in
+`enquiries.corrections` and are read over it by `effectiveSubmission` — every
+reader (the list, the record, the lead prefill, HQ's SQL through
+`raw_submission || corrections`) must read the corrected one, and
+`search_text` is rebuilt from it. The activity carries each field's before and
+after. An enquiry typed in by hand (`createManualEnquiry`) is `source` anything
+but `website` — that source is the ingest door's alone and the only one
+`leadConvertibility` lets become a lead, so a manual enquiry cannot be turned
+into one yet. An Enquiries MANAGER can also DELETE one outright
+(`deleteEnquiry`, the `enquiry-delete` impact dialog) — refused while a customer,
+lead or order is linked. The website retransmits until acknowledged and
+`createEnquiryFromWebsite` used to recognise a retransmission only by the row
+still existing, so deleting keeps the (source, external ref) in
+`enquiry_deletions` and a resend is acknowledged as a duplicate and dropped;
+its follow-up reminders are deleted with it and the audit row keeps the
+submission. `spam`
+leaves All, every count and the Unassigned banner, shows only under its own
+tab, is refused by `changeStage` (it goes through `markEnquirySpam` and the
+`enquiry-spam` impact dialog) and is blocked once a customer is linked; any
+other stage brings it back ("Not spam"). Notes are edited and deleted only by
+their author — an edit keeps the previous words in `meta.edits`, a delete leaves
+a `note_deleted` line with the text only in the audit row. A follow-up is moved
+through the CRM's own `rescheduleReminder` (`skipCustomerScope`, as creating one
+is) and cancelled through `dismissReminder`, so cancelling needs
+`reminder.close` — which an Enquiries MANAGER carries (owner's decision, Nov
+2026), as a CRM manager does; an Enquiries associate cannot.
+
 **AN UNOWNED LEAD IS ON NO TELECALLER'S DESK, so it is said out loud.** An
 associate's scope is their own book and `owner_id` is the assignment, so a lead
 nobody owns is invisible to every telecaller. It is not automatic to give it an
@@ -423,3 +452,15 @@ A reopen's next action goes to the door's named owner, or to the person reversin
 where that owner has left. A Dead request is routed from the REQUESTER up the
 chart, so Seema's goes to Pritesh. Phase 2, not built: lead lists for a non-admin
 ancestor who holds no seat.
+
+**ONE LEAD EDIT, A MODAL, WHEREVER THE LEAD IS OPEN.** `components/leads/record/lead-edit-dialog.tsx`
+is mounted on the unified record (CRM and Sales Dashboard, under More actions),
+the pipeline record and the Sales Manager desk. Anybody holding `lead.work` with
+the lead in scope may correct its name, city, contact, phone and product; the
+owner and sales-manager boxes appear, and are accepted by `editLeadBasics`, only
+inside the CRM Sales Manager workspace with its module (`maySetSeats`) —
+everywhere else moving a lead stays Reassign's. `loadLeadEditForm` reads the
+form under the same rule the save asks. The old `/crm/leads/sales-manager/[id]/edit`
+page is only a redirect back to the record. Before this the edit was that page
+alone, so a lead's own salesman or telecaller could not fix a misspelt shop
+name, and the pipeline's Edit button linked back to the record it was on.

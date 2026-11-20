@@ -4,7 +4,7 @@ import { requireUser } from "@/lib/auth";
 import { bookPageData } from "@/lib/services/price-book-page";
 import { BookScreen } from "@/components/pricing/books/book-screen";
 
-export const metadata = { title: "Price book — Founder Command Centre — MahekOne" };
+export const metadata = { title: "Price book — HQ — MahekOne" };
 
 export default async function Page({ params }: { params: Promise<{ bookId: string }> }) {
   const { bookId } = await params;

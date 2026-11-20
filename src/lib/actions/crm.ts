@@ -49,12 +49,14 @@ import {
 } from "@/lib/config/store";
 import { saveInteraction } from "@/lib/services/interaction-service";
 import type { TakenTo } from "@/lib/order-journey";
-import { setOpportunityStatus } from "@/lib/services/opportunity-service";
+import { editOpportunity, setOpportunityStatus } from "@/lib/services/opportunity-service";
 import { canOpenModule } from "@/lib/access";
 import type { CallDetailView } from "@/lib/call-detail";
 import { createComplaint } from "@/lib/services/complaint-create";
 import type { NextStep } from "@/lib/engines/next-step";
 import {
+  cancelPromise,
+  editPromise,
   recordFollowUpAttempt,
   recordPayment as recordPaymentService,
 } from "@/lib/services/payment-service";
@@ -68,6 +70,9 @@ import {
   completeReminder as completeReminderService,
   createReminder as createReminderService,
   dismissReminder,
+  editComplaint,
+  editReminder,
+  withdrawComplaint,
   holdOtherReasonsUntilReminder as holdOtherReasonsUntilReminderService,
   recordWatchOutcome,
   rescheduleReminder as rescheduleReminderService,
@@ -463,6 +468,21 @@ export async function rescheduleReminder(
   }
 }
 
+/** Correct a reminder's note or kind without counting it as a reschedule. */
+export async function editReminderAction(input: {
+  reminderId: string;
+  note: string;
+  type?: string;
+}): Promise<Result> {
+  try {
+    const r = await editReminder(input);
+    if (r.ok) refreshAll();
+    return r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
 export async function holdOtherReasonsUntilReminder(
   reminderId: string,
 ): Promise<Result> {
@@ -511,6 +531,54 @@ export async function recordPromise(input: {
       idempotencyKey: randomUUID(),
     });
     refreshAll();
+    return r.ok ? okVoid(r.message) : r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** Correct a promise's amount, date or note. The chase reminder moves with it. */
+export async function editPromiseAction(input: {
+  attemptId: string;
+  amount: string;
+  promisedBy: string;
+  note?: string;
+}): Promise<Result> {
+  try {
+    const amount = parseRupees(input.amount);
+    if (amount === null) {
+      return err("Enter the amount they committed to.", "validation", [
+        { field: "amount", message: "Enter a positive amount." },
+      ]);
+    }
+    const r = await editPromise({
+      attemptId: input.attemptId,
+      amount,
+      promisedDate: input.promisedBy,
+      note: input.note,
+    });
+    if (r.ok) refreshAll();
+    return r.ok ? okVoid(r.message) : r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * A promise that no longer stands — confirmed against its impact first,
+ * because its chase reminder comes off somebody's list with it.
+ */
+export async function cancelPromiseAction(
+  attemptId: string,
+  reason: string,
+  confirmation?: ImpactConfirmation,
+): Promise<Result> {
+  try {
+    await requireCapability("reminder.close");
+    const refusal = await confirmImpact("crm-payment-promise-cancel", attemptId, confirmation);
+    if (refusal) return refusal;
+    const r = await cancelPromise({ attemptId, reason });
+    if (r.ok) refreshAll();
     return r.ok ? okVoid(r.message) : r;
   } catch (e) {
     return fromThrown(e);
@@ -1638,6 +1706,39 @@ export async function setComplaintPriorityAction(
   }
 }
 
+/** Correct what a complaint says and the heading it is filed under. */
+export async function editComplaintAction(input: {
+  complaintId: string;
+  description: string;
+  category: string;
+}): Promise<Result> {
+  try {
+    const r = await editComplaint(input);
+    if (r.ok) refreshAll();
+    return r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** Close a complaint raised by mistake or twice, with the reason — never a delete. */
+export async function withdrawComplaintAction(
+  complaintId: string,
+  reason: string,
+  confirmation?: ImpactConfirmation,
+): Promise<Result> {
+  try {
+    await requireCapability("complaint.resolve");
+    const refusal = await confirmImpact("crm-complaint-withdraw", complaintId, confirmation);
+    if (refusal) return refusal;
+    const r = await withdrawComplaint({ complaintId, reason });
+    if (r.ok) refreshAll();
+    return r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
 /* ---------------------------------------------------------- inactive watch */
 
 export async function recordInactiveOutcome(
@@ -2518,6 +2619,39 @@ export async function setOpportunityStatusAction(input: {
       return err("Opportunities are not part of your access.", "not_permitted");
     }
     const result = await setOpportunityStatus(input);
+    if (result.ok) refreshAll();
+    return result;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** Correct an opportunity's estimated value and expected order day. */
+export async function editOpportunityAction(input: {
+  id: string;
+  /** Rupees as typed; empty clears the estimate. */
+  value: string;
+  expectedOrderDate: string;
+}): Promise<Result<{ id: string }>> {
+  try {
+    const ctx = await resolveScope();
+    if (!(await canOpenModule(ctx.user.id, "crm.opportunities"))) {
+      return err("Opportunities are not part of your access.", "not_permitted");
+    }
+    let value: number | null = null;
+    if (input.value.trim()) {
+      value = parseRupees(input.value);
+      if (value === null) {
+        return err("Enter the value in rupees, or leave it empty.", "validation", [
+          { field: "value", message: "A positive amount, or empty." },
+        ]);
+      }
+    }
+    const result = await editOpportunity({
+      id: input.id,
+      estimatedValuePaise: value,
+      expectedOrderDate: input.expectedOrderDate || null,
+    });
     if (result.ok) refreshAll();
     return result;
   } catch (e) {

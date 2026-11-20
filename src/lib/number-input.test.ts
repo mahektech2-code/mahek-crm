@@ -84,7 +84,7 @@ test("an amount shows its paise, and a whole amount reads as it always did", () 
   assert.equal(moneyShort(51_20_000_00), "₹51.20L");
 });
 
-test("the ERP and the Command Centre show the same paise", () => {
+test("the ERP and HQ show the same paise", () => {
   assert.equal(erpInr(1045060), "₹10,450.60");
   assert.equal(erpInr(1045000), "₹10,450");
   assert.equal(erpInr(-1045060), "−₹10,450.60");

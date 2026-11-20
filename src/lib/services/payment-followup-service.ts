@@ -409,6 +409,9 @@ export async function logPaymentFollowUp(
    * next step everybody believes in and nothing chasing it.
    */
   const createdReminderIds: string[] = [];
+  /** The chase reminder a promise writes, named on the attempt so editing or
+   *  cancelling the promise can find the reminder that belongs to it. */
+  const promiseReminderId = input.outcome === "promised" && input.date ? id("rem") : null;
   /** And promises this call SETTLED, for the sentence the telecaller reads. */
   let remindersClosed = 0;
   const now = new Date();
@@ -431,6 +434,7 @@ export async function logPaymentFollowUp(
       // values they were written with.
       promisedAmount: input.outcome === "promised" ? amountPaise : null,
       promisedDate: input.outcome === "promised" ? (input.date ?? null) : null,
+      reminderId: promiseReminderId,
       idempotencyKey: input.idempotencyKey,
       createdById: ctx.user.id,
     });
@@ -474,13 +478,12 @@ export async function logPaymentFollowUp(
     ]);
 
     /* ---- a promise, and the reminder that chases it ---- */
-    if (input.outcome === "promised" && input.date) {
+    if (promiseReminderId && input.date) {
       const due = onOrAfterWorkingDay(addDays(input.date, 1), {
         timezone: config["workingDay.timezone"],
         dayBoundaryHour: config["workingDay.dayBoundaryHour"],
         workingDays: config["workingDay.workingDays"],
       });
-      const promiseReminderId = id("rem");
       createdReminderIds.push(promiseReminderId);
       await tx.insert(reminders).values({
         id: promiseReminderId,
@@ -937,7 +940,8 @@ export async function getFollowUpPanel(
       disputed: b.disputed,
     })),
     promises: attempts
-      .filter((a) => a.promisedDate && a.promisedAmount)
+      // A cancelled promise no longer stands, so it is not offered as one.
+      .filter((a) => a.promisedDate && a.promisedAmount && !a.promiseCancelledAt)
       .slice(0, 5)
       .map((a) => ({
         amount: Number(a.promisedAmount),

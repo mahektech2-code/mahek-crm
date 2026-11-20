@@ -219,3 +219,11 @@ before that the second check of every such TO was refused at the insert.
 
 The handset's screens arrive with an APK release; an older build shows the TO
 number as the order's number.
+
+**REOPENING A DELIVERY WITHDRAWS THE "DELIVERED" MESSAGE NOBODY SENT.**
+`reopen` (Logistics) sets every `delivered` row in `erp_transport_messages` for
+that bill still `to_send` or `failed` to `skipped`, in the same transaction,
+with "Withdrawn — the delivery was reopened by …: <reason>" as its `why`. It is
+never deleted, and a message already sent is kept (the customer is not told of
+the reopening). A message that spoke for several bills goes with it: it would
+say all of them arrived. The `erp-delivery-reopen` impact says so before.

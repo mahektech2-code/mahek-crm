@@ -7,7 +7,8 @@ import { getConfig } from "@/lib/config/store";
 import { billSize, conversionFor, frequency, type Conversion } from "@/lib/engines/owner-kpis";
 import { orderCountsSql } from "@/lib/order-status";
 import { CREDIT_SEAT_LABELS, CREDITED_TO_SEAT_SQL, CREDITED_TO_SQL, creditedToSql, type CreditSeat } from "@/lib/sales-attribution";
-import { approveOrderAction, declineOrderAction } from "@/lib/actions/orders";
+import { approveOrderAction } from "@/lib/actions/orders";
+import { declineOrder } from "@/lib/services/order-approval-service";
 import { orderLines, pendingOrders, type PendingOrder } from "@/lib/services/order-approval-service";
 import { leadsCreatedIn, salesFigures } from "@/lib/services/owner-dashboard-service";
 import { loadCatalogue, orderLinesOf } from "@/lib/services/performance-service";
@@ -1065,7 +1066,10 @@ export const provider: SectionProvider = {
         if (reason.length > 1000) {
           return { ok: false, error: "That reason is too long.", fieldErrors: { reason: "Keep it under 1,000 characters." } };
         }
-        const r = await declineOrderAction(id, reason);
+        /* The service, not the Accounts action: the action now asks for the
+           impact modal's confirmation, which HQ's row acts do not draw. HQ's
+           own reason form and confirm stand in front of this. */
+        const r = await declineOrder(id, reason);
         return fromOwning(r.ok ? { ok: true } : r, `Declined · ${subject}`);
       }
       return { ok: false, error: "That action is not offered on an order." };

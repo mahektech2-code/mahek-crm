@@ -12,6 +12,7 @@ import {
   Input,
   MetricStrip,
   PageHeader,
+  Select,
   cx,
 } from "@/components/ui/primitives";
 import { Modal, RowMenu, Tabs } from "@/components/ui/overlays";
@@ -26,6 +27,7 @@ import {
   cancelReminder,
   completeReminder,
   createReminder,
+  editReminderAction,
   holdOtherReasonsUntilReminder,
   rescheduleReminder,
 } from "@/lib/actions/crm";
@@ -131,6 +133,7 @@ export function RemindersScreen({
   const [tab, setTab] = React.useState<Tab>("due");
   const [newOpen, setNewOpen] = React.useState(false);
   const [rescheduling, setRescheduling] = React.useState<Row | null>(null);
+  const [editing, setEditing] = React.useState<Row | null>(null);
   const [dismissing, setDismissing] = React.useState<Row | null>(null);
   /* The reason first, then the impact modal: the day it leaves on the Call
      Log, and any order chasing it was holding back. Keyed per opening. */
@@ -433,6 +436,10 @@ export function RemindersScreen({
                             ]
                           : []),
                         {
+                          label: "Edit note or kind",
+                          onSelect: () => setEditing(r),
+                        },
+                        {
                           label: "Reschedule",
                           onSelect: () => setRescheduling(r),
                         },
@@ -531,6 +538,19 @@ export function RemindersScreen({
           );
           if (result.ok) {
             setNewOpen(false);
+            router.refresh();
+          }
+        }}
+      />
+
+      <EditReminderModal
+        reminder={editing}
+        onClose={() => setEditing(null)}
+        onSubmit={async (note, type) => {
+          if (!editing) return;
+          const result = await run(editReminderAction({ reminderId: editing.id, note, type }));
+          if (result.ok) {
+            setEditing(null);
             router.refresh();
           }
         }}
@@ -745,6 +765,112 @@ type RescheduleProps = {
 function RescheduleModal(props: RescheduleProps) {
   if (!props.reminder) return null;
   return <RescheduleModalBody key={props.reminder.id} {...props} />;
+}
+
+/** The kinds a person may file a reminder under — the server's own list. */
+const EDITABLE_TYPES = ["call_back", "order_confirmation", "send_information", "check_stock", "other"];
+
+type EditReminderProps = {
+  reminder: Row | null;
+  onClose: () => void;
+  onSubmit: (note: string, type: string) => Promise<void>;
+};
+
+function EditReminderModal(props: EditReminderProps) {
+  if (!props.reminder) return null;
+  return <EditReminderModalBody key={props.reminder.id} {...props} />;
+}
+
+/**
+ * The note and the kind, never the date — moving the date is rescheduling,
+ * which is counted, and a corrected typo must not read as another push back.
+ * A reminder the system set to chase a promise keeps its kind.
+ */
+function EditReminderModalBody({ reminder, onClose, onSubmit }: EditReminderProps) {
+  const r = reminder!;
+  const lockedKind = r.systemGenerated || r.type === "payment_promise";
+  const [note, setNote] = React.useState(r.note);
+  const [type, setType] = React.useState(r.type);
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState(false);
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Edit reminder"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            disabled={busy}
+            onClick={async () => {
+              if (!note.trim()) {
+                setError(true);
+                return;
+              }
+              setBusy(true);
+              try {
+                await onSubmit(note, type);
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Save changes
+          </Button>
+        </>
+      }
+    >
+      <div className="mb-3 text-sm text-muted">
+        {r.customerName} · due {shortDate(r.dueDate)}
+      </div>
+      <Field
+        label="Kind"
+        hint={
+          lockedKind
+            ? "Set by the system to chase a promise, so its kind stays."
+            : "To change the day, use Reschedule."
+        }
+      >
+        <Select
+          value={type}
+          disabled={lockedKind}
+          title={lockedKind ? "Set by the system to chase a promise, so its kind stays" : undefined}
+          onChange={(e) => setType(e.target.value as Row["type"])}
+        >
+          {(lockedKind ? [r.type] : EDITABLE_TYPES).map((k) => (
+            <option key={k} value={k}>
+              {(TYPE_LABEL[k] ?? k).replace(/^./, (c) => c.toUpperCase())}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      <Field
+        label="Note"
+        required
+        className="mt-3"
+        error={error ? "A reminder needs a note — what was promised." : null}
+      >
+        <VoiceTextarea
+          value={note}
+          onChange={(e) => {
+            setNote(e.target.value);
+            setError(false);
+          }}
+          onDictate={(v) => {
+            setNote(v);
+            setError(false);
+          }}
+          invalid={error}
+          className="h-20"
+        />
+      </Field>
+    </Modal>
+  );
 }
 
 function RescheduleModalBody({ reminder, onClose, onSubmit }: RescheduleProps) {

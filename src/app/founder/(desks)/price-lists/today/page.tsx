@@ -4,7 +4,7 @@ import { today } from "@/lib/recompute";
 import { priceDeskToday } from "@/lib/services/price-today-service";
 import { TodayScreen } from "@/components/pricing/today/today-screen";
 
-export const metadata = { title: "Price Desk · Today — Founder Command Centre — MahekOne" };
+export const metadata = { title: "Price Desk · Today — HQ — MahekOne" };
 
 /**
  * What needs the Price Desk this morning. `today()` is read here and handed

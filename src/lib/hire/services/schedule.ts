@@ -1,13 +1,14 @@
 import "server-only";
-import { eq, sql } from "drizzle-orm";
-import { addDays } from "@/lib/format";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { sendMail } from "@/lib/mailer";
+import { addDays, stamp } from "@/lib/format";
 import { db } from "@/db";
 import { hireApplications, hireStageExecutions } from "@/db/schema";
 import { notifyUsers } from "@/lib/notify";
 import { err, ok, type Result } from "@/lib/result";
-import { isScored } from "../blueprint-types";
+import { isScored, stageByKey } from "../blueprint-types";
 import { scopeWhere, type HireContext } from "../access";
-import { hireTrail, ensureExecution, type AppBundle } from "./core";
+import { hireTrail, ensureExecution, recordMessage, type AppBundle } from "./core";
 
 /* ---------------------------------------------------------------------------
  * Interviews on a calendar. Times are proposed by a plain rule — the first
@@ -128,6 +129,73 @@ export async function bookInterview(
   return ok(undefined, `${stage.name} booked for ${when}.`);
 }
 
+/** How the candidate was told a cancellation: emailed from here, told by the person themself, or not yet. */
+export type CancelTell = "email" | "whatsapp" | "sms" | "phone" | "none";
+
+/**
+ * CANCELLING A BOOKED INTERVIEW. Hire is append-only, so nothing is deleted:
+ * the stage's execution goes back to `not_started` with no time (so the
+ * candidate is on "To schedule" again and off the interviewer's list), and the
+ * trail keeps the booking as it stood with the reason. The interviewer is told
+ * on their bell. The candidate is told the way every Hire message is recorded
+ * — an email sent from here, or a WhatsApp, SMS or call the person confirms
+ * they made, on the Communication tab — and never while marked do-not-contact.
+ * Only a booking that has not started can be cancelled.
+ */
+export async function cancelBooking(
+  ctx: HireContext,
+  b: AppBundle,
+  execId: string,
+  input: { reason: string; tell: CancelTell; message: string },
+): Promise<Result> {
+  const reason = input.reason.trim();
+  if (reason.length < 10) return { ok: false, error: "Say why it is cancelled — at least 10 characters, kept on the record.", code: "validation", fieldErrors: [{ field: "reason", message: "At least 10 characters" }] };
+  if (!["email", "whatsapp", "sms", "phone", "none"].includes(input.tell)) return err("Choose how the candidate is told.", "validation");
+  const message = input.message.trim();
+  if (input.tell !== "none" && message.length < 10) return { ok: false, error: "Write the message the candidate is sent.", code: "validation", fieldErrors: [{ field: "message", message: "Required" }] };
+  if (input.tell !== "none" && b.candidate.doNotContact) return err(`${b.candidate.fullName} is marked do-not-contact${b.candidate.dncReason ? `: ${b.candidate.dncReason}` : ""}. Cancel without messaging them.`, "rule_violation");
+  if (input.tell === "email" && !b.candidate.email) return err("There is no email address on this candidate.", "validation");
+
+  const [exec] = await db.select().from(hireStageExecutions).where(eq(hireStageExecutions.id, execId)).limit(1);
+  if (!exec || exec.applicationId !== b.app.id || exec.supersededById) return err("That interview is not on your list.", "not_found");
+  if (exec.status !== "scheduled" || !exec.scheduledAt) return err(exec.status === "in_progress" || exec.status === "completed" ? "That interview has already started." : "That interview is not booked.", "rule_violation");
+
+  const stageName = b.def.stages.find((s) => s.key === exec.stageKey)?.name ?? exec.stageKey;
+  const when = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false }).format(exec.scheduledAt);
+  const before = { status: exec.status, scheduledAt: exec.scheduledAt.toISOString(), scheduledMinutes: exec.scheduledMinutes, place: exec.place, modality: exec.modality, conductedById: exec.conductedById };
+  const moved = await db
+    .update(hireStageExecutions)
+    .set({ status: "not_started", scheduledAt: null, scheduledMinutes: null, place: null, modality: null, conductedById: null, updatedAt: new Date(), updatedById: ctx.user.id })
+    .where(and(eq(hireStageExecutions.id, execId), eq(hireStageExecutions.status, "scheduled")))
+    .returning({ id: hireStageExecutions.id });
+  if (!moved.length) return err("That interview changed while you were cancelling it — reload.", "conflict");
+  await hireTrail(ctx, {
+    applicationId: b.app.id,
+    candidateId: b.candidate.id,
+    entityType: "stage",
+    entityId: execId,
+    event: "interview_cancelled",
+    summary: `${stageName} on ${when} IST cancelled · ${reason}`,
+    before,
+    after: { status: "not_started", reason, candidateTold: input.tell },
+  });
+
+  let told = "";
+  if (input.tell === "email") {
+    const r = await sendMail({ to: b.candidate.email!, subject: `Your ${stageName} interview`, text: message });
+    const status = r.delivered ? "sent" : r.reason === "not_configured" ? "not_sent" : "failed";
+    await recordMessage(ctx, { candidateId: b.candidate.id, applicationId: b.app.id, direction: "out", channel: "email", subject: `Your ${stageName} interview`, body: message, status });
+    told = r.delivered ? " The candidate was emailed." : " The email could not be sent — the Communication tab says so; tell them another way.";
+  } else if (input.tell !== "none") {
+    await recordMessage(ctx, { candidateId: b.candidate.id, applicationId: b.app.id, direction: "out", channel: input.tell, body: message, status: "logged" });
+    told = " Recorded on their Communication tab.";
+  } else told = " The candidate has not been told yet.";
+
+  if (exec.conductedById && exec.conductedById !== ctx.user.id)
+    await notifyUsers([{ userId: exec.conductedById, title: `Interview cancelled: ${b.candidate.fullName}`, body: `${stageName} · ${b.blueprint.title} · ${when} IST · ${reason}`, href: `/hire/calendar`, kind: "info" }]);
+  return ok(undefined, `${stageName} on ${when} cancelled.${told}`);
+}
+
 export type CalEvent = {
   execId: string;
   applicationId: string;
@@ -140,6 +208,9 @@ export type CalEvent = {
   place: string | null;
   status: string;
   mine: boolean;
+  /** Whether the candidate can be emailed from here, and whether they may be messaged at all. */
+  hasEmail: boolean;
+  doNotContact: boolean;
 };
 
 /** Interviews booked in a week (Mon–Sat), in this person's scope. */
@@ -148,7 +219,7 @@ export async function weekEvents(ctx: HireContext, monday: string): Promise<CalE
   const to = istAt(addYmd(monday, 7), 0).toISOString();
   const rows = (await db.execute(sql`
     select x.id, x.application_id, c.full_name, b.title, b.definition, x.stage_key, x.scheduled_at, coalesce(x.scheduled_minutes, 45) as minutes,
-           u.name as interviewer, x.place, x.status, x.conducted_by_id
+           u.name as interviewer, x.place, x.status, x.conducted_by_id, c.email, c.do_not_contact
     from hire_stage_executions x
     join hire_applications a on a.id = x.application_id
     join hire_candidates c on c.id = a.candidate_id
@@ -172,6 +243,8 @@ export async function weekEvents(ctx: HireContext, monday: string): Promise<CalE
       place: (r.place as string) ?? null,
       status: String(r.status),
       mine: r.conducted_by_id === ctx.user.id,
+      hasEmail: !!r.email,
+      doNotContact: r.do_not_contact === true,
     };
   });
 }
@@ -214,4 +287,65 @@ export async function hireStaff(): Promise<{ id: string; name: string; role: str
     left join hire_user_roles r on r.user_id = u.id
     where u.active is not false order by u.name`)) as unknown as { id: string; name: string; role: string | null }[];
   return rows.map((r) => ({ id: String(r.id), name: String(r.name), role: r.role ?? null }));
+}
+
+/* ------------------------------------------------- a withdrawal's interviews */
+
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+export type CancelledInterview = { id: string; stageKey: string; conductedById: string | null; scheduledAt: Date | null };
+
+/**
+ * A WITHDRAWN CANDIDATE'S BOOKED INTERVIEWS COME OFF THE CALENDAR, inside the
+ * withdrawal's own transaction. Each live run still `scheduled` or
+ * `in_progress` becomes `skipped` — the stage's "not run"; the status check has
+ * no other word for it, and nothing else writes it — with outcome not
+ * applicable and a trail line. Answers already recorded stay on it. The bell
+ * to each interviewer goes after the commit (`tellInterviewersCancelled`).
+ */
+export async function cancelBookedInterviews(ctx: HireContext, b: AppBundle, tx: Tx): Promise<CancelledInterview[]> {
+  const now = new Date();
+  const rows = await tx
+    .update(hireStageExecutions)
+    .set({ status: "skipped", outcome: "not_applicable", updatedAt: now, updatedById: ctx.user.id })
+    .where(
+      and(
+        eq(hireStageExecutions.applicationId, b.app.id),
+        isNull(hireStageExecutions.supersededById),
+        inArray(hireStageExecutions.status, ["scheduled", "in_progress"]),
+      ),
+    )
+    .returning({ id: hireStageExecutions.id, stageKey: hireStageExecutions.stageKey, conductedById: hireStageExecutions.conductedById, scheduledAt: hireStageExecutions.scheduledAt });
+  for (const x of rows) {
+    const stage = stageByKey(b.def, x.stageKey)?.name ?? x.stageKey;
+    await hireTrail(
+      ctx,
+      {
+        applicationId: b.app.id,
+        candidateId: b.candidate.id,
+        entityType: "execution",
+        entityId: x.id,
+        event: "interview_cancelled",
+        summary: `${stage}${x.scheduledAt ? ` on ${stamp(x.scheduledAt)}` : ""} cancelled — the candidate was withdrawn`,
+        before: { status: "booked" },
+        after: { status: "skipped" },
+      },
+      tx,
+    );
+  }
+  return rows;
+}
+
+/** One bell per interviewer whose interview a withdrawal cancelled — never to the person who withdrew. */
+export async function tellInterviewersCancelled(ctx: HireContext, b: AppBundle, rows: CancelledInterview[]): Promise<void> {
+  const told = [...new Set(rows.map((x) => x.conductedById).filter((u): u is string => !!u && u !== ctx.user.id))];
+  if (!told.length) return;
+  await notifyUsers(
+    told.map((userId) => ({
+      userId,
+      title: `Interview cancelled: ${b.candidate.fullName}`,
+      body: `${b.blueprint.title} · the candidate was withdrawn, so the interview is off your calendar.`,
+      href: "/hire/calendar",
+      kind: "info" as const,
+    })),
+  );
 }

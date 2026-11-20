@@ -7,6 +7,7 @@ import {
   PRIORITY_LABEL,
   STAGE_LABEL,
   categoryLabel,
+  isTerminalStage,
   leadConvertibility,
   reminderTypeLabel,
   sourceFormLabel,
@@ -52,7 +53,7 @@ import type { ActSpec, Bar, Cell, FigureDrawer, Metric, RecordView, Row, TableDe
 
 const TZ = "Asia/Kolkata";
 const WS = sql`e.workspace = 'enquiries'`;
-const CONTACT_KINDS = sql.raw(`('stage_changed','note','reminder_created','customer_linked','lead_created','order_linked')`);
+const CONTACT_KINDS = sql.raw(`('stage_changed','note','note_edited','note_deleted','details_corrected','marked_spam','reminder_created','customer_linked','lead_created','order_linked')`);
 
 const n = (v: unknown) => Number(v ?? 0);
 
@@ -161,6 +162,7 @@ const STATE_TONE: Record<EnquiryStage, Tone> = {
   qualified: "good",
   converted: "good",
   closed: "muted",
+  spam: "muted",
 };
 
 type EnqRow = {
@@ -191,7 +193,7 @@ function toRow(r: EnqRow): Row {
   const state: Cell = !r.assigned_id
     ? { t: "Unassigned", pill: "bad", sub: STAGE_LABEL[r.stage] === "New" ? undefined : STAGE_LABEL[r.stage] }
     : { t: STAGE_LABEL[r.stage] ?? r.stage, pill: STATE_TONE[r.stage] ?? "muted", sub: r.assigned ?? undefined };
-  const terminal = r.stage === "converted" || r.stage === "closed";
+  const terminal = isTerminalStage(r.stage);
   const acts: string[] = [];
   if (!terminal) acts.push("assign");
   if (!terminal && !r.customer_id && leadConvertibility({ source: r.source, sourceForm: r.source_form, category: r.category }).ok) {
@@ -226,7 +228,7 @@ async function everyPage(query: TableQuery): Promise<TablePage> {
   const pages = Math.max(1, Math.ceil(matched / query.size));
   const page = Math.min(query.page, pages);
   const rows = await db.execute<EnqRow>(sql`
-    select e.id, e.raw_submission as raw, e.source, e.source_form, e.category, e.stage::text as stage,
+    select e.id, (e.raw_submission || coalesce(e.corrections, '{}'::jsonb)) as raw, e.source, e.source_form, e.category, e.stage::text as stage,
            u.name as assigned, e.assigned_to_id as assigned_id,
            to_char(e.received_at at time zone ${TZ}, 'FMDD Mon, HH24:MI') as received,
            e.customer_id, c.name as customer_name
@@ -256,7 +258,7 @@ async function headline(ctx: Ctx) {
     `),
     db.execute<{ n: number; oldest: string | null }>(sql`
       select count(*)::int as n, min(e.received_at) as oldest
-        from enquiries e where ${WS} and e.assigned_to_id is null
+        from enquiries e where ${WS} and e.assigned_to_id is null and e.stage::text <> 'spam'
     `),
     db.execute<{ median: string | null; worked: number }>(sql`
       select percentile_cont(0.5) within group (order by t.h) as median, count(*)::int as worked
@@ -330,7 +332,7 @@ const DEFS: Record<string, string> = {
 
 async function enquiryRecord(id: string): Promise<RecordView> {
   const [r] = await db.execute<Record<string, unknown>>(sql`
-    select e.id, e.raw_submission as raw, e.source, e.source_form, e.category, e.stage::text as stage,
+    select e.id, (e.raw_submission || coalesce(e.corrections, '{}'::jsonb)) as raw, e.source, e.source_form, e.category, e.stage::text as stage,
            e.priority::text as priority, e.received_at, e.external_ref, e.assigned_to_id,
            u.name as assigned, e.customer_id, c.name as customer_name, c.kind::text as customer_kind,
            c.city as customer_city, ou.name as customer_owner
@@ -369,8 +371,7 @@ async function enquiryRecord(id: string): Promise<RecordView> {
   const pending = reminders.filter((x) => x.status === "pending");
   const convertible =
     !s("customer_id") &&
-    stage !== "converted" &&
-    stage !== "closed" &&
+    !isTerminalStage(stage) &&
     leadConvertibility({ source: s("source")!, sourceForm: s("source_form"), category: s("category") }).ok;
 
   const fields = [
@@ -412,7 +413,7 @@ async function enquiryRecord(id: string): Promise<RecordView> {
   ];
 
   const acts: ActSpec[] = [];
-  if (stage !== "converted" && stage !== "closed") acts.push(ASSIGN);
+  if (!isTerminalStage(stage)) acts.push(ASSIGN);
   if (convertible) acts.push(MAKE_LEAD);
 
   return {
@@ -513,7 +514,7 @@ export const provider: SectionProvider = {
       metric === "reply"
         ? Promise.resolve([] as EnqRow[])
         : db.execute<EnqRow>(sql`
-            select e.id, e.raw_submission as raw, e.source, e.source_form, e.category, e.stage::text as stage,
+            select e.id, (e.raw_submission || coalesce(e.corrections, '{}'::jsonb)) as raw, e.source, e.source_form, e.category, e.stage::text as stage,
                    u.name as assigned, e.assigned_to_id as assigned_id,
                    to_char(e.received_at at time zone ${TZ}, 'FMDD Mon, HH24:MI') as received,
                    e.customer_id, c.name as customer_name
@@ -562,7 +563,7 @@ export const provider: SectionProvider = {
     if (table !== "every") return { ok: false, error: "That action is not offered here." };
     try {
       const [e] = await db.execute<{ raw: Record<string, unknown>; customer_id: string | null; person: string | null }>(sql`
-        select e.raw_submission as raw, e.customer_id,
+        select (e.raw_submission || coalesce(e.corrections, '{}'::jsonb)) as raw, e.customer_id,
                (select name from users where users.id = ${String(input.person ?? "")}) as person
           from enquiries e where e.id = ${id} and ${WS}
       `);

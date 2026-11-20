@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button, Field, Input, Progress, Textarea, cx } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/modal";
+import { ReasonImpactDialog } from "@/components/ui/reason-impact-dialog";
 import { RowMenu, type MenuItem } from "@/components/ui/overlays";
 import { CardGrid } from "@/components/ui/card-grid";
 import { useToast } from "@/components/ui/toast";
@@ -343,43 +344,23 @@ function HoldDialog({ row, onClose }: { row: ApprovalBoardRow; onClose: () => vo
   );
 }
 
+/** The reason first, then what declining it touches — the buying cycle, the taker's bell, the ERP lines. */
 function DeclineDialog({ row, onClose }: { row: ApprovalBoardRow; onClose: () => void }) {
   const router = useRouter();
-  const { run } = useToast();
-  const [reason, setReason] = React.useState("");
-  const [busy, setBusy] = React.useState(false);
+  const { push } = useToast();
   return (
-    <Modal
-      open
-      onClose={onClose}
+    <ReasonImpactDialog
+      kind="accounts-order-decline"
+      id={row.orderId}
       title={`Decline order ${row.orderNo ?? ""}`.trim()}
-      footer={
-        <>
-          <Button onClick={onClose}>Keep it</Button>
-          <Button
-            variant="danger"
-            disabled={busy || !reason.trim()}
-            onClick={async () => {
-              setBusy(true);
-              try {
-                const res = await run(declineOrderAction(row.orderId, reason));
-                if (res.ok) {
-                  onClose();
-                  router.refresh();
-                }
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            Decline
-          </Button>
-        </>
-      }
-    >
-      <Field label="Why is it declined? Whoever took it is told." required>
-        <Textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)} />
-      </Field>
-    </Modal>
+      reasonLabel="Why is it declined? Whoever took it is told."
+      confirmLabel="Decline"
+      onClose={onClose}
+      onConfirm={(reason, confirmation) => declineOrderAction(row.orderId, reason, confirmation)}
+      onDone={(r) => {
+        if (r.message) push(r.message);
+        router.refresh();
+      }}
+    />
   );
 }

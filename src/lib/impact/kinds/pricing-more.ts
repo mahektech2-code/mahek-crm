@@ -222,9 +222,10 @@ export const priceDocumentImpact: ImpactSource = {
     items.push({
       app: ACCOUNTS,
       label: "the uploaded file",
-      effect: "kept",
-      count: 0,
-      note: "The bytes stay in storage. Uploading the same file again reads it afresh, as a new document.",
+      effect: "deleted",
+      count: 1,
+      examples: [doc.filename],
+      note: "It is taken off and its bytes freed on the next tidy-up. Uploading the same file again reads it afresh, as a new document.",
     });
 
     const blockers: string[] = [];
