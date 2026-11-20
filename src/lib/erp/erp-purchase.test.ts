@@ -1425,4 +1425,25 @@ describe("voiding a mistaken goods inward line", () => {
     assert.match((await impact("erp-inward-void", line.id)).report.blockers[0] ?? "", /moved to another godown/);
     assert.equal((await db.select().from(erpInward).where(eq(erpInward.id, line.id))).length, 1, "nothing was taken");
   });
+
+  test("Register offers the same Void line on the lot, naming the GRN line it came from", async () => {
+    const ctx = await as(admin);
+    const a = await approvedPo("Asian Solvents", [{ item: "1 L Tin Can", quantity: 50, ratePaise: 8950 }]);
+    assert.ok((await grn(ctx, a.po, { poLine: a.lines["1 L Tin Can"], qty: "50" })).ok);
+    const line = await lineOf(a.poId);
+    const [lot] = await db.select().from(erpPurchases).where(eq(erpPurchases.inwardId, line.id));
+    const row = (await mod("register").load(ctx, { pd: "all", window: { from: null, to: null }, ids: [lot.id], open: null })).rows.find((x) => x.id === lot.id);
+    const act = row?.actions?.find((x) => x.id === "void");
+    assert.deepEqual(act?.impact, { kind: "erp-inward-void", id: line.id }, "the modal is asked about the GRN line");
+    assert.equal(act?.why, "");
+
+    const { values } = await impact("erp-inward-void", line.id);
+    assert.equal((await mod("register").actions!.void(await as(clerk), lot.id, { ...reason, ...values })).ok, false, "a clerk without stock control");
+    const unconfirmed = await mod("register").actions!.void(ctx, lot.id, reason);
+    assert.equal(unconfirmed.ok ? "ok" : unconfirmed.error, UNCONFIRMED);
+    const done = await mod("register").actions!.void(ctx, lot.id, { ...reason, ...values });
+    assert.ok(done.ok, JSON.stringify(done));
+    assert.equal((await db.select().from(erpInward).where(eq(erpInward.id, line.id))).length, 0);
+    assert.equal((await db.select().from(erpPurchases).where(eq(erpPurchases.id, lot.id))).length, 0);
+  });
 });

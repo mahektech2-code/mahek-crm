@@ -317,3 +317,76 @@ describe("a count cancelled says what it lets go of", () => {
     assert.equal((await stage(req.id)).stage, "Create PO", "the requirement never waited on it");
   });
 });
+
+describe("what is listed is changed where it is listed", () => {
+  test("Every count cancels an open count, behind the same modal and the same power", async () => {
+    await db.insert(erpRawMaterials).values({ id: "rm_ipa", serialNo: 60, name: "IPA", code: "IPA", unit: "Litre", materialType: "Chemical", purchaseMethod: "direct", preferredSupplierId: "sup_a" });
+    await stock("rm_ipa", "AS-IPA-1", 50);
+    await ask(controller, "rm_ipa");
+    const count = await rootCount("rm_ipa");
+    const row = (await mod("stockCounts").load(await as(controller))).rows.find((r) => r.id === count.id);
+    const act = row?.actions?.find((a) => a.id === "cancel");
+    assert.deepEqual(act?.impact, { kind: "erp-stock-count", id: count.id });
+    assert.equal(act?.why, "");
+    const storeRow = (await mod("stockCounts").load(await as(store1))).rows.find((r) => r.id === count.id);
+    assert.ok(storeRow?.actions?.find((a) => a.id === "cancel")?.why, "a store hand sees why not");
+    const why = { reason: "Opened for the wrong item" };
+    assert.equal((await mod("stockCounts").actions!.cancel(await as(store1), count.id, why)).ok, false, "a store hand does not cancel");
+    const bare = await mod("stockCounts").actions!.cancel(await as(controller), count.id, why);
+    assert.ok(!bare.ok && /Check what this affects/.test(bare.error), "the bare act is refused");
+    setTestUser(controller);
+    const report = await impactReport("erp-stock-count", count.id);
+    assert.ok(report.ok);
+    const done = await mod("stockCounts").actions!.cancel(await as(controller), count.id, { ...why, [IMPACT_FIELD]: JSON.stringify({ typed: report.data.confirmWord, fingerprint: report.data.fingerprint }) });
+    assert.ok(done.ok, done.ok ? "" : done.error);
+    assert.equal((await db.select().from(erpStockCounts).where(eq(erpStockCounts.id, count.id)))[0].status, "cancelled");
+  });
+
+  test("a stock check is corrected or deleted by whoever checked it until it is reviewed", async () => {
+    const { recordFloorCheck } = await import("@/lib/erp/floor-checks");
+    const made = await recordFloorCheck(store1.id, { stage: "rm", itemId: "rm_ipa", godownId: BHW, qty: 40, source: "erp" });
+    assert.ok(made.ok && !made.check.matched);
+    const screen = mod("floorChecks");
+    const row = (await screen.load(await as(store1))).rows.find((r) => r.id === made.check.id);
+    assert.deepEqual(row?.actions?.filter((a) => a.id === "edit" || a.id === "delete").map((a) => [a.id, a.why]), [["edit", ""], ["delete", ""]]);
+
+    assert.equal((await screen.actions!.edit(await as(store2), made.check.id, { qty: "50" })).ok, false, "somebody else's check");
+    const fixed = await screen.actions!.edit(await as(store1), made.check.id, { qty: "50", bin: "Rack 3", reason: "" });
+    assert.ok(fixed.ok, fixed.ok ? "" : fixed.error);
+    assert.match(fixed.message ?? "", /Matches the book/);
+    const [after] = (await db.execute(sql`select counted_qty::float8 as q, matched, bin from erp_floor_checks where id = ${made.check.id}`)) as unknown as { q: number; matched: boolean; bin: string }[];
+    assert.deepEqual([after.q, after.matched, after.bin], [50, true, "Rack 3"]);
+
+    assert.equal((await screen.actions!.delete(await as(store2), made.check.id, {})).ok, false, "somebody else's check");
+    assert.ok((await screen.actions!.delete(await as(controller), made.check.id, {})).ok, "stock control may remove it");
+    assert.equal(((await db.execute(sql`select 1 from erp_floor_checks where id = ${made.check.id}`)) as unknown as unknown[]).length, 0);
+
+    const other = await recordFloorCheck(store1.id, { stage: "rm", itemId: "rm_ipa", godownId: BHW, qty: 10, source: "erp" });
+    assert.ok(other.ok);
+    assert.ok((await screen.actions!.review(await as(controller), other.check.id, { note: "seen" })).ok);
+    assert.equal((await screen.actions!.edit(await as(store1), other.check.id, { qty: "50" })).ok, false, "a reviewed check stays");
+    assert.equal((await screen.actions!.delete(await as(store1), other.check.id, {})).ok, false, "a reviewed check stays");
+    const audit = (await db.execute(sql`select action from audit_log where entity_id = ${made.check.id} order by at`)) as unknown as { action: string }[];
+    assert.deepEqual(audit.map((a) => a.action), ["erp.floorCheck.edit", "erp.floorCheck.delete"]);
+  });
+
+  test("whoever asked for an adjustment withdraws it while it is pending; nobody else does", async () => {
+    await ask(controller, "rm_ace");
+    const count = await rootCount("rm_ace");
+    const adjId = id("adj");
+    await db.insert(erpStockAdjustments).values({ id: adjId, countId: count.id, rawMaterialId: "rm_ace", godownId: BHW, quantity: -5, reasonCode: "spillage", reason: "Spilt while decanting", requestedById: store1.id });
+    const rows = (await mod("stockAdjustments").load(await as(store1))).rows;
+    assert.ok(rows.find((r) => r.id === adjId)?.actions?.some((a) => a.id === "withdraw"));
+    assert.ok(!(await mod("stockAdjustments").load(await as(controller))).rows.find((r) => r.id === adjId)?.actions?.some((a) => a.id === "withdraw"), "only the requester is offered it");
+    const theirs = await mod("stockAdjustments").actions!.withdraw(await as(controller), adjId, {});
+    assert.equal(theirs.ok ? "ok" : theirs.code, "not_permitted");
+    const done = await mod("stockAdjustments").actions!.withdraw(await as(store1), adjId, { note: "Wrong figure" });
+    assert.ok(done.ok, done.ok ? "" : done.error);
+    const [a] = await db.select().from(erpStockAdjustments).where(eq(erpStockAdjustments.id, adjId));
+    assert.equal(a.status, "withdrawn");
+    assert.equal((await mod("stockAdjustments").load(await as(store1))).rows.find((r) => r.id === adjId)?.v.status, "Withdrawn");
+    const again = await mod("stockAdjustments").actions!.withdraw(await as(store1), adjId, {});
+    assert.equal(again.ok ? "ok" : again.code, "conflict");
+    assert.equal((await mod("stockAdjustments").actions!.approve(await as(controller), adjId, {})).ok, false, "a withdrawn adjustment is not approved");
+  });
+});

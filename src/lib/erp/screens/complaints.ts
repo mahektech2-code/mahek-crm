@@ -252,6 +252,50 @@ function editRefusal(ctx: ErpContext, c: typeof complaints.$inferSelect, fromRet
   return "";
 }
 
+/**
+ * WITHDRAWING: the raiser takes back a request nobody has decided yet — raised
+ * on the wrong bill, or the customer changed their mind. It is CLOSED, not
+ * deleted: the CRM record shows it was raised and taken back, and the office
+ * sees why. There is no "withdrawn" complaint status (the CRM's enum), so the
+ * word is read from the closing note this writes, and only here.
+ */
+export const WITHDRAWN_NOTE = "Withdrawn by ";
+const isWithdrawn = (c: { status: string; resolutionNotes: string | null }) => c.status === "closed" && !!c.resolutionNotes?.startsWith(WITHDRAWN_NOTE);
+
+function withdrawRefusal(ctx: ErpContext, c: typeof complaints.$inferSelect, fromReturn: boolean): string {
+  if (c.category !== ERP_COMPLAINT_CATEGORY) return NOT_ERP;
+  if (c.loggedByUserId !== ctx.user.id) return "Only whoever raised it withdraws a request";
+  if (requestStatus(c) !== "Requested" || c.cnStatus === "issued") return "It has been decided — the office rejects it now";
+  if (fromReturn) return "A customer return raised it — change the return instead";
+  return "";
+}
+
+async function withdraw(ctx: ErpContext, id: string, values: Record<string, string>): Promise<Result<unknown>> {
+  const reason = text(values.reason);
+  if (!reason) return fieldErr("reason", "Say why it is withdrawn — the office reads it");
+  const [c] = await db.select().from(complaints).where(eq(complaints.id, id));
+  if (!c) return err("That complaint no longer exists.", "not_found");
+  const why = withdrawRefusal(ctx, c, (await raisedByReturns([id])).has(id));
+  if (why) return err(`${why}.`, c.loggedByUserId !== ctx.user.id ? "not_permitted" : "rule_violation");
+  await db.transaction(async (tx) => {
+    await tx
+      .update(complaints)
+      .set({
+        status: "closed",
+        cnStatus: c.requestCn ? "rejected" : c.cnStatus,
+        resolvedAt: new Date(),
+        resolvedById: ctx.user.id,
+        resolutionNotes: `${WITHDRAWN_NOTE}${ctx.user.name} — ${reason}`,
+        updatedAt: new Date(),
+        updatedById: ctx.user.id,
+      })
+      .where(eq(complaints.id, id));
+    await history(tx, id, c.status, "closed", ctx.user.id, `Withdrawn in the ERP by ${ctx.user.name}: ${reason}`);
+  });
+  await erpAudit(ctx, "erp.request.withdraw", "complaint", id, { status: c.status }, { status: "closed", reason });
+  return okVoid("Request withdrawn");
+}
+
 /** Complaints a customer return raised (`approveCredit` in screens/returns.ts). */
 async function raisedByReturns(ids: string[]): Promise<Set<string>> {
   if (!ids.length) return new Set();
@@ -377,9 +421,18 @@ async function assist(rows: Row[]): Promise<Map<string, ListRow["panel"]>> {
 function toRow(ctx: ErpContext, x: Row, files: Map<string, string[]>, canIssue: boolean, panel?: ListRow["panel"], ai?: { on: boolean; pending: boolean; summary?: string }, fromReturn = false): ListRow {
   const c = x.c;
   const word = requestStatus(c);
+  const shown = isWithdrawn(c) ? "Withdrawn" : word;
   const decider = ctx.powers.has("decideRequests");
   const why = decider ? "" : "Only an admin or the office decides a request";
   const actions: ActionSpec[] = [{ id: "edit", l: "Edit", loadsForm: true, why: editRefusal(ctx, c, fromReturn) }];
+  /* Offered to the raiser (the office has Reject); explained to anybody else only while it is still a request. */
+  if (word === "Requested" && (c.loggedByUserId === ctx.user.id || !decider))
+    actions.push({
+      id: "withdraw",
+      l: "Withdraw",
+      why: withdrawRefusal(ctx, c, fromReturn),
+      prompt: { title: `Withdraw the complaint from ${x.party}?`, sub: "It is closed, not deleted: the CRM record keeps it, marked withdrawn.", submit: "Withdraw", fields: [{ k: "reason", l: "Why is it withdrawn?", t: "area", req: true }] },
+    });
   if (word === "Requested") actions.push({ id: "accept", l: "Accept", primary: true, why });
   if (word === "Requested" || word === "Accepted") actions.push({ id: "reject", l: "Reject", why, confirm: `Reject the complaint from ${x.party}?` });
   if (word === "Accepted" && c.requestCn)
@@ -429,7 +482,7 @@ function toRow(ctx: ErpContext, x: Row, files: Map<string, string[]>, canIssue: 
     id: c.id,
     v: {
       raised: calendarDate(c.createdAt),
-      status: word,
+      status: shown,
       salesman: x.salesman ?? c.salesmanName ?? x.by,
       party: x.party,
       mobile: c.mobileNumber ?? x.phone,
@@ -558,6 +611,7 @@ function complaintList(scope: ComplaintScope): ScreenModule {
       aiComplaintReject: async (ctx, id) => (await import("../ai-complaints")).rejectComplaint(ctx, id),
       accept: (ctx, id) => decide(ctx, [id], "Accepted"),
       reject: (ctx, id) => decide(ctx, [id], "Rejected"),
+      withdraw: (ctx, id, values) => withdraw(ctx, id, values ?? {}),
       async issue(ctx, id, v) {
         const [c] = await db.select().from(complaints).where(eq(complaints.id, id));
         if (!c) return err("That complaint no longer exists.", "not_found");

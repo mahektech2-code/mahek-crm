@@ -14,7 +14,8 @@ import { categorySpec, PLAN_CATEGORIES, type PlanCategory } from "@/lib/erp/engi
 import { facetValues, type BoardFacet } from "@/lib/erp/engines/plan-board";
 import type { PlanBoardRow, PlanItem, PlanLineView, PlanSummary, PlanView } from "@/lib/erp/production-plan";
 import { BoardHeader, BoardTable, Pill } from "../_ui/board";
-import { erpPlanOpen, erpPlanPrintPicks, erpPlanSaveLine } from "@/lib/actions/erp-production-plan";
+import { erpPlanDeleteLine, erpPlanOpen, erpPlanPrintPicks, erpPlanSaveLine } from "@/lib/actions/erp-production-plan";
+import { RowMenu } from "@/components/ui/overlays";
 import { PageLinks } from "../_ui/page-head";
 import { labelClass, linkClass, popoverClass, toggleClass } from "../_ui/look";
 import { DialogBody, DialogFooter, DialogHeader, DialogTitle, ErpDialog } from "../_ui/dialog";
@@ -261,6 +262,8 @@ export function PlanEditor({ plan, board, items, readOnly, past }: { plan: PlanV
   const router = useRouter();
   const ui = useErpUi();
   const [adding, setAdding] = useState(false);
+  /* The typed line whose ⋯ → Edit line opened the dialog. */
+  const [editing, setEditing] = useState<PlanLineView | null>(null);
   const [edits, setEdits] = useState<Record<string, RowEdit>>(() => Object.fromEntries(board.map((r) => [r.key, { ticked: r.ticked, qty: String(r.qty), unit: r.unit }])));
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState<Partial<Record<Facet, string[]>>>({});
@@ -330,6 +333,26 @@ export function PlanEditor({ plan, board, items, readOnly, past }: { plan: PlanV
       </svg>
     </button>
   );
+
+  /* A row somebody typed (Add a line) is theirs to edit or take off; a row the orders put there is ticked or not, and changes when the orders do. */
+  const typedLine = (r: PlanBoardRow): PlanLineView | null => (r.key.startsWith("line:") && r.lineId ? (plan.lines.find((l) => l.id === r.lineId && l.source === "manual") ?? null) : null);
+  const forget = (key: string) =>
+    setEdits((all) => {
+      const next = { ...all };
+      delete next[key];
+      return next;
+    });
+  const removeLine = (r: PlanBoardRow, line: PlanLineView) =>
+    ui.confirm(`Remove ${r.name} (${nf(line.quantity)} ${UNIT_SHORT[line.unit] ?? line.unit}) from ${planName(plan.planNo)}?${line.state === "given" ? " The floor already has it on an earlier print." : ""}`, () =>
+      start(async () => {
+        const res = await erpPlanDeleteLine(line.id);
+        if (!res.ok) return ui.toast(res.error, "error");
+        forget(r.key);
+        ui.toast(res.message ?? "Line removed");
+        router.refresh();
+      }),
+    );
+  const showMenu = !past && !readOnly;
 
   const numberCell = (r: PlanBoardRow, n: number | null) => (n == null ? "—" : n === 0 ? "—" : `${nf(n)}${r.measure === "L" ? " L" : ""}`);
 
@@ -410,12 +433,13 @@ export function PlanEditor({ plan, board, items, readOnly, past }: { plan: PlanV
               <Th>If all approved{past ? null : funnel("verdict")}</Th>
               <Th align="right">Make today</Th>
               <Th>Unit{past ? null : funnel("unit")}</Th>
+              {showMenu ? <Th className="w-10" aria-label="Actions" /> : null}
             </tr>
           </thead>
           <tbody>
             {sections.flatMap((s) => [
               <Tr key={`s-${s.label}`}>
-                <Td colSpan={past ? 7 : 8} className={cx(labelClass, "bg-canvas py-1.5")}>
+                <Td colSpan={past ? 7 : showMenu ? 9 : 8} className={cx(labelClass, "bg-canvas py-1.5")}>
                   {s.label}
                 </Td>
               </Tr>,
@@ -483,13 +507,18 @@ export function PlanEditor({ plan, board, items, readOnly, past }: { plan: PlanV
                         e.unit
                       )}
                     </Td>
+                    {showMenu ? (
+                      <Td align="right">
+                        <LineMenu row={r} line={typedLine(r)} onEdit={setEditing} onRemove={removeLine} />
+                      </Td>
+                    ) : null}
                   </Tr>
                 );
               }),
             ])}
             {!sections.length ? (
               <Tr>
-                <Td colSpan={8} className="py-6 text-center text-muted">
+                <Td colSpan={showMenu ? 9 : 8} className="py-6 text-center text-muted">
                   Nothing matches.
                 </Td>
               </Tr>
@@ -519,7 +548,33 @@ export function PlanEditor({ plan, board, items, readOnly, past }: { plan: PlanV
       ) : null}
 
       {adding ? <LineDialog plan={plan} items={items} start={{ category: "loose", line: null }} onClose={() => setAdding(false)} onSaved={() => router.refresh()} /> : null}
+      {editing ? (
+        <LineDialog
+          key={editing.id}
+          plan={plan}
+          items={items}
+          start={{ category: editing.category as PlanCategory, line: editing }}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            forget(`line:${editing.id}`);
+            router.refresh();
+          }}
+        />
+      ) : null}
     </div>
+  );
+}
+
+/** A row's ⋯ menu. A row the orders put on the plan says why it has nothing to edit, rather than having no menu at all. */
+function LineMenu({ row, line, onEdit, onRemove }: { row: PlanBoardRow; line: PlanLineView | null; onEdit: (l: PlanLineView) => void; onRemove: (r: PlanBoardRow, l: PlanLineView) => void }) {
+  const why = line ? undefined : "This row comes from the orders. Untick it to leave it off the print, or change the order itself.";
+  return (
+    <RowMenu
+      items={[
+        { label: "Edit line", onSelect: () => line && onEdit(line), disabled: !line, title: why },
+        { label: "Remove line", onSelect: () => line && onRemove(row, line), destructive: true, disabled: !line, title: why },
+      ]}
+    />
   );
 }
 

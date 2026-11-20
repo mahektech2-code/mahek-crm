@@ -742,3 +742,42 @@ asking, so an answer can never hold a row or column their screen would not.
 a tablet at the godown gate — and every other app keeps it. It was lost once
 in a header refactor and every ERP page sat at 1100px; below 1280px the ERP
 header draws Feedback and the account chip as icons so it fits a tablet.
+
+**A RECORD IS CHANGED FROM THE LIST IT IS LISTED ON (Nov 2026).** A sweep found
+rows that could be read but not corrected where they stood: plan lines on
+Under Process, bills on Billing & dispatch, fillings, register lots, MRP
+checks, stock checks, counts, adjustments, drum corrections, complaints, and
+advance lines on Petty Cash. Every one now carries its act on its own row —
+the same handler and the same gate as the tab that already had it (Undo
+billing and Change invoice on `orderDetails` reuse `doUnbill` /
+`doChangeInvoice`; Register's Void line resolves the lot to its GRN line and
+calls `voidInward`, so the impact modal is asked about the GRN line). Where the
+change belongs to another app or tab the row LINKS there (an advance's lines
+→ Advances; a product → Admin › Catalogue; a party → its Accounts customer;
+an MRP-check order → its Orders row for Edit / Cancel) rather than being a
+dead end. When you add a list, give every row that can be wrong a way to be
+put right from that row, or a link to where it is; a row with nothing to do
+says why in a disabled item (Under Process's order rows do).
+
+**Withdraw is the asker's, Reject is the decider's.** A pending request the
+asker raised by mistake — a credit-note request, a stock adjustment, a drum
+correction — is WITHDRAWN by them, not rejected by somebody else and not
+deleted. Adjustments and drum corrections carry a real `withdrawn` status
+(`0367_erp_withdrawn_requests`); a complaint is the CRM's and its enum has no
+such word, so a withdrawn ERP request is `closed` with a closing note starting
+`WITHDRAWN_NOTE` ("Withdrawn by …"), and the ERP list reads the word from that
+note. The CRM still sees it as closed, with the note.
+
+**A filling is edited, not only deleted** (`fgFill` → Edit): cans filled and
+cans lost. The lot, products, size and packing are fixed (they are what the
+lot code and the stock drawn mean); more cans need the SFG and empty cans, and
+fewer are refused once the FG cans were packed or moved on.
+
+**A WRONG PRODUCTION ENTRY IS DELETED BY AN ERP MANAGER, NOT ONLY AN ADMIN.**
+SFG batch lines, FG fillings and packing lines were deletable by an ERP
+administrator alone, so the Production Head (an ERP manager running those
+screens) could not take back a line entered in error. `mayDeleteProduction`
+(production.ts) and the matching impact sources (erp-production.ts) now allow
+any ERP manager or administrator; associates still cannot. The impact modal's
+blockers — stock the entry made has been packed, moved or used — remain the
+real guard (Nov 2026, owner).

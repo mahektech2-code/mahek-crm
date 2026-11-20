@@ -3167,6 +3167,14 @@ const orderDetails: ScreenModule = {
             },
             { id: "invoiceFile", l: invoiceFiles.has(l.o.orderNo) ? "Replace invoice PDF" : "Add invoice PDF", primary: !invoiceFiles.has(l.o.orderNo), prompt: INVOICE_FILE_PROMPT(l.o.orderNo, invoiceFiles.has(l.o.orderNo)) },
             { id: "gst", l: "Change GST", why: d.verification === "Verified" ? "The line has been dispatch-verified" : "", prompt: { title: "GST", submit: "Save", fields: [{ k: "gst", l: "GST", t: "select", req: true, opts: ["18%", "0%"] }], init: { gst: d.gstBp ? "18%" : "0%" } } },
+            /* The same two the Orders tabs carry, so a bill found here is undone or corrected here (`lineHandlers`). Both refuse once the order has left. */
+            { id: "unbill", l: "Undo billing", why: d.verification === "Verified" ? "It has been dispatch-verified" : "", impact: { kind: "erp-order-unbill", id: l.o.id } },
+            {
+              id: "changeInvoice",
+              l: "Change invoice",
+              why: d.verification === "Verified" ? "It has been dispatch-verified" : "",
+              prompt: invoicePrompt(`Change the invoice · order ${l.o.orderNo}`, "An approved invoice goes back to the checker.", { invoiceNo: l.o.tallyBillNo ?? "", invoiceDate: l.o.invoiceDate ?? today() }),
+            },
             { id: "select", l: "Show the whole order", href: erpLink("orderDetails", { f: (byNo.get(l.o.orderNo) ?? []).join(","), fl: `Order ${l.o.orderNo}` }) },
             { id: "view", l: "Open the order", href: erpLink("orders", { open: l.o.id }) },
             { id: "scan", l: gate ? "Scan its boxes" : "Dispatch desk", primary: !!gate, href: erpDispatchHref(l.o.orderNo) },
@@ -3256,6 +3264,11 @@ const orderDetails: ScreenModule = {
     verify: (ctx, id, values) => verify(ctx, [id], values),
     extra: (ctx, id, values) => setExtraExpenses(ctx, [id], values),
     invoiceFile: (ctx, id, values) => doInvoiceFile(ctx, id, values ?? {}),
+    async unbill(ctx, id, values) {
+      const refusal = await confirmImpact("erp-order-unbill", id, readConfirmation(values));
+      return refusal ?? doUnbill(ctx, [id]);
+    },
+    changeInvoice: (ctx, id, values) => doChangeInvoice(ctx, id, values),
     async notVerify(ctx, id, values) {
       if (!ctx.administrator) return err("Only an administrator marks a line not verified.", "not_permitted");
       const refusal = await confirmImpact("erp-dispatch-unverify", id, readConfirmation(values));
