@@ -1,7 +1,7 @@
 "use server";
 
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLog, studioForwardRecipients, studioForwards } from "@/db/schema";
 import { canOpenModule } from "@/lib/access";
@@ -98,9 +98,49 @@ export async function startForward(input: StartInput): Promise<Result<StartResul
   return ok({ started: final.length, skipped });
 }
 
+const CANCELLED = "This forward was cancelled, so nobody more is offered from it. What was already sent stays sent.";
+
+/**
+ * CANCELLING A FORWARD stops the list: nobody left on it is offered a chat any
+ * more, and every recipient keeps exactly the status the person gave them —
+ * MahekOne never sent anything, so what was sent stays sent. A draft that was
+ * never started is cancelled the same way. Only its uploader may cancel it.
+ */
+export async function cancelForward(forwardId: string): Promise<Result<{ left: number }>> {
+  const user = await guard();
+  if (!user) return err("You do not have this part of the Studio.", "not_permitted");
+  const forward = await getForward(user.id, forwardId);
+  if (!forward) return err("That poster was not found.", "not_found");
+  if (forward.status === "cancelled") return err("This forward is already cancelled.", "conflict");
+  const left = await db.transaction(async (tx) => {
+    const claimed = await tx
+      .update(studioForwards)
+      .set({ status: "cancelled", cancelledAt: new Date() })
+      .where(and(eq(studioForwards.id, forward.id), inArray(studioForwards.status, ["draft", "started"])))
+      .returning({ id: studioForwards.id });
+    if (!claimed.length) return null;
+    const rows = await tx
+      .select({ status: studioForwardRecipients.status })
+      .from(studioForwardRecipients)
+      .where(eq(studioForwardRecipients.forwardId, forward.id));
+    const pending = rows.filter((r) => r.status === "pending" || r.status === "opened").length;
+    await tx.insert(auditLog).values({
+      id: newId("aud"),
+      actorId: user.id,
+      action: "studio.forward.cancelled",
+      entityType: "studio_forward",
+      entityId: forward.id,
+      afterState: { from: forward.status, notDone: pending, sent: rows.filter((r) => r.status === "sent").length } as never,
+    });
+    return pending;
+  });
+  if (left == null) return err("This forward is already cancelled.", "conflict");
+  return ok({ left }, `Forward cancelled${left ? ` · ${left} not yet done will not be offered` : ""} · what was sent stays sent`);
+}
+
 async function ownedRecipient(userId: string, recipientId: string) {
   const [row] = await db
-    .select({ r: studioForwardRecipients, caption: studioForwards.caption })
+    .select({ r: studioForwardRecipients, caption: studioForwards.caption, forwardStatus: studioForwards.status })
     .from(studioForwardRecipients)
     .innerJoin(studioForwards, eq(studioForwards.id, studioForwardRecipients.forwardId))
     .where(and(eq(studioForwardRecipients.id, recipientId), eq(studioForwards.createdById, userId)))
@@ -118,6 +158,7 @@ export async function openRecipientChat(recipientId: string): Promise<Result<{ h
   if (!user) return err("You do not have this part of the Studio.", "not_permitted");
   const row = await ownedRecipient(user.id, recipientId);
   if (!row) return err("That recipient was not found.", "not_found");
+  if (row.forwardStatus === "cancelled") return err(CANCELLED, "rule_violation");
   if (!row.r.customerId) return err("The record is no longer in your book, so there is no number to open a chat on.");
   const { scope } = await resolveScope();
   const rec = await getRecipient(scope.userIds, row.r.customerId);
@@ -141,6 +182,7 @@ export async function markRecipient(recipientId: string, status: ForwardStatus, 
   if (!(FORWARD_STATUSES as readonly string[]).includes(status)) return err("Not a valid status.");
   const row = await ownedRecipient(user.id, recipientId);
   if (!row) return err("That recipient was not found.", "not_found");
+  if (row.forwardStatus === "cancelled") return err(CANCELLED, "rule_violation");
   if (!canMove(row.r.status as ForwardStatus, status)) return ok(undefined);
   await db.transaction(async (tx) => {
     await tx

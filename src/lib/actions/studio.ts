@@ -253,6 +253,42 @@ export async function makeBatch(input: MakeBatchInput): Promise<Result<{ id: str
   return ok({ id: batchId, made: posters.length, skipped: skipped.length });
 }
 
+/**
+ * CANCELLING A BULK RUN. MahekOne never sent any of it — a poster leaves by a
+ * download or a WhatsApp chat somebody opened — so cancelling cannot unsend:
+ * the posters nobody has shared yet leave the lists and the ZIP (`removed_at`,
+ * exactly what Remove does to one), and the ones already shared stay, because
+ * that share is a fact. Only the person who made the run may cancel it.
+ */
+export async function cancelBatch(id: string): Promise<Result<{ removed: number; kept: number }>> {
+  const user = await requireUser();
+  if (!(await needModule(user.id, "studio.bulk"))) return err(NO_ACCESS, "not_permitted");
+  const [b] = await db.select({ createdById: studioBatches.createdById, cancelledAt: studioBatches.cancelledAt }).from(studioBatches).where(eq(studioBatches.id, id)).limit(1);
+  if (!b || b.createdById !== user.id) return err("Only the person who made a bulk run can cancel it.", "not_permitted");
+  if (b.cancelledAt) return err("This bulk run is already cancelled.", "conflict");
+  const out = await db.transaction(async (tx) => {
+    const claimed = await tx
+      .update(studioBatches)
+      .set({ cancelledAt: new Date(), cancelledById: user.id })
+      .where(and(eq(studioBatches.id, id), isNull(studioBatches.cancelledAt)))
+      .returning({ id: studioBatches.id });
+    if (!claimed.length) return null;
+    const removed = await tx
+      .update(studioPosters)
+      .set({ removedAt: new Date() })
+      .where(and(eq(studioPosters.batchId, id), isNull(studioPosters.removedAt), eq(studioPosters.shareCount, 0)))
+      .returning({ id: studioPosters.id });
+    const [{ n }] = await tx.select({ n: sql<number>`count(*)::int` }).from(studioPosters).where(and(eq(studioPosters.batchId, id), sql`${studioPosters.shareCount} > 0`));
+    await tx.insert(auditLog).values({ id: newId("aud"), actorId: user.id, action: "studio.batch.cancelled", entityType: "studio_batch", entityId: id, afterState: { removed: removed.length, kept: Number(n) } as never });
+    return { removed: removed.length, kept: Number(n) };
+  });
+  if (!out) return err("This bulk run is already cancelled.", "conflict");
+  refresh("/studio/bulk");
+  refresh(`/studio/bulk/${id}`);
+  refresh("/studio/posters");
+  return ok(out, `Bulk run cancelled · ${out.removed} unshared poster${out.removed === 1 ? "" : "s"} taken off${out.kept ? ` · ${out.kept} already shared stay` : ""}`);
+}
+
 /* ------------------------------------------------------------------ uploaded designs */
 
 /** Who may touch a draft: whoever made it, and whoever approves designs. */

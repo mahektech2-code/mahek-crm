@@ -161,3 +161,13 @@ needs an approved template), a preview of a customer's inbound photo, and a
 link from an API send into My posters' forwarding history. Webhook events for
 messages written on the phone, and whether the Free plan includes webhooks,
 are unconfirmed until real conversations flow.
+
+**CANCELLING IN THE STUDIO NEVER UNSENDS** (`0366`). A bulk run's maker may
+Cancel run (`cancelBatch`): `studio_batches.cancelled_at` is stamped, its posters
+with `share_count = 0` get `removed_at` (off My posters, the run's page and its
+ZIP — `getBatch` reads non-removed only), and the shared ones stay. A forward's
+uploader may Cancel forward (`cancelForward`, draft or started): status
+`cancelled`, every recipient keeps the status the person gave it, and
+`openRecipientChat` / `markRecipient` refuse. `alreadySentTo` counts cancelled
+forwards too, so somebody already sent the same picture is still a repeat. Both
+dialogs are `ConfirmDialog`s that say what already went stays gone.

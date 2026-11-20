@@ -32,7 +32,7 @@ export default async function ForwardHome() {
                 <div className="p-3">
                   <div className="truncate text-sm font-medium text-ink">{f.title}</div>
                   <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[12.5px] text-muted">
-                    {f.status === "draft" ? <Badge tone="warn">Not started</Badge> : <Badge tone="brand">{f.tally.sent} of {f.tally.total} marked sent</Badge>}
+                    {f.status === "cancelled" ? <Badge tone="neutral">Cancelled · {f.tally.sent} marked sent</Badge> : f.status === "draft" ? <Badge tone="warn">Not started</Badge> : <Badge tone="brand">{f.tally.sent} of {f.tally.total} marked sent</Badge>}
                     <span>{stamp(f.createdAt)}</span>
                   </div>
                 </div>

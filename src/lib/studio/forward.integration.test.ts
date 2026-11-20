@@ -16,7 +16,7 @@ import { appAccess, appModuleAccess, auditLog, customers, studioForwardRecipient
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { fileStorage } from "@/lib/storage";
-import { markRecipient, openRecipientChat, searchRecipients, startForward } from "@/lib/actions/studio-forward";
+import { cancelForward, markRecipient, openRecipientChat, searchRecipients, startForward } from "@/lib/actions/studio-forward";
 import { POST as uploadRoute } from "@/app/api/studio/forwards/upload/route";
 import { GET as imageRoute } from "@/app/api/studio/forwards/[id]/image/route";
 import { forwardRecipients } from "./forward-service";
@@ -303,5 +303,30 @@ describe("Working the list: per-recipient status", () => {
     await db.update(customers).set({ ownerId: rakesh.id, salesAmId: rakesh.id });
     const res = await openRecipientChat(open.id);
     assert.ok(!res.ok);
+  });
+
+  test("cancelling stops the list; what was sent stays sent, and still counts as sent", async () => {
+    const { fid, open, nowa } = await started();
+    assert.ok((await markRecipient(open.id, "sent")).ok);
+    setTestUser(rakesh);
+    assert.equal((await cancelForward(fid)).ok, false, "only the uploader cancels");
+    setTestUser(priya);
+    const done = await cancelForward(fid);
+    assert.ok(done.ok, done.ok ? "" : done.error);
+    assert.equal(done.ok ? done.data.left : -1, 2);
+    const [row] = await db.select().from(studioForwards).where(eq(studioForwards.id, fid));
+    assert.equal(row.status, "cancelled");
+    assert.ok(row.cancelledAt);
+    const rows = await forwardRecipients(fid);
+    assert.equal(rows.find((r) => r.id === open.id)!.status, "sent", "what was sent stays sent");
+    assert.equal(rows.find((r) => r.id === nowa.id)!.status, "pending", "nobody's status is rewritten");
+    assert.match((await openRecipientChat(nowa.id)).ok ? "" : "refused", /refused/);
+    assert.equal((await markRecipient(nowa.id, "sent")).ok, false);
+    assert.equal((await cancelForward(fid)).ok, false, "once");
+    assert.equal((await db.select().from(auditLog).where(eq(auditLog.action, "studio.forward.cancelled"))).length, 1);
+    /* The same picture again: somebody already sent to is still a repeat. */
+    const again = await uploadedId("Navratri again");
+    const res = await startForward({ forwardId: again, customerIds: [open.customerId!], caption: "" });
+    assert.ok(res.ok && res.data.repeats?.length === 1, JSON.stringify(res));
   });
 });
