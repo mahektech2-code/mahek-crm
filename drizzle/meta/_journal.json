@@ -2514,6 +2514,13 @@
       "when": 1794948288699,
       "tag": "0366_studio_cancel_batch_forward",
       "breakpoints": true
+    },
+    {
+      "idx": 360,
+      "version": "7",
+      "when": 1794948488699,
+      "tag": "0368_hrms_workday_claim_withdrawn",
+      "breakpoints": true
     }
   ]
 }

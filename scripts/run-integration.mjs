@@ -139,6 +139,7 @@ const files = [
   // The workday clock: punch in, breaks, idle, claims, the lock and a holiday
   // worked as extra.
   "src/lib/hrms/integration/workday.test.ts",
+  "src/lib/hrms/integration/row-gaps.test.ts",
   // Hire: identity is the phone, gating is enforced, an override is a named
   // act, an interviewer's scope is narrow, and the record is append-only.
   "src/lib/hire/integration/core.test.ts",

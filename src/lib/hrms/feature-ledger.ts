@@ -125,6 +125,13 @@ export const ADDED: Partial<Record<HandlerRef, string>> = {
   "workdayClaims.actions.decline": "A manager keeps an automatic break as a break, with a reason",
   /* Team today's "To review" (Nov 2026): a punch-in from outside the office is turned down with a reason. */
   "help.actions.decline": "Whoever resolves help turns a request down, with the reason they are told",
+  /* Changed where it is listed (Nov 2026): the person a record belongs to corrects or takes it back from its own row. */
+  "workdayClaims.actions.editClaim": "The claimant corrects what they said they were doing, while the claim is pending",
+  "workdayClaims.actions.withdraw": "The claimant withdraws a pending claim; the time stays a break",
+  "assignments.actions.edit": "HR changes an assignment's quantity, date and responsibility (never below what came back)",
+  "help.actions.edit": "Whoever asked edits a pending help request's times and details",
+  "grievances.actions.withdraw": "Whoever raised a grievance withdraws it while it is pending; it is kept, marked Withdrawn",
+  "documents.actions.edit": "Whoever manages documents edits a title, description and audience; leaving the handsets tombstones it",
 };
 
 /**

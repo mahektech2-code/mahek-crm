@@ -15330,7 +15330,12 @@ export const hrmsWorkdayClaims = pgTable(
     decidedNote: text("decided_note"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("hrms_workday_claims_emp_idx").on(t.employeeId, t.date), index("hrms_workday_claims_status_idx").on(t.status)],
+  (t) => [
+    index("hrms_workday_claims_emp_idx").on(t.employeeId, t.date),
+    index("hrms_workday_claims_status_idx").on(t.status),
+    /* pending | approved | declined | withdrawn (by the claimant, 0368). */
+    check("hrms_workday_claims_status", sql`${t.status} in ('pending','approved','declined','withdrawn')`),
+  ],
 );
 
 /** A leave or half-day request (spec §7.1). */

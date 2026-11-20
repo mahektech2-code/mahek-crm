@@ -1760,8 +1760,25 @@ const assignments: HrmsScreenModule = {
               ],
             },
           });
+        actions.push({
+          id: "edit",
+          l: "Edit",
+          why: hr ? undefined : "Changing an assignment needs the HR power",
+          prompt: {
+            title: "Edit the assignment",
+            sub: `${s?.name ?? ""} · ${p?.name ?? ""}. The asset and the person stay; assign again for another.`,
+            submit: "Save",
+            init: { qty: String(a.qty), date: a.date, resp: a.responsibility ?? "" },
+            fields: [
+              { k: "qty", l: "Quantity", t: "num", req: true, min: Math.max(1, a.restoredQty ?? 0), hint: a.restoredQty ? `${a.restoredQty} already back — it cannot go below that` : undefined },
+              { k: "date", l: "Assigned date", t: "date", req: true },
+              { k: "resp", l: "Responsibility & suggestion", t: "area" },
+            ],
+          },
+        });
         actions.push({ id: "asset", l: "View asset", href: hrmsLink("assetStock", { open: a.stockId }) });
-        if (has(ctx, "admin")) actions.push({ id: "delete", l: "Delete", impact: { kind: "hrms-asset-assignment", id: a.id } });
+        /* HR assigns, so HR takes back an assignment made in error — not only the HRMS administrator. */
+        if (hr) actions.push({ id: "delete", l: "Delete", impact: { kind: "hrms-asset-assignment", id: a.id } });
         return {
           id: a.id,
           v: {
@@ -1883,8 +1900,24 @@ const assignments: HrmsScreenModule = {
       if (res.ok) await hrmsAudit(ctx, "hrms.asset.restore", "hrms_asset_assignments", id, { status: a.status, restoredQty: before }, { status: done ? "Restored" : "Assigned", restoredQty: total, qty, date });
       return res;
     },
+    async edit(ctx, id, v) {
+      if (!has(ctx, "hr")) return err("Changing an assignment needs the HR power", "not_permitted");
+      const [a] = await db.select().from(hrmsAssetAssignments).where(eq(hrmsAssetAssignments.id, id)).limit(1);
+      if (!a) return err("That assignment no longer exists.", "not_found");
+      const qty = int(v.qty);
+      if (qty == null || qty < 1) return fieldErr("qty", qty == null ? "Required" : "The quantity must be at least 1");
+      const back = a.restoredQty ?? 0;
+      if (qty < back) return fieldErr("qty", `${back} have already come back; the quantity cannot be below that`);
+      const date = text(v.date);
+      if (!date || !DATE.test(date)) return fieldErr("date", "Required");
+      if (a.restoredOn && date > a.restoredOn) return fieldErr("date", `The assigned date cannot be after the return on ${fdShort(a.restoredOn)}`);
+      const after = { qty, date, responsibility: text(v.resp), status: back > 0 && back >= qty ? "Restored" : "Assigned" };
+      await db.update(hrmsAssetAssignments).set({ ...after, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(hrmsAssetAssignments.id, id));
+      await hrmsAudit(ctx, "hrms.asset.assignmentEdit", "hrms_asset_assignments", id, { qty: a.qty, date: a.date, responsibility: a.responsibility, status: a.status }, after);
+      return okVoid(after.status === "Restored" && a.status !== "Restored" ? "Saved · everything assigned is now back" : "Assignment saved");
+    },
     async delete(ctx, id, values) {
-      if (!has(ctx, "admin")) return err("Deleting an assignment needs the HRMS administration power", "not_permitted");
+      if (!has(ctx, "hr")) return err("Deleting an assignment needs the HR power", "not_permitted");
       const [a] = await db.select().from(hrmsAssetAssignments).where(eq(hrmsAssetAssignments.id, id)).limit(1);
       if (!a) return err("That assignment no longer exists.", "not_found");
       const refusal = await confirmImpact("hrms-asset-assignment", id, readConfirmation(values));
