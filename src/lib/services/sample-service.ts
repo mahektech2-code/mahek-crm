@@ -391,6 +391,27 @@ export async function sampleDeskCounts(): Promise<SampleDeskCounts> {
  * none, and refusing to render it would hide the very rows somebody is trying
  * to account for.
  */
+/**
+ * WHO MAY CHANGE A SAMPLE REQUEST — the person who asked for it, or the lead's
+ * manager, while nothing has been sent (`requested` or `approved`). The record
+ * page draws Edit from this; `editSampleRequest` asks the same questions on
+ * the way in, so the button and the action cannot disagree.
+ */
+export async function sampleEditableBy(sampleId: string, userId: string): Promise<boolean> {
+  const [row] = await db
+    .select({
+      salesmanId: mbosSamples.salesmanId,
+      state: mbosSamples.state,
+      leadManagerId: customers.leadManagerId,
+    })
+    .from(mbosSamples)
+    .innerJoin(customers, eq(customers.id, mbosSamples.customerId))
+    .where(eq(mbosSamples.id, sampleId));
+  if (!row) return false;
+  if (row.state !== "requested" && row.state !== "approved") return false;
+  return row.salesmanId === userId || row.leadManagerId === userId;
+}
+
 export async function sampleDetail(sampleId: string) {
   const scope = await visibility();
   const [row] = await deskQuery(waitingDaysFrom(mbosSamples.serverCreatedAt))

@@ -1,6 +1,8 @@
 import { listCustomerStatusRequests } from "@/lib/queries";
 import { today } from "@/lib/recompute";
 import { RequestsScreen } from "./requests-screen";
+import { requireUser } from "@/lib/auth";
+import { canFor } from "@/lib/access-control";
 
 export const metadata = { title: "Status requests — MahekOne CRM" };
 
@@ -16,6 +18,20 @@ export const metadata = { title: "Status requests — MahekOne CRM" };
  * by the React Compiler rules.
  */
 export default async function Page() {
-  const [rows, day] = await Promise.all([listCustomerStatusRequests(), today()]);
-  return <RequestsScreen rows={rows} today={day} />;
+  const user = await requireUser();
+  const [rows, day, canDecide] = await Promise.all([
+    listCustomerStatusRequests(),
+    today(),
+    canFor(user, "customer.deactivate"),
+  ]);
+  /* Somebody who cannot decide is here only to withdraw their own (see the
+     layout), so they see only their own. */
+  return (
+    <RequestsScreen
+      rows={canDecide ? rows : rows.filter((r) => r.askedById === user.id)}
+      today={day}
+      userId={user.id}
+      canDecide={canDecide}
+    />
+  );
 }

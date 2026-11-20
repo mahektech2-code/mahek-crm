@@ -6,6 +6,7 @@ import { cx } from "@/components/ui/primitives";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/toast";
 import { BillDetailPanel } from "@/components/bills/bill-detail-panel";
+import { BillRowLinks, type BillLinks } from "@/components/bills/bill-links";
 import { Pager } from "@/components/ui/pager";
 import { downloadCsv, toCsv } from "@/lib/csv";
 import { money, shortDate } from "@/lib/format";
@@ -56,6 +57,7 @@ export function InvoicesScreen({
   query,
   page,
   perPage,
+  links,
 }: {
   /** ONE PAGE. Everything beside it describes the whole book. */
   rows: FieldInvoice[];
@@ -73,6 +75,8 @@ export function InvoicesScreen({
   query: string;
   page: number;
   perPage: number;
+  /** Where a row may lead this reader — see `BillRowLinks`. */
+  links: BillLinks;
 }) {
   const router = useRouter();
   const { push } = useToast();
@@ -309,6 +313,7 @@ export function InvoicesScreen({
                 <HeadCell align="right" width={140}>Paid</HeadCell>
                 <HeadCell align="right" width={140}>Open</HeadCell>
                 <HeadCell>State</HeadCell>
+                <HeadCell width={48} />
               </>
             }
           >
@@ -389,10 +394,13 @@ export function InvoicesScreen({
                       <Pill>Open</Pill>
                     )}
                   </Cell>
+                  <Cell align="right">
+                    <BillRowLinks customerId={b.customerId} erpOrderNo={b.erpOrderNo} links={links} />
+                  </Cell>
                 </Row>
                 {openBillId === b.id ? (
                   <tr>
-                    <td colSpan={8} className="p-0">
+                    <td colSpan={9} className="p-0">
                       {/* Keyed on the bill, so opening another row mounts a
                           fresh panel rather than resetting one in an effect. */}
                       {/* NO customer link here, deliberately. The Sales

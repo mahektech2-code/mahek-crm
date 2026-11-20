@@ -23,6 +23,7 @@ import { Modal, RowMenu, Tabs } from "@/components/ui/overlays";
 import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
+import { EditPaymentDialog } from "@/app/accounts/edit-payment-dialog";
 import {
   cancelPromiseAction,
   editPromiseAction,
@@ -118,6 +119,8 @@ export function PaymentsScreen({
   canBulk,
   canExport,
   canCancelPromise,
+  userId,
+  canConfirmPayments,
   rows,
   aging,
   workingDaysLeft,
@@ -150,6 +153,9 @@ export function PaymentsScreen({
   canExport: boolean;
   /** `reminder.close` — cancelling a promise dismisses its chase reminder. */
   canCancelPromise: boolean;
+  /** Who is reading, and whether they are Accounts (`payment.confirm`) — what Edit payment is offered on. */
+  userId: string;
+  canConfirmPayments: boolean;
   rows: Row[];
   aging: { total: number; buckets: Array<{ label: string; amount: number }> };
   workingDaysLeft: number;
@@ -223,6 +229,7 @@ export function PaymentsScreen({
     key: number;
   } | null>(null);
   const [paying, setPaying] = React.useState<Row | null>(null);
+  const [editingPayment, setEditingPayment] = React.useState<string | null>(null);
   const [heldOpen, setHeldOpen] = React.useState(false);
   /*
    * THE FIGURES THAT ARE NOT TODAY'S WORK ARE ONE CLICK AWAY, not gone.
@@ -559,6 +566,10 @@ export function PaymentsScreen({
                       onEditPromise={() => setEditingPromise(r)}
                       onCancelPromise={() => setCancellingPromise(r)}
                       canCancelPromise={canCancelPromise}
+                      editableReceipts={r.reportedReceipts.filter(
+                        (p) => canConfirmPayments || (p.reportedById === userId && p.status === "reported"),
+                      )}
+                      onEditPayment={setEditingPayment}
                       onGo={(href) => router.push(href)}
                     />
                   ))}
@@ -716,6 +727,18 @@ export function PaymentsScreen({
           }
         }}
       />
+      {editingPayment ? (
+        <EditPaymentDialog
+          key={editingPayment}
+          receiptId={editingPayment}
+          run={run}
+          onClose={() => setEditingPayment(null)}
+          onDone={() => {
+            setEditingPayment(null);
+            router.refresh();
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -796,6 +819,8 @@ function WorklistLine({
   onEditPromise,
   onCancelPromise,
   canCancelPromise,
+  editableReceipts,
+  onEditPayment,
   onGo,
 }: {
   r: Row;
@@ -808,6 +833,9 @@ function WorklistLine({
   onEditPromise: () => void;
   onCancelPromise: () => void;
   canCancelPromise: boolean;
+  /** The reported payments on this row this reader may edit — the server's rule, mirrored. */
+  editableReceipts: Row["reportedReceipts"];
+  onEditPayment: (receiptId: string) => void;
   onGo: (href: string) => void;
 }) {
   const wa = r.lastWa ? statusView(r.lastWa) : null;
@@ -954,6 +982,17 @@ function WorklistLine({
                 disabled: r.held,
                 title: r.held ? (r.heldReason ?? undefined) : undefined,
               },
+              /* A payment reported on this account and still with Accounts —
+                 the "Paid ₹X?" badge. Fixable from here, by whoever recorded
+                 it while it waits, or by Accounts. */
+              ...editableReceipts.map((p) => ({
+                label: editableReceipts.length > 1 ? `Edit payment of ${money(p.amount)}` : "Edit payment",
+                title:
+                  p.status === "held"
+                    ? "On hold with Accounts — correct it before it is decided"
+                    : "Correct the amount, date, mode or reference before Accounts decide it",
+                onSelect: () => onEditPayment(p.id),
+              })),
               ...(r.promiseAttemptId
                 ? [
                     { label: "Edit the promise", onSelect: onEditPromise },

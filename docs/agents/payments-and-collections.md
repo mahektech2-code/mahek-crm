@@ -369,3 +369,13 @@ counts. The chase is
 found by `follow_up_attempts.reminder_id`, which the collections panel now
 fills; older panel promises are matched by the system reminder's
 "promised for <date>" note.
+
+**EDIT PAYMENT IS OFFERED WHERE A REPORTED PAYMENT IS LISTED (Nov 2026).**
+`EditPaymentDialog` (#1199) is mounted on the CRM payments worklist (row menu,
+from `WorklistRow.reportedReceipts`, parsed from one `string_agg`), the CRM
+bills page (a "Paid ₹X?" badge and row menu, from
+`undecidedReceiptsForBills`), Sales › Payments (`receipt-actions.tsx`) and the
+statement. Each screen offers it only where `receiptForEdit` would agree:
+Accounts (`payment.confirm`) on any live payment, the recorder on their own
+while `reported`. Elsewhere Sales › Payments and Accounts › On account link to
+the customer's ledger, where Edit and Reverse live.

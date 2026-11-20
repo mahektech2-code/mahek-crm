@@ -1273,3 +1273,174 @@ export async function cancelSample(
     return fromThrown(e);
   }
 }
+
+/* ------------------------------------------------- §15 editing the request */
+
+const editSchema = z.object({
+  productId: z.string().min(1),
+  /** Cans, where somebody counted. Null clears it — the column reads "not asked". */
+  quantityCans: z.number().int().positive().max(10000).nullable(),
+  /** What it is to be tried on — the sample's one note. Null clears it. */
+  application: z.string().trim().max(500).nullable(),
+  sendingDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  sendingMode: z.enum(SENDING_MODE_CODES),
+});
+
+/** The states an edit is still honest in: nothing has left the godown. */
+const EDITABLE_STATES: SampleState[] = ["requested", "approved"];
+
+/**
+ * FIX WHAT WAS ASKED FOR, BEFORE IT GOES OUT.
+ *
+ * A request with the wrong product or the wrong can count used to have one
+ * exit — cancel it with a reason and ask again — which put a cancellation on
+ * the record that was really a typo. This corrects it in place while nothing
+ * has been sent: the requester or the lead's manager, while the sample is
+ * `requested` or `approved`. Once dispatched it is refused: the courier has
+ * what was packed, and the record has to say what was packed.
+ *
+ * **An approved sample keeps its product and quantity.** The manager approved
+ * THAT stock; changing it underneath the approval would make the approval say
+ * something nobody decided. The date, the mode and the note may still move,
+ * because none of them is what was weighed. A different product after
+ * approval is cancel-and-ask-again, and the refusal says so.
+ *
+ * The pending approval's one-line subject is rewritten with the request, so
+ * the manager deciding it reads what is now being asked for. Audited with
+ * before and after. Who may is `sampleEditableBy` in sample-service, which the
+ * record page reads to draw the button.
+ */
+export async function editSampleRequest(
+  sampleId: string,
+  input: z.infer<typeof editSchema>,
+): Promise<Result<null>> {
+  try {
+    const parsed = editSchema.safeParse(input);
+    if (!parsed.success) {
+      const first = parsed.error.issues[0];
+      return err(
+        "A sample needs a product, the day it is to be sent and whether it goes by courier or by hand.",
+        "validation",
+        first ? [{ field: String(first.path[0] ?? "productId"), message: first.message }] : undefined,
+      );
+    }
+    if (!isRealDate(parsed.data.sendingDate)) {
+      return err("That is not a date MahekOne can read.", "validation", [
+        { field: "sendingDate", message: "Pick the day it is to be sent." },
+      ]);
+    }
+    const ctx = await requireCapability("lead.work");
+    const loaded = await loadForTransition(sampleId, null);
+    if (!loaded.ok) return loaded.error;
+    const before = loaded.sample;
+    const state = before.state as SampleState;
+
+    const [lead] = await db
+      .select({ leadManagerId: customers.leadManagerId })
+      .from(customers)
+      .where(eq(customers.id, loaded.customer.id));
+    const leadManagerId = lead?.leadManagerId ?? null;
+    if (before.salesmanId !== ctx.user.id && leadManagerId !== ctx.user.id) {
+      return err(
+        "Only the person who asked for this sample, or the lead's manager, can change the request.",
+        "not_permitted",
+      );
+    }
+    if (!EDITABLE_STATES.includes(state)) {
+      return err(
+        `This sample is ${STATE_WORDS[state]}, so the request can no longer be changed — the record has to say what was actually sent.`,
+        "rule_violation",
+      );
+    }
+
+    const next = parsed.data;
+    const productChanged = next.productId !== before.productId;
+    const quantityChanged = (next.quantityCans ?? null) !== (before.quantityCans ?? null);
+    if (state === "approved" && (productChanged || quantityChanged)) {
+      return err(
+        "The manager approved this product and quantity. To send something else, cancel this sample and ask for the right one, so the approval says what was decided.",
+        "rule_violation",
+      );
+    }
+    /* Not in the past — unless it is the date already there, which an edit of
+       only the note must be able to keep. */
+    if (next.sendingDate !== before.plannedSendDate && next.sendingDate < (await today())) {
+      return err("The sending date cannot be in the past.", "validation", [
+        { field: "sendingDate", message: "Pick today or a day to come." },
+      ]);
+    }
+
+    const [product] = await db
+      .select({ id: products.id, name: products.name, active: products.active })
+      .from(products)
+      .where(eq(products.id, next.productId));
+    if (!product) return err("That product is not in the catalogue.", "not_found");
+    if (productChanged && !product.active) {
+      return err(`${product.name} is retired, so it cannot be sent as a sample.`, "rule_violation");
+    }
+
+    const application = next.application?.trim() || null;
+    const now = new Date();
+    await db.transaction(async (tx) => {
+      await tx
+        .update(mbosSamples)
+        .set({
+          productId: next.productId,
+          quantityCans: next.quantityCans ?? null,
+          application,
+          plannedSendDate: next.sendingDate,
+          sendingMode: next.sendingMode,
+          updatedAt: now,
+          updatedById: ctx.user.id,
+        })
+        .where(eq(mbosSamples.id, sampleId));
+
+      await tx
+        .update(mbosApprovals)
+        .set({
+          reason: `${product.name}, to go by ${modeWord(next.sendingMode)} on ${next.sendingDate}`,
+          updatedAt: now,
+          updatedById: ctx.user.id,
+        })
+        .where(
+          and(
+            eq(mbosApprovals.type, "sample"),
+            eq(mbosApprovals.subjectType, "mbos_samples"),
+            eq(mbosApprovals.subjectId, sampleId),
+            eq(mbosApprovals.state, "pending"),
+          ),
+        );
+
+      await tx.insert(auditLog).values({
+        id: id("aud"),
+        actorId: ctx.user.id,
+        actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
+        action: "sample.edited",
+        entityType: "mbos_samples",
+        entityId: sampleId,
+        beforeState: {
+          productId: before.productId,
+          quantityCans: before.quantityCans,
+          application: before.application,
+          sendingDate: before.plannedSendDate,
+          sendingMode: before.sendingMode,
+        } as never,
+        afterState: {
+          customerId: loaded.customer.id,
+          productId: next.productId,
+          productName: product.name,
+          quantityCans: next.quantityCans ?? null,
+          application,
+          sendingDate: next.sendingDate,
+          sendingMode: next.sendingMode,
+        } as never,
+      });
+    });
+
+    refresh();
+    return ok(null, "Sample request updated.");
+  } catch (e) {
+    return fromThrown(e);
+  }
+}

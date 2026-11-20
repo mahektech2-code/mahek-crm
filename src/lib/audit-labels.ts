@@ -630,6 +630,7 @@ const DESCRIBE: Record<string, Describer> = {
   "payment.reallocate": (c) => ["moved a payment from", c.subject(), "onto different bills"],
   "payment.corrected": (c) => ["corrected a payment from", c.subject(), "before it was decided"],
   "payment.amended": (c) => ["corrected a counted payment from", c.subject()],
+  "sample.edited": (c) => ["changed a sample request for", c.subject()],
   "payment.matchedToBankEntry": (c) => ({
     says: ["matched a bank entry to a payment", c.subject() === "a customer" ? "" : "from", c.subject(""), "already reported, instead of recording it twice"],
     changes: false,
@@ -728,6 +729,8 @@ const DESCRIBE: Record<string, Describer> = {
   "mbos.approval.rejected": () => ({ says: ["turned down a field request"], changes: false }),
   "mbos.evidence.accepted": () => ({ says: ["accepted a salesman's evidence for an expense claim"], changes: false }),
   "mbos.evidence.rejected": () => ({ says: ["rejected a salesman's evidence for an expense claim"], changes: false }),
+  "mbos.expense.edited_for": (c) => ({ says: ["corrected an expense entered for a salesman", ...(num(c.a.amountPaise) ? ["to", strong(rupees(c.a.amountPaise)!)] : [])], changes: false }),
+  "mbos.expense.deleted_for": (c) => ({ says: ["deleted an expense entered for a salesman", ...(num(c.b.amountPaise) ? ["of", strong(rupees(c.b.amountPaise)!)] : [])], changes: false }),
   "mbos.expense.entered_for": (c) => ({ says: ["entered an expense for a salesman", ...(num(c.a.amountPaise) ? ["of", strong(rupees(c.a.amountPaise)!)] : [])], changes: false }),
   "mbos.expense_payout.recorded": (c) => ({ says: ["recorded a reimbursement to a salesman", ...(num(c.a.amountPaise) ? ["of", strong(rupees(c.a.amountPaise)!)] : [])], changes: false }),
   "mbos.expense_payout.voided": () => ({ says: ["voided a reimbursement to a salesman"], changes: false }),
@@ -776,6 +779,8 @@ const DESCRIBE: Record<string, Describer> = {
   "customer.deactivation_rejected": (c) => ({ says: ["turned down a request to deactivate", c.subject()], changes: false }),
   "customer.reactivate": (c) => ({ says: ["reactivated", c.subject()], changes: false }),
   "customer.reactivation_rejected": (c) => ({ says: ["turned down a request to reactivate", c.subject()], changes: false }),
+  "customer.deactivation_withdrawn": (c) => ({ says: ["withdrew their request to deactivate", c.subject()], changes: false }),
+  "customer.reactivation_withdrawn": (c) => ({ says: ["withdrew their request to reactivate", c.subject()], changes: false }),
   "customer.reassign": (c) => {
     const a = c.a;
     const moved: Piece[] = [];

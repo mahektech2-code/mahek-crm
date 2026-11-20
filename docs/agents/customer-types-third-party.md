@@ -215,3 +215,13 @@ and the three seats off the right-hand edge for every row on the page. The
 ceiling is on a block INSIDE the cell, because `max-width` on a `td` is
 advisory under automatic layout; the full name rides on `title`, and the badges
 carry `shrink-0` so a slow-payer flag is never what the ellipsis eats.
+
+**THE ASKER MAY WITHDRAW A CLOSE/REOPEN REQUEST (Nov 2026).**
+`withdrawStatusRequest(customerId, kind)` clears the request fields exactly as a
+rejection does, only for the user stored as `*_requested_by_id`, only while the
+request is still up; audited `customer.deactivation_withdrawn` /
+`customer.reactivation_withdrawn`. A request from before the asker was stored
+has nobody to withdraw it. `/crm/status-requests` lets a non-decider in ONLY
+while they have an undecided request of their own (`hasOwnStatusRequest`), and
+then shows only their rows, with Withdraw and no Approve/Reject; the sidebar
+entry stays `managerOnly`.

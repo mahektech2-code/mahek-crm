@@ -111,6 +111,8 @@ export type CustomerStatusRequest = {
   reason: string | null;
   /** Null on requests raised before the asker was recorded. Say so; do not guess. */
   askedBy: string | null;
+  /** The asker's account — who may Withdraw it. Null where nobody was recorded. */
+  askedById: string | null;
   /**
    * The IST calendar date the request was raised on, computed by Postgres.
    *
@@ -152,6 +154,7 @@ export async function listCustomerStatusRequests(): Promise<CustomerStatusReques
     kind: "deactivate" | "reactivate";
     reason: string | null;
     asked_by: string | null;
+    asked_by_id: string | null;
     asked_on: string | null;
     assigned_to: string | null;
     status: string;
@@ -167,6 +170,7 @@ export async function listCustomerStatusRequests(): Promise<CustomerStatusReques
            'deactivate'                as kind,
            customers.deactivation_reason as reason,
            u.name                      as asked_by,
+           customers.deactivation_requested_by_id as asked_by_id,
            (customers.deactivation_requested_at at time zone 'Asia/Kolkata')::date as asked_on,
            a.name                      as assigned_to,
            customers.status            as status,
@@ -179,7 +183,8 @@ export async function listCustomerStatusRequests(): Promise<CustomerStatusReques
     union all
     select customers.id, customers.name, 'reactivate',
            customers.reactivation_reason,
-           u.name, (customers.reactivation_requested_at at time zone 'Asia/Kolkata')::date,
+           u.name, customers.reactivation_requested_by_id,
+           (customers.reactivation_requested_at at time zone 'Asia/Kolkata')::date,
            a.name, customers.status,
            coalesce(customers.outstanding, 0)::bigint,
            customers.last_order_date
@@ -198,12 +203,25 @@ export async function listCustomerStatusRequests(): Promise<CustomerStatusReques
     kind: r.kind as "deactivate" | "reactivate",
     reason: (r.reason as string | null) ?? null,
     askedBy: (r.asked_by as string | null) ?? null,
+    askedById: (r.asked_by_id as string | null) ?? null,
     askedOn: (r.asked_on as string | null) ?? null,
     assignedTo: (r.assigned_to as string | null) ?? null,
     status: String(r.status),
     outstanding: Number(r.outstanding ?? 0),
     lastOrderDate: (r.last_order_date as string | null) ?? null,
   }));
+}
+
+/** Whether this person has an undecided close/reopen request of their own — lets them in to withdraw it. */
+export async function hasOwnStatusRequest(userId: string): Promise<boolean> {
+  const [row] = await db.execute<{ yes: boolean }>(sql`
+    select exists (
+      select 1 from customers
+       where (deactivation_requested and deactivation_requested_by_id = ${userId})
+          or (reactivation_requested and reactivation_requested_by_id = ${userId})
+    ) as yes
+  `);
+  return Boolean(row?.yes);
 }
 
 /** How many requests are waiting. The sidebar badge and the screen agree. */

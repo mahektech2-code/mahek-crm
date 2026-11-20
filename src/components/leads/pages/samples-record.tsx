@@ -4,7 +4,9 @@ import { addDays, daysBetween, type BusinessDate } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
 import { chaseOffset } from "@/lib/engines/lead-nurture";
-import { sampleDetail } from "@/lib/services/sample-service";
+import { sampleDetail, sampleEditableBy } from "@/lib/services/sample-service";
+import { requireUser } from "@/lib/auth";
+import { canLead } from "@/lib/services/lead-console-service";
 import { sampleTrialFacts } from "@/lib/services/sample-trials-service";
 import { SampleRecordScreen } from "@/components/samples/record/sample-record-screen";
 
@@ -39,6 +41,7 @@ export async function Body({
 }) {
   const { id } = await params;
   const day = await today();
+  const user = await requireUser();
 
   const [detail, facts, config] = await Promise.all([
     sampleDetail(id),
@@ -89,6 +92,8 @@ export async function Body({
       trialOpenDays={facts.trialStartedOn && !facts.trialCompletedOn ? trialDays : null}
       trialRanDays={facts.trialStartedOn && facts.trialCompletedOn ? trialDays : null}
       today={day}
+      canWork={await canLead(user, "lead.work")}
+      canEdit={await sampleEditableBy(id, user.id)}
     />
   );
 }

@@ -40,6 +40,8 @@ import {
 } from "@/components/console/parts";
 import { plural } from "@/components/console/words";
 import { DecideExpense } from "../../decide-expense";
+import { EnteredExpenseActions } from "../../entered-expense-actions";
+import { requireUser } from "@/lib/auth";
 import { AddExpense } from "../../add-expense";
 import { expenseKindLabel, inrExact } from "../../labels";
 import { ExpenseTabs } from "../../tabs";
@@ -104,6 +106,7 @@ export default async function Page({
   const { userId } = await params;
   const query = queryOf(await searchParams, KEYS);
   const now = await today();
+  const me = await requireUser();
   const period = readPeriod(query, now);
   const from = period.from;
   const inPeriod = (day: string) => inPeriodOf(period, day);
@@ -400,6 +403,8 @@ export default async function Page({
                 balance={e.balancePaise}
                 striped={i % 2 === 1}
                 canDecide={canDecide}
+                userId={me.id}
+                today={now}
               />
             ),
           )}
@@ -475,6 +480,8 @@ function LineRowView({
   balance,
   striped,
   canDecide,
+  userId,
+  today: day,
 }: {
   row: ExpenseLineRow;
   notes: PolicyNote[];
@@ -482,6 +489,9 @@ function LineRowView({
   balance: number;
   striped: boolean;
   canDecide: boolean;
+  /** The reader — who entered a line may edit or delete it while it waits. */
+  userId: string;
+  today: string;
 }) {
   const line = ledgerLineOf(row);
   const elig = eligibilityOf(line);
@@ -579,6 +589,23 @@ function LineRowView({
               vendorName={row.vendorName}
               billNumber={row.billNumber}
               files={row.files}
+            />
+          </span>
+        ) : null}
+        {row.enteredById === userId && row.state === "pending" ? (
+          <span className="mt-1 block">
+            <EnteredExpenseActions
+              today={day}
+              line={{
+                id: row.id,
+                who: row.userName,
+                day: row.day,
+                kind: row.kind,
+                claimedPaise: row.claimedPaise,
+                vendorName: row.vendorName,
+                billNumber: row.billNumber,
+                remarks: row.remarks,
+              }}
             />
           </span>
         ) : null}
