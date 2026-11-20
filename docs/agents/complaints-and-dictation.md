@@ -223,3 +223,18 @@ the default one. `VoiceTextarea` decides the joining and the `maxLength`
 ceiling in one place rather than at twenty call sites that would each get one
 of them slightly wrong — `maxLength` stops typing but not a programmatic set,
 so the box would otherwise accept more than the field will save.
+
+**A complaint is corrected while it is open, and WITHDRAWN rather than
+deleted.** `editComplaint` rewrites the description and the category (a label,
+through `categoryValue`) for whoever logged it or anybody holding
+`complaint.resolve`, and writes the correction into the status history; a
+finished complaint is not edited, because its resolution answered what it
+said. `withdrawComplaint` is for one raised by mistake or twice: it is a
+finishing move, so it asks `complaint.resolve` as `changeComplaintStatus` does,
+and closes the complaint with "Withdrawn: <reason>" in its history and
+resolution notes. There is no `withdrawn` status — it is `closed`, because a
+new enum value would have to be taught to every status reader and the handset.
+A credit-note request still waiting (`requested`/`under_review`) goes with it
+as `rejected`; one accounts have `approved` or `issued` BLOCKS the withdrawal
+(`crm-complaint-withdraw` impact blocker and the service both say so) — that
+money is undone in Accounts, not by closing the complaint under it.

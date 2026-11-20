@@ -339,6 +339,94 @@ async function editTransfer(ctx: ErpContext, h: Record<string, string>, id: stri
   return res;
 }
 
+/**
+ * WHAT CANCELLING A TRANSFER WOULD DO, and why it cannot — one reading for the
+ * impact modal (the pool) and for the act (inside its transaction, under the
+ * lots' locks). A transfer is cancelled only while everything it delivered is
+ * still where it left it: the same holds as an edit (`transferHolds`), all of
+ * the quantity still at the destination, and every box or labelled can it
+ * moved untouched since. Item Lost Record never gives stock out, so a
+ * write-off's destination always still holds it.
+ */
+export type TransferCancelPicture = {
+  t: TransferRow;
+  type: ItemType;
+  from: string;
+  to: string;
+  lost: boolean;
+  unit: string;
+  units: { id: string; status: string; godownId: string; touched: boolean }[];
+  lotFrom: "pack" | "fg" | null;
+  blocker: string | null;
+};
+
+export async function transferCancelPicture(ex: Tx | typeof db, id: string): Promise<TransferCancelPicture | null> {
+  const [t] = await ex.select().from(erpTransfers).where(eq(erpTransfers.id, id));
+  if (!t) return null;
+  const type = t.itemType as ItemType;
+  const gds = await ex.select({ id: erpGodowns.id, name: erpGodowns.name, reserved: erpGodowns.reserved }).from(erpGodowns);
+  const from = gds.find((g) => g.id === t.fromGodownId);
+  const to = gds.find((g) => g.id === t.toGodownId);
+  const lotFrom = type === "FG Packing" ? "pack" : type === "Finish Goods" ? "fg" : null;
+  let unit = "litres";
+  if (type === "Purchase") {
+    const [m] = await ex.select({ unit: erpRawMaterials.unit }).from(erpRawMaterials).where(eq(erpRawMaterials.id, t.itemId));
+    unit = stockUnit(m?.unit ?? "") === "Ltr" ? "litres" : "pieces";
+  } else if (type === "Finish Goods") unit = "cans";
+  else if (type === "FG Packing") unit = "boxes";
+  const units = lotFrom ? await unitsOfTransfer(ex, { transferId: id, lotFrom, lotCode: t.lotNo }) : [];
+  const out: TransferCancelPicture = { t, type, from: from?.name ?? "its godown", to: to?.name ?? "its godown", lost: !!to?.reserved, unit, units, lotFrom, blocker: null };
+  if (!TYPES.includes(type)) return { ...out, blocker: "This transfer is of a kind that cannot be cancelled." };
+  const hold = (await transferHolds(ex, [id])).get(id);
+  if (hold) return { ...out, blocker: hold.replace("can no longer be edited", "can no longer be cancelled").replace("not here", "not by cancelling it") };
+  if (!out.lost) {
+    const there = await lotStockAt(ex, type, t.itemId, t.lotNo, t.toGodownId);
+    if (there < t.quantity - 1e-9)
+      return { ...out, blocker: `Of the ${nf(t.quantity)} this transfer delivered to ${out.to}, only ${nf(Math.max(there, 0))} of lot ${t.lotNo} is still there — the rest has been used or moved on, so this transfer can no longer be cancelled.` };
+  }
+  const wantStatus = out.lost ? "lost" : "available";
+  if (units.some((u) => u.touched || u.godownId !== t.toGodownId || u.status !== wantStatus))
+    return { ...out, blocker: `${type === "FG Packing" ? "Boxes" : "Labelled cans"} this transfer moved have since been scanned, dispatched or moved again, so it can no longer be cancelled.` };
+  return out;
+}
+
+/**
+ * CANCELLING A TRANSFER takes it back whole, in one transaction: the
+ * destination's inflow entry is removed, the boxes and labelled cans it moved
+ * go back to the godown they left (a further event on each — their history is
+ * never rewritten), and the transfer row itself — the outflow the source's
+ * stock is read from — is deleted, so the lot's stock is back where it was.
+ * The audit row keeps the transfer as it stood. Refused on the same grounds
+ * as an edit; a write-off needs the lost-stock power to cancel, as to make.
+ */
+async function cancelTransfer(ctx: ErpContext, id: string, values: Record<string, string>): Promise<Result<unknown>> {
+  const refusal = await confirmImpact("erp-transfer-cancel", id, readConfirmation(values));
+  if (refusal) return refusal;
+  const seen: { before?: TransferRow; to?: string; lost?: boolean } = {};
+  const res = await inTx(async (tx) => {
+    const [b] = await tx.select().from(erpTransfers).where(eq(erpTransfers.id, id)).for("update");
+    if (!b) return refuse(err("That transfer no longer exists.", "not_found"));
+    const type = b.itemType as ItemType;
+    const [to] = await tx.select({ reserved: erpGodowns.reserved }).from(erpGodowns).where(eq(erpGodowns.id, b.toGodownId));
+    if (to?.reserved && !ctx.powers.has("lostStock")) return refuse(err(LOST_CANCEL_WHY, "not_permitted"));
+    for (const g of [b.fromGodownId, b.toGodownId].sort()) for (const st of [STAGE_OF[type] ?? type, type].sort()) await lockLot(tx, st, b.lotNo, g);
+    const p = await transferCancelPicture(tx, id);
+    if (!p) return refuse(err("That transfer no longer exists.", "not_found"));
+    if (p.blocker) return refuse(err(p.blocker, "rule_violation"));
+    await dropTransferIn(tx, type, id);
+    if (p.units.length) await undoUnitsForTransfer(tx, { transferId: id, unitIds: p.units.map((u) => u.id), fromGodownId: b.fromGodownId, byId: ctx.user.id });
+    await tx.delete(erpTransfers).where(eq(erpTransfers.id, id));
+    seen.before = b;
+    seen.to = p.to;
+    seen.lost = p.lost;
+    return okVoid(p.lost ? `Write-off cancelled · ${nf(b.quantity)} of ${b.itemName} back at ${p.from}` : `Transfer cancelled · ${nf(b.quantity)} of ${b.itemName} back at ${p.from}`);
+  });
+  if (res.ok) await erpAudit(ctx, "erp.transfer.cancel", "erp_transfer", id, seen.before ?? null, null);
+  return res;
+}
+
+const LOST_CANCEL_WHY = "Cancelling a write-off to Item Lost Record needs the lost-stock power.";
+
 /* Transfers are a register: read by transfer date, never the whole history (`window.ts`). */
 const TRANSFER_WINDOW = { label: "Transfer date", default: REGISTER_DEFAULT } as const;
 
@@ -402,7 +490,16 @@ const transfers: ScreenModule = {
           flags,
           title: `${x.t.itemName} · ${nf(x.t.quantity)}`,
           header: `${from?.name ?? ""} → ${to?.name ?? ""} · lot ${x.t.lotNo}`,
-          actions: [{ id: "edit", l: "Edit", loadsForm: true, why: holds.get(x.t.id) ?? (to?.reserved && !lostPower ? LOST_EDIT_WHY : "") }],
+          actions: [
+            { id: "edit", l: "Edit", loadsForm: true, why: holds.get(x.t.id) ?? (to?.reserved && !lostPower ? LOST_EDIT_WHY : "") },
+            {
+              id: "cancel",
+              l: to?.reserved ? "Cancel write-off" : "Cancel transfer",
+              /* The holds an edit has are the cancel's too; what the destination has used since is the modal's to say. */
+              why: (holds.get(x.t.id) ?? "").replace("can no longer be edited", "can no longer be cancelled") || (to?.reserved && !lostPower ? LOST_CANCEL_WHY : ""),
+              impact: { kind: "erp-transfer-cancel", id: x.t.id },
+            },
+          ],
           by: stampLine(x.by, x.t.createdAt),
         };
       }),
@@ -410,6 +507,9 @@ const transfers: ScreenModule = {
   },
   formLoaders: {
     edit: transferEditForm,
+  },
+  actions: {
+    cancel: (ctx, id, values) => cancelTransfer(ctx, id, values),
   },
   forms: {
     async edit(ctx, h, _l, id) {

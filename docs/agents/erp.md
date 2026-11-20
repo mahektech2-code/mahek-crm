@@ -478,6 +478,13 @@ panel):
   `erp.purchase.poGstPercent`. Several requirements on one number are one PO.
   **Unlink** is allowed while nothing has arrived; a PO left empty is cancelled
   and reused if linked again (the number is unique).
+  **A Quotation manager row is NOT deleted while a PO it bought is still open**
+  (Approved, Sent or Partly received): the `erp-quote-row` impact carries a
+  blocker naming the PO, and the save refuses. Undo the purchase on each rate
+  (which withdraws the line, cancelling a PO left empty) or close the PO short,
+  then delete. It used to leave the PO receiving with nothing on the sheet
+  saying where it came from; refusing was chosen over cancelling the PO
+  automatically, because a PO the vendor already has is not undone by a row.
 - **Direct purchase** — no quotation. **Create PO** opens a three-page modal
   (Vendor → Delivery → Review) OVER the requirement, which stays open. The rate is
   the item's `erp_raw_materials.price_paise` and is never read from the request;
@@ -696,6 +703,20 @@ and a batch line that used more than `erp.production.recipeTolerancePercent`
 above it is flagged on the batches list; nothing is refused. A new below-level
 alert tells whoever works at that godown and can raise requisitions, once, as it
 is raised.
+
+**A whole recipe is RETIRED, never deleted** (`0365`, `erp_recipes.retired_at`
+stamped on every line of the product; impact kind `erp-recipe-retire`). EVERY
+reader of `erp_recipes` filters `retired_at is null` — `recipeRows`,
+`recipeMap`, `mrp-stock.ts`, `factory/server.ts` (the phones' batch sheets) and
+`factory/head.ts` (starting a mixing batch) — so a new reader must too. A
+retired recipe refuses edits, quantity changes and a New recipe for the same
+product until Restore. Batches made to it keep their lines.
+
+**Retiring a reference list value says which records carry it.** Settings →
+Reference lists → Retire a value goes through `erp-ref-value-retire` (id
+`impactPart(listKey, value)`); `refValueUses` counts each `STORED_IN` source,
+named by `STORED_WHAT` entry for entry — add a label when you add a source.
+`IN_USE` is `union all` so those counts are records, not distinct values.
 
 **The AI features draft and a person decides** (`docs/erp/04`). Everything a
 rule can do is ordinary code: the alert rules (`engines/alerts.ts`, run hourly

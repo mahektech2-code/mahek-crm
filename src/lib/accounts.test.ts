@@ -31,6 +31,7 @@ import {
   users,
 } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
+import { correctReceiptAction } from "@/lib/actions/payments";
 import { NotPermittedError } from "@/lib/access-control";
 import { invalidateConfig, seedConfig, updateSetting } from "@/lib/config/store";
 import { addDays } from "@/lib/business-date";
@@ -59,6 +60,9 @@ import {
 } from "@/lib/services/order-approval-service";
 import {
   confirmReceipt,
+  correctReceipt,
+  holdReceipt,
+  myReportedReceipts,
   customerLedger,
   openBillsFor,
   paymentSearch,
@@ -741,6 +745,124 @@ describe("Payments to confirm", () => {
 });
 
 /* ============================================================= credit notes */
+
+describe("Correcting a claim before it is decided", () => {
+  async function claim(customerId: string, amount: number) {
+    setTestUser(priya);
+    const r = await recordReceipt({
+      customerId,
+      amount,
+      receivedAt: TODAY,
+      mode: "Bank transfer",
+      allocation: "auto",
+      source: "collections_call",
+      idempotencyKey: randomUUID(),
+    });
+    assert.ok(r.ok, r.ok ? "" : r.error);
+    return r.data.receiptId;
+  }
+  const linesOf = (receiptId: string) => db.select().from(payments).where(eq(payments.receiptId, receiptId));
+
+  test("accounts fix a mistyped amount: the same bill, nothing counted, the reason kept — and it confirms at the new figure", async () => {
+    const customer = await makeCustomer();
+    const bill = await makeBill(customer.id, 10_000_00);
+    const receiptId = await claim(customer.id, 9_000_00);
+
+    setTestUser(deepa);
+    const r = await correctReceipt(receiptId, { amount: 900_00, reference: "UTR123" }, "Typed 9,000; the transfer is 900.");
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+
+    const [receipt] = await db.select().from(paymentReceipts).where(eq(paymentReceipts.id, receiptId));
+    assert.equal(Number(receipt.amount), 900_00);
+    assert.equal(receipt.status, "reported", "still waiting to be decided");
+    const lines = await linesOf(receiptId);
+    assert.deepEqual(lines.map((l) => [l.billId, Number(l.amount), l.reference]), [[bill.id, 900_00, "UTR123"]]);
+    const [b] = await db.select().from(bills).where(eq(bills.id, bill.id));
+    assert.equal(b.paidAmount, 0, "a correction counts nothing");
+
+    const [audit] = await db.select().from(auditLog).where(and(eq(auditLog.entityId, receiptId), eq(auditLog.action, "payment.corrected")));
+    assert.ok(audit, "the correction is in the audit log");
+    assert.equal((audit.afterState as { reason: string }).reason, "Typed 9,000; the transfer is 900.");
+
+    const done = await confirmReceipt(receiptId);
+    assert.equal(done.ok, true, done.ok ? "" : done.error);
+    const [after] = await db.select().from(bills).where(eq(bills.id, bill.id));
+    assert.equal(after.paidAmount, 900_00);
+  });
+
+  test("whoever recorded it may correct it while it waits; another telecaller may not", async () => {
+    const customer = await makeCustomer();
+    await makeBill(customer.id, 10_000_00);
+    const receiptId = await claim(customer.id, 4_000_00);
+
+    setTestUser(priya);
+    const mine = await correctReceipt(receiptId, { receivedAt: addDays(TODAY, -1) }, "Paid yesterday, not today.");
+    assert.equal(mine.ok, true, mine.ok ? "" : mine.error);
+    const lines = await linesOf(receiptId);
+    assert.ok(lines.every((l) => String(l.paidAt) === addDays(TODAY, -1)), "the lines carry the date too");
+
+    const other = await makeUser("Rakesh Two", "associate");
+    setTestUser(other);
+    const theirs = await correctReceipt(receiptId, { amount: 1_00 }, "Not mine to change.");
+    assert.equal(theirs.ok, false);
+  });
+
+  test("once accounts hold it, only accounts correct it", async () => {
+    const customer = await makeCustomer();
+    await makeBill(customer.id, 10_000_00);
+    const receiptId = await claim(customer.id, 4_000_00);
+    setTestUser(deepa);
+    assert.ok((await holdReceipt(receiptId, "Looking for it in the statement.")).ok);
+
+    setTestUser(priya);
+    assert.equal((await correctReceipt(receiptId, { amount: 3_000_00 }, "Wrong amount.")).ok, false);
+    setTestUser(deepa);
+    const r = await correctReceipt(receiptId, { amount: 3_000_00 }, "Statement says 3,000.");
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    const [receipt] = await db.select().from(paymentReceipts).where(eq(paymentReceipts.id, receiptId));
+    assert.equal(receipt.status, "held", "correcting does not end the hold");
+  });
+
+  test("a confirmed receipt is reversed, never corrected; and the reason is required", async () => {
+    const customer = await makeCustomer();
+    await makeBill(customer.id, 10_000_00);
+    const receiptId = await claim(customer.id, 4_000_00);
+
+    setTestUser(deepa);
+    const noReason = await correctReceipt(receiptId, { amount: 3_000_00 }, " ");
+    assert.equal(noReason.ok, false);
+    assert.ok((await confirmReceipt(receiptId)).ok);
+    const late = await correctReceipt(receiptId, { amount: 3_000_00 }, "Too late for this.");
+    assert.equal(late.ok, false);
+    assert.equal(late.ok ? "" : late.code, "conflict");
+  });
+
+  test("the CRM Ledger tab lists only the viewer's own claims still waiting, and Correct from there writes", async () => {
+    const customer = await makeCustomer();
+    await makeBill(customer.id, 10_000_00);
+    const waiting = await claim(customer.id, 2_000_00);
+    const held = await claim(customer.id, 1_000_00);
+    setTestUser(deepa);
+    assert.ok((await holdReceipt(held, "Looking for it in the statement.")).ok);
+    const other = await makeUser("Rakesh Three", "associate");
+
+    const mine = await myReportedReceipts(customer.id, priya.id);
+    assert.deepEqual(mine.receipts.map((r) => r.receiptId), [waiting], "held ones are Accounts' now");
+    assert.ok(mine.correct.modes.includes("Bank transfer"));
+    assert.deepEqual((await myReportedReceipts(customer.id, other.id)).receipts, [], "nobody else's claims");
+
+    setTestUser(priya);
+    const r = await correctReceiptAction(waiting, { amount: 2_500_00 }, "Customer sent 2,500.");
+    assert.ok(r.ok || /static generation store/.test(r.error), r.ok ? "" : r.error);
+    const [receipt] = await db.select().from(paymentReceipts).where(eq(paymentReceipts.id, waiting));
+    assert.equal(Number(receipt.amount), 2_500_00);
+
+    setTestUser(other);
+    const refused = await correctReceiptAction(waiting, { amount: 1_00 }, "Not mine to change.");
+    assert.equal(refused.ok, false);
+    assert.ok(!refused.ok && !/static generation store/.test(refused.error));
+  });
+});
 
 describe("Credit notes", () => {
   test("a request reaches the queue with its complaint and its bill", async () => {

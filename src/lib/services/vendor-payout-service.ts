@@ -11,6 +11,7 @@ import {
   dueDateFor,
   groupPurchaseLots,
   moveRefusal,
+  payoutEditRefusal,
   paymentWeekdays,
   plannedPayOn,
   replannedPayOn,
@@ -805,6 +806,73 @@ export async function cancelPayout(payoutId: string, reason: string): Promise<Re
     .where(eq(vendorPayouts.id, payoutId));
   await audit(desk.ctx, "payout.cancel", payoutId, { status: row.status }, { status: "cancelled", reason: reason.trim(), payee: row.payeeName });
   return okVoid(`Payout to ${row.payeeName} cancelled`);
+}
+
+export type PayoutEditInput = {
+  /** A supplier from the list, or null with `payeeName` for somebody not in it. */
+  supplierId?: string | null;
+  payeeName?: string | null;
+  description: string;
+  reference?: string | null;
+  amountPaise: number;
+};
+
+/**
+ * Corrects who a MANUAL payout is to and what it is worth, while it is still
+ * to pay. The same checks `createManualPayout` makes, the same capability, and
+ * one audit row carrying both pictures so the change can be read back.
+ */
+export async function editManualPayout(payoutId: string, input: PayoutEditInput): Promise<Result> {
+  const desk = await requireDesk("payment.record");
+  if (desk.refused) return desk.refused;
+  const row = await loadPayout(payoutId);
+  if (!row) return err("That payout no longer exists.", "not_found");
+  const why = payoutEditRefusal(row);
+  if (why) return err(why, "rule_violation");
+
+  let payee = input.payeeName?.trim() ?? "";
+  let supplierId: string | null = null;
+  if (input.supplierId) {
+    const [s] = await db.execute<{ id: string; name: string }>(sql`select id, name from erp_suppliers where id = ${input.supplierId}`);
+    if (!s) return fieldErr("supplierId", "That supplier no longer exists.");
+    supplierId = s.id;
+    payee = s.name;
+  }
+  if (!payee) return fieldErr("payeeName", "Say who is being paid.");
+  if (payee.length > 120) return fieldErr("payeeName", "Keep the name under 120 characters.");
+  if (!input.description?.trim()) return fieldErr("description", "Say what the payment is for.");
+  if (!Number.isFinite(input.amountPaise) || input.amountPaise <= 0) return fieldErr("amountPaise", "Enter the amount to pay.");
+
+  /* A PO names one supplier; a payee changed away from it takes the PO off. */
+  let poId = row.poId;
+  if (poId && supplierId !== row.supplierId) poId = null;
+
+  const next = {
+    supplierId,
+    payeeName: payee,
+    description: input.description.trim(),
+    reference: input.reference?.trim() || null,
+    amountPaise: Math.round(input.amountPaise),
+    poId,
+  };
+  const before = {
+    supplierId: row.supplierId,
+    payeeName: row.payeeName,
+    description: row.description,
+    reference: row.reference,
+    amountPaise: Number(row.amountPaise),
+    poId: row.poId,
+  };
+  if (JSON.stringify(before) === JSON.stringify(next)) return okVoid("Nothing changed");
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(vendorPayouts)
+      .set({ ...next, updatedAt: new Date(), updatedById: desk.ctx.user.id })
+      .where(eq(vendorPayouts.id, payoutId));
+    await audit(desk.ctx, "payout.edit", payoutId, before, { ...next, payee, amount: next.amountPaise }, tx);
+  });
+  return okVoid(`Payout to ${payee} saved`);
 }
 
 export async function updatePayoutNotes(payoutId: string, notes: string): Promise<Result> {

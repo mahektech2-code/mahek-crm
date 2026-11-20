@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 
 import { Icon } from "@/components/shell/icons";
+import { EditLeadButton } from "@/components/leads/record/lead-edit-dialog";
 import { cx } from "@/components/ui/primitives";
 import { STAGE_LABEL, COMMS_ACTIONS, personName } from "@/lib/sales-lead-pipeline/reference";
 import { stageAgeLong } from "@/lib/sales-lead-pipeline/stage-age";
@@ -38,13 +39,11 @@ function MetaCell({ label, value }: { label: string; value?: string }) {
 export function ProtoRecordHeader({
   lead,
   canWork,
-  editHref,
   onReassign,
   onLost,
 }: {
   lead: Lead;
   canWork: boolean;
-  editHref: string;
   onReassign: () => void;
   onLost: () => void;
 }) {
@@ -69,9 +68,16 @@ export function ProtoRecordHeader({
               <Icon name="people" size={14} /> Reassign
             </button>
           ) : null}
-          <Link href={editHref} className={pbtn("ghost", true)}>
-            <Icon name="doc" size={14} /> Edit
-          </Link>
+          {canWork ? (
+            <EditLeadButton
+              customerId={lead.id}
+              renderButton={(open) => (
+                <button type="button" className={pbtn("ghost", true)} onClick={open}>
+                  <Icon name="doc" size={14} /> Edit
+                </button>
+              )}
+            />
+          ) : null}
           {!lead.lost && canWork ? (
             <button type="button" className={cx(pbtn("secondary", true), "border-danger-soft text-danger")} onClick={onLost}>
               Mark Lost

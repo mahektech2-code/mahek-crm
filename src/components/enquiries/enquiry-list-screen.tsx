@@ -40,6 +40,7 @@ import type {
   EnquiryDashboardCounts,
 } from "@/lib/services/enquiry-service";
 import { initialsOf, phoneDisplay, stamp } from "@/lib/format";
+import { NewEnquiryButton } from "@/components/enquiries/enquiry-edit-dialogs";
 
 type Filters = {
   q: string;
@@ -138,6 +139,9 @@ export function EnquiryListScreen({
       <PageHeader
         title="Website Enquiries"
         subtitle="Every enquiry from the website and beyond, from first contact through to delivery."
+        /* It opens the new enquiry's own page, which is the worklist's — so it
+           is offered to whoever may open one. */
+        actions={canOpenEnquiry ? <NewEnquiryButton /> : null}
       />
 
       <CardGrid min={128} gap="gap-3" className="mb-4">

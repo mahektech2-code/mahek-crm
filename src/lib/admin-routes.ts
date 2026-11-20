@@ -64,6 +64,7 @@ export const ADMIN_TABS = {
   powers: [
     { slug: "powers", label: "Powers" },
     { slug: "screens", label: "Screens" },
+    { slug: "seats", label: "Roles & seats" },
     { slug: "templates", label: "Job templates" },
   ],
   person: [

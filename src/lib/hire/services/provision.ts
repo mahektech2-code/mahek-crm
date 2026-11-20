@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appAccess, hireApplications, hireCandidates, hireDecisions, hireDocuments, hireOnboardingItems, hireStageExecutions, passwordResets, users } from "@/db/schema";
-import { APP_IDS, getApp, type AppId } from "@/lib/apps";
+import { APP_IDS, NEVER_PROVISIONED, getApp, type AppId } from "@/lib/apps";
 import { initialsOf } from "@/lib/format";
 import { sendMail } from "@/lib/mailer";
 import { notifyUsers } from "@/lib/notify";
@@ -45,6 +45,14 @@ export type ProvisionPlan = {
   blockers: string[];
 };
 
+/** A blueprint naming an app only a platform administrator grants is refused, not trimmed. */
+function forbidden(apps: { id: AppId; name: string }[]): string[] {
+  const bad = apps.filter((a) => NEVER_PROVISIONED.includes(a.id));
+  return bad.length
+    ? [`The blueprint grants ${bad.map((a) => a.name).join(", ")}, which only a platform administrator gives — take ${bad.length === 1 ? "it" : "them"} out of its Provisioning section.`]
+    : [];
+}
+
 export async function provisionPlan(b: AppBundle): Promise<ProvisionPlan> {
   const p = b.def.provisioning;
   const apps = p.apps.filter((a): a is AppId => (APP_IDS as readonly string[]).includes(a)).map((id) => ({ id, name: getApp(id)?.name ?? id }));
@@ -80,7 +88,7 @@ export async function provisionPlan(b: AppBundle): Promise<ProvisionPlan> {
     phone,
     email,
     emailTaken: Boolean(byEmail && byEmail.id !== existing?.id),
-    blockers: b.app.status === "hired" ? [] : await provisionBlockers(b),
+    blockers: b.app.status === "hired" ? [] : [...forbidden(apps), ...(await provisionBlockers(b))],
   };
 }
 

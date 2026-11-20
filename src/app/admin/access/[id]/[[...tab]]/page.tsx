@@ -68,6 +68,26 @@ export default async function PersonPage({ params }: { params: Promise<{ id: str
       why: "ERP Masters → Godowns. A godown's staff list decides whose stock and forms a person works on.",
     },
     {
+      label: "Sales regions",
+      href: "/sales/people",
+      now: extras.regions.length
+        ? `Oversees ${extras.regions.join(", ")}.${extras.workingPlaces ? ` Also allocated ${extras.workingPlaces} working ${extras.workingPlaces === 1 ? "place" : "places"}.` : ""}`
+        : extras.workingPlaces
+          ? `No oversight region. Allocated ${extras.workingPlaces} working ${extras.workingPlaces === 1 ? "place" : "places"}.`
+          : "No region and no working place.",
+      warn:
+        extras.regionScoped && !extras.regions.length
+          ? "As a manager with no region, they see EVERY region's customers, salesmen and figures. Give them a region on the Sales Dashboard if they should see less."
+          : undefined,
+      why: "Sales Dashboard → People → Managers. A manager's regions decide whose customers, salesmen and numbers they see in the CRM and the Sales Dashboard — and none at all means the whole country.",
+    },
+    {
+      label: "Website assignments",
+      href: "/website/assignments",
+      now: extras.websiteAssignments.length ? `Assigned: ${extras.websiteAssignments.join(", ")}.` : "No website content assigned.",
+      why: "Website → Assignments. Which pages and items they may edit and send for review, without any grant here.",
+    },
+    {
       label: "Lead verifier settings",
       href: verifierHref,
       now: verifies.length ? `Named in: ${verifies.join("; ")}.` : "Not named as a lead verifier.",

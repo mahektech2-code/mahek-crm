@@ -1652,9 +1652,21 @@ export async function deleteDocument(documentId: string, confirmation?: ImpactCo
         action: "pricelist.document.delete",
         entityType: "price_list_document",
         entityId: documentId,
-        before: { filename: doc.filename },
+        before: { filename: doc.filename, attachmentId: doc.attachmentId },
       });
       await tx.delete(priceListDocuments).where(eq(priceListDocuments.id, documentId));
+      /* Its file goes with it, the way every removed attachment goes: detached and marked removed,
+         never hard-deleted here. Nothing can put it back on a document that no longer exists, so
+         no recycle-bin hold is kept — the orphan sweep frees the bytes on its next run. */
+      await tx.execute(sql`
+        update attachments
+           set status = 'removed', parent_type = null, parent_id = null,
+               removed_parent_type = null, removed_parent_id = null,
+               removed_at = now(), updated_at = now()
+         where purged_at is null
+           and ((parent_type = 'price_list_document' and parent_id = ${documentId})
+                ${doc.attachmentId ? sql`or id = ${doc.attachmentId}` : sql``})
+      `);
     });
     refresh();
     return okVoid("Deleted.");

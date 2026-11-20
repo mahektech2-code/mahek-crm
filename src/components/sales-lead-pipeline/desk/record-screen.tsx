@@ -195,7 +195,6 @@ export function SalesManagerRecordScreen({ initialTab, timeline }: { initialTab?
       <ProtoRecordHeader
         lead={lead}
         canWork={canWork}
-        editHref={`${links.base}/${lead.id}/edit`}
         onReassign={() => openModal("reassign", lead.id)}
         onLost={() => openModal("lost", lead.id)}
       />

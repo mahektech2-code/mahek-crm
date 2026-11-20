@@ -50,7 +50,7 @@ import {
   type ScreenModule,
 } from "../server";
 import type { ActionSpec, ColSpec, FieldSpec, FormSpec, ListRow } from "../ui";
-import { inr, nf } from "../ui";
+import { impactPart, inr, nf } from "../ui";
 import { getConfig } from "@/lib/config/store";
 import { rmTotalsByItem } from "../stock";
 import { PURCHASE_METHODS, methodByLabel, methodLabel, type PurchaseMethod } from "../engines/purchase-flow";
@@ -1236,13 +1236,25 @@ async function godownForm(id?: string): Promise<FormSpec> {
   };
 }
 
-async function erpUsers(): Promise<{ id: string; name: string }[]> {
-  return db
-    .select({ id: users.id, name: users.name })
+/**
+ * The ERP's people, each with a LABEL that names exactly one of them.
+ *
+ * The godown staff box is a list of words, and it used to be names — the save
+ * then matched names back, so two people called the same thing were both
+ * given a godown when one was ticked, and a renamed person fell off it (the
+ * "a person is an id" rule). The label is the name where it is unique and the
+ * name with the email or number where it is not; the save maps a label to the
+ * one id it was made from.
+ */
+async function erpUsers(): Promise<{ id: string; name: string; label: string }[]> {
+  const rows = await db
+    .select({ id: users.id, name: users.name, email: users.email, phone: users.phone })
     .from(users)
     .innerJoin(appAccess, and(eq(appAccess.userId, users.id), eq(appAccess.app, "erp")))
     .where(eq(users.active, true))
     .orderBy(asc(users.name));
+  const shared = new Set(rows.filter((r, i) => rows.findIndex((o) => o.name === r.name) !== i).map((r) => r.name));
+  return rows.map((r) => ({ id: r.id, name: r.name, label: shared.has(r.name) ? `${r.name} (${r.email ?? r.phone ?? r.id.slice(-6)})` : r.name }));
 }
 
 const godowns: ScreenModule = {
@@ -1252,12 +1264,13 @@ const godowns: ScreenModule = {
        it stays in the table for transfers and stock counts, and off this list. */
     const rows = await db.select().from(erpGodowns).where(eq(erpGodowns.reserved, false)).orderBy(asc(erpGodowns.name));
     const staff = await db
-      .select({ godownId: erpGodownStaff.godownId, name: users.name })
+      .select({ godownId: erpGodownStaff.godownId, userId: erpGodownStaff.userId, name: users.name })
       .from(erpGodownStaff)
       .innerJoin(users, eq(users.id, erpGodownStaff.userId));
     const people = await erpUsers();
+    const labelOf = new Map(people.map((p) => [p.id, p.label]));
     const byGodown = new Map<string, string[]>();
-    staff.forEach((s) => byGodown.set(s.godownId, [...(byGodown.get(s.godownId) ?? []), s.name]));
+    staff.forEach((s) => byGodown.set(s.godownId, [...(byGodown.get(s.godownId) ?? []), labelOf.get(s.userId) ?? s.name]));
     const admin = ctx.powers.has("employeeAdmin");
     const why = admin ? "" : "Only an ERP administrator changes a godown's status and staff.";
     /* Only somebody who can save a godown is offered a new one: saveGodown needs employeeAdmin. */
@@ -1301,12 +1314,14 @@ const godowns: ScreenModule = {
                   title: `Who works at ${g.name}`,
                   sub: "Only people holding the ERP are listed. A working location is chosen from these.",
                   submit: "Save",
-                  fields: [{ k: "people", l: "Assigned employees", t: "multi", opts: people.map((p) => p.name) }],
+                  fields: [{ k: "people", l: "Assigned employees", t: "multi", opts: people.map((p) => p.label) }],
                   init: { people: names.join("|") },
                 },
               },
               { id: "edit", l: "Edit", why, loadsForm: true },
-              { id: "toggle", l: g.status === "active" ? "Retire" : "Restore", why },
+              g.status === "active"
+                ? { id: "toggle", l: "Retire", why, impact: { kind: "erp-godown-retire", id: g.id } }
+                : { id: "toggle", l: "Restore", why },
             ];
         return {
           id: g.id,
@@ -1355,11 +1370,16 @@ const godowns: ScreenModule = {
     },
   },
   actions: {
-    async toggle(ctx, id) {
+    async toggle(ctx, id, v) {
       if (!ctx.powers.has("employeeAdmin")) return err("Only an ERP administrator changes a godown's status.", "not_permitted");
       const [g] = await db.select().from(erpGodowns).where(eq(erpGodowns.id, id));
       if (!g || g.reserved) return err("That godown cannot be changed.", "rule_violation");
       const status = g.status === "active" ? "inactive" : "active";
+      /* Retiring shows who works there and what still leaves from it first; restoring is harmless. */
+      if (status === "inactive") {
+        const refusal = await confirmImpact("erp-godown-retire", id, readConfirmation(v));
+        if (refusal) return refusal;
+      }
       await db.update(erpGodowns).set({ status, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpGodowns.id, id));
       await erpAudit(ctx, "erp.godown.status", "erp_godown", id, { status: g.status }, { status });
       return okVoid(status === "active" ? `${g.name} restored` : `${g.name} retired`);
@@ -1368,7 +1388,8 @@ const godowns: ScreenModule = {
       if (!ctx.powers.has("employeeAdmin")) return err("Only an ERP administrator assigns godown staff.", "not_permitted");
       const names = multi(values.people);
       const people = await erpUsers();
-      const ids = people.filter((p) => names.includes(p.name)).map((p) => p.id);
+      /* By the label each person was offered under — one label, one id. */
+      const ids = people.filter((p) => names.includes(p.label)).map((p) => p.id);
       await db.transaction(async (tx) => {
         await tx.delete(erpGodownStaff).where(eq(erpGodownStaff.godownId, id));
         if (ids.length) await tx.insert(erpGodownStaff).values(ids.map((userId) => ({ godownId: id, userId })));
@@ -1477,10 +1498,12 @@ const refListsScreen: ScreenModule = {
                     l: "Retire a value",
                     prompt: {
                       title: `Retire from ${l.label}`,
-                      sub: "Records that already carry it keep it; new forms stop offering it.",
-                      submit: "Retire",
+                      sub: "Records that already carry it keep it; new forms stop offering it. The next step lists those records.",
+                      submit: "Next",
                       fields: [{ k: "v", l: "Value", t: "select" as const, req: true, opts: vals }],
                     },
+                    /* The report is about the value the prompt picked. */
+                    impact: { kind: "erp-ref-value-retire", id: l.key, withValue: "v" },
                   },
                 ]
               : []),
@@ -1545,6 +1568,9 @@ const refListsScreen: ScreenModule = {
     async retire(ctx, listKey, values) {
       const v = text(values.v);
       if (!v) return fieldErr("v", "Type the value.");
+      /* The person saw which records carry it — they keep it — before it stops being offered. */
+      const refusal = await confirmImpact("erp-ref-value-retire", impactPart(listKey, v), readConfirmation(values));
+      if (refusal) return refusal;
       await db.update(erpRefValues).set({ active: false }).where(and(eq(erpRefValues.listKey, listKey), eq(erpRefValues.value, v)));
       await erpAudit(ctx, "erp.ref.retire", "erp_ref_value", listKey, null, { value: v });
       return okVoid(`Retired “${v}”`);

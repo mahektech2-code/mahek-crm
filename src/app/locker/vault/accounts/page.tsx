@@ -1,3 +1,6 @@
+import { asc, eq } from "drizzle-orm";
+import { db } from "@/db";
+import { lockerIdentities } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
 import { requireModule } from "@/lib/access";
 import { lockerPeople } from "@/lib/locker/service";
@@ -10,7 +13,11 @@ export const metadata = { title: "Sign-in accounts" };
 export default async function AccountsPage() {
   const user = await requireUser();
   await requireModule(user.id, "locker.identities");
-  const [rows, people] = await Promise.all([identitiesView(), lockerPeople()]);
+  const [rows, people, retired] = await Promise.all([
+    identitiesView(),
+    lockerPeople(),
+    db.select({ id: lockerIdentities.id, email: lockerIdentities.email, provider: lockerIdentities.provider }).from(lockerIdentities).where(eq(lockerIdentities.active, false)).orderBy(asc(lockerIdentities.email)),
+  ]);
   return (
     <>
       <PageHead
@@ -20,6 +27,7 @@ export default async function AccountsPage() {
         sub="Every Google, Microsoft, GitHub and Apple account the company relies on. A personal account rooting company services stays red until it is resolved."
       />
       <IdentitiesScreen
+        retired={retired}
         rows={rows.map((r) => ({ ...r.identity, score: r.score, direct: r.direct, ownerName: r.ownerName, ownerId: r.ownerId, controlledById: r.controlledById }))}
         people={[
           ...people.map((p) => ({ v: p.id, l: p.name })),

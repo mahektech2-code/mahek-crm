@@ -16,8 +16,10 @@
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
+import { auditLog } from "@/db/schema";
 import { hashPassword } from "@/lib/auth";
 import { findAccount } from "@/lib/services/otp-service";
+import { rederiveAccountLevel } from "@/lib/services/app-provisioning";
 
 const AREAS = ["head", "mixing", "filling", "packing", "dispatch", "qc"];
 const CREW = ["owner", "operator", "helper", "verifier"];
@@ -52,26 +54,58 @@ async function main() {
   if (pin && !/^\d{4}$/.test(pin)) throw new Error("--pin is 4 numbers");
 
   const level = area === "head" ? "manager" : "associate";
-  await db.execute(sql`
-    insert into app_access (id, user_id, app, role) values (${"aca_" + randomUUID().slice(0, 12)}, ${user.id}, 'factory', ${level})
-    on conflict do nothing`);
-  await db.execute(sql`
-    insert into factory_staff (user_id, area, areas, role_label, badge_code, hr_confirmed, pin_hash)
-    values (${user.id}, ${allAreas[0]}, ${sql`${sql.param(allAreas)}::text[]`}, ${arg("role") ?? null}, ${arg("badge") ?? null}, ${!flag("unconfirmed")}, ${pin ? await hashPassword(pin) : null})
-    on conflict (user_id) do update set
-      area = excluded.area,
-      areas = excluded.areas,
-      role_label = coalesce(excluded.role_label, factory_staff.role_label),
-      badge_code = coalesce(excluded.badge_code, factory_staff.badge_code),
-      hr_confirmed = excluded.hr_confirmed,
-      pin_hash = coalesce(excluded.pin_hash, factory_staff.pin_hash),
-      updated_at = now()`);
-  if (crew) {
-    /* One owner and one operator per process; any number of helpers. */
-    if (crew === "owner" || crew === "operator") await db.execute(sql`delete from factory_team_defaults where proc = ${area} and role = ${crew}`);
-    await db.execute(sql`insert into factory_team_defaults (proc, role, user_id) values (${area}, ${crew}, ${user.id}) on conflict do nothing`);
-  }
-  console.log(`${user.name} is on the floor: ${allAreas.join(", ")}${crew ? " · " + crew : ""}${level === "manager" ? " · Production Head" : ""}.`);
+  const pinHash = pin ? await hashPassword(pin) : null;
+  /* One transaction: the grant, the floor place, the crew seat, the account level rebuilt from every
+     grant they now hold (a Production Head is a manager — `users.role` is a cache of the hats), and
+     an audit row for the person placed and for anybody a seat was taken from. A terminal wears no
+     hat, so the actor is recorded as nobody, the way `app:grant` records it. */
+  const displaced = await db.transaction(async (tx) => {
+    const granted = (await tx.execute(sql`
+      insert into app_access (id, user_id, app, role) values (${"aca_" + randomUUID().slice(0, 12)}, ${user.id}, 'factory', ${level})
+      on conflict do nothing returning id`)) as unknown as { id: string }[];
+    await tx.execute(sql`
+      insert into factory_staff (user_id, area, areas, role_label, badge_code, hr_confirmed, pin_hash)
+      values (${user.id}, ${allAreas[0]}, ${sql`${sql.param(allAreas)}::text[]`}, ${arg("role") ?? null}, ${arg("badge") ?? null}, ${!flag("unconfirmed")}, ${pinHash})
+      on conflict (user_id) do update set
+        area = excluded.area,
+        areas = excluded.areas,
+        role_label = coalesce(excluded.role_label, factory_staff.role_label),
+        badge_code = coalesce(excluded.badge_code, factory_staff.badge_code),
+        hr_confirmed = excluded.hr_confirmed,
+        pin_hash = coalesce(excluded.pin_hash, factory_staff.pin_hash),
+        updated_at = now()`);
+    let gone: { userId: string }[] = [];
+    if (crew) {
+      /* One owner and one operator per process; any number of helpers. */
+      if (crew === "owner" || crew === "operator")
+        gone = (await tx.execute(sql`
+          delete from factory_team_defaults where proc = ${area} and role = ${crew} and user_id <> ${user.id}
+          returning user_id as "userId"`)) as unknown as { userId: string }[];
+      await tx.execute(sql`insert into factory_team_defaults (proc, role, user_id) values (${area}, ${crew}, ${user.id}) on conflict do nothing`);
+    }
+    const accountLevel = await rederiveAccountLevel(tx, user.id);
+    const place = `${allAreas.join(", ")}${crew ? ` · ${crew}` : ""}${flag("unconfirmed") ? " · to confirm" : ""}${pin ? " · pilot PIN set" : ""}`;
+    await tx.insert(auditLog).values({
+      id: `aud_${randomUUID().slice(0, 12)}`,
+      actorId: null,
+      action: "access.factory-staff",
+      entityType: "user",
+      entityId: user.id,
+      afterState: { detail: `${granted.length ? `granted factory as ${level}; ` : ""}Factory ${place} (terminal)`, accountLevel } as never,
+    });
+    for (const g of gone) {
+      await tx.insert(auditLog).values({
+        id: `aud_${randomUUID().slice(0, 12)}`,
+        actorId: null,
+        action: "access.factory-seat-displaced",
+        entityType: "user",
+        entityId: g.userId,
+        afterState: { detail: `${area} ${crew} seat given to ${user.name} (terminal)` } as never,
+      });
+    }
+    return gone.length;
+  });
+  console.log(`${user.name} is on the floor: ${allAreas.join(", ")}${crew ? " · " + crew : ""}${level === "manager" ? " · Production Head" : ""}.${displaced ? ` ${displaced} person moved off that seat.` : ""}`);
 }
 
 main()

@@ -14,7 +14,7 @@ export async function mrpStockAt(godownIds: string[]): Promise<Map<string, MrpSt
     sfgLots(db, { rates: false }),
     rmLots(db, { rates: false }),
     db.execute(sql`select lot_code as "lotCode", status from erp_sfg_qc`) as unknown as Promise<{ lotCode: string; status: string }[]>,
-    db.execute(sql`select formulation_id as "formulationId", raw_material_id as "materialId", qty_per_batch::float8 as qty from erp_recipes`) as unknown as Promise<{ formulationId: string; materialId: string; qty: number }[]>,
+    db.execute(sql`select formulation_id as "formulationId", raw_material_id as "materialId", qty_per_batch::float8 as qty from erp_recipes where retired_at is null`) as unknown as Promise<{ formulationId: string; materialId: string; qty: number }[]>,
   ]);
   const qcOf = new Map(qc.map((q) => [q.lotCode, q.status]));
   const recipe = new Map<string, Map<string, number>>();

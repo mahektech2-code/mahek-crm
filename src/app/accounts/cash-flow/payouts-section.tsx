@@ -243,6 +243,7 @@ export function PayoutsSection({
 
       <PayoutDrawer
         payout={opened}
+        suppliers={suppliers}
         today={today}
         days={days}
         modes={modes}

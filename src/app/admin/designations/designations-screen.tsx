@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Card, CardHeader, Checkbox, EmptyState, Field, Input, Select, Td, Th, Tr, cx } from "@/components/ui/primitives";
-import { Modal, RowMenu } from "@/components/ui/overlays";
+import { ConfirmDialog, Modal, RowMenu } from "@/components/ui/overlays";
 import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { useToast } from "@/components/ui/toast";
 import { getModule, isAlwaysOpen, moduleGroupsForApp, moduleKeysForApp } from "@/lib/modules";
@@ -63,6 +63,9 @@ export function DesignationsScreen({ roster }: { roster: DesignationWithMembers[
   const { push } = useToast();
   const [editing, setEditing] = React.useState<DesignationWithMembers | "new" | null>(null);
   const [deleting, setDeleting] = React.useState<DesignationWithMembers | null>(null);
+  /* Bringing holders up to a designation changes several people at once, so
+     it names them first rather than running from the menu on one click. */
+  const [syncing, setSyncing] = React.useState<DesignationWithMembers | null>(null);
   const holders = roster.reduce((n, d) => n + d.members.length, 0);
   const customised = roster.reduce((n, d) => n + d.members.filter((m) => !m.matches).length, 0);
 
@@ -81,6 +84,8 @@ export function DesignationsScreen({ roster }: { roster: DesignationWithMembers[
       push(moved.length ? `${moved.length} brought up to ${d.name}: ${moved.map((m) => m.name).join(", ")}` : `Everybody holding ${d.name} already has all of it.`);
       router.refresh();
     });
+
+  const behind = syncing ? syncing.members.filter((m) => !m.matches) : [];
 
   return (
     <AdminPage
@@ -216,7 +221,7 @@ export function DesignationsScreen({ roster }: { roster: DesignationWithMembers[
                               title: d.members.some((m) => !m.matches)
                                 ? "Adds the designation's screens, level and powers to every holder — customised ones too. Nothing extra they hold is taken away."
                                 : "Everybody holding it already matches it",
-                              onSelect: () => syncAll(d),
+                              onSelect: () => setSyncing(d),
                             },
                             { label: "Delete", destructive: true, onSelect: () => setDeleting(d) },
                           ]}
@@ -263,6 +268,29 @@ export function DesignationsScreen({ roster }: { roster: DesignationWithMembers[
           }}
         />
       ) : null}
+      <ConfirmDialog
+        key={syncing?.id ?? "none"}
+        open={syncing !== null}
+        title={syncing ? `Bring every holder up to ${syncing.name}?` : ""}
+        body={
+          behind.length ? (
+            <>
+              <span className="block">
+                {behind.length === 1 ? "This person gets" : `These ${behind.length} people get`} the designation&rsquo;s level, screens and powers added. Nothing extra they hold is taken away.
+              </span>
+              <span className="mt-2 block font-medium text-ink">{behind.map((m) => m.name).join(", ")}</span>
+            </>
+          ) : (
+            "Everybody holding it already matches it, so nothing will change."
+          )
+        }
+        confirmLabel={behind.length ? `Bring ${behind.length} up to it` : "OK"}
+        cancelLabel="Leave them"
+        onConfirm={() => {
+          if (syncing && behind.length) syncAll(syncing);
+        }}
+        onClose={() => setSyncing(null)}
+      />
     </AdminPage>
   );
 }

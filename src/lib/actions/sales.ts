@@ -4323,6 +4323,101 @@ export async function setCoursePublished(
   }
 }
 
+/**
+ * CORRECT A COURSE after it was published — its title, heading, length, pass
+ * mark, whether it is compulsory and by when. A course has no body of its own:
+ * the material is its file, and changing the file is publishing a new course.
+ *
+ * WHAT IT REACHES: bumping `updated_at` sends the new copy to every handset on
+ * its next sync (`coursesFor` reads `c.updated_at > since`), withdrawn ones
+ * excepted since they are off the phones anyway. PROGRESS IS NOT REWRITTEN:
+ * somebody who passed at 60% when the mark was 60 has passed; a new pass mark
+ * applies to attempts from now on. The rules `publishCourse` holds — a deadline
+ * only on a compulsory course, a pass mark between 1 and 100 — hold here too.
+ */
+export async function editCourse(input: {
+  courseId: string;
+  title: string;
+  category?: string | null;
+  durationMinutes?: number | null;
+  passMarkPercent?: number | null;
+  mandatory: boolean;
+  dueDate?: string | null;
+}): Promise<Result> {
+  try {
+    const user = await requireSalesAccess(SALES_MANAGER("sales.knowledge"));
+    const title = input.title.trim();
+    if (!title) {
+      return err("A course needs a title.", "validation", [{ field: "title", message: "Required." }]);
+    }
+    if (input.dueDate && !input.mandatory) {
+      return err(
+        "A deadline only means something on a compulsory course. Either make it compulsory or leave the date empty.",
+        "validation",
+        [{ field: "dueDate", message: "Needs a compulsory course." }],
+      );
+    }
+    if (input.passMarkPercent != null && (input.passMarkPercent < 1 || input.passMarkPercent > 100)) {
+      return err("A pass mark is a percentage between 1 and 100.", "validation", [
+        { field: "passMarkPercent", message: "1 to 100." },
+      ]);
+    }
+    if (input.durationMinutes != null && (!Number.isInteger(input.durationMinutes) || input.durationMinutes < 1)) {
+      return err("The length is a whole number of minutes.", "validation", [
+        { field: "durationMinutes", message: "Whole minutes." },
+      ]);
+    }
+
+    const [course] = await db.select().from(mbosCourses).where(eq(mbosCourses.id, input.courseId));
+    if (!course) return err("That course is not here any more.", "not_found");
+
+    const next = {
+      title,
+      category: input.category?.trim() || null,
+      durationMinutes: input.durationMinutes ?? null,
+      // Not asked by the screen: left out means "keep what it was".
+      passMarkPercent: input.passMarkPercent === undefined ? course.passMarkPercent : input.passMarkPercent,
+      mandatory: input.mandatory,
+      dueDate: input.dueDate || null,
+    };
+    const before = {
+      title: course.title,
+      category: course.category,
+      durationMinutes: course.durationMinutes,
+      passMarkPercent: course.passMarkPercent,
+      mandatory: course.mandatory,
+      dueDate: course.dueDate,
+    };
+    if (JSON.stringify(before) === JSON.stringify(next)) return ok(undefined, "Nothing changed.");
+
+    await db.transaction(async (tx) => {
+      await tx
+        .update(mbosCourses)
+        .set({ ...next, updatedById: user.id, updatedAt: new Date() })
+        .where(eq(mbosCourses.id, course.id));
+      await tx.insert(auditLog).values({
+        id: gen("aud"),
+        actorId: user.id,
+        action: "mbos.course.edit",
+        entityType: "mbos_course",
+        entityId: course.id,
+        beforeState: before as never,
+        afterState: next as never,
+      });
+    });
+
+    refresh();
+    return ok(
+      undefined,
+      course.active
+        ? `${title} updated. The field sees it on their next sync; finished records stand as they were.`
+        : `${title} updated. It is withdrawn, so no phone shows it until it is published again.`,
+    );
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
 /* ═══════════════════════════════════════════════════════════ task allocation */
 
 /**
@@ -4822,6 +4917,99 @@ export async function closeTaskCampaign(
     refresh();
     refreshCampaign(campaignId);
     return ok({ cancelled: rows.length }, rows.length ? `${plural(rows.length, "open task")} withdrawn.` : "Nothing was still open.");
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * CORRECT AN ASSIGNMENT'S WORDING AND DATES after it went out.
+ *
+ * WHAT IT REACHES is the honest part, and the screen says it before saving:
+ * the assignment's own title, description, priority and due date, and every
+ * task of it still OPEN or IN PROGRESS on a phone in this manager's team —
+ * those carry a copy of the title and date, and bumping `updated_at` is what
+ * sends the new copy down on the next sync. A task already ANSWERED keeps the
+ * title it was answered under, because the answer is about that question; a
+ * withdrawn one stays withdrawn. Where the due date moves, each salesman with
+ * an open task gets one bell saying so — a date changed under somebody without
+ * a word is a deadline they will miss.
+ *
+ * WHO IT GOES TO is not editable here. Changing the audience would mean minting
+ * tasks for new shops and withdrawing others, which is assigning and
+ * withdrawing — both already doors of their own, each with its own preview.
+ * The questions are not editable either: answers already given were given to
+ * the questions as they stood.
+ */
+export async function editTaskCampaign(input: {
+  campaignId: string;
+  title: string;
+  description?: string;
+  priority: string;
+  dueDate: string;
+}): Promise<Result<{ updatedTasks: number }>> {
+  try {
+    const user = await requireSalesAccess(SALES_MANAGER(TASK_MODULE));
+    const title = String(input.title ?? "").trim();
+    const problem = validTask(title, input.dueDate, input.priority);
+    if (problem) return err(problem, "validation");
+    const priority = input.priority as TaskPriority;
+    const description = input.description?.trim() || null;
+
+    const [head] = await db.select().from(mbosTaskCampaigns).where(eq(mbosTaskCampaigns.id, input.campaignId));
+    if (!head) return err("That assignment no longer exists.", "not_found");
+    if (head.closedAt) return err("This assignment was withdrawn. Assign it again to send it out.", "rule_violation");
+    const scope = await managerScope();
+
+    const before = { title: head.title, description: head.description, priority: head.priority, dueDate: head.dueDate };
+    const dateMoved = head.dueDate !== input.dueDate;
+    let affected: { id: string; userId: string }[] = [];
+    await db.transaction(async (tx) => {
+      await tx
+        .update(mbosTaskCampaigns)
+        .set({ title, description, priority, dueDate: input.dueDate, updatedAt: new Date() })
+        .where(eq(mbosTaskCampaigns.id, head.id));
+      affected = (await tx.execute<{ id: string; userId: string }>(sql`
+        update mbos_tasks t
+           set title = ${title}, description = ${description}, priority = ${priority},
+               due_date = ${input.dueDate}, updated_at = now(), updated_by_id = ${user.id}
+         where t.campaign_id = ${head.id}
+           and t.status in ('open', 'in_progress')
+           ${onlyMine(scope, "t.assigned_to_user_id")}
+        returning t.id, t.assigned_to_user_id as "userId"
+      `)) as unknown as { id: string; userId: string }[];
+      await tx.insert(auditLog).values({
+        id: gen("aud"),
+        actorId: user.id,
+        action: "mbos.task.campaignEdited",
+        entityType: "mbos_task_campaign",
+        entityId: head.id,
+        beforeState: before as never,
+        afterState: { title, description, priority, dueDate: input.dueDate, openTasksUpdated: affected.length } as never,
+      });
+    });
+
+    if (dateMoved) {
+      const per = new Map<string, number>();
+      for (const a of affected) per.set(a.userId, (per.get(a.userId) ?? 0) + 1);
+      for (const [userId, n] of per) {
+        await tell(
+          userId,
+          n === 1 ? "A task's due date moved" : `${n} tasks' due date moved`,
+          `${user.name}: "${title}" is now due ${input.dueDate}`,
+          "/tasks",
+        );
+      }
+    }
+
+    refresh();
+    refreshCampaign(head.id);
+    return ok(
+      { updatedTasks: affected.length },
+      affected.length
+        ? `Updated, and ${plural(affected.length, "open task")} on the phones with it.`
+        : "Updated. No task was still open, so nothing on the phones changed.",
+    );
   } catch (e) {
     return fromThrown(e);
   }
