@@ -629,6 +629,7 @@ const DESCRIBE: Record<string, Describer> = {
   "locker.access.changed": (c) => ["changed the Locker access of", c.subject()],
   "payment.reallocate": (c) => ["moved a payment from", c.subject(), "onto different bills"],
   "payment.corrected": (c) => ["corrected a payment from", c.subject(), "before it was decided"],
+  "payment.amended": (c) => ["corrected a counted payment from", c.subject()],
   "payment.matchedToBankEntry": (c) => ({
     says: ["matched a bank entry to a payment", c.subject() === "a customer" ? "" : "from", c.subject(""), "already reported, instead of recording it twice"],
     changes: false,

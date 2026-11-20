@@ -1,6 +1,7 @@
 import { requireUser } from "@/lib/auth";
 import { nowMs } from "@/lib/format";
 import { PAYMENT_HISTORY_LIMIT, paymentHistory } from "@/lib/services/receipt-service";
+import { canFor } from "@/lib/access-control";
 import { PaymentHistoryScreen } from "./payment-history-screen";
 
 export const metadata = { title: "Payment history — Accounts — MahekOne" };
@@ -13,7 +14,7 @@ export const metadata = { title: "Payment history — Accounts — MahekOne" };
  */
 export default async function PaymentHistoryPage() {
   const user = await requireUser();
-  const rows = await paymentHistory();
+  const [rows, canDecide] = await Promise.all([paymentHistory(), canFor(user, "payment.confirm")]);
 
   return (
     <PaymentHistoryScreen
@@ -21,6 +22,8 @@ export default async function PaymentHistoryPage() {
       capped={rows.length >= PAYMENT_HISTORY_LIMIT}
       currentUserName={user.name}
       nowMs={nowMs()}
+      canDecide={canDecide}
+      currentUserId={user.id}
     />
   );
 }

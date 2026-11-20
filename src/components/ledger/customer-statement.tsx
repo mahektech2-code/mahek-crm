@@ -8,6 +8,7 @@ import { ReasonImpactDialog } from "@/components/ui/reason-impact-dialog";
 import { Pager } from "@/components/ui/pager";
 import { ALL_TIME, CUSTOM_DATES, YearFilter } from "@/components/ui/year-filter";
 import { reverseReceiptAction } from "@/lib/actions/payments";
+import { EditPaymentDialog } from "@/app/accounts/edit-payment-dialog";
 import { longDate, money, shortDate, signedMoney } from "@/lib/format";
 import { yearLabel } from "@/lib/year-period";
 
@@ -266,7 +267,8 @@ export function StatementTable({
    */
   compact?: boolean;
 }) {
-  const { push } = useToast();
+  const { push, run } = useToast();
+  const [editing, setEditing] = React.useState<string | null>(null);
   /* Which receipt is being reversed. One dialog holds both steps: the reason,
      then the impact modal — which bills are owed again and what the
      outstanding becomes. */
@@ -377,15 +379,27 @@ export function StatementTable({
                 </td>
                 {canReverse ? (
                   <td className="w-10 px-1.5 py-2.5 text-right align-middle">
-                    {e.kind === "receipt" && e.status === "confirmed" && e.receiptId ? (
+                    {e.kind === "receipt" && e.receiptId && (e.status === "confirmed" || e.status === "reported" || e.status === "held") ? (
                       <RowMenu
                         items={[
                           {
-                            label: "Reverse payment",
-                            destructive: true,
-                            title: "A bounced cheque, a duplicate entry, or money on the wrong customer",
-                            onSelect: () => setReversing(e),
+                            label: "Edit payment",
+                            title:
+                              e.status === "confirmed"
+                                ? "Fix the amount, date, mode or reference — the old entry shows as reversed and the corrected one is recorded"
+                                : "Correct it before it is decided — nothing has counted yet",
+                            onSelect: () => setEditing(e.receiptId!),
                           },
+                          ...(e.status === "confirmed"
+                            ? [
+                                {
+                                  label: "Reverse payment",
+                                  destructive: true,
+                                  title: "A bounced cheque, a duplicate entry, or money on the wrong customer",
+                                  onSelect: () => setReversing(e),
+                                },
+                              ]
+                            : []),
                         ]}
                       />
                     ) : null}
@@ -429,6 +443,18 @@ export function StatementTable({
         A reason is required and it goes on the statement, because somebody has
         to ring the customer and say something.
       */}
+      {editing ? (
+        <EditPaymentDialog
+          key={editing}
+          receiptId={editing}
+          run={run}
+          onClose={() => setEditing(null)}
+          onDone={() => {
+            setEditing(null);
+            onReversed();
+          }}
+        />
+      ) : null}
       {reversing?.receiptId ? (
         <ReasonImpactDialog
           key={reversing.receiptId}
