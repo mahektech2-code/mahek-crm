@@ -68,7 +68,7 @@ function Listing({ blocks, empty }: { blocks: ReviewBlock[]; empty: string }) {
   if (!blocks.length) return <div className="text-meta text-muted">{empty}</div>;
   const cols: string[] = [];
   for (const b of blocks) for (const r of b.rows) if (!cols.includes(r.label)) cols.push(r.label);
-  const right = (c: string) => /^Pending/.test(c);
+  const right = (c: string) => /^(Pending|Quantity)/.test(c);
   return (
     /* A list wider than the dialog scrolls inside its own frame, so nothing is cut off. */
     <div className="max-w-full overflow-x-auto rounded-card border border-line">
