@@ -784,11 +784,7 @@ export function ListScreen({
               </button>
             ) : null}
           </div>
-<<<<<<< HEAD
-          {win && !subtabOf(spec, query)?.unwindowed ? <PeriodPicker key={win.pd} pd={win.pd} label={win.label} dateLabel={win.dateLabel} onPick={(pd) => setQuery({ pd, page: 1 })} /> : null}
-=======
-          {win && !stNow?.allTime ? <PeriodPicker key={win.pd} pd={win.pd} label={win.label} dateLabel={win.dateLabel} onPick={(pd) => setQuery({ pd, page: 1 })} /> : null}
->>>>>>> origin/erp/testing-bills-labels
+          {win && !subtabOf(spec, query)?.unwindowed && !stNow?.allTime ? <PeriodPicker key={win.pd} pd={win.pd} label={win.label} dateLabel={win.dateLabel} onPick={(pd) => setQuery({ pd, page: 1 })} /> : null}
           {chips.length > MAX_TABS ? (
             <Select value={chip} onChange={(e) => pickChip(e.target.value)} aria-label={colOf(spec.chips!).l} className="cursor-pointer">
               <option value="">All {colOf(spec.chips!).l.toLowerCase()} · {nf(lp.beforeChip)}</option>

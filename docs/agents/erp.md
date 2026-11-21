@@ -917,7 +917,6 @@ the audit log, every PO line it was ever on with that PO's audit and
 the last, open entry. `audit_log`'s time column is `at`, and raw SQL hands a
 timestamp back as a string — wrap it in `new Date()` before `calendarDate`.
 
-<<<<<<< HEAD
 **PURCHASE ORDERS: TO SEND · WAITING FOR GOODS · PART RECEIVED · DONE · CANCELLED
 (Nov 2026).** Each PO row carries `bucket` = `poBucket(status, anyReceived)`
 (pure, `engines/purchase-flow.ts`): Approved and an old Pending approval are To
@@ -979,7 +978,6 @@ so "Printed" is never said. The label print now also answers to `inward`.
 "Add another item from this truck" restarts the dialog with `prFixed` and the
 vendor locked; the transport fields are hidden (recorded once per PR) and the
 server refuses another supplier's goods on an existing PR.
-=======
 **LOT TESTING IS A QUEUE: TO TEST · TO VERIFY · VERIFIED · FAILED (Nov 2026).**
 `engines/lot-testing.ts` (pure) buckets each lot. A line routed to testing is
 **To test** before any `erp_tests` row exists, so the loader reads two things:
@@ -1023,4 +1021,33 @@ on that sub-tab, still in the record and the export), and `BulkSpec.href` /
 `countK` (a selection that navigates — "Print {n} labels" — summing a row
 value into its label). `td .truncate` WRAPS by the global rule
 (`globals.css`); the sub-line ellipsises with an inline `textOverflow` instead.
->>>>>>> origin/erp/testing-bills-labels
+**THE QUOTATION MANAGER IS A TABLE YOU TYPE INTO, WITH A PANEL BESIDE IT
+(owner, Nov 2026).** It stays a table that works like a spreadsheet — never
+call it a "sheet" or "Google Sheet" on the screen — and it has no group tabs:
+the columns are exactly the desk's. The ERP sidebar starts SHUT on this one
+screen (`WIDE_SCREENS` in `_ui/erp-shell.tsx`, the toggle opens it) to give
+the table room. A toolbar carries Undo, Redo (Ctrl+Y), Mark, Filter (party
+and dates), Sort, Freeze, + Row and + Material; Sort and Freeze are views,
+the stored order is still latest first. Above the table the EDITING BAR says
+what the selected cell is in words — material · party · date · per unit ·
+rate — never a cell code like "C2" or a column letter. A mark is a coloured
+LEFT EDGE of the cell (green Ready to buy, orange bought, red cancelled, blue
+picked up), so the rate stays readable; the cheapest rate of each column over
+the rows shown is green (a lone rate is not). A heading carries "REQ-n
+waiting" when a requirement Purchase it could take (`purchaseChoices`,
+`openRequirements`) is waiting for its linked raw material. The side panel
+reads the selected rate: "cheapest this month", every party's LATEST rate for
+the material, this party's last quotes as bars, and each waiting requirement
+with "Purchase it at ₹x", which opens the real dialog with that requirement
+picked. The footer sums the selection (count, Min, Avg). All of it is the pure
+`engines/quote-panel.ts`, over the rows the screen holds — never rows the
+period hides. The Purchase it dialog's total is `poTotals`/`poLineFigures` at
+the cell's rate with `PurchaseChoices.gstPercent` (the same
+`erp.purchase.poGstPercent` `orderFromQuote` writes), rounded like any PO. A
+rate's unit is the linked raw material's purchase unit; there is no per-column
+"per kg / litre / drum" because nothing stores one. The right-click menu is
+grouped look → change → take back (Undo purchase, Delete row: red, last), and
+leaves out what the person's Edit / Delete ticks do not allow; every write is
+still `erpQuoteApply`, checked per op by `quoteOpTick`. The old "Latest rate /
+Lowest rate" foot rows are gone: the panel and the green say both.
+

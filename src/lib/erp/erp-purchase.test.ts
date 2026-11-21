@@ -48,6 +48,8 @@ import { invalidateConfig } from "@/lib/config/store";
 import { approvedPo } from "@/lib/erp/po-fixture";
 import { applyQuoteOps } from "@/lib/erp/quotes";
 import { lookupRequirementPo, purchaseChoices } from "@/lib/erp/screens/requirement-po";
+import { waitingBadge, waitingByColumn } from "@/lib/erp/engines/quote-panel";
+import { getConfig } from "@/lib/config/store";
 import type { GrnItem } from "@/lib/erp/engines/grn-pick";
 import type { GrnNext } from "@/lib/erp/engines/goods-in";
 import { calendarDate } from "@/lib/business-date";
@@ -996,6 +998,29 @@ describe("Purchase it on the Quotation manager writes the purchase order", () =>
     assert.ok((await applyQuoteOps(a, [{ op: "cell", rowId: "eqr_bharat9", columnId: "eqc_mekdrum", status: "ready", poNo: null, impact: undoing.confirmation }])).ok);
     const [back] = await db.select().from(erpRequisitions).where(eq(erpRequisitions.id, mek.id));
     assert.equal(back.status, "Pending", "a requirement somebody raised is never cancelled by an undo");
+  });
+
+  test("the table reads what is waiting: each requirement by number on the columns of its raw material, and the PO's GST", async () => {
+    const a = await as(admin);
+    assert.ok((await mod("requisitions").forms!.new(a, { date: TODAY, requiredBy: "2099-12-07", department: "Production Head", godown: "Bhiwandi", type: "Chemical", item: "MEK", required: "640", priority: "Medium" }, [])).ok);
+    const [mek] = await db.select().from(erpRequisitions).where(sql`raw_material_id = 'rm_mek' and required_by = '2099-12-07'`);
+    const choices = await purchaseChoices(a);
+    const offered = choices.openRequirements.find((r) => r.id === mek.id);
+    assert.ok(offered, "a quotation requirement waiting for a PO is offered");
+    assert.deepEqual([offered.reqNo, offered.department, offered.materialId, offered.qty, offered.unit], [mek.reqNo, "Production Head", "rm_mek", 640, mek.unit]);
+    assert.equal(choices.gstPercent, (await getConfig())["erp.purchase.poGstPercent"]);
+    /* The heading's badge: every column linked to MEK shows it; a column of another material does not. */
+    const cols = await db.select({ id: erpQuoteColumns.id, rawMaterialId: erpQuoteColumns.rawMaterialId }).from(erpQuoteColumns);
+    const waiting = waitingByColumn(cols, choices.openRequirements);
+    assert.ok(waiting.get("eqc_mekdrum")?.some((r) => r.id === mek.id));
+    assert.ok(!waiting.get("eqc_toluene")?.some((r) => r.id === mek.id));
+    assert.match(waitingBadge(waiting.get("eqc_mekdrum")!.filter((r) => r.id === mek.id))!, new RegExp(`^REQ-${mek.reqNo} waiting$`));
+    /* Bought against it, it is no longer waiting. */
+    await db.insert(erpQuoteRows).values({ id: "eqr_bharatw", quoteDate: "2026-10-20", party: "Bharat Chemicals", supplierId: "sup_b" });
+    await db.insert(erpQuoteCells).values({ rowId: "eqr_bharatw", columnId: "eqc_mekdrum", value: "90", status: "ready" });
+    const bought = await applyQuoteOps(a, [{ op: "cell", rowId: "eqr_bharatw", columnId: "eqc_mekdrum", status: "po", drums: 4, order: order({ requisitionId: mek.id, qty: 640 }) }]);
+    assert.ok(bought.ok, JSON.stringify(bought));
+    assert.ok(!(await purchaseChoices(a)).openRequirements.some((r) => r.id === mek.id));
   });
 
   test("a second material from the same party goes on the same PO, and undoing one keeps the other", async () => {

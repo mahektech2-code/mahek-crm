@@ -973,6 +973,15 @@ export function inrRate(paise: CellValue | undefined): string {
   return (r < 0 ? "−" : "") + "₹" + (Number.isInteger(r) ? RATE_WHOLE : RATE_PAISE).format(Math.abs(r));
 }
 
+/** A RATE in paise → "₹118.00" — always two places, for a column of rates read side by side (the Quotation manager). */
+export function inrRateFixed(paise: CellValue | undefined): string {
+  if (paise == null || paise === "") return "";
+  const n = Number(paise);
+  if (!Number.isFinite(n)) return String(paise);
+  const r = n / 100;
+  return (r < 0 ? "−" : "") + "₹" + RATE_PAISE.format(Math.abs(r));
+}
+
 /** 12345.5 → "12,345.5" in Indian grouping, up to two decimals. */
 /* One formatter, built once. `toLocaleString` with options builds a fresh
    Intl formatter on EVERY call, and a list of ten thousand rows formats a

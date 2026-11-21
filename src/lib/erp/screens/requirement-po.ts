@@ -462,7 +462,18 @@ export async function joinablePoNumber(tx: Tx, poNo: string): Promise<string | n
 export const QM_RAISED_REMARK = "Raised by a purchase on the Quotation manager";
 
 /** A requirement a Quotation manager purchase may be put against. */
-export type OpenRequirement = { id: string; label: string; materialId: string; qty: number; unit: string; godown: string; requiredBy: string | null };
+export type OpenRequirement = {
+  id: string;
+  label: string;
+  /** `REQ-n`'s n — the badge on the Quotation manager's column heading. */
+  reqNo: number | null;
+  department: string | null;
+  materialId: string;
+  qty: number;
+  unit: string;
+  godown: string;
+  requiredBy: string | null;
+};
 
 export type PurchaseChoices = {
   godowns: string[];
@@ -472,6 +483,8 @@ export type PurchaseChoices = {
   openRequirements: OpenRequirement[];
   /** Open Quotation manager POs a purchase may be added to, newest first — the dialog shows the row's vendor's. */
   openPos: OpenQuotePo[];
+  /** `erp.purchase.poGstPercent` — the GST every line `orderFromQuote` writes carries, so the dialog's total is the PO's. */
+  gstPercent: number;
 };
 
 /** Why a requirement cannot take a Quotation manager purchase; null where it can. */
@@ -504,6 +517,8 @@ export async function purchaseChoices(ctx: ErpContext): Promise<PurchaseChoices>
     .filter((v) => !quoteReqRefusal(ctx, v, v.r.rawMaterialId ?? ""))
     .map((v) => ({
       id: v.r.id,
+      reqNo: v.r.reqNo ?? null,
+      department: v.r.department ?? null,
       label: `${v.r.reqNo ? `REQ-${v.r.reqNo}` : "Requirement"} · ${v.r.requiredQty} ${v.r.unit} · ${v.godown}${v.r.department ? ` · ${v.r.department}` : ""}`,
       materialId: v.r.rawMaterialId!,
       qty: v.r.requiredQty,
@@ -532,6 +547,7 @@ export async function purchaseChoices(ctx: ErpContext): Promise<PurchaseChoices>
     units: Object.fromEntries(mats.map((m) => [m.id, purchaseUnit(m.unit, m.type)])),
     openRequirements,
     openPos: pos.map((p) => ({ ...p, items: Array.isArray(p.items) ? p.items.map(String) : [], materialIds: Array.isArray(p.materialIds) ? p.materialIds.map(String) : [] })),
+    gstPercent: (await getConfig())["erp.purchase.poGstPercent"],
   };
 }
 
