@@ -15,9 +15,12 @@ import { setAccess, type ScreenGrantInput, type SetAccessResult } from "@/lib/ac
 import { loadScreenAccess, type ScreenAccessView } from "@/lib/actions/screen-access";
 import { HANDSET_LABELS } from "@/lib/access/handset-screens";
 import { moduleShape } from "@/lib/access/screen-permissions";
+import { isTabKey, tabsHeld, tabsOfPage } from "@/lib/access/tab-grants";
 import {
   emptyGrant,
+  holdsTab,
   setAccess as tickAccess,
+  setTab,
   setDelete,
   setEdit,
   setModule,
@@ -61,6 +64,13 @@ function screenLabel(key: string): string {
   return getModule(key)?.label ?? HANDSET_LABELS[key] ?? key;
 }
 
+/** Pages held — tab entries are a narrowing under a page, not sub-modules of their own. */
+function pagesIn(g: AppGrantDraft): number {
+  let n = 0;
+  for (const k of g.screens.keys()) if (!isTabKey(k)) n++;
+  return n;
+}
+
 /** "ERP · Purchase" in the registry reads "Purchase" inside the ERP's own list. */
 function moduleLabel(m: string): string {
   return m.replace(/^[^·]+·\s*/, "");
@@ -102,8 +112,20 @@ function describe(before: Drafts, after: Drafts, adminBefore: boolean, adminAfte
     }
     if (!had && has) out.push(`${a.name}: given, as ${n!.position}`);
     else if (b!.position !== n!.position) out.push(`${a.name}: position ${b!.position} → ${n!.position}`);
-    const keys = new Set([...(b?.screens.keys() ?? []), ...n!.screens.keys()]);
+    const keys = new Set([...(b?.screens.keys() ?? []), ...n!.screens.keys()].filter((k) => !isTabKey(k)));
     for (const k of keys) {
+      /* A page's tabs, said one by one where the page is held after as before. */
+      if (!b?.screens.has(k) && n!.screens.has(k)) {
+        const tabs = tabsOfPage(k);
+        const held = tabs.filter((t) => holdsTab(n!, t.key));
+        if (held.length < tabs.length) out.push(`${a.name} › ${screenLabel(k)}: only the ${held.map((t) => t.label).join(", ")} tab${held.length === 1 ? "" : "s"}`);
+      }
+      if (b?.screens.has(k) && n!.screens.has(k))
+        for (const t of tabsOfPage(k)) {
+          const was = holdsTab(b, t.key);
+          const is = holdsTab(n!, t.key);
+          if (was !== is) out.push(`${a.name} › ${screenLabel(k)} › ${t.label}: ${was ? "Access" : "no access"} → ${is ? "Access" : "no access"}`);
+        }
       const x = b?.screens.get(k);
       const y = n!.screens.get(k);
       const word = (t?: { edit: boolean; delete: boolean }) => (!t ? "no access" : t.delete ? "Delete" : t.edit ? "Edit" : "Access");
@@ -173,6 +195,8 @@ function Editor({
   const [sel, setSel] = React.useState<AppId>(() => (view.apps[0]?.app ?? apps[0].id) as AppId);
   const [posOpen, setPosOpen] = React.useState(false);
   const [folded, setFolded] = React.useState<ReadonlySet<string>>(new Set());
+  /* Pages whose tabs are drawn open beneath them. */
+  const [tabsOpen, setTabsOpen] = React.useState<ReadonlySet<string>>(new Set());
   const [step, setStep] = React.useState<"edit" | "review">("edit");
   const [saving, setSaving] = React.useState(false);
   const [confirming, setConfirming] = React.useState(false);
@@ -313,7 +337,7 @@ function Editor({
                       <span aria-hidden className={cx("h-2 w-2 flex-none rounded-full", has ? "bg-success" : "bg-line-strong")} />
                       <span className="flex min-w-0 flex-1 flex-col leading-tight">
                         <span className="font-semibold text-ink">{a.name}</span>
-                        <span className="text-2xs text-muted">{has ? `${POSITIONS.find((p) => p.id === g!.position)!.label} · ${g!.screens.size}/${total}` : "No access"}</span>
+                        <span className="text-2xs text-muted">{has ? `${POSITIONS.find((p) => p.id === g!.position)!.label} · ${pagesIn(g!)}/${total}` : "No access"}</span>
                       </span>
                     </button>
                   );
@@ -395,7 +419,7 @@ function Editor({
                     <div className="flex items-center gap-2 border-b border-divider px-5 py-2.5 text-xs">
                       <span className="flex-1 text-body">{POSITIONS.find((p) => p.id === grant.position)!.label} — {POSITIONS.find((p) => p.id === grant.position)!.line}</span>
                       <span className="text-muted">
-                        {grant.modules.size} modules · {grant.screens.size} sub-modules · {[...grant.screens.values()].filter((t) => t.edit).length} edit ·{" "}
+                        {grant.modules.size} modules · {pagesIn(grant)} sub-modules · {[...grant.screens.values()].filter((t) => t.edit).length} edit ·{" "}
                         {[...grant.screens.values()].filter((t) => t.delete).length} delete
                       </span>
                     </div>
@@ -477,9 +501,39 @@ function Editor({
                               ) : open ? (
                                 m.screens.map((s) => {
                                   const t = grant.screens.get(s);
+                                  const tabs = tabsOfPage(s);
+                                  const tabsShown = !!t && tabs.length > 0 && tabsOpen.has(s);
+                                  const heldTabs = t ? tabsHeld(grant.screens, s).length : 0;
                                   return (
-                                    <div key={s} className="flex min-h-[22px] items-center border-t border-divider bg-surface py-1.5 pr-3.5 pl-9 hover:bg-page">
-                                      <span className={cx("min-w-0 flex-1", t ? "text-body" : "text-faint")}>{screenLabel(s)}</span>
+                                    <React.Fragment key={s}>
+                                    <div className="flex min-h-[22px] items-center border-t border-divider bg-surface py-1.5 pr-3.5 pl-9 hover:bg-page">
+                                      <span className={cx("flex min-w-0 flex-1 items-center gap-2", t ? "text-body" : "text-faint")}>
+                                        {screenLabel(s)}
+                                        {tabs.length ? (
+                                          t ? (
+                                            <button
+                                              type="button"
+                                              aria-expanded={tabsShown}
+                                              onClick={() =>
+                                                setTabsOpen((prev) => {
+                                                  const next = new Set(prev);
+                                                  if (next.has(s)) next.delete(s);
+                                                  else next.add(s);
+                                                  return next;
+                                                })
+                                              }
+                                              className={cx(
+                                                "cursor-pointer rounded-full px-2 py-px text-2xs font-semibold whitespace-nowrap",
+                                                heldTabs < tabs.length ? "bg-warn-soft text-warn-ink" : "bg-brand-soft text-brand-hover",
+                                              )}
+                                            >
+                                              {heldTabs === tabs.length ? `All ${tabs.length} tabs` : `${heldTabs} of ${tabs.length} tabs`} {tabsShown ? "▴" : "▾"}
+                                            </button>
+                                          ) : (
+                                            <span className="text-2xs text-faint">{tabs.length} tabs</span>
+                                          )
+                                        ) : null}
+                                      </span>
                                       <span className="flex w-[76px] justify-center">
                                         <Tick label={`Access to ${screenLabel(s)}`} checked={!!t} onChange={() => update((g) => tickAccess(g, shape, s, !t))} />
                                       </span>
@@ -496,6 +550,28 @@ function Editor({
                                       </span>
                                       <span className="w-[92px]" />
                                     </div>
+                                    {tabsShown
+                                      ? tabs.map((tab) => {
+                                          const held = holdsTab(grant, tab.key);
+                                          return (
+                                            <div key={tab.key} className="flex min-h-[20px] items-center border-t border-divider/60 bg-page/50 py-1 pr-3.5 pl-14 text-meta hover:bg-page">
+                                              <span className={cx("min-w-0 flex-1", held ? "text-body" : "text-faint")}>
+                                                <span aria-hidden className="mr-1.5 text-faint">└</span>
+                                                {tab.label}
+                                              </span>
+                                              <span className="flex w-[76px] justify-center">
+                                                <Tick label={`Access to the ${tab.label} tab of ${screenLabel(s)}`} checked={held} onChange={() => update((g) => setTab(g, shape, tab.key, !held))} />
+                                              </span>
+                                              <span className="w-[76px] text-center text-[10px] text-faint" title="Edit and Delete are set on the page and apply to every tab of it.">
+                                                as page
+                                              </span>
+                                              <span className="w-[76px]" />
+                                              <span className="w-[92px]" />
+                                            </div>
+                                          );
+                                        })
+                                      : null}
+                                    </React.Fragment>
                                   );
                                 })
                               ) : null}

@@ -221,6 +221,7 @@ const files = [
   "src/lib/access-leftovers.test.ts",
   "src/lib/access/access-screens-backfill.test.ts",
   "src/lib/access/screen-access-switch.test.ts",
+  "src/lib/access/tab-grants.integration.test.ts",
   "src/lib/storage-fallback.test.ts",
   "src/lib/relationship-handover.test.ts",
   "src/lib/seat-mirrors.test.ts",

@@ -536,3 +536,28 @@ why `screensDiffer` is part of "No change.". `requestHat` returns the hat from
 `hatsFor` for the same reason: a second read of the grant would carry no ticks,
 and the app in force would answer from the level while the union answered from
 the screens.
+
+**TABS ARE THE THIRD LEVEL: module › screen › tab (Nov 2026).** In Manage
+access a page with tabs (ERP only: Purchases, Logistics, Stock, Petty Cash…)
+shows "All n tabs ▾" beside it; opened, each tab has an Access tick. Rules
+(`lib/access/tab-grants.ts`, run by `permission-rules.ts` → `setTab`,
+`holdsTab`, and inside `normaliseGrant`):
+- A tab is an `app_screen_access` row keyed `erp.<page>.<tab>`, Access only.
+  Edit and Delete stay on the page and apply to every tab of it, because
+  every power and action owner is placed on a page.
+- NO TAB ROWS UNDER A HELD PAGE MEANS EVERY TAB — every grant made before
+  this is unchanged, and a tab added later reaches whoever holds the whole
+  page. Every tab ticked is normalised back to no rows. The last tab unticked
+  takes the page away (and its module, if it was the last page).
+- Tabs never reach `app_module_access` (`legacyFromScreens` filters them), so
+  the sidebar, route guard and the older access screens go on reading pages.
+- The ERP reads them itself: `erpContext` → `ctx.withheld` (`withheldViews`),
+  only for a converted grant (position set). A page's own key stays in
+  `ctx.screens` even when it doubles as a withheld tab's key (Purchases is
+  `register`, and so is its Register tab) because ~100 checks ask `screens`
+  "may they open this page"; the tab strip (`heldViews`), the tab a page opens
+  on, the sidebar badge and `requireErpWrite` all ask `withheld` too. A typed
+  `?view=` of a withheld tab lands on the first held one.
+- `access-screens-backfill` reconverts from the older tables, which cannot
+  say a tab — so it carries a grant's tab rows over rather than widen it.
+- Designation previews (`erp_designation_modules`) are page-level and stay so.

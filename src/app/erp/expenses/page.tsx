@@ -1,5 +1,6 @@
 import { NavLink } from "@/components/shell/nav-link";
 import { notFound, redirect } from "next/navigation";
+import { heldViews } from "../_ui/screen-tabs";
 import { erpContext } from "@/lib/erp/access";
 import { erpLink, erpScreenBySlug } from "@/lib/erp/registry";
 import { screenModule } from "@/lib/erp/screens";
@@ -68,7 +69,8 @@ export default async function PettyCashPage({ searchParams }: { searchParams: Pr
   const raw = await searchParams;
   const one = (k: string) => (typeof raw[k] === "string" ? (raw[k] as string) : undefined);
   const screen = erpScreenBySlug("expenses")!;
-  const views = screen.views ?? [];
+  const views = heldViews(ctx, screen);
+  if (!views.length) redirect("/erp");
   const known = new Set(views.map((v) => v.key));
   const view = one("view") && known.has(one("view")!) ? one("view")! : views[0].key;
   const day = today();

@@ -1,8 +1,10 @@
 import "server-only";
 import { cache } from "react";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import { db } from "@/db";
 import {
+  appAccess,
+  appScreenAccess,
   erpDesignationModules,
   erpDesignationPowers,
   erpDesignations,
@@ -18,6 +20,7 @@ import { requireUser } from "@/lib/auth";
 import { levelInApp } from "@/lib/access-control";
 import { listUserApps, listUserModules } from "@/lib/access";
 import { ERP_ALWAYS_OPEN, ERP_SCREENS, erpKeysOf } from "./registry";
+import { PAGE_TABS, withheldViews } from "@/lib/access/tab-grants";
 import { ERP_POWERS, type ErpPower } from "./powers";
 import { isDepartmentSeat, type ErpDepartmentSeat } from "./departments";
 
@@ -51,6 +54,15 @@ export type ErpContext = {
   powers: ReadonlySet<ErpPower>;
   /** Screen keys (not module keys) this person may open, and the keys of those screens' tabs. */
   screens: ReadonlySet<string>;
+  /**
+   * Tab keys withheld under a page that IS held (`lib/access/tab-grants.ts`).
+   * A page's own key stays in `screens` even where it doubles as a withheld
+   * tab's key (Purchases is `register`, and so is its Register tab), because a
+   * hundred checks ask `screens` "may they open this page"; the tab strip, the
+   * tab a page opens on and every write ask this set as well. Absent: nothing
+   * withheld.
+   */
+  withheld?: ReadonlySet<string>;
   /** Godowns the person is assigned to and may work at. */
   assignedGodowns: ErpGodownRef[];
   /** The working location, or the first assigned godown, or null. */
@@ -67,11 +79,23 @@ export type ErpContext = {
 
 type Resolved = Omit<ErpContext, "actor" | "viewingAs">;
 
-/** A screen's tabs come with the screen: see the comment in `resolveFor`. */
-function screensFrom(held: Set<string>): Set<string> {
+/** A screen's tabs come with the screen, less any tab withheld — but never the page's own key. */
+function screensFrom(held: Set<string>, withheld: ReadonlySet<string> = new Set()): Set<string> {
   const screens = new Set<string>();
-  for (const sc of ERP_SCREENS) if (held.has(sc.key)) erpKeysOf(sc).forEach((k) => screens.add(k));
+  for (const sc of ERP_SCREENS) if (held.has(sc.key)) erpKeysOf(sc).forEach((k) => (k === sc.key || !withheld.has(k)) && screens.add(k));
   return screens;
+}
+
+const TAB_KEYS = [...PAGE_TABS.values()].flatMap((tabs) => tabs.map((t) => t.key));
+
+/** The tab rows of a CONVERTED ERP grant (one with a position) — an unconverted grant has none to read. */
+async function tabRowsOf(userId: string): Promise<Set<string>> {
+  const rows = await db
+    .select({ screen: appScreenAccess.screen })
+    .from(appScreenAccess)
+    .innerJoin(appAccess, and(eq(appAccess.userId, appScreenAccess.userId), eq(appAccess.app, appScreenAccess.app)))
+    .where(and(eq(appScreenAccess.userId, userId), eq(appScreenAccess.app, "erp"), isNotNull(appAccess.position), inArray(appScreenAccess.screen, TAB_KEYS)));
+  return new Set(rows.map((r) => r.screen));
 }
 
 async function allActiveGodowns(): Promise<ErpGodownRef[]> {
@@ -86,7 +110,7 @@ async function resolveFor(user: User): Promise<Resolved> {
   const level = (await levelInApp(user, "erp")) as ErpContext["level"];
   const administrator = level === "admin" || user.role === "admin";
 
-  const [powerRows, modules, staffRows, setting, designationRow] = await Promise.all([
+  const [powerRows, modules, staffRows, setting, designationRow, tabRows] = await Promise.all([
     db.select({ power: erpUserPowers.power }).from(erpUserPowers).where(eq(erpUserPowers.userId, user.id)),
     level ? listUserModules(user.id, "erp") : Promise.resolve([]),
     db
@@ -101,6 +125,7 @@ async function resolveFor(user: User): Promise<Resolved> {
       .innerJoin(erpDesignations, eq(erpDesignations.id, erpUserDesignations.designationId))
       .where(eq(erpUserDesignations.userId, user.id))
       .limit(1),
+    level ? tabRowsOf(user.id) : Promise.resolve(new Set<string>()),
   ]);
 
   const powers = new Set<ErpPower>(
@@ -112,7 +137,9 @@ async function resolveFor(user: User): Promise<Resolved> {
   /* A screen's tabs come with the screen: they are not modules, so nothing
      could grant them on their own, and every check below that names a tab's
      key (a dashboard tile, a sidebar count, an action) answers as the screen. */
-  const screens = screensFrom(held);
+  /* A page narrowed to some of its tabs (Manage access › a page › its tabs). */
+  const withheld = withheldViews(held, tabRows);
+  const screens = screensFrom(held, withheld);
 
   /*
    * AN ADMINISTRATOR IS ASSIGNED EVERYWHERE. The source's CEO picks any godown;
@@ -134,6 +161,7 @@ async function resolveFor(user: User): Promise<Resolved> {
     administrator,
     powers,
     screens,
+    withheld,
     assignedGodowns: assigned,
     workingGodown,
     designation: designationRow[0]?.name ?? null,
@@ -279,7 +307,7 @@ export async function requireErpForm(screen: string): Promise<ErpContext> {
 async function requireErpScreen(ctx: ErpContext, screen: string, power?: ErpPower): Promise<ErpContext> {
   const apps = await listUserApps(ctx.actor.id);
   if (!apps.includes("erp") || !ctx.level) throw new ErpNotPermitted("The ERP is not on your account.");
-  if (!ctx.screens.has(screen)) throw new ErpNotPermitted("That screen is not on your account.");
+  if (!ctx.screens.has(screen) || ctx.withheld?.has(screen)) throw new ErpNotPermitted("That screen is not on your account.");
   if (power && !ctx.powers.has(power)) throw new ErpNotPermitted(powerRefusal(power));
   return ctx;
 }
