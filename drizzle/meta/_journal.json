@@ -2535,6 +2535,13 @@
       "when": 1794948588699,
       "tag": "0369_locker_renewal_cancel",
       "breakpoints": true
+    },
+    {
+      "idx": 363,
+      "version": "7",
+      "when": 1794948688699,
+      "tag": "0370_journey_plan_cities",
+      "breakpoints": true
     }
   ]
 }

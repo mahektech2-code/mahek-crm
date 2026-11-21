@@ -12,6 +12,7 @@
  * Client-safe on purpose: the calendar and the drawer are client components.
  * ------------------------------------------------------------------------- */
 
+import { planCityList } from "@/lib/journey-cities";
 import { addDays, isoWeekday } from "./business-date";
 import { areasSignature, type SignedArea } from "./territory-signature";
 
@@ -227,10 +228,15 @@ export function rankShopCities(cities: ReadonlyArray<string | null | undefined>)
  */
 export function dayWhere(plan: {
   city: string | null;
+  /** Every city the day names, where it names several — see `journey-cities.ts`. */
+  cities?: ReadonlyArray<string> | null;
   beat?: string | null;
   shopCities?: ReadonlyArray<string>;
 }): { text: string | null; fromShops: boolean } {
-  if (plan.city?.trim()) return { text: plan.city.trim(), fromShops: false };
+  /* A day with several cities says ALL of them, primary first. One city reads
+     exactly as it always did. */
+  const named = planCityList(plan);
+  if (named.length) return { text: named.join(", "), fromShops: false };
   const cities = plan.shopCities ?? [];
   if (cities.length) {
     const shown = cities.slice(0, 2).join(" · ");

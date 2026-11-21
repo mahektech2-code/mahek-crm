@@ -52,7 +52,8 @@ sequenceDiagram
 
 ## Tables
 
-<DbTable name="mbos_journey_plans" only={["user_id", "plan_date", "city", "day_state", "proposed_by_id", "proposed_at", "refusal_reason", "counter_city", "responded_at", "self_planned", "status", "beat", "area"]} note={{
+<DbTable name="mbos_journey_plans" only={["user_id", "plan_date", "city", "cities", "day_state", "proposed_by_id", "proposed_at", "refusal_reason", "counter_city", "responded_at", "self_planned", "status", "beat", "area"]} note={{
+  cities: "All cities of the day, in order, only when more than one was named; NULL means just city. city stays the primary (never a joined string) — the handset filters its shop list by it.",
   day_state: "proposed · refused · agreed · planned — the agreement. Unique per user and day.",
   refusal_reason: "Required on a refusal. Cleared when the office answers.",
   counter_city: "The city he would rather work, if he named one. 'Take his city' uses it.",
