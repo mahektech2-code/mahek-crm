@@ -938,6 +938,11 @@ const inward: ScreenModule = {
         cols,
         hidden: [],
         groups: ["pr"],
+        subtabs: [
+          { id: "all", l: "All receipts" },
+          { id: "notSent", l: "Not sent on", flag: "awaitingRoute", hint: "Received, not yet sent to Testing or to Purchase" },
+          { id: "testing", l: "Going to testing", k: "routed", in: ["Testing"] },
+        ],
         groupHead: ["po", "date", "supplier", "godown", "transport"],
         groupSel: true,
         godownKey: "godown",
@@ -1625,6 +1630,12 @@ const testing: ScreenModule = {
         hidden: [],
         groups: ["status"],
         chips: "status",
+        subtabs: [
+          { id: "pending", l: "Waiting to verify", in: ["Pending"] },
+          { id: "notVerified", l: "Not verified", in: ["Not Verified"] },
+          { id: "verified", l: "Verified", in: ["Verified"] },
+          { id: "all", l: "All" },
+        ],
         godownKey: "godown",
         stats: [
           { l: "Tests" },
@@ -2151,6 +2162,13 @@ const register: ScreenModule = {
         cols,
         hidden,
         groups: ["pr"],
+        subtabs: [
+          /* The stage column needs purchase money; without it the tab would always read 0. */
+          ...(money ? [{ id: "billToCome", l: "Bill to come", k: "stage", in: ["Arrived", "Tested"], hint: "In the godown, the supplier's bill not yet received" }] : []),
+          { id: "rateMissing", l: "Rate missing", flag: "rateMissing", hint: "Held out of stock until the rate is entered" },
+          { id: "rateOff", l: "Rate differs from PO", flag: "rateOffPo" },
+          { id: "all", l: "All lots" },
+        ],
         groupHead: ["date", "po", "party", "billNo"],
         agg: money ? { k: "final", l: "on the bill" } : undefined,
         godownKey: "godown",

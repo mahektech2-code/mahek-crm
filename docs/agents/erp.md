@@ -806,3 +806,19 @@ order and asked for one in Feedback (2026-11-19). `editOrders` ("Edit orders
 before billing") now opens the same `editsOrders` gate without the MRP check
 that `productionCheck` carries; it maps to `erp.orders` in access-bulk.
 Granted per person on the Admin Console like any ERP power.
+
+**NAVIGATION STAYS IN THE SIDEBAR (owner, Nov 2026, a reversal).** A
+horizontal purchase "stage bar" over every purchase screen, with the sidebar's
+Purchase group folded into one row, was built and taken out the same day: the
+owner wants the sidebar and its sub-navigation as they are, and no tab-like
+bars drawn as navigation. Narrowing a list belongs to its sub-tabs (below).
+
+**A LIST OPENS ON THE WORK WAITING: SUB-TABS (`ListSpec.subtabs`).** A
+sub-tab is a named set of one column's values (`k`, else the chips column),
+or a flag; the first is what the list opens on, `?st=` names another, and one
+with neither is All. Filtering and counts live in `list-query.ts`
+(`subtabOf`, `inSubtab`, `subtabCounts`), so a server-paged register and a
+client list answer alike. A sub-tab over a column a power withholds always
+reads 0 — leave it out for that person (Bills' "Bill to come" needs purchase
+money). `scripts/seed-purchase-demo.ts` seeds a purchase desk locally through
+the real handlers, to look at all of this.

@@ -14,7 +14,7 @@
  * ------------------------------------------------------------------------- */
 
 import { validPeriod } from "./period";
-import { aggsOf, cellText, type ColSpec, type ListRow, type ListSpec, type SelectSum, type StatSpec, type Tone } from "./ui";
+import { aggsOf, cellText, type ColSpec, type ListRow, type ListSpec, type ListSubtab, type SelectSum, type StatSpec, type Tone } from "./ui";
 
 export type ListSort = { k: string; d: 1 | -1 };
 
@@ -69,6 +69,8 @@ export type ListQuery = {
   cf: Record<string, ColFilter>;
   /** Only rows carrying this flag — a figure card such as "Late" or "Rate missing", tapped. */
   flag?: string;
+  /** The sub-tab (`ListSpec.subtabs`) by id; empty is the screen's first sub-tab. */
+  st?: string;
 };
 
 /**
@@ -81,7 +83,7 @@ export type ColFilter = { in?: string[]; min?: number | null; max?: number | nul
 export const PAGE_SIZES = [25, 50, 100] as const;
 
 /** The query keys a list owns in the URL, beside the page's own (`view`, `open`, `f`, `fl`, `new`). */
-export const LIST_QUERY_KEYS = ["q", "chip", "gf", "grp", "sort", "page", "size", "pd", "parts", "fx", "cf", "flg"] as const;
+export const LIST_QUERY_KEYS = ["q", "chip", "gf", "grp", "sort", "page", "size", "pd", "parts", "fx", "cf", "flg", "st"] as const;
 
 type Raw = Record<string, string | string[] | undefined>;
 const one = (raw: Raw, k: string) => (typeof raw[k] === "string" ? (raw[k] as string) : "");
@@ -149,6 +151,7 @@ export function parseListQuery(raw: Raw): ListQuery {
     fx: parseFx(one(raw, "fx")),
     cf: parseCf(one(raw, "cf")),
     flag: /^[A-Za-z0-9_]{1,40}$/.test(one(raw, "flg")) ? one(raw, "flg") : "",
+    st: /^[A-Za-z0-9_]{1,40}$/.test(one(raw, "st")) ? one(raw, "st") : "",
   };
 }
 
@@ -169,6 +172,7 @@ export function listQueryParams(q: ListQuery): Record<string, string> {
   const cf = Object.keys(q.cf ?? {}).sort();
   if (cf.length) out.cf = JSON.stringify(Object.fromEntries(cf.map((k) => [k, q.cf[k]])));
   if (q.flag) out.flg = q.flag;
+  if (q.st) out.st = q.st;
   return out;
 }
 
@@ -199,6 +203,8 @@ export type ListPage = {
   /** Rows before the chip is applied: the "All" tab's count. */
   beforeChip: number;
   chips: { v: string; n: number }[];
+  /** Each sub-tab's count (`ListSpec.subtabs`), over the rows every other filter leaves. */
+  subtabs?: { id: string; n: number }[];
   /** Each column filter's choices, counted over the rows every OTHER filter leaves. */
   facets: Facet[];
   /**
@@ -390,11 +396,11 @@ function byFilter(rows: ListRow[], c: ColSpec, v: string): ListRow[] {
 
 /** The rows the filters, chip and search leave, sorted and grouped — every page of them. */
 export function queryRows(
-  spec: Pick<ListSpec, "cols" | "chips" | "godownKey" | "sortDefault" | "groups" | "fold" | "filters" | "colFilters">,
+  spec: Pick<ListSpec, "cols" | "chips" | "godownKey" | "sortDefault" | "groups" | "fold" | "filters" | "colFilters" | "subtabs">,
   rows: ListRow[],
   query: ListQuery,
   flagWords: Record<string, [string, Tone]>,
-): { list: ListRow[]; beforeFx: ListRow[]; beforeCf: ListRow[]; beforeChip: ListRow[]; sort: ListSort | null; gk: string[] | null; gOf: (r: ListRow) => string; by: Map<string, ListRow[]> | null } {
+): { list: ListRow[]; beforeFx: ListRow[]; beforeCf: ListRow[]; beforeSubtab: ListRow[]; beforeChip: ListRow[]; sort: ListSort | null; gk: string[] | null; gOf: (r: ListRow) => string; by: Map<string, ListRow[]> | null } {
   const cols = spec.cols;
   let all = unfold(spec, rows, query);
   if (query.ids) {
@@ -409,6 +415,9 @@ export function queryRows(
   all = byColFilters(all, cfCols(spec), query.cf ?? {}, null);
   const flag = query.flag;
   if (flag) all = all.filter((r) => r.flags.includes(flag));
+  const beforeSubtab = all;
+  const st = subtabOf(spec, query);
+  if (st) all = all.filter((r) => inSubtab(spec, st, r));
   const beforeChip = all;
   if (spec.chips && query.chip) all = all.filter((r) => String(r.v[spec.chips!] ?? "") === query.chip);
   const ql = query.q.trim().toLowerCase();
@@ -424,7 +433,7 @@ export function queryRows(
   }
   const gk = spec.groups && query.grp ? spec.groups : null;
   const gOf = (r: ListRow) => (gk ?? []).map((k) => cellText(colOf(cols, k), r.v[k])).join(" · ");
-  if (!gk) return { list: all, beforeFx, beforeCf, beforeChip, sort, gk, gOf, by: null };
+  if (!gk) return { list: all, beforeFx, beforeCf, beforeSubtab, beforeChip, sort, gk, gOf, by: null };
   /* Each group contiguous, in the order its first row appears. Pushed onto
      its own array — spreading a fresh copy per row was quadratic, and on a
      group of eight thousand that is the whole page load. */
@@ -435,7 +444,34 @@ export function queryRows(
     if (at) at.push(r);
     else by.set(g, [r]);
   }
-  return { list: Array.from(by.values()).flat(), beforeFx, beforeCf, beforeChip, sort, gk, gOf, by };
+  return { list: Array.from(by.values()).flat(), beforeFx, beforeCf, beforeSubtab, beforeChip, sort, gk, gOf, by };
+}
+
+/**
+ * THE SUB-TAB a query reads: the one it names, else the screen's first. A
+ * sub-tab is a named set of the chips column's values (or a flag), so "Needs
+ * a PO" is three stages at once — the work waiting — and the list opens on it
+ * rather than on everything ever raised. One with neither is "All".
+ */
+export function subtabOf(spec: Pick<ListSpec, "subtabs">, query: Pick<ListQuery, "st">): ListSubtab | null {
+  const tabs = spec.subtabs ?? [];
+  if (!tabs.length) return null;
+  return tabs.find((t) => t.id === query.st) ?? tabs[0];
+}
+
+export function inSubtab(spec: Pick<ListSpec, "chips">, t: ListSubtab, r: ListRow): boolean {
+  if (t.flag && !r.flags.includes(t.flag)) return false;
+  const k = t.k ?? spec.chips;
+  if (!k) return true;
+  const v = String(r.v[k] ?? "");
+  if (t.in && !t.in.includes(v)) return false;
+  if (t.notIn && t.notIn.includes(v)) return false;
+  return true;
+}
+
+/** Each sub-tab's count, over the rows every other filter leaves. */
+export function subtabCounts(spec: Pick<ListSpec, "chips" | "subtabs">, rows: ListRow[]): { id: string; n: number }[] {
+  return (spec.subtabs ?? []).map((t) => ({ id: t.id, n: rows.filter((r) => inSubtab(spec, t, r)).length }));
 }
 
 /** The status-value chips over the rows before a chip is picked. */
@@ -686,6 +722,7 @@ export function pageOf(spec: ListSpec, rows: ListRow[], query: ListQuery, flagWo
     page,
     beforeChip: r.beforeChip.length,
     chips: chipCounts(spec, r.beforeChip),
+    ...(spec.subtabs?.length ? { subtabs: subtabCounts(spec, r.beforeSubtab) } : {}),
     facets: facetCounts(spec, r.beforeFx, query.fx),
     ...(spec.colFilters ? { colFacets: colFacetsOf(spec, r.beforeCf, query.cf ?? {}) } : {}),
     sort: r.sort,

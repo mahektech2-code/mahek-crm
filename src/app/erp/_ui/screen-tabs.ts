@@ -1,8 +1,20 @@
 import "server-only";
 import type { ErpContext } from "@/lib/erp/access";
 import { erpCountsFor } from "@/lib/erp/counts";
-import { erpHref, type ErpScreen } from "@/lib/erp/registry";
+import { erpHref, type ErpScreen, type ErpView } from "@/lib/erp/registry";
 import type { ListTab } from "./list-screen";
+
+/**
+ * THE TABS OF A PAGE THIS PERSON HOLDS — every tab, less any withheld in
+ * Manage access (`lib/access/tab-grants.ts`). Every page that draws tabs, and
+ * every page that picks which tab to open on, reads this, so a withheld tab is
+ * neither drawn nor reachable by typing its `?view=`.
+ */
+export function heldViews(ctx: ErpContext, screen: ErpScreen): ErpView[] {
+  const withheld = ctx.withheld;
+  const all = screen.views ?? [];
+  return withheld?.size ? all.filter((v) => !withheld.has(v.key)) : all;
+}
 
 /**
  * A screen's tab strip, worked out ONCE for every page that draws one — the
@@ -15,7 +27,7 @@ export async function screenTabs(
   screen: ErpScreen,
   activeKey: string,
 ): Promise<{ tabs: ListTab[]; toggle: { label: string; href: string } | null; at: (key: string) => string; sections: ListTab[] | null }> {
-  const views = screen.views ?? [];
+  const views = heldViews(ctx, screen);
   const base = erpHref(screen);
   const at = (k: string) => (k === views[0]?.key ? base : `${base}?view=${k}`);
   /* Only this strip's own badges — the sidebar's are the layout's, and streamed. */

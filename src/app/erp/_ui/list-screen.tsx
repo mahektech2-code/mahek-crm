@@ -8,7 +8,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { ColSpec, FormSpec, ListRow, ListSpec, Tone } from "@/lib/erp/ui";
 import type { Result } from "@/lib/result";
 import { aggsOf, cellText, moneyText, nf, NEW_FORM_ACTION } from "@/lib/erp/ui";
-import { colOf as colIn, listCsv, listQueryParams, LIST_QUERY_KEYS, pageOf, queryRows, SEARCH_PAUSE_MS, searchWorthAsking, selectionTotals, selectionTotalText, subMatches, type ColFilter, type ListPage, type ListQuery, type SelectionTotal, type StatPick } from "@/lib/erp/list-query";
+import { colOf as colIn, listCsv, listQueryParams, LIST_QUERY_KEYS, pageOf, queryRows, SEARCH_PAUSE_MS, searchWorthAsking, selectionTotals, subtabOf, selectionTotalText, subMatches, type ColFilter, type ListPage, type ListQuery, type SelectionTotal, type StatPick } from "@/lib/erp/list-query";
 import { Icon as ShellIcon } from "@/components/shell/icons";
 import { Button, Card, checkboxClass, cx, EmptyState, Input, Select, SortableTh, Td, Th, Tr } from "@/components/ui/primitives";
 import { eyebrowClass, IconButton, LinkButton, linkClass } from "./look";
@@ -64,6 +64,38 @@ export type ListTab = {
   /** Work waiting on this tab for the person looking — the sidebar badge, per tab. */
   count?: number;
 };
+
+/**
+ * A list's SUB-TABS (`ListSpec.subtabs`): a segmented row of named views over
+ * its status, each with its count, the first being what the list opens on.
+ */
+function SubtabRow({ tabs, counts, value, onPick }: { tabs: { id: string; l: string; hint?: string }[]; counts: { id: string; n: number }[]; value: string; onPick: (id: string) => void }) {
+  const n = new Map(counts.map((c) => [c.id, c.n]));
+  return (
+    <div role="tablist" aria-label="Views" className="mb-3 inline-flex max-w-full flex-wrap gap-0.5 rounded-control bg-line/60 p-1">
+      {tabs.map((t) => {
+        const on = t.id === value;
+        return (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={on}
+            title={t.hint}
+            onClick={() => onPick(t.id)}
+            className={cx(
+              "flex h-8 cursor-pointer items-center gap-1.5 rounded-[7px] px-3.5 text-sm whitespace-nowrap",
+              on ? "bg-surface font-semibold text-ink shadow-sm" : "font-medium text-muted hover:text-body",
+            )}
+          >
+            {t.l}
+            <span className={cx("text-meta tabular-nums", on ? "text-brand-hover" : "text-faint")}>{nf(n.get(t.id) ?? 0)}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 /**
  * A screen's tabs. Exported because a screen can have a tab that is not a
@@ -844,6 +876,14 @@ export function ListScreen({
           the page above the table rather than inside its card. */}
       {/* The figure cards: the server's, over every row the filters reach, and
           the status values — where there are a handful — as one Breakdown card. */}
+      {spec.subtabs?.length && lp.all > 0 ? (
+        <SubtabRow
+          tabs={spec.subtabs}
+          counts={lp.subtabs ?? []}
+          value={subtabOf(spec, query)?.id ?? ""}
+          onPick={(id) => setQuery({ st: id === spec.subtabs![0].id ? "" : id, chip: "", page: 1 })}
+        />
+      ) : null}
       {(() => {
         const stats = lp.stats ?? [];
         const breakdown = v4 && chips.length >= 2 && chips.length <= MAX_TABS ? { total: lp.beforeChip, chips, value: chip, tones, onPick: pickChip } : null;

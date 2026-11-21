@@ -27,7 +27,10 @@ export type ErpIcon =
  * and one grant each. A view is that list again, reached from its screen
  * rather than from the sidebar: it keeps its own server module (its rows, its
  * actions) under its own key, and it is opened by holding the SCREEN. It is
- * never a module of its own, so it can never be granted apart from its screen.
+ * never a module of its own (`lib/modules.ts`), but since Nov 2026 a screen
+ * can be NARROWED to some of its tabs in Manage access — a tab row under the
+ * page, Access only (`lib/access/tab-grants.ts`); a page with no tab rows
+ * holds every tab.
  */
 export type ErpView = {
   /** The server module key that draws this tab. */

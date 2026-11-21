@@ -8,6 +8,7 @@ import type { Owner } from "./action-owners";
 import { normaliseGrant, type AppGrantDraft } from "./permission-rules";
 import { ERP_POWER_OWNERS, HRMS_POWER_OWNERS, TASK_POWER_OWNERS } from "./power-owners";
 import { holdsAny, moduleShape } from "./screen-permissions";
+import { isTabKey } from "./tab-grants";
 
 /* ---------------------------------------------------------------------------
  * A SCREEN GRANT, WRITTEN BACK AS THE TABLES THE REST OF THE APP READS.
@@ -48,7 +49,8 @@ export function legacyFromScreens(
   opts: { platformAdmin?: boolean; previousRole?: Role | null } = {},
 ): LegacyGrant {
   const grant = normaliseGrant(draft, moduleShape(app));
-  const screens = [...grant.screens.keys()];
+  /* Tabs never reach `app_module_access`: they are read from the screen rows (`tab-grants.ts`). */
+  const screens = [...grant.screens.keys()].filter((k) => !isTabKey(k));
 
   let modules: string[];
   if (app === "field") modules = screens.length ? ["field.home"] : [];

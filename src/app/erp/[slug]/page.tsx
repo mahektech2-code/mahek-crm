@@ -3,7 +3,7 @@ import { erpContext } from "@/lib/erp/access";
 import { erpScreenBySlug } from "@/lib/erp/registry";
 import { screenModule } from "@/lib/erp/screens";
 import { ListScreen } from "../_ui/list-screen";
-import { screenTabs } from "../_ui/screen-tabs";
+import { heldViews, screenTabs } from "../_ui/screen-tabs";
 import { LIST_QUERY_KEYS, pageOf, parseListQuery } from "@/lib/erp/list-query";
 import { FLAG } from "@/lib/erp/ui";
 import { withRenderMemo } from "@/lib/erp/read-memo";
@@ -43,7 +43,9 @@ export default async function ErpScreenPage({
   const ctx = await erpContext();
   if (!ctx.screens.has(screen.key)) redirect("/erp");
 
-  const views = screen.views ?? [];
+  /* Only the tabs this person holds; a page whose every tab was withheld is not theirs. */
+  const views = heldViews(ctx, screen);
+  if (screen.views?.length && !views.length) redirect("/erp");
   const known = new Set(views.flatMap((v) => [v.key, ...(v.alt ? [v.alt.key] : [])]));
   const key = sp.view && known.has(sp.view) ? sp.view : (views[0]?.key ?? screen.key);
   const mod = screenModule(key);

@@ -775,6 +775,12 @@ const requisitions: ScreenModule = {
         groups: ["reqNo"],
         groupHead: ["date", "department", "godown"],
         chips: "stage",
+        subtabs: [
+          { id: "needs", l: "Needs a PO", in: ["Waiting for PO number", "Create PO", "Create or link PO", "PO awaiting approval"], hint: "Waiting on the buyer: create the PO, or link the number the Quotation manager made" },
+          { id: "onOrder", l: "On order", in: ["Waiting for goods", "Partly received"], hint: "On a PO, waiting for the goods at the gate" },
+          { id: "received", l: "Received", in: ["Received", "Closed short"] },
+          { id: "all", l: "All" },
+        ],
         godownKey: "godown",
         /* Quantity is not summed: items mix kg, litres and pieces. */
         stats: [
@@ -1648,6 +1654,12 @@ const purchaseOrders: ScreenModule = {
         hidden,
         groups: ["status"],
         chips: "status",
+        subtabs: [
+          { id: "toSend", l: "To send", in: ["Pending approval", "Approved"], hint: "Raised, not yet shared with the supplier" },
+          { id: "awaiting", l: "Awaiting goods", in: ["Sent", "Partly received"], hint: "With the supplier, goods still to come" },
+          { id: "done", l: "Done", in: ["Received", "Closed"] },
+          { id: "all", l: "All" },
+        ],
         stats: [
           { l: "POs" },
           { l: "Suppliers", kind: "distinct", k: "vendor" },

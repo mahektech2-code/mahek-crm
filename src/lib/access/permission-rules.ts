@@ -1,3 +1,5 @@
+import { isTabKey, pageOfTab, tabsHeld, tabsOfPage } from "./tab-grants";
+
 /* ---------------------------------------------------------------------------
  * THE TICK RULES OF THE ACCESS DIALOG, IN ONE PLACE.
  *
@@ -15,6 +17,9 @@
  * same `group` `lib/modules.ts` gives every screen. A module gates its
  * screens: none of them can be given until the module is, and the last one
  * taken away takes the module with it.
+ *
+ * A page's TABS are a third level under it (`tab-grants.ts`): Access only,
+ * no tab entries meaning every tab.
  *
  * Pure and client-safe. The dialog runs these on every click and the server
  * runs `normaliseGrant` on every save, so what the dialog drew is what is
@@ -73,7 +78,7 @@ export function setModule(d: AppGrantDraft, shape: readonly ModuleShape[], modul
       for (const s of m.screens) if (!screens.has(s)) screens.set(s, NONE);
     } else {
       modules.delete(module);
-      for (const s of m.screens) screens.delete(s);
+      for (const s of m.screens) dropPage(screens, s);
     }
   });
 }
@@ -90,10 +95,51 @@ export function setAccess(d: AppGrantDraft, shape: readonly ModuleShape[], scree
     if (on) {
       if (!screens.has(screen)) screens.set(screen, NONE);
     } else {
-      screens.delete(screen);
+      dropPage(screens, screen);
       if (!m.screens.some((s) => screens.has(s))) modules.delete(m.module);
     }
   });
+}
+
+/** A page taken away takes its tab entries with it. */
+function dropPage(screens: Map<string, ScreenTicks>, page: string) {
+  screens.delete(page);
+  for (const t of tabsOfPage(page)) screens.delete(t.key);
+}
+
+/** Whether a tab is open under this draft: its page held, and the tab listed or no tab listed. */
+export function holdsTab(d: AppGrantDraft, tab: string): boolean {
+  const page = pageOfTab(tab);
+  return !!page && d.screens.has(page) && tabsHeld(d.screens, page).includes(tab);
+}
+
+/**
+ * ACCESS ON ONE TAB. Refused while its page is not held. Every tab ticked is
+ * stored as no tab entries ("all"); the last tab unticked takes the page away
+ * (and its module, if that was the module's last page).
+ */
+export function setTab(d: AppGrantDraft, shape: readonly ModuleShape[], tab: string, on: boolean): AppGrantDraft {
+  const page = pageOfTab(tab);
+  if (!page || !d.screens.has(page)) return d;
+  const all = tabsOfPage(page).map((t) => t.key);
+  const held = new Set(tabsHeld(d.screens, page));
+  if (on) held.add(tab);
+  else held.delete(tab);
+  if (!held.size) return setAccess(d, shape, page, false);
+  return withScreens(d, (screens) => {
+    for (const k of all) screens.delete(k);
+    if (held.size < all.length) for (const k of held) screens.set(k, NONE);
+  });
+}
+
+/** Tab entries kept only under a held page, without ticks, and dropped where they list every tab. */
+function keepTabs(from: ReadonlyMap<string, ScreenTicks>, into: Map<string, ScreenTicks>) {
+  const byPage = new Map<string, string[]>();
+  for (const k of from.keys()) {
+    const page = isTabKey(k) ? pageOfTab(k) : undefined;
+    if (page && into.has(page)) byPage.set(page, [...(byPage.get(page) ?? []), k]);
+  }
+  for (const [page, keys] of byPage) if (keys.length < tabsOfPage(page).length) for (const k of keys) into.set(k, NONE);
 }
 
 /** Edit ticked by hand is the person's own; taking it away takes Delete with it. */
@@ -139,6 +185,7 @@ export function normaliseGrant(d: AppGrantDraft, shape: readonly ModuleShape[]):
     }
     if (m.screens.some((s) => screens.has(s))) modules.add(m.module);
   }
+  keepTabs(d.screens, screens);
   return { position: d.position, modules, screens };
 }
 
