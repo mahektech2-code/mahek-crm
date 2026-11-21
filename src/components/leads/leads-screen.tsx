@@ -3,6 +3,8 @@
 import { displayStageLabel } from "@/lib/lead-display";
 import { displayStageOf } from "@/lib/engines/lead-ladder";
 import { LeadTabs } from "@/components/leads/lead-tabs";
+import { LeadStageSummary } from "@/components/leads/lead-stage-summary";
+import type { DisplayStage } from "@/lib/engines/lead-ladder";
 import { useInLeadHub } from "@/components/leads/hub/hub-context";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import { SalesmanLink } from "@/components/leads/salesman-link";
@@ -166,6 +168,7 @@ export function LeadsScreen({
   options,
   view,
   tiles,
+  stageSummary,
   showArchived,
   archivedCount,
   staleDays,
@@ -246,6 +249,8 @@ export function LeadsScreen({
    * reword one.
    */
   tiles: Record<LeadTileId, number> | null;
+  /** Open leads per pipeline stage, for the summary card; null where it is not drawn. */
+  stageSummary?: { stage: DisplayStage; count: number; min: number; max: number }[] | null;
   showArchived: boolean;
   archivedCount: number;
   staleDays: number;
@@ -727,6 +732,18 @@ export function LeadsScreen({
 
   return (
     <div className="p-6">
+      {inHub && !showArchived && stageSummary ? <LeadStageSummary
+          stages={stageSummary}
+          selectedStages={filters.stage}
+          hrefFor={(stageParam) => {
+            const next = new URLSearchParams(search.toString());
+            next.delete("stage");
+            next.delete("page");
+            if (stageParam) next.set("stage", stageParam);
+            const q = next.toString();
+            return q ? `?${q}` : leadHref(workspace, "leads");
+          }}
+        /> : null}
       {/*
         THE HEADING CHANGES WITH THE VIEW, and it has to.
         A page still calling itself "Leads" over a table of eleven overdue
