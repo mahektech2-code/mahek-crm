@@ -28,6 +28,7 @@ import { TERRITORY_REGION_SQL, qualify, stateKeySql } from "@/lib/territory-sql"
 import { placeFilterOptions, placeFilterSql, placeNameSql } from "@/lib/services/place-filter-service";
 import type { PlaceFilterOptions, PlaceFilterValues } from "@/lib/place-filters";
 import { rankShopCities } from "@/lib/journey-days";
+import { planCityList } from "@/lib/journey-cities";
 import { canonicalState, stateKey, stateVariants } from "@/lib/india-states";
 import { mergeMasterWithBook } from "@/lib/geography/territory-options";
 import { metresBetween } from "@/lib/geo";
@@ -5216,7 +5217,14 @@ export type JourneyPlan = {
   completedAt: Date | null;
   /* ---- the negotiation ---- */
   dayState: "proposed" | "refused" | "agreed" | "planned";
+  /** The PRIMARY city — the one every handset filters its shop list by. */
   city: string | null;
+  /**
+   * EVERY city the day names, primary first: [city] for a day with one, [] for a
+   * day with none. Derived on read from the primary city and the additive
+   * cities column, so a row that predates it reads exactly as before.
+   */
+  cities: string[];
   refusalReason: string | null;
   counterCity: string | null;
   proposedAt: Date | null;
@@ -5256,12 +5264,12 @@ export async function journeyPlansBetween(
   const scope = await managerScope();
   const who = userId ? sql`and p.user_id = ${userId}` : sql``;
 
-  const plans = (await db.execute<Omit<JourneyPlan, "stops" | "shopCities">>(sql`
+  const plans = (await db.execute<Omit<JourneyPlan, "stops" | "shopCities" | "cities"> & { cities: string[] | null }>(sql`
     select p.id, p.user_id as "userId", u.name as "userName",
            p.plan_date::text as "planDate", p.beat, p.area,
            p.status::text as status,
            p.started_at as "startedAt", p.completed_at as "completedAt",
-           p.day_state::text as "dayState", p.city,
+           p.day_state::text as "dayState", p.city, p.cities,
            p.refusal_reason as "refusalReason", p.counter_city as "counterCity",
            p.proposed_at as "proposedAt", p.responded_at as "respondedAt",
            p.self_planned as "selfPlanned", pb.name as "proposedByName",
@@ -5272,7 +5280,7 @@ export async function journeyPlansBetween(
      where p.plan_date between ${fromDay}::date and ${toDay}::date ${who}
        ${onlyMine(scope, "p.user_id")}
      order by p.plan_date asc, u.name asc
-  `)) as unknown as Array<Omit<JourneyPlan, "stops" | "shopCities">>;
+  `)) as unknown as Array<Omit<JourneyPlan, "stops" | "shopCities" | "cities"> & { cities: string[] | null }>;
 
   if (!plans.length) return [];
 
@@ -5309,7 +5317,12 @@ export async function journeyPlansBetween(
 
   return plans.map((p) => {
     const own = stops.filter((s) => s.planId === p.id);
-    return { ...p, stops: own, shopCities: rankShopCities(own.map((s) => s.city)) };
+    return {
+      ...p,
+      cities: planCityList(p),
+      stops: own,
+      shopCities: rankShopCities(own.map((s) => s.city)),
+    };
   });
 }
 

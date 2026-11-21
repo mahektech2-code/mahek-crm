@@ -6996,6 +6996,14 @@ export const mbosJourneyPlans = pgTable(
     selfPlanned: boolean("self_planned").notNull().default(false),
     /** What he wants instead. Optional — "not this" is a legitimate answer. */
     counterCity: text("counter_city"),
+    /**
+     * EVERY CITY the office named for the day, in the order chosen, where it
+     * named more than one. `city` stays the PRIMARY city and is always the first
+     * of these: the handset hard-filters its shop list by `city` alone, so it
+     * must never become a joined string. NULL means "just `city`" — every row
+     * that predates this, and every day with a single city.
+     */
+    cities: text("cities").array(),
     respondedAt: timestamp("responded_at", { withTimezone: true }),
   },
   (t) => [

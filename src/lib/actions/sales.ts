@@ -79,6 +79,7 @@ import {
 } from "@/lib/services/territory-service";
 import { territoryLeaves, territoryName } from "@/lib/territory-rules";
 import { acknowledgementProblem, leavesByState } from "@/lib/geography/territory-options";
+import { citiesInWords, cityColumns, normaliseCities } from "@/lib/journey-cities";
 import { bookIdsIgnoringTerritory } from "@/lib/services/mbos-service";
 import {
   assignableOwner,
@@ -1209,6 +1210,8 @@ export type PlannedDay = {
    * whatever city the day already carries.
    */
   city?: string | null;
+  /** Every city the day names, primary first, where the office named more than one. */
+  cities?: string[] | null;
   /** In the order they are to be walked. An empty day CLEARS that day. */
   customerIds: string[];
   startTime?: string;
@@ -1358,13 +1361,16 @@ export async function saveJourneyPeriod(input: {
 
         const planId = existing?.id ?? gen("mbos_plan");
         const startMinutes = parseClock(day.startTime) ?? 9 * 60 + 30;
+        /* `city` is the primary and `cities` the full list where there are several;
+           absent, the day keeps whatever it already carries. */
+        const dayCities = cityColumns(normaliseCities(day.city, day.cities));
 
         if (existing) {
           await tx
             .update(mbosJourneyPlans)
             .set({
               beat: day.beat ?? null,
-              ...(day.city?.trim() ? { city: day.city.trim() } : {}),
+              ...(dayCities.city ? { city: dayCities.city, cities: dayCities.cities } : {}),
               estimatedTravelMinutes: perStop * Math.max(0, day.customerIds.length - 1),
               updatedAt: new Date(),
               updatedById: user.id,
@@ -1376,7 +1382,8 @@ export async function saveJourneyPeriod(input: {
             userId: input.salesmanId,
             planDate: day.planDate,
             beat: day.beat ?? null,
-            city: day.city?.trim() || null,
+            city: dayCities.city,
+            cities: dayCities.cities,
             status: "active",
             estimatedTravelMinutes: perStop * Math.max(0, day.customerIds.length - 1),
             createdById: user.id,
@@ -1479,7 +1486,11 @@ export async function saveJourneyPeriod(input: {
  */
 export async function proposeJourneyDays(input: {
   salesmanId: string;
-  days: Array<{ planDate: string; city: string }>;
+  /**
+   * `city` is the PRIMARY city; `cities` carries every city for the day, the
+   * primary first, where the office named more than one.
+   */
+  days: Array<{ planDate: string; city: string; cities?: string[] }>;
 }): Promise<Result<{ proposed: number; leftAlone: string[] }>> {
   try {
     const user = await requireSalesAccess(SALES_MANAGER("sales.journeys"));
@@ -1505,11 +1516,17 @@ export async function proposeJourneyDays(input: {
 
     let proposed = 0;
     const leftAlone: string[] = [];
+    /* The days that name more than one city — said in the notification, because a
+       handset that has not been updated shows the first city of a day only. */
+    const multiCityDays: Array<{ planDate: string; cities: string[] }> = [];
 
     await db.transaction(async (tx) => {
       for (const day of input.days) {
-        const city = day.city.trim();
-        if (!city) continue;
+        /* The first city named is the primary; the rest ride in `cities`. A
+           single city is stored exactly as it always was. */
+        const named = normaliseCities(day.city, day.cities);
+        if (!named.length) continue;
+        const { city, cities } = cityColumns(named);
 
         const [existing] = await tx
           .select({ id: mbosJourneyPlans.id, dayState: mbosJourneyPlans.dayState })
@@ -1534,6 +1551,7 @@ export async function proposeJourneyDays(input: {
             .update(mbosJourneyPlans)
             .set({
               city,
+              cities,
               dayState: "proposed",
               proposedById: user.id,
               proposedAt: new Date(),
@@ -1552,6 +1570,7 @@ export async function proposeJourneyDays(input: {
             userId: input.salesmanId,
             planDate: day.planDate,
             city,
+            cities,
             status: "draft",
             dayState: "proposed",
             proposedById: user.id,
@@ -1560,6 +1579,7 @@ export async function proposeJourneyDays(input: {
             updatedById: user.id,
           });
         }
+        if (cities) multiCityDays.push({ planDate: day.planDate, cities });
         proposed += 1;
       }
     });
@@ -1573,6 +1593,7 @@ export async function proposeJourneyDays(input: {
       afterState: {
         salesman: salesman.name,
         days: proposed,
+        multiCityDays: multiCityDays.length,
         from: input.days[0]?.planDate,
         to: input.days[input.days.length - 1]?.planDate,
       } as never,
@@ -1582,7 +1603,12 @@ export async function proposeJourneyDays(input: {
       await tell(
         input.salesmanId,
         `${plural(proposed, "day")} proposed for you`,
-        `${user.name} has proposed where you work. Open your plan to agree, or say why a day will not work and what you want instead.`,
+        `${user.name} has proposed where you work. Open your plan to agree, or say why a day will not work and what you want instead.` +
+          (multiCityDays.length
+            ? ` Days with more than one city — ${multiCityDays
+                .map((d) => `${d.planDate}: ${citiesInWords(d.cities)}`)
+                .join("; ")}. Your shop list on the handset covers the first city of each day.`
+            : ""),
         "/journey",
       );
     }
@@ -1615,7 +1641,10 @@ export async function answerRefusal(input: {
   planId: string;
   /** Accept what he asked for, or put a different city back to him. */
   take: "counter" | "other";
+  /** The primary city when putting a different proposal back to him. */
   city?: string;
+  /** Every city of that proposal, primary first, where there are several. */
+  cities?: string[];
 }): Promise<Result> {
   try {
     const user = await requireSalesAccess(SALES_MANAGER("sales.journeys"));
@@ -1634,8 +1663,14 @@ export async function answerRefusal(input: {
       );
     }
 
-    const city =
-      input.take === "counter" ? (plan.counterCity ?? "").trim() : (input.city ?? "").trim();
+    /* His counter-proposal is one city (a handset names one); a proposal put back
+       to him can name several. */
+    const named =
+      input.take === "counter"
+        ? normaliseCities(plan.counterCity)
+        : normaliseCities(input.city, input.cities);
+    const { city, cities } = cityColumns(named);
+    const said = citiesInWords(named);
 
     if (!city) {
       return err(
@@ -1650,6 +1685,7 @@ export async function answerRefusal(input: {
       .update(mbosJourneyPlans)
       .set({
         city,
+        cities,
         /* His own suggestion needs no further agreement from him. */
         dayState: input.take === "counter" ? "agreed" : "proposed",
         proposedById: user.id,
@@ -1674,25 +1710,25 @@ export async function answerRefusal(input: {
         refusalReason: plan.refusalReason,
         counterCity: plan.counterCity,
       } as never,
-      afterState: { city, planDate: plan.planDate } as never,
+      afterState: { city, cities, planDate: plan.planDate } as never,
     });
 
     await tell(
       plan.userId,
       input.take === "counter"
-        ? `${plan.planDate} is agreed — ${city}`
-        : `${plan.planDate} proposed again — ${city}`,
+        ? `${plan.planDate} is agreed — ${said}`
+        : `${plan.planDate} proposed again — ${said}`,
       input.take === "counter"
         ? `${user.name} took your suggestion. Pick the shops when you are ready.`
-        : `${user.name} has proposed ${city} instead. Agree, or say why it will not work.`,
+        : `${user.name} has proposed ${said} instead. Agree, or say why it will not work.`,
       "/journey",
     );
 
     refresh();
     return okVoid(
       input.take === "counter"
-        ? `Agreed — ${city}. He picks the shops.`
-        : `${city} put back to him.`,
+        ? `Agreed — ${said}. He picks the shops.`
+        : `${said} put back to him.`,
     );
   } catch (e) {
     return fromThrown(e);

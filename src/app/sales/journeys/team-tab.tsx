@@ -122,7 +122,7 @@ export function TeamTab({
       id: r.t.id,
       tone: "danger" as const,
       who: r.t.name,
-      what: `refused ${shortDate(p.planDate)}${p.city ? ` · ${p.city}` : ""}`,
+      what: `refused ${shortDate(p.planDate)}${p.cities?.length ? ` · ${p.cities.join(", ")}` : p.city ? ` · ${p.city}` : ""}`,
     })),
     ...(r.area.key === "change-pending"
       ? [{ key: `a:${r.t.id}`, id: r.t.id, tone: "warn" as const, who: r.t.name, what: "asked for different areas" }]
