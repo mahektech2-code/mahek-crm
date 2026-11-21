@@ -58,6 +58,12 @@ import { relations, sql } from "drizzle-orm";
 export const roleEnum = pgEnum("role", ["associate", "manager", "admin"]);
 
 /**
+ * Whose records somebody sees in one app: their own, their own and their HRMS
+ * team's, or the whole company's. See `lib/access/permission-rules.ts`.
+ */
+export const accessPositionEnum = pgEnum("access_position", ["associate", "manager", "everyone"]);
+
+/**
  * §9's three answers about one field somebody already wrote down.
  *
  * `confirmed` is "we asked again and got the same answer" — evidence, and the
@@ -955,6 +961,11 @@ export const appAccess = pgTable(
      * written by `npm run app:grant` behaves exactly as it always did.
      */
     role: roleEnum("role"),
+    /**
+     * Whose records they see in this app, under the screen model. NULL until
+     * `access-screens-backfill` has converted the grant; nothing reads it yet.
+     */
+    position: accessPositionEnum("position"),
     grantedById: text("granted_by_id").references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -999,6 +1010,43 @@ export const appModuleAccess = pgTable(
   (t) => [
     uniqueIndex("app_module_access_user_module_key").on(t.userId, t.module),
     index("app_module_access_user_app_idx").on(t.userId, t.app),
+  ],
+);
+
+/**
+ * The screen model of access: one row per person per screen they may open.
+ *
+ * A row is Access — the screen and every ordinary action on it. `canEdit` is
+ * any row, modal or detail edit there; `canDelete` is the special one and
+ * needs Edit (the database refuses it without). `editByDelete` marks an Edit
+ * that Delete brought along, so unticking Delete takes back only that one.
+ * The rules live in `lib/access/permission-rules.ts`, which the dialog and the
+ * save both run.
+ *
+ * Unlike `app_module_access`, NO ROWS MEANS NO SCREENS: every converted grant
+ * is written out in full. Filled by `npm run jobs -- access-screens-backfill`;
+ * nothing reads it until the checks are switched over.
+ */
+export const appScreenAccess = pgTable(
+  "app_screen_access",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    app: appIdEnum("app").notNull(),
+    /** A screen key: `lib/modules.ts`, or `lib/access/handset-screens.ts` for the Salesman App. */
+    screen: text("screen").notNull(),
+    canEdit: boolean("can_edit").notNull().default(false),
+    canDelete: boolean("can_delete").notNull().default(false),
+    editByDelete: boolean("edit_by_delete").notNull().default(false),
+    grantedById: text("granted_by_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("app_screen_access_user_screen_key").on(t.userId, t.screen),
+    index("app_screen_access_user_app_idx").on(t.userId, t.app),
+    check("app_screen_access_delete_needs_edit", sql`not ${t.canDelete} or ${t.canEdit}`),
   ],
 );
 

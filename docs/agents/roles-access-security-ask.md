@@ -497,3 +497,25 @@ there with no seat, and a department with no one in charge or operator), each
 ERP godown's staff, and each Sales Dashboard oversight region. Active accounts
 only. `seatsOverview()` in `access-overview-service.ts`; each kind is changed
 where it is set, named under its heading.
+
+**THE SCREEN MODEL IS BEING BUILT BESIDE LEVELS, and nothing reads it yet**
+(branch `admin/access-position-and-permissions`). A level used to decide both
+whose records somebody saw and what they could do. It is being split in two:
+POSITION per app (associate own, manager own + HRMS team, everyone the whole
+company) decides only what is seen, and per SCREEN — the app's sidebar items,
+grouped by its sidebar sections as modules — Access opens it with every
+ordinary action, Edit is any row/modal/detail edit, Delete is special and
+needs Edit. The rules are `lib/access/permission-rules.ts`, run by the dialog
+and by the save alike. Which screen and tick owns every capability is
+`lib/access/action-owners.ts`, and every ERP, HRMS and Tasks power
+`lib/access/power-owners.ts` — both `Record`s, so a new one fails the build
+until placed. Seeing money or a sensitive field comes with Edit on the screen
+that shows it; "everybody's" powers need the Everyone position. The Salesman
+App's screens are the handset's own menu (`lib/access/handset-screens.ts`),
+because one screen would have handed a field manager's decisions to anybody
+with Edit on it. `permissions.test.ts` pins, level by level, exactly what the
+model gives that levels did not; `convert-grant.ts` converts one grant and
+`compareConversion` proves what it moves; `access-screens-backfill` writes
+`app_access.position` and `app_screen_access` and REFUSES any grant that would
+lose something on a screen still held. Unlike `app_module_access`, no
+`app_screen_access` rows means no screens.

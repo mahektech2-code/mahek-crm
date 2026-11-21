@@ -219,6 +219,7 @@ const files = [
   "src/lib/website-access-save.test.ts",
   "src/lib/access-candidates.test.ts",
   "src/lib/access-leftovers.test.ts",
+  "src/lib/access/access-screens-backfill.test.ts",
   "src/lib/storage-fallback.test.ts",
   "src/lib/relationship-handover.test.ts",
   "src/lib/seat-mirrors.test.ts",

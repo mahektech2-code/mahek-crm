@@ -76,6 +76,13 @@ export function draftFromLevel(app: AppId, role: Role, heldScreens?: readonly st
     }
     screens.set(s, { edit: edit || del, delete: del, autoEdit: del && !edit });
   }
+  /* A whole grant held every screen's old Write level ("reply and send"), and Write is Edit now. */
+  if (!heldScreens) {
+    for (const screen of writeLevelsForApp(app).keys()) {
+      const t = screens.get(screen);
+      if (t) screens.set(screen, { ...t, edit: true });
+    }
+  }
   const modules = new Set(shape.filter((m) => m.screens.some((s) => screens.has(s))).map((m) => m.module));
   return { position, modules, screens };
 }

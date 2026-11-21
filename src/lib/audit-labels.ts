@@ -1002,6 +1002,8 @@ const DESCRIBE: Record<string, Describer> = {
   "access.factory-staff": (c) => ({ says: ["put", c.user(c.e.entityId), "on the factory floor from a terminal"], note: c.reason(), changes: false }),
   /* `npm run jobs -- hrms-for-everyone` — the backfill that gives every active account HRMS. */
   "access.hrms-for-everyone": (c) => ({ says: ["gave", c.user(c.e.entityId), "HRMS as an associate"], note: c.reason(), changes: false }),
+  /* `npm run jobs -- access-screens-backfill` — one grant written as position and screen ticks. Changes nobody's access yet. */
+  "access.screens-backfill": (c) => ({ says: ["converted", c.user(c.e.entityId), "to position and screens"], note: c.reason(), changes: false }),
   "issue-credential": (c) => ({ says: ["issued a sign-in password to", c.user(c.e.entityId)], note: null, changes: false }),
   "link-employee": (c) => ({ says: ["linked", c.user(c.e.entityId), "to their HR record"], changes: false }),
   "unlink-employee": (c) => ({ says: ["unlinked", c.user(c.e.entityId), "from their HR record"], changes: false }),
