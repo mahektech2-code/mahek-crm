@@ -26,6 +26,12 @@ export type ColSpec = {
   u?: string;
   /** Minimum width override in px. */
   w?: number;
+  /** The row value drawn after a number as its unit, where units differ row by row ("1,500 Litre", "100 Pcs"). */
+  uk?: string;
+  /** The row value that, when set, says the date is late ("2 days late"): drawn after it, in red. */
+  late?: string;
+  /** A figure read beside the others, not first: drawn in the muted ink. */
+  quiet?: boolean;
   /**
    * Money shown to the RUPEE, as Tally rounds a bill's final amount. Only how
    * it is SHOWN: the value stays exact, so a group's total is the exact sum
@@ -286,7 +292,11 @@ export type ActionSpec = {
   /** Stable id the server dispatches on. */
   id: string;
   l: string;
+  /** The shorter words a list row's next-step button says ("Link PO no." for "Link PO number"). */
+  short?: string;
   primary?: boolean;
+  /** A primary drawn outlined on its row: the next step, but one that asks for something typed first. */
+  soft?: boolean;
   /** An AI action (drawn distinctly; absent when AI is off). */
   ai?: boolean;
   /** Why it is not available yet; drawn disabled with this reason. */
@@ -329,6 +339,18 @@ export type ActionSpec = {
   loadsForm?: boolean;
   /** Navigates to a screen (e.g. "Open record"). */
   href?: string;
+  /**
+   * Started INSIDE the record: pressed on a row, the record opens and its
+   * panel takes it from there (Create PO's three pages, the PO number box).
+   * The panel runs the action itself, through the same handler.
+   */
+  opens?: boolean;
+  /**
+   * The act belongs to another screen's record — a requirement's "Receive
+   * goods" is its PO's. Run (and its form loaded) as that screen's, on that id,
+   * so the server checks that screen's grant and ticks.
+   */
+  on?: { screen: string; id: string };
   /**
    * Opens the Share window (`_ui/share-dialog.tsx`): how it goes, who it goes
    * to, the message. Its Send runs this action with `channel`, `to` (the ticked
@@ -413,9 +435,12 @@ export type BulkSpec = {
    * Handled on the page rather than by the server: "printInvoices" opens the
    * Print invoices pop-up over the selection, "billingView" the invoice to make
    * in Tally, "combinedView" the ticked rows read together with what can be
-   * done to them as a set (`combined-view.tsx`).
+   * done to them as a set (`combined-view.tsx`). "startInRecord" opens the
+   * first ticked row that can take `fits` and starts that action in its record
+   * with the other ticked rows chosen (Create one PO: Create PO with every
+   * ticked requirement already on it).
    */
-  client?: "printInvoices" | "billingView" | "combinedView";
+  client?: "printInvoices" | "billingView" | "combinedView" | "startInRecord";
   /**
    * Row values every ticked row must share for this to be offered at all —
    * `["pr"]` is "only while the ticks are one PR", `["party"]` one party. It is
@@ -490,7 +515,13 @@ export type ListRow = {
   hiddenFields?: number;
   /** Free-form panels a screen draws in the record (allocation, evidence…). */
   /** `covers`: column keys the panel already draws, left out of the record's field list. */
-  panel?: { kind: string; data: unknown; covers?: string[] };
+  panel?: { kind: string; data: unknown; covers?: string[]; whole?: boolean };
+  /**
+   * Said after the screen's name above the title ("Requirements · REQ-14").
+   * With `panel.whole` the panel IS the record: it draws every fact itself, so
+   * there is no Details tab and the status is said beside the title.
+   */
+  ref?: string;
   /** More screen-drawn panels, each a tab after `panel` (an order's Invoice beside its Customer tracking). */
   panels?: { kind: string; data: unknown }[];
   /**

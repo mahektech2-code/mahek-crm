@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   FLOW_STEPS,
+  requirementBucket,
   poStatusAfterReceipt,
   poTotals,
   purchaseUnit,
@@ -198,4 +199,11 @@ test("the GRN line asks about the extra only when more arrived, and whether more
   assert.match(runCalc("inward.diff", { h: {}, l: line("1150"), lines: [], i: 0, data }), /^150 Kg more than PO-1243 .*₹89\.50 per kg/);
   /* A kg chemical is read off the scale: 6 drums, 1,247.8 kg with drums, 16.3 kg each. */
   assert.equal(whenHolds({ calc: "inward.isMore" }, { ...line(""), drums: "6", weight: "1247.8", emptyDrum: "16.3" }, data), true);
+});
+
+test("a requirement's stage is read under one of the four sub-tabs of Requirements", () => {
+  for (const st of ["Waiting for PO number", "Create PO", "Create or link PO"]) assert.equal(requirementBucket(st), "toOrder", st);
+  for (const st of ["Waiting for goods", "Partly received", "PO awaiting approval", "Order Placed (before POs)"]) assert.equal(requirementBucket(st), "onOrder", st);
+  for (const st of ["Received", "Closed short", "Closed"]) assert.equal(requirementBucket(st), "received", st);
+  assert.equal(requirementBucket("Cancelled"), "cancelled");
 });

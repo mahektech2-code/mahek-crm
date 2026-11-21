@@ -122,6 +122,21 @@ export function requirementStage(r: RequirementState): Stage {
   return { stage: "Create or link PO", step: STEP.method, next: "Buyer decision — create the PO here, or link a PO number from the Quotation manager.", readyForPo: true };
 }
 
+/**
+ * WHICH SUB-TAB OF REQUIREMENTS A STAGE IS READ UNDER — To order, On order,
+ * Received or Cancelled. To order is owed a PO; On order is on one and waiting
+ * for goods (a PO still waiting on its approver, and anything ordered before
+ * POs, are on order too); Received is finished with, closed short included.
+ */
+export type RequirementBucket = "toOrder" | "onOrder" | "received" | "cancelled";
+
+export function requirementBucket(stage: string): RequirementBucket {
+  if (stage === "Cancelled") return "cancelled";
+  if (stage === "Received" || stage === "Closed short" || stage === "Closed") return "received";
+  if (stage === "Waiting for PO number" || stage === "Create PO" || stage === "Create or link PO") return "toOrder";
+  return "onOrder";
+}
+
 /* ------------------------------------------------- the Quotation manager's PO */
 
 /** A PO number as it is compared: spaces squeezed, case ignored. The number is stored as it was typed on the Quotation manager. */

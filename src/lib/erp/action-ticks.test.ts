@@ -5,7 +5,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyTicks, holdsTick, PURCHASE_TICKS, quoteOpTick, tickFor, tickWhy } from "./action-ticks";
+import { applyTicks, holdsTick, menuBlock, PURCHASE_TICKS, quoteOpTick, tickFor, tickWhy } from "./action-ticks";
 import type { ListRow, ListSpec } from "./ui";
 
 const ticks = (m: Record<string, [boolean, boolean]>) => ({ administrator: false, ticks: new Map(Object.entries(m).map(([k, [edit, del]]) => [k, { edit, delete: del }])) });
@@ -58,4 +58,15 @@ test("on the Quotation manager every change is Edit and taking something back is
   assert.equal(quoteOpTick({ op: "deleteRow" }), "delete");
   assert.equal(quoteOpTick({ op: "archiveColumn" }), "delete");
   assert.equal(quoteOpTick({ op: "cell", impact: { typed: "x" } }), "delete", "undoing a bought rate");
+});
+
+test("a Purchase row's menu is ordered by the tick each act needs: ordinary, changes, take-backs", () => {
+  assert.equal(menuBlock("requisitions", { id: "openPo" }), 0, "opening its PO is ordinary work");
+  assert.equal(menuBlock("requisitions", { id: "edit", loadsForm: true }), 1);
+  assert.equal(menuBlock("requisitions", { id: "createPo" }), 1);
+  assert.equal(menuBlock("requisitions", { id: "cancel" }), 2);
+  assert.equal(menuBlock("purchaseOrders", { id: "receive", loadsForm: true }), 0, "receiving goods is Access");
+  assert.equal(menuBlock("register", { id: "reopen" }), 2);
+  assert.equal(menuBlock("barcode", { id: "label" }), 0);
+  assert.equal(tickFor("requisitions", "bulk", "createOnePo"), "edit", "Create one PO is Create PO for several");
 });

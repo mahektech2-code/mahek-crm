@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
+import { menuBlock } from "@/lib/erp/action-ticks";
 import type { ListRow, ListSpec, Tone } from "@/lib/erp/ui";
 import { cellText } from "@/lib/erp/ui";
 import { Button, cx, SectionLabel } from "@/components/ui/primitives";
@@ -50,6 +51,7 @@ export function RecordDialog({
   row,
   onClose,
   stages,
+  start,
 }: {
   screen: ListSpec;
   kind: string;
@@ -57,6 +59,8 @@ export function RecordDialog({
   onClose: () => void;
   /** v4: the list's status values in order, drawn as a stage bar over the record. */
   stages?: { key: string; values: string[] };
+  /** An act to start in the record's panel on opening (`ActionSpec.opens`), with other rows chosen for it. */
+  start?: { act: string; with?: string[] };
 }) {
   const ui = useErpUi();
   const { flags: words, tones } = useKit();
@@ -80,30 +84,67 @@ export function RecordDialog({
   /* The record's status is said once, in the heading, where it is read first —
      only a column CALLED Status or Stage: a badge column like "Material type"
      reads as a status in a heading and is not one. */
-  const status = fields.find((f) => f.status && f.v !== "—" && /^(status|stage)$/i.test(f.l.trim()));
+  const status =
+    fields.find((f) => f.status && f.v !== "—" && /^(status|stage)$/i.test(f.l.trim())) ??
+    /* A whole panel covers its stage column, and the heading still says it. */
+    (row.panel?.whole
+      ? (() => {
+          const c = screen.cols.find((x) => x.t === "s" && /^(status|stage)$/i.test(x.l.trim()) && row.v[x.k] != null && row.v[x.k] !== "");
+          return c ? { l: c.l, v: String(row.v[c.k]), der: false, status: true } : undefined;
+        })()
+      : undefined);
   const shown = fields.filter((f) => f !== status);
 
-  const panel = row.panel ? renderPanel(row.panel.kind, { data: row.panel.data, row, screen: screen.screen }) : null;
+  /* An act the panel takes from here: started from the row (`start`), or from a button in this foot. Each start remounts the panel fresh. */
+  const [started, setStarted] = useState<{ act: string; with?: string[]; n: number } | null>(start ? { ...start, n: 1 } : null);
+  const whole = !!row.panel?.whole;
+  const panel = row.panel ? (
+    <Fragment key={started?.n ?? 0}>{renderPanel(row.panel.kind, { data: row.panel.data, row, screen: screen.screen, start: started ?? undefined })}</Fragment>
+  ) : null;
   const more = (row.panels ?? []).map((p, i) => ({ key: `panel${i + 1}`, label: PANEL_TAB[p.kind] ?? "More", node: renderPanel(p.kind, { data: p.data, row, screen: screen.screen }) }));
   const tabs: DialogTab[] = [
     ...(panel ? [{ key: "panel", label: PANEL_TAB[row.panel!.kind] ?? "Overview" }] : []),
-    { key: "details", label: "Details", count: shown.length },
+    /* A whole panel draws every fact itself: a Details tab would only say them again. */
+    ...(whole ? [] : [{ key: "details", label: "Details", count: shown.length }]),
     ...more.map((m) => ({ key: m.key, label: m.label })),
   ];
   /* Why the held-back action just pressed cannot be taken — a tablet has no hover for a title. */
   const [why, setWhy] = useState<{ l: string; why: string } | null>(null);
   const [tab, setTab] = useState(tabs[0].key);
+  /* An act the panel starts restarts it fresh, on the panel's tab; any other runs as the list runs it. */
+  const run = (a: NonNullable<ListRow["actions"]>[number]) => {
+    if (a.opens && panel) {
+      setTab("panel");
+      setStarted((x) => ({ act: a.id, n: (x?.n ?? 0) + 1 }));
+      return;
+    }
+    ui.act(screen.screen, a, row.id);
+  };
   const active = tabs.some((t) => t.key === tab) ? tab : tabs[0].key;
+
+  const whyNote = why ? (
+    <div role="status" className={cx(insetClass, "flex items-start gap-2 text-sm text-body")}>
+            <span className="mt-0.5 flex text-muted">
+              <Icon n="lock" s={14} />
+            </span>
+            <span>
+              <span className="font-medium text-ink">{why.l}</span> · {why.why}
+            </span>
+          </div>
+  ) : null;
 
   /* An action does NOT close the record: the list refreshes under it, so the
      person sees what the action changed and can take the next one. A record
      the action removes from the list (deleted, filtered out) closes on its
      own, because the list no longer holds a row to draw. */
   return (
-    <ErpDialog onClose={onClose} label={title} size={panel || more.length ? "lg" : "md"} tall={tabs.length > 1}>
-      <DialogHeader onClose={onClose} aside={status ? <StatusBadge value={status.v} /> : null}>
-        <SectionLabel>{kind}</SectionLabel>
-        <DialogTitle className="mt-0.5">{title}</DialogTitle>
+    <ErpDialog onClose={onClose} label={title} size={panel || more.length ? "lg" : "md"} tall={tabs.length > 1 || whole}>
+      <DialogHeader onClose={onClose} aside={status && !whole ? <StatusBadge value={status.v} /> : null}>
+        <SectionLabel>{row.ref ? `${kind} · ${row.ref}` : kind}</SectionLabel>
+        <DialogTitle className={cx("mt-0.5", whole && "flex flex-wrap items-center gap-2.5")}>
+          {title}
+          {whole && status ? <StatusBadge value={status.v} /> : null}
+        </DialogTitle>
         {row.header ? <div className="mt-0.5 text-meta text-body">{row.header}</div> : null}
         {flags.length ? (
           <div className="mt-2 flex flex-wrap gap-1">
@@ -129,8 +170,15 @@ export function RecordDialog({
         ) : null}
       </DialogHeader>
       {tabs.length > 1 ? <TabBar tabs={tabs} active={active} onChange={setTab} /> : null}
+      {whole && active === "panel" ? (
+        /* A whole panel lays out its own columns edge to edge. */
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          {panel}
+          {why ? <div className="px-6 pb-4">{whyNote}</div> : null}
+        </div>
+      ) : (
       <DialogBody>
-        {stages ? <StageBar values={stages.values} at={String(row.v[stages.key] ?? "")} tones={tones} /> : null}
+        {stages && !whole ? <StageBar values={stages.values} at={String(row.v[stages.key] ?? "")} tones={tones} /> : null}
         {active === "panel" ? panel : null}
         {more.map((m) => (active === m.key ? <div key={m.key}>{m.node}</div> : null))}
         {active === "details" ? (
@@ -165,17 +213,9 @@ export function RecordDialog({
             ) : null}
           </>
         ) : null}
-        {why ? (
-          <div role="status" className={cx(insetClass, "flex items-start gap-2 text-sm text-body")}>
-            <span className="mt-0.5 flex text-muted">
-              <Icon n="lock" s={14} />
-            </span>
-            <span>
-              <span className="font-medium text-ink">{why.l}</span> · {why.why}
-            </span>
-          </div>
-        ) : null}
+        {whyNote}
       </DialogBody>
+      )}
       {acts.length || row.by ? (
         <DialogFooter left={row.by}>
           {(() => {
@@ -198,16 +238,18 @@ export function RecordDialog({
                     disabled: !!a.why,
                     why: a.why,
                     danger: DANGER.test(a.l),
-                    onSelect: () => (a.why ? setWhy({ l: a.l, why: a.why }) : ui.act(screen.screen, a, row.id)),
+                    onSelect: () => (a.why ? setWhy({ l: a.l, why: a.why }) : run(a)),
                   }))}
                 />
                 {shown.map((a) => {
             const okA = !a.why;
+            /* A take-back (it needs the page's Delete tick) is drawn in red. */
+            const takeBack = menuBlock(screen.screen, a) === 2;
             return (
               <Button
                 key={a.id}
-                variant={a.primary && okA ? "primary" : "secondary"}
-                onClick={() => (okA ? ui.act(screen.screen, a, row.id) : setWhy({ l: a.l, why: a.why! }))}
+                variant={a.primary && okA ? "primary" : takeBack && okA ? "dangerOutline" : "secondary"}
+                onClick={() => (okA ? run(a) : setWhy({ l: a.l, why: a.why! }))}
                 title={a.why || a.l}
                 aria-disabled={!okA}
                 className={cx(a.ai && okA && !a.primary && "border-brand text-brand-hover", !okA && "cursor-help opacity-50")}

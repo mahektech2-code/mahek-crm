@@ -31,6 +31,7 @@ export function ErpDialog({
   size = "md",
   width,
   tall = true,
+  over = false,
   children,
 }: {
   onClose: () => void;
@@ -40,6 +41,13 @@ export function ErpDialog({
   width?: number;
   /** A fixed height (the default), so tabs and pages do not jump; false sizes to the content. */
   tall?: boolean;
+  /**
+   * Always drawn over the dialog it was opened from. A dialog open on its
+   * parent's FIRST render (Create PO started from a list row) reaches <body>
+   * before its parent does — React commits the child's portal first — and
+   * would sit underneath it at the same z.
+   */
+  over?: boolean;
   children: React.ReactNode;
 }) {
   useEscape(onClose, true);
@@ -48,7 +56,7 @@ export function ErpDialog({
     <BodyPortal>
       <div
         {...backdrop}
-        className="ui-scrim animate-fade-in fixed inset-0 z-[60] flex items-center justify-center bg-[rgba(22,22,22,0.35)] p-4 sm:p-6"
+        className={cx("ui-scrim animate-fade-in fixed inset-0 flex items-center justify-center bg-[rgba(22,22,22,0.35)] p-4 sm:p-6", over ? "z-[65]" : "z-[60]")}
         role="dialog"
         aria-modal="true"
         aria-label={label}

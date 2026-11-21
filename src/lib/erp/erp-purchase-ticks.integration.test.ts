@@ -123,3 +123,19 @@ test("an unconverted grant keeps every act it had", async () => {
   assert.equal(ctx.ticks, undefined);
   assert.equal(refusedFor(await erpRunAction("requisitions", "cancel", "no-such-id", { reason: "x" })), false);
 });
+
+test("Create one PO is Create PO for several: offered with Edit on Requirements, refused at the server without it", async () => {
+  const p = await account("Raiser Two");
+  assert.ok((await setAccess({ userId: p.id, grants: [], screenGrants: [purchase({ requisitions: [false, false], purchaseOrders: [false, false] })] })).ok);
+  const ctx = await asPerson(p);
+  const { applyTicks } = await import("@/lib/erp/action-ticks");
+  const spec = { screen: "requisitions", cols: [], hidden: [], bulk: [{ id: "createOnePo", l: "Create one PO", client: "startInRecord" as const, fits: "createPo" }] };
+  const rows = [{ id: "r1", v: {}, flags: [], actions: [{ id: "createPo", l: "Create PO", primary: true, opens: true }] }];
+  const read = applyTicks(ctx, "requisitions", { spec, rows });
+  assert.deepEqual(read.spec.bulk, [], "the bulk act is not offered without Edit on Requirements");
+  assert.equal(read.rows[0].actions![0].tickHidden, true, "nor the row's Create PO");
+  /* The record's Create PO — what Create one PO runs — is refused at the server. */
+  assert.ok(refusedFor(await erpRunAction("requisitions", "createPo", "no-such-id", { vendor: "x" })));
+  /* There is no server bulk to slip past: the selection only ever runs Create PO. */
+  assert.equal((await erpRunBulk("requisitions", "createOnePo", ["no-such-id"])).ok, false);
+});

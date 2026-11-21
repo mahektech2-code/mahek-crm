@@ -35,6 +35,8 @@ export const PURCHASE_TICKS: Readonly<Record<string, Rules>> = {
   requisitions: {
     actions: { edit: "edit", linkPo: "edit", unlinkPo: "edit", createPo: "edit", decide: "edit", vendor: "edit", cancel: "delete" },
     forms: { edit: "edit" },
+    /* Create one PO over ticked requirements of one supplier: Create PO, for several at once. */
+    bulk: { createOnePo: "edit" },
   },
   purchaseOrders: {
     actions: { edit: "edit", share: "edit", approve: "edit", sendBack: "edit", close: "edit", correctionRate: "edit", cancel: "delete", cancelCorrection: "delete" },
@@ -85,8 +87,19 @@ export function tickWhy(screen: string, tick: Tick): string {
 }
 
 /** The tick a row action needs: a form it loads is judged as that form. */
-function actionTick(screen: string, a: ActionSpec): Tick | undefined {
+export function actionTick(screen: string, a: Pick<ActionSpec, "id" | "loadsForm">): Tick | undefined {
   return tickFor(screen, "actions", a.id) ?? (a.loadsForm ? tickFor(screen, "forms", a.id) : undefined);
+}
+
+/**
+ * Which block of a Purchase row's ⋯ menu an action is listed in: 0 — open it
+ * and its ordinary work; 1 — changes (it needs Edit); 2 — take-backs (it needs
+ * Delete), drawn last and in red. Read off the same table the server refuses
+ * by, so the menu's order cannot drift from who may do what.
+ */
+export function menuBlock(screen: string, a: Pick<ActionSpec, "id" | "loadsForm">): 0 | 1 | 2 {
+  const t = actionTick(screen, a);
+  return t === "delete" ? 2 : t === "edit" ? 1 : 0;
 }
 
 /**

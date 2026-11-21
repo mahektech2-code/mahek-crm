@@ -13,6 +13,9 @@ import { resultError, useAct } from "../use-act";
 import { DialogBody, DialogTitle, DialogFooter, DialogHeader, ErpDialog, StepBar } from "../dialog";
 import { gridHeadClass, eyebrowClass, insetClass, labelClass, linkClass } from "../look";
 import { Stepper } from "./parts";
+import { StatusBadge } from "../badge";
+import { Icon } from "../icons";
+import { useErpUi } from "../erp-ui";
 import { ErpImpactDialog } from "../impact-confirm";
 import { IMPACT_FIELD } from "@/lib/impact/types";
 
@@ -64,6 +67,10 @@ type Flow = {
   step: number;
   stage: string;
   next: string;
+  /** The line under the next step: when, where, how much has come. */
+  nextSub: string | null;
+  summary: { qty: string; unit: string; inStock: string; requiredBy: string | null; late: string | null; team: string | null; deliverTo: string; priority: string | null; method: string; raisedBy: string; remarks: string | null };
+  history: { at: string; text: string; open?: boolean }[];
   facts: Fact[];
   po: {
     name: string;
@@ -74,6 +81,8 @@ type Flow = {
     gst: string;
     drums: number | null;
     received: string;
+    progress: number;
+    shared: string | null;
     href: string;
     canUnlink: boolean;
   } | null;
@@ -83,7 +92,7 @@ type Flow = {
 const count = (q: string) => (Number.isFinite(Number(q)) && q.trim() ? qty(Number(q)) : q);
 
 /** The PO number box: typed, looked up after a pause, linked with one press. Never a pop-up. */
-function LinkPo({ id }: { id: string }) {
+function LinkPo({ id, inputRef, focus }: { id: string; inputRef?: React.Ref<HTMLInputElement>; focus?: boolean }) {
   const [poNo, setPoNo] = useState("");
   const [found, setFound] = useState<{ q: string; data: LinkPreview } | null>(null);
   const [error, setError] = useState<{ q: string; text: string } | null>(null);
@@ -118,6 +127,8 @@ function LinkPo({ id }: { id: string }) {
         <label className="grid gap-1">
           <span className={labelClass}>PO number</span>
           <Input
+            ref={inputRef}
+            autoFocus={focus}
             value={poNo}
             onChange={(e) => setPoNo(e.target.value)}
             placeholder="The PO number the Quotation manager made"
@@ -169,7 +180,7 @@ function LinkPo({ id }: { id: string }) {
 const PAGES = ["Supplier", "Delivery", "Review"] as const;
 
 /** Create PO: three pages over the record. The rate is the item's price and is shown, never asked. */
-function CreatePoModal({ id, d, onClose }: { id: string; d: CreateData; onClose: () => void }) {
+function CreatePoModal({ id, d, preselect, onClose }: { id: string; d: CreateData; preselect?: string[]; onClose: () => void }) {
   const [page, setPage] = useState(0);
   const termsOf = (name: string) => d.vendors.find((x) => x.name === name)?.terms ?? null;
   const [v, setV] = useState({
@@ -184,7 +195,8 @@ function CreatePoModal({ id, d, onClose }: { id: string; d: CreateData; onClose:
   const [errors, setErrors] = useState<Record<string, string>>({});
   /* The other items on this PO: offered where they have no vendor yet or the one picked, the vendor's own ticked. */
   const [also, setAlso] = useState<Record<string, { on: boolean; qty: string }>>(() =>
-    Object.fromEntries(d.others.map((o) => [o.id, { on: !!d.vendor && o.vendor === d.vendor, qty: o.qty }])),
+    /* Create one PO names exactly the requirements ticked on the list; otherwise the vendor's own are ticked. */
+    Object.fromEntries(d.others.map((o) => [o.id, { on: preselect ? preselect.includes(o.id) : !!d.vendor && o.vendor === d.vendor, qty: o.qty }])),
   );
   const { run, pending } = useAct();
   const set = (k: keyof typeof v, val: string) => setV((x) => ({ ...x, [k]: val }));
@@ -235,7 +247,7 @@ function CreatePoModal({ id, d, onClose }: { id: string; d: CreateData; onClose:
   }
   const err = (k: string) => (errors[k] ? <span className="text-meta text-danger">{errors[k]}</span> : null);
   return (
-    <ErpDialog onClose={onClose} label={`Create PO · ${d.item}`} width={680} tall={false}>
+    <ErpDialog onClose={onClose} label={`Create PO · ${d.item}`} width={680} tall={false} over>
       <DialogHeader onClose={onClose}>
         <DialogTitle>Create PO · {d.item}</DialogTitle>
         <div className="mt-0.5 text-meta text-muted">
@@ -462,107 +474,147 @@ function CreatePoModal({ id, d, onClose }: { id: string; d: CreateData; onClose:
   );
 }
 
-function PurchaseFlow({ data }: PanelProps) {
+/** One fact down the record's left side: a small label over the value. */
+function SumFact({ l, children }: { l: string; children: React.ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <dt className={eyebrowClass}>{l}</dt>
+      <dd className="mt-0.5 text-sm break-words text-ink">{children}</dd>
+    </div>
+  );
+}
+
+/**
+ * A REQUIREMENT'S RECORD, whole (Nov 2026 design): every fact down the left,
+ * so there is no Details tab; on the right the four steps, a Next step card
+ * with the one button the requirement is waiting on, its PO, and its history
+ * read from what happened. The button is the row's own primary action, so its
+ * tick and its reason are the list's; Create PO and the PO number box are
+ * started here (`ActionSpec.opens`), from the row, the foot or this card.
+ */
+function PurchaseFlow({ data, row, screen, start }: PanelProps) {
   const f = data as Flow;
-  const [creating, setCreating] = useState(false);
+  const ui = useErpUi();
+  const [creating, setCreating] = useState(start?.act === "createPo" && !!f.entry?.create && !f.entry.create.why);
   /* Unlinking takes the line off the PO, and the PO with it where it was the only one: the modal says so first. */
   const [unlinking, setUnlinking] = useState(false);
+  const poBox = useRef<HTMLInputElement>(null);
   const { pending } = useAct();
+  const s = f.summary;
+  const next = row.actions?.find((a) => a.primary);
+  const press = () => {
+    if (!next || next.why) return;
+    if (next.id === "createPo" && f.entry?.create) setCreating(true);
+    else if (next.id === "linkPo") poBox.current?.focus();
+    else ui.act(screen, next, row.id);
+  };
   return (
-    <section className={cx("grid gap-3", insetClass)}>
-      <div className="flex items-baseline justify-between gap-3">
-        <SectionLabel>Purchase flow</SectionLabel>
-        <span className="text-xs text-muted">{f.stage}</span>
-      </div>
-      <Stepper steps={f.steps} step={f.step} label="Purchase flow" />
-      {/* Once every step is done there is no next one; the stage above says so. */}
-      {f.step < f.steps.length ? (
-        <div className={cx("rounded-control px-3 py-2 text-meta", f.step < 0 ? "bg-canvas text-muted" : "bg-brand-soft text-brand-hover")}>
-          <span className="font-semibold">Next · </span>
-          {f.next}
-        </div>
-      ) : null}
-      <dl className="grid grid-cols-2 gap-x-6 gap-y-2">
-        {f.facts.map((x) => (
-          <div key={x.l} className="min-w-0">
-            <dt className={labelClass}>{x.l}</dt>
-            <dd className="mt-0.5 text-sm break-words text-ink">
-              {x.href ? (
-                <a href={x.href} className={linkClass("brand")}>
-                  {x.v}
-                </a>
-              ) : (
-                x.v
-              )}
-            </dd>
-          </div>
-        ))}
+    <div className="grid min-h-full flex-1 grid-cols-[280px_minmax(0,1fr)]">
+      <dl className="grid content-start gap-3.5 border-r border-divider bg-canvas px-5 py-5" aria-label="Summary">
+        <SumFact l="Quantity">
+          <span className="text-lg font-semibold tabular-nums">{s.qty}</span> {s.unit}
+        </SumFact>
+        <SumFact l="In stock now">{s.inStock}</SumFact>
+        <SumFact l="Required by">
+          {s.requiredBy ? <span className={cx(s.late && "font-semibold text-danger")}>{s.late ? `${s.requiredBy} · ${s.late}` : s.requiredBy}</span> : <span className="text-muted">—</span>}
+        </SumFact>
+        <SumFact l="Team">{s.team ?? "—"}</SumFact>
+        <SumFact l="Deliver to">{s.deliverTo}</SumFact>
+        <SumFact l="Priority">{s.priority ? <StatusBadge value={s.priority} /> : "—"}</SumFact>
+        <SumFact l="Purchase method">{s.method}</SumFact>
+        <SumFact l="Raised by">{s.raisedBy}</SumFact>
+        {s.remarks ? <SumFact l="Remarks"><span className="text-body">{s.remarks}</span></SumFact> : null}
       </dl>
-      {f.po ? (
-        <div className="overflow-hidden rounded-control border border-line">
-          <div className="flex items-center justify-between gap-3 border-b border-divider bg-canvas px-3 py-2 text-meta">
-            <span className="font-medium text-ink">
-              Purchase order · <span className="font-mono">{f.po.name}</span>
-            </span>
-            <a href={f.po.href} className={linkClass("brand", "text-xs")}>
-              Open the PO
-            </a>
+      <div className="grid min-w-0 content-start gap-4 px-6 py-5">
+        <Stepper steps={f.steps} step={f.step} label="Purchase flow" />
+        {f.step >= 0 && f.step < f.steps.length ? (
+          <div className="flex items-center gap-4 rounded-card border border-brand bg-brand-soft px-4 py-3.5">
+            <div className="min-w-0 flex-1">
+              <div className={cx(eyebrowClass, "text-brand-hover")}>Next step</div>
+              <div className="mt-0.5 text-md font-semibold text-ink">{f.next}</div>
+              {f.nextSub ? <div className="mt-0.5 text-meta text-body">{f.nextSub}</div> : null}
+              {next?.why ? <div className="mt-1 flex items-center gap-1.5 text-meta text-muted"><Icon n="lock" s={13} />{next.why}</div> : null}
+            </div>
+            {next ? (
+              <Button variant={next.why ? "secondary" : "primary"} className={cx("shrink-0", next.why && "cursor-help opacity-50")} aria-disabled={!!next.why} title={next.why || next.l} onClick={press}>
+                {next.why ? <Icon n="lock" s={14} /> : null}
+                {next.l}
+              </Button>
+            ) : null}
           </div>
-          <dl className="grid grid-cols-2 gap-x-5 gap-y-2 px-3 py-2.5 text-meta">
-            {[
-              ["Supplier", f.po.vendor],
-              ["Status", f.po.status],
-              ...(f.po.rate ? [["Rate", `${f.po.rate} · GST ${f.po.gst}`]] : []),
-              ...(f.po.drums != null ? [["Drums", String(f.po.drums)]] : []),
-              ["Received", f.po.received],
-              ["From", `${f.po.fromQuotationManager ? "Quotation manager" : "Created on the requirement"}${f.po.status === "Pending approval" ? "" : " · no approval needed"}`],
-            ].map(([l, v]) => (
-              <div key={l} className="min-w-0">
-                <dt className={eyebrowClass}>{l}</dt>
-                <dd className="break-words text-ink">{v}</dd>
+        ) : null}
+        {f.facts.length ? (
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-2">
+            {f.facts.map((x) => (
+              <div key={x.l} className="min-w-0">
+                <dt className={labelClass}>{x.l}</dt>
+                <dd className="mt-0.5 text-sm break-words text-ink">{x.v}</dd>
               </div>
             ))}
           </dl>
-          {f.po.canUnlink ? (
-            <div className="flex justify-end border-t border-divider px-3 py-2">
-              <Button size="sm" disabled={pending} onClick={() => setUnlinking(true)}>
-                Unlink PO
-              </Button>
-              {unlinking ? (
-                <ErpImpactDialog
-                  kind="erp-requirement-unlink"
-                  id={f.id}
-                  confirmLabel="Unlink PO"
-                  onClose={() => setUnlinking(false)}
-                  act={(confirmation) => erpRunAction("requisitions", "unlinkPo", f.id, { [IMPACT_FIELD]: JSON.stringify(confirmation) })}
-                />
-              ) : null}
+        ) : null}
+        {f.po ? (
+          <div className="overflow-hidden rounded-card border border-line">
+            <div className="flex items-center justify-between gap-3 border-b border-divider bg-canvas px-4 py-2.5 text-sm">
+              <span className="font-medium text-ink">
+                Purchase order · <span className="font-mono">{f.po.name}</span>
+              </span>
+              <a href={f.po.href} className={linkClass("brand", "text-meta")}>
+                Open the PO
+              </a>
             </div>
-          ) : null}
-        </div>
-      ) : null}
-      {f.entry ? (
-        <>
-          {f.entry.link ? <LinkPo key={f.id} id={f.id} /> : null}
-          {f.entry.create ? (
-            <div className="overflow-hidden rounded-control border border-line">
-              <div className="border-b border-divider bg-canvas px-3 py-2 text-meta font-medium text-ink">Purchase order · Create PO</div>
-              <div className="flex items-center justify-between gap-3 px-3 py-2.5 text-meta">
-                <span className="text-body">
-                  Direct purchase — <b>no quotation needed</b>.{" "}
-                  {f.entry.create.defaultVendor ? <>Default supplier <b>{f.entry.create.defaultVendor}</b>, </> : null}
-                  {f.entry.create.money ? (f.entry.create.hasPrice ? <>at the item&apos;s price <b>{f.entry.create.rate}</b>.</> : <><b>no price</b> on the item — ordered at ₹0.</>) : "at the item's price."}
+            {/* One row of the PO's facts — as many columns as it has, in a panel of known width. */}
+            <dl className="grid gap-3 px-4 py-3.5" style={{ gridTemplateColumns: `repeat(${3 + (f.po.rate ? 1 : 0) + (f.po.drums != null ? 1 : 0)}, minmax(0, 1fr))` }}>
+              <SumFact l="Supplier">{f.po.vendor}</SumFact>
+              {f.po.rate ? <SumFact l="Rate">{`${f.po.rate} · GST ${f.po.gst}`}</SumFact> : null}
+              {f.po.drums != null ? <SumFact l="Drums">{String(f.po.drums)}</SumFact> : null}
+              <SumFact l="Shared">{f.po.shared ?? <span className="text-muted">Not yet</span>}</SumFact>
+              <SumFact l="Received">
+                {f.po.received}
+                <span className="mt-1.5 block h-1.5 overflow-hidden rounded-full bg-divider">
+                  <span className="block h-1.5 rounded-full bg-brand" style={{ width: `${Math.max(2, Math.round(f.po.progress * 100))}%` }} />
                 </span>
-                <Button variant="primary" className="shrink-0" disabled={!!f.entry.create.why} title={f.entry.create.why || undefined} onClick={() => setCreating(true)}>
-                  Create PO
+              </SumFact>
+            </dl>
+            {f.po.canUnlink ? (
+              <div className="flex justify-end border-t border-divider px-4 py-2">
+                <Button size="sm" disabled={pending} onClick={() => setUnlinking(true)}>
+                  Unlink PO
                 </Button>
+                {unlinking ? (
+                  <ErpImpactDialog
+                    kind="erp-requirement-unlink"
+                    id={f.id}
+                    confirmLabel="Unlink PO"
+                    onClose={() => setUnlinking(false)}
+                    act={(confirmation) => erpRunAction("requisitions", "unlinkPo", f.id, { [IMPACT_FIELD]: JSON.stringify(confirmation) })}
+                  />
+                ) : null}
               </div>
-            </div>
-          ) : null}
-          {creating && f.entry.create ? <CreatePoModal key={f.id} id={f.id} d={f.entry.create} onClose={() => setCreating(false)} /> : null}
-        </>
-      ) : null}
-    </section>
+            ) : null}
+          </div>
+        ) : null}
+        {f.entry?.link ? <LinkPo key={f.id} id={f.id} inputRef={poBox} focus={start?.act === "linkPo"} /> : null}
+        {creating && f.entry?.create ? <CreatePoModal key={f.id} id={f.id} d={f.entry.create} preselect={start?.with} onClose={() => setCreating(false)} /> : null}
+        {f.history.length ? (
+          <div className="grid gap-1">
+            <div className={eyebrowClass}>History</div>
+            <ol className="grid">
+              {f.history.map((h, i) => (
+                <li key={i} className="flex gap-3 py-1.5 text-sm">
+                  <span
+                    aria-hidden
+                    className={cx("mt-1.5 size-2.5 flex-none rounded-full", h.open ? "border-2 border-brand bg-surface" : "bg-success")}
+                  />
+                  <span className="w-32 flex-none text-muted tabular-nums">{h.at}</span>
+                  <span className="min-w-0 break-words text-ink">{h.text}</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 }
 

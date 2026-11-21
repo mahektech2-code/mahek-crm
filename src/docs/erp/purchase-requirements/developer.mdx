@@ -5,10 +5,12 @@ Requirements are one screen module, `requisitions`, in `lib/erp/screens/purchase
 | Layer | File | What lives there |
 |---|---|---|
 | Registry | `src/lib/erp/registry.ts` | Screen `requisitions` (slug `requisitions`), no tabs |
-| Engine (pure) | `src/lib/erp/engines/purchase-flow.ts` | `PURCHASE_METHODS`, `FLOW_STEPS`, `requirementStage`, `poRouteOf`, `purchaseUnit`, `requirementLabel`, `itemPickLabels`, `parsePastedLines` |
+| Engine (pure) | `src/lib/erp/engines/purchase-flow.ts` | `PURCHASE_METHODS`, `FLOW_STEPS`, `requirementStage`, `requirementBucket` (the four sub-tabs), `poRouteOf`, `purchaseUnit`, `requirementLabel`, `itemPickLabels`, `parsePastedLines` |
 | Reading | `src/lib/erp/screens/purchase-flow.ts` | `requirementViews`, `stageOf`, `requirementWork` (dashboard and badge), `receivedByLine` |
 | Form | same | `requisitionForm` (new: header + `table` lines; edit: one item) |
 | Writes | same | `raiseRequirement` / `raiseRequirementWith`, `saveRequirement` (edit), `linkPo`, `unlinkPo`, `createPo`, `cancel` (and the older `decide`, `vendor`, which no button offers any more) |
+| History | `src/lib/erp/screens/requirement-history.ts` | `requirementHistory` — the record's History, read from the row, the audit log, every PO line it was on, `erp_po_shares` and the gate's inward lines |
+| Record UI | `src/app/erp/_ui/panels/purchase-flow.tsx` | `PurchaseFlow` — the whole record (`panel.whole`): summary column, steps, Next step card, PO card, History; `CreatePoModal`, `LinkPo` |
 | PO step | `src/lib/erp/screens/requirement-po.ts` | `linkRequirementPo`, `unlinkRequirementPo`, `createRequirementPo`; `orderFromQuote` puts a Quotation manager purchase against a requirement, or raises one (`QM_RAISED_REMARK`) |
 | Departments (pure) | `src/lib/erp/departments.ts` | `requirementDepartmentsFor`, `categoriesFor`, `requirementRefusal`, `requirementVisibleTo` |
 | Line table UI | `src/app/erp/_ui/line-table.tsx` | Add-by-search and paste for `lineLayout: "table"` |
@@ -90,6 +92,13 @@ The Requirements screen's Quotations tab was removed in October 2026: supplier r
   document_id: "The vendor's quotation as an attachment.",
 }} />
 
+## The list and the record (Nov 2026)
+
+- **Sub-tabs.** Every row carries `bucket` (`requirementBucket(stage)`): `toOrder`, `onOrder` (a PO awaiting approval and anything ordered before POs included), `received` (closed short included), `cancelled`. The spec's four sub-tabs name that key, To order first, so the list opens on it. Being in the Purchase group, they are drawn segmented (`isPurchaseScreen`).
+- **The next step.** The row's one `primary` action is drawn as its button: `createPo` / `linkPo` carry `opens` — pressed on the row they open the record with the act already started (`start` → the panel opens `CreatePoModal`, or focuses the PO number box); `receive` carries `on: { screen: "purchaseOrders", id }` and loads the PO's Receive goods form. Every other act is in the ⋯ menu, in blocks by `menuBlock` (`action-ticks.ts`).
+- **Create one PO** is the bulk `createOnePo` (`client: "startInRecord"`, `fits: "createPo"`, `same: ["vendor"]`): the first ticked row's record opens with Create PO started and the other ticked ids pre-ticked under "Also on this PO". There is no server bulk — what is saved is `createPo` with `also`, so every check of Create PO applies. Its tick is Edit (`PURCHASE_TICKS.requisitions.bulk`).
+- **The record** is `panel.whole`: the record dialog draws no Details tab and says the stage beside the title; `ref` puts the requirement number after the screen's name.
+
 ## Permissions
 
 - **Module:** <ModuleRef k="erp.requisitions" /> — opens the screen.
@@ -103,7 +112,7 @@ The Requirements screen's Quotations tab was removed in October 2026: supplier r
 |---|---|---|
 | `npm run test` | `src/lib/erp/engines/purchase-flow.test.ts` | Direct, quotation and buyer paths; the PO drives the rest; units; pick labels; paste matching |
 | `npm run test` | `src/lib/erp/departments.test.ts` | Categories per department; four teams; visibility |
-| `npm run test:integration` | `src/lib/erp/erp-purchase.test.ts` — "the purchase flow up to the PO", "one requirement, many items", "Create PO puts the vendor's other items on the same PO" | The rule routes on raise; date and department required, finished goods never bought; Link PO checks the number first; Create PO at the item's price; every item under one number, a bad line writes nothing |
+| `npm run test:integration` | `src/lib/erp/erp-purchase.test.ts` — "the purchase flow up to the PO", "one requirement, many items", "Create PO puts the vendor's other items on the same PO", "the Requirements list: sub-tabs, Create one PO, and the record's history" | The rule routes on raise; date and department required, finished goods never bought; Link PO checks the number first; Create PO at the item's price; every item under one number, a bad line writes nothing |
 | `npm run test:integration` | `src/lib/erp/erp-departments.test.ts` | Each department raises and sees its own; the head and the store see all; cross-department cancel refused; the badge counts the department's own |
 
 ## Changing it safely

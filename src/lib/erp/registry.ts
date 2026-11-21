@@ -425,6 +425,16 @@ export function erpGroupOf(key: string): ErpGroup | undefined {
 }
 
 /**
+ * Whether a list key is drawn in the Purchase group — its own screen or a tab
+ * of one. The shared list draws Purchase's sub-tabs as a segmented control and
+ * its rows' actions as a primary button and a ⋯ menu in blocks; every other
+ * screen keeps its own look.
+ */
+export function isPurchaseScreen(key: string): boolean {
+  return erpGroupOf(erpScreen(key)?.key ?? key)?.id === "purchase";
+}
+
+/**
  * The screens every ERP user reaches whatever they were narrowed to: the
  * dashboard (it only shows tiles for screens they hold) and their own
  * settings. Withholding either would leave somebody an app with no front door.

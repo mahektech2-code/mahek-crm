@@ -861,3 +861,58 @@ client list answer alike. A sub-tab over a column a power withholds always
 reads 0 — leave it out for that person (Bills' "Bill to come" needs purchase
 money). `scripts/seed-purchase-demo.ts` seeds a purchase desk locally through
 the real handlers, to look at all of this.
+
+**PURCHASE'S SUB-TABS ARE A SEGMENTED CONTROL, KEYED OFF THE GROUP (Nov 2026).**
+`SubtabRow` in `_ui/list-screen.tsx` draws the design's segmented control
+(grey track, the open one a raised white pill with its count in brand purple)
+for every list `isPurchaseScreen(key)` (registry) says is in the Purchase
+group, its tabs included; any other screen that gains sub-tabs keeps the plain
+row. Never style a screen's sub-tabs per screen.
+
+**A PURCHASE ROW HAS ONE NEXT STEP AND A ⋯ MENU IN THREE BLOCKS (Nov 2026).**
+On the seven Purchase lists there is no pencil Edit. A row's `primary` action
+(the first one not `tickHidden`) is its button — `short` gives it shorter
+words, `soft` draws it outlined — and the ⋯ menu lists every act: "Open the …"
+and the ordinary work, a rule, the changes, a rule, the take-backs last in red,
+and never a tick's name. The block is `menuBlock` in `action-ticks.ts`, read
+off `PURCHASE_TICKS` — Edit is the middle, Delete the last — so it cannot drift
+from what the server refuses; `rowMenu` is ignored on Purchase. The record's
+foot draws a Delete-tick act as a red outlined button. The Quotation manager is
+a hand-built grid and is not a generic list.
+
+**AN ACT CAN BE STARTED IN THE RECORD, OR BELONG TO ANOTHER SCREEN'S RECORD.**
+`ActionSpec.opens`: pressed on a row (or in the record's foot) the record
+opens with its panel already doing it — `PanelProps.start` — and the panel runs
+the real handler (Create PO's three pages, the PO number box). `BulkSpec.client:
+"startInRecord"` does the same over a selection, passing the other ticked ids
+as `start.with`. `ActionSpec.on: { screen, id }` runs the act as that screen's,
+on that record, so its grant and ticks are that screen's: a requirement's
+Receive goods is its PO's. A dialog opened on its parent's first render reaches
+`<body>` before the parent (React commits the child portal first): give it
+`ErpDialog over`, or it sits underneath.
+
+**REQUIREMENTS: TO ORDER · ON ORDER · RECEIVED · CANCELLED, AND CREATE ONE PO
+(Nov 2026).** Each row carries `bucket` = `requirementBucket(stage)` (pure, in
+`engines/purchase-flow.ts`): a PO awaiting an old approval and anything ordered
+before POs are On order, closed short is Received. The list opens on To order
+and has no All. Its next step is Create PO (direct, buyer), Link PO no.
+(quotation) or Receive goods (on a receivable PO). Ticking requirements of one
+supplier (`same: ["vendor"]`; a direct row's supplier is the one it has, else
+the item's default) offers **Create one PO**, which opens Create PO on the
+first with the others ticked under "Also on this PO" — there is no server
+bulk, so every check of `createRequirementPo` holds, and it needs Edit on
+Requirements (`bulk.createOnePo`) and Purchase orders on the account.
+Department, team, method, supplier and godown stay in the Filters dialog.
+
+**A REQUIREMENT'S RECORD IS WHOLE, AND ITS HISTORY IS READ, NEVER KEPT.** The
+`purchaseFlow` panel is `whole`: the record dialog draws no Details tab, puts
+the stage beside the title and `ListRow.ref` after the screen's name. The left
+column is every fact (in stock with the level's minimum, required by with "n
+days late", team, method, raised by); the right is the steps, a Next step card
+whose button is the row's own primary (so its lock and reason are the list's),
+the PO card (rate only with purchase money; first share; received bar) and
+History from `requirementHistory` (`screens/requirement-history.ts`): the row,
+the audit log, every PO line it was ever on with that PO's audit and
+`erp_po_shares`, and the gate's inward lines, with what it still waits for as
+the last, open entry. `audit_log`'s time column is `at`, and raw SQL hands a
+timestamp back as a string — wrap it in `new Date()` before `calendarDate`.

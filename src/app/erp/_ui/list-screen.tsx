@@ -5,7 +5,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from
 import { bulkOffers } from "@/lib/erp/bulk-fit";
 import { NavLink } from "@/components/shell/nav-link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import type { ColSpec, FormSpec, ListRow, ListSpec, Tone } from "@/lib/erp/ui";
+import type { ActionSpec, ColSpec, FormSpec, ListRow, ListSpec, Tone } from "@/lib/erp/ui";
+import { menuBlock } from "@/lib/erp/action-ticks";
+import { isPurchaseScreen } from "@/lib/erp/registry";
 import type { Result } from "@/lib/result";
 import { aggsOf, cellText, moneyText, nf, NEW_FORM_ACTION } from "@/lib/erp/ui";
 import { colOf as colIn, listCsv, listQueryParams, LIST_QUERY_KEYS, pageOf, queryRows, SEARCH_PAUSE_MS, searchWorthAsking, selectionTotals, subtabOf, selectionTotalText, subMatches, type ColFilter, type ListPage, type ListQuery, type SelectionTotal, type StatPick } from "@/lib/erp/list-query";
@@ -69,8 +71,36 @@ export type ListTab = {
  * A list's SUB-TABS (`ListSpec.subtabs`): a segmented row of named views over
  * its status, each with its count, the first being what the list opens on.
  */
-function SubtabRow({ tabs, counts, value, onPick }: { tabs: { id: string; l: string; hint?: string }[]; counts: { id: string; n: number }[]; value: string; onPick: (id: string) => void }) {
+function SubtabRow({ tabs, counts, value, onPick, segmented }: { tabs: { id: string; l: string; hint?: string }[]; counts: { id: string; n: number }[]; value: string; onPick: (id: string) => void; segmented?: boolean }) {
   const n = new Map(counts.map((c) => [c.id, c.n]));
+  /* PURCHASE draws them as the design's segmented control: a grey track, the
+     open one a raised white pill with its count in brand purple. Keyed off the
+     screen's group (`isPurchaseScreen`), never per screen. */
+  if (segmented)
+    return (
+      <div role="tablist" aria-label="Views" className="mb-3 flex max-w-full flex-wrap gap-1 self-start rounded-card bg-line/70 p-1" style={{ width: "fit-content" }}>
+        {tabs.map((t) => {
+          const on = t.id === value;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={on}
+              title={t.hint}
+              onClick={() => onPick(t.id)}
+              className={cx(
+                "flex h-[34px] cursor-pointer items-center gap-2 rounded-control px-3.5 text-sm whitespace-nowrap",
+                on ? "bg-surface font-semibold text-ink shadow-sm" : "font-medium text-muted hover:text-body",
+              )}
+            >
+              {t.l}
+              <span className={cx("font-semibold tabular-nums", on ? "text-brand-hover" : "text-faint")}>{nf(n.get(t.id) ?? 0)}</span>
+            </button>
+          );
+        })}
+      </div>
+    );
   return (
     <div role="tablist" aria-label="Views" className="mb-3 inline-flex max-w-full flex-wrap gap-0.5 rounded-control bg-line/60 p-1">
       {tabs.map((t) => {
@@ -425,6 +455,16 @@ export function ListScreen({
   const [sel, setSel] = useState<Record<string, boolean>>({});
   const [openId, setOpenIdState] = useState<string | null>(initialOpen ?? null);
   const setOpenId = (id: string | null) => (id != null && onOpen ? onOpen(id) : setOpenIdState(id));
+  /* An act started INSIDE a record (`ActionSpec.opens`): the row's Create PO
+     opens the requirement with Create PO already under way, and the bulk
+     Create one PO the same with the other ticked rows chosen. */
+  const [start, setStart] = useState<{ id: string; act: string; with?: string[]; n: number } | null>(null);
+  const startIn = (id: string, act: string, withIds?: string[]) => {
+    setStart((x) => ({ id, act, with: withIds, n: (x?.n ?? 0) + 1 }));
+    setOpenId(id);
+  };
+  /* Purchase draws its rows' actions as one next-step button and a ⋯ menu in blocks, and its sub-tabs segmented. */
+  const purchase = isPurchaseScreen(spec.screen);
   /* Totals opened onto their folded rows, by hand. Unset follows the search: a lot number typed opens the total it is under. */
   const [unfolded, setUnfolded] = useState<Record<string, boolean>>({});
   /* A New form too heavy to send with the list is asked for when it is wanted
@@ -531,10 +571,12 @@ export function ListScreen({
      that names its ⋯ menu (`rowMenu`) gets exactly that; every other list
      offers the record's own actions there, with its Edit drawn as a button,
      so an edit is never only inside the record. */
-  const menuIds: string[] | null = spec.rowMenu ?? null;
+  const menuIds: string[] | null = purchase ? null : (spec.rowMenu ?? null);
   const menuOn = menuIds ? menuIds.length > 0 : pageRows.some((r) => !!r.actions?.length || !!r.sub?.some((x) => !!x.actions?.length));
-  const editOn = !menuIds && pageRows.some((r) => rowEdit(r) || !!r.sub?.some((x) => rowEdit(x)));
-  const menuCol = editOn ? MENU_COL + EDIT_COL : MENU_COL;
+  /* Purchase rows carry no pencil Edit: their next step is the button, and Edit is in the menu's middle block. */
+  const editOn = !purchase && !menuIds && pageRows.some((r) => rowEdit(r) || !!r.sub?.some((x) => rowEdit(x)));
+  const primaryOn = purchase && pageRows.some((r) => !!rowPrimary(r) || !!r.sub?.some((x) => !!rowPrimary(x)));
+  const menuCol = MENU_COL + (editOn ? EDIT_COL : 0) + (primaryOn ? PRIMARY_COL : 0);
   const fit = fitColumns({ cols: lineCols, avail: menuOn ? Math.max(0, avail - menuCol) : avail, check: selectOn, chosen: chosenCols, badgeChars, headExtra: 0 });
   const shownCols = fit.shown;
 
@@ -614,6 +656,7 @@ export function ListScreen({
     (server ? null : withSubs(rows).find((r) => r.id === openId) ?? null);
   const closeRec = () => {
     setOpenId(null);
+    setStart(null);
     if (params.get("open")) {
       const p = new URLSearchParams(params.toString());
       p.delete("open");
@@ -878,6 +921,7 @@ export function ListScreen({
           the status values — where there are a handful — as one Breakdown card. */}
       {spec.subtabs?.length && lp.all > 0 ? (
         <SubtabRow
+          segmented={purchase}
           tabs={spec.subtabs}
           counts={lp.subtabs ?? []}
           value={subtabOf(spec, query)?.id ?? ""}
@@ -1131,7 +1175,7 @@ export function ListScreen({
                               }
                             />
                           ))}
-                          {menuOn ? <MenuCell row={r} ids={menuIds} screen={spec.screen} onRowAct={onRowAct} /> : null}
+                          {menuOn ? <MenuCell row={r} ids={menuIds} screen={spec.screen} onRowAct={onRowAct} purchase={purchase} onOpenRow={setOpenId} onStart={startIn} /> : null}
                         </Tr>,
                       );
                       /* Its folded rows, under it: indented, and blank where they only repeat their total. */
@@ -1151,7 +1195,7 @@ export function ListScreen({
                                   <Cell key={c.k} c={c} r={x} cols={cols} small />
                                 ),
                               )}
-                              {menuOn ? <MenuCell row={x} ids={menuIds} screen={spec.screen} onRowAct={onRowAct} /> : null}
+                              {menuOn ? <MenuCell row={x} ids={menuIds} screen={spec.screen} onRowAct={onRowAct} purchase={purchase} onOpenRow={setOpenId} onStart={startIn} /> : null}
                             </Tr>,
                           );
                         }
@@ -1209,6 +1253,14 @@ export function ListScreen({
                 if (b.client === "printInvoices") return setPrinting(chosen);
                 if (b.client === "billingView") return setBillingView(chosen);
                 if (b.client === "combinedView") return setCombinedView(chosen);
+                if (b.client === "startInRecord") {
+                  /* The first ticked row that can take it carries the act; the rest are chosen on it. */
+                  const key = b.fits || b.id;
+                  const can = chosen.map((id) => heldRows.find((r) => r.id === id)).filter((r): r is ListRow => !!r?.actions?.some((a) => a.id === key && !a.why && !a.tickHidden));
+                  if (!can.length) return ui.toast(`${b.l} · none of the ticked rows can take it`, "error");
+                  setSel({});
+                  return startIn(can[0].id, key, can.slice(1).map((r) => r.id));
+                }
                 if (onBulk) return onBulk(b.id, chosen, () => setSel({}));
                 /* The selection is one record (one PR): its own action, run once. */
                 if (row) {
@@ -1230,14 +1282,15 @@ export function ListScreen({
       {printing ? <PrintInvoicesModal lineIds={printing} onClose={() => setPrinting(null)} /> : null}
       {combinedView ? <CombinedViewModal screen={spec.screen} ids={combinedView} onClose={() => setCombinedView(null)} /> : null}
       {billingView ? <BillingViewModal screen={spec.screen} lineIds={billingView} onClose={() => setBillingView(null)} /> : null}
-      {open ? <RecordDialog key={open.id} screen={spec} kind={label} row={open} onClose={closeRec} stages={v4 ? stages : undefined} /> : null}
+      {open ? <RecordDialog key={`${open.id}:${start?.n ?? 0}`} screen={spec} kind={label} row={open} onClose={closeRec} stages={v4 ? stages : undefined} start={start && start.id === open.id ? { act: start.act, with: start.with } : undefined} /> : null}
     </Frame>
   );
 }
 
-/** The width of a row's ⋯ menu column, and what its Edit button adds to it. */
+/** The width of a row's ⋯ menu column, and what its Edit button — or a Purchase row's next-step button — adds to it. */
 const MENU_COL = 52;
 const EDIT_COL = 64;
+const PRIMARY_COL = 112;
 
 /**
  * An action that changes the record itself: "Edit", "Edit order", "Edit TO",
@@ -1252,15 +1305,88 @@ function rowEdit(row: ListRow) {
   return row.actions?.find((a) => isEditAction(a) && !a.tickHidden);
 }
 
+/** A Purchase row's one next step, drawn as a button beside its ⋯ menu. */
+function rowPrimary(row: ListRow) {
+  return row.actions?.find((a) => a.primary && !a.tickHidden);
+}
+
+/** What a Purchase row's menu calls opening the record. */
+const OPEN_WORDS: Record<string, string> = {
+  requisitions: "Open the requirement",
+  purchaseOrders: "Open the PO",
+  inward: "Open the receipt",
+  testing: "Open the test",
+  register: "Open the lot",
+  barcode: "Open the lot",
+};
+
+/**
+ * A Purchase row's ⋯ menu, in three blocks read off `action-ticks.ts`:
+ * opening it and its ordinary work, then the changes (Edit), then the
+ * take-backs (Delete), last and in red. No tick is named in the menu.
+ */
+export function purchaseMenu(screen: string, acts: ActionSpec[]): { a: ActionSpec; block: 0 | 1 | 2 }[] {
+  return acts
+    .filter((a) => !a.tickHidden)
+    .map((a, i) => ({ a, i, block: menuBlock(screen, a) }))
+    .sort((x, y) => x.block - y.block || x.i - y.i)
+    .map(({ a, block }) => ({ a, block }));
+}
+
 /**
  * A row's actions: the ones the screen names in `rowMenu`, in that order —
  * or, where it names none, the record's Edit as a button and every one of its
  * actions in a ⋯ menu — run exactly as the record dialog runs them. A held-back
  * Edit is drawn locked and says why. A click inside never opens the record.
  */
-function MenuCell({ row, ids, screen, onRowAct }: { row: ListRow; ids: string[] | null; screen: string; onRowAct?: (actionId: string, rowId: string) => void }) {
+function MenuCell({
+  row,
+  ids,
+  screen,
+  onRowAct,
+  purchase,
+  onOpenRow,
+  onStart,
+}: {
+  row: ListRow;
+  ids: string[] | null;
+  screen: string;
+  onRowAct?: (actionId: string, rowId: string) => void;
+  purchase?: boolean;
+  onOpenRow?: (id: string) => void;
+  onStart?: (id: string, act: string) => void;
+}) {
   const ui = useErpUi();
-  const run = (a: NonNullable<ListRow["actions"]>[number]) => (onRowAct ? onRowAct(a.id, row.id) : ui.act(screen, a, row.id));
+  const run = (a: NonNullable<ListRow["actions"]>[number]) =>
+    a.opens && onStart ? onStart(row.id, a.id) : onRowAct ? onRowAct(a.id, row.id) : ui.act(screen, a, row.id);
+  if (purchase) {
+    const blocks = purchaseMenu(screen, row.actions ?? []);
+    const next = rowPrimary(row);
+    const items = [
+      ...(onOpenRow ? [{ label: OPEN_WORDS[screen] ?? "Open", onSelect: () => onOpenRow(row.id), block: 0 as const }] : []),
+      ...blocks.map(({ a, block }) => ({ label: a.l, disabled: !!a.why, title: a.why || undefined, onSelect: () => run(a), block, destructive: block === 2 })),
+    ].map((x, i, xs) => ({ ...x, divider: i > 0 && xs[i - 1].block !== x.block }));
+    return (
+      <Td className="text-right" onClick={(e) => e.stopPropagation()}>
+        <span className="inline-flex items-center justify-end gap-1.5">
+          {next ? (
+            <Button
+              size="sm"
+              variant={next.soft ? "secondary" : "primary"}
+              aria-disabled={!!next.why}
+              title={next.why || next.l}
+              className={cx("whitespace-nowrap", next.why && "cursor-help opacity-50")}
+              onClick={() => (next.why ? ui.toast(`${next.l} · ${next.why}`, "error") : run(next))}
+            >
+              {next.why ? <Icon n="lock" s={13} /> : null}
+              {next.short ?? next.l}
+            </Button>
+          ) : null}
+          {items.length ? <RowMenu items={items} heading={row.title ? { title: row.title, sub: row.ref } : undefined} /> : null}
+        </span>
+      </Td>
+    );
+  }
   /* An act held back for a missing Edit or Delete tick is not offered in a list at all; the opened record shows it locked. */
   const picked = (ids ? ids.map((id) => row.actions?.find((a) => a.id === id)).filter((a): a is NonNullable<typeof a> => !!a) : (row.actions ?? [])).filter((a) => !a.tickHidden);
   const items = picked.map((a) => ({ label: a.l, disabled: !!a.why, title: a.why || undefined, onSelect: () => run(a) }));
@@ -1362,9 +1488,12 @@ function Cell({ c, r, edge, cols, lead, small }: { c: ColSpec; r: ListRow; edge?
       </Td>
     );
   }
-  const txt = cellText(c, r.v[c.k]);
+  const base = cellText(c, r.v[c.k]);
+  const unit = c.uk && typeof r.v[c.k] === "number" ? r.v[c.uk] : null;
+  const late = c.late && base !== "—" ? r.v[c.late] : null;
+  const txt = `${base}${unit ? ` ${unit}` : ""}${late ? ` · ${late}` : ""}`;
   const num = c.t === "n" || c.t === "m";
-  const empty = txt === "—";
+  const empty = base === "—";
   return (
     <Td
       align={num ? "right" : "left"}
@@ -1372,7 +1501,7 @@ function Cell({ c, r, edge, cols, lead, small }: { c: ColSpec; r: ListRow; edge?
       className={cx(
         edge,
         "truncate tabular-nums",
-        c.t === "b" ? "font-medium text-ink" : empty ? "text-line-strong" : undefined,
+        c.t === "b" ? "font-medium text-ink" : empty ? "text-line-strong" : late ? "font-semibold text-danger" : c.quiet ? "text-muted" : undefined,
         !empty && (c.t === "ph" || c.t === "em" || c.t === "map") && "text-brand",
         c.t === "mono" && "font-mono text-meta",
         small && "text-meta",
