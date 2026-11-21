@@ -9,6 +9,7 @@ const line = (over: Partial<BillingLine> = {}): BillingLine => ({
   billing: party("a"),
   delivery: party("a"),
   description: "Nano Thinner - 5 Liter (Loose)",
+  skuId: "sku-nano-5",
   type: "Can",
   qtyCans: 10,
   litresPerCan: 5,
@@ -31,7 +32,8 @@ test("every ticked order is clubbed onto ONE invoice, whichever party it bills, 
   assert.equal(sheets.length, 1);
   const [s] = sheets;
   assert.equal(s.orderCount, 3);
-  assert.deepEqual(s.rows.map((r) => r.orderNo.show), ["101", "101", "102", "103"]);
+  /* The three identical Nano lines fold into one row naming all three orders; PU stays its own. */
+  assert.deepEqual(s.rows.map((r) => r.orderNo.show), ["101, 102, 103", "101"]);
   assert.equal(s.head.find((f) => f.l === "Order no")!.v.copy, "101, 102, 103");
   assert.deepEqual(s.buyers.map((b) => b.fields[0].v.show), ["Party a", "Party b"]);
   assert.equal(s.head.find((f) => f.l === "Terms of payment")!.v.copy, "30 days");
@@ -46,7 +48,8 @@ test("a billed line is left off, and the sheet says how many were", () => {
 });
 
 test("each row says what it weighs, and the invoice its total weight, whatever money the viewer may see", () => {
-  const [s] = billingSheets([line({ weightKg: 27 }), line({ orderNo: 102, weightKg: 7.7 }), line({ orderNo: 103, weightKg: 0.1 }), line({ orderNo: 104, weightKg: null })], { rates: false, amounts: false });
+  /* Distinct products, so each stays its own row and the per-row weight is what is under test. */
+  const [s] = billingSheets([line({ description: "P1", weightKg: 27 }), line({ orderNo: 102, description: "P2", weightKg: 7.7 }), line({ orderNo: 103, description: "P3", weightKg: 0.1 }), line({ orderNo: 104, description: "P4", weightKg: null })], { rates: false, amounts: false });
   assert.deepEqual(s.rows[0].weight, { show: "27 kg", copy: "27" });
   assert.equal(s.rows[3].weight, null);
   assert.equal(total(s, "Total weight"), "34.8", "summed in grams, not as floats");
@@ -120,4 +123,117 @@ test("each shop the goods go to is listed once, and blank party fields are left 
   const [s] = billingSheets([line({ delivery: party("x", { address: "12 MG Road", gstin: "  " }) }), line({ orderNo: 102, delivery: party("y") }), line({ orderNo: 103, delivery: party("x", { address: "12 MG Road" }) })], all);
   assert.deepEqual(s.consignees.map((c) => c.key), ["x", "y"]);
   assert.deepEqual(s.consignees[0].fields.map((f) => f.l), ["Name", "Address"]);
+});
+
+/* ---- folding identical lines into one row ---------------------------------------------------- */
+
+const fig = (s: { totals: { l: string; v: { copy: string } }[] }) => JSON.stringify(s.totals);
+
+test("lines that differ only in quantity are ONE row: quantities and amount add up, every order is named", () => {
+  const [s] = billingSheets(
+    [
+      line({ orderNo: 10289, qtyCans: 12, boxes: 3, weightKg: 99, ratePaise: 110_500 }),
+      line({ orderNo: 10292, qtyCans: 12, boxes: 3, weightKg: 99, ratePaise: 110_500 }),
+      line({ orderNo: 10290, qtyCans: 6, boxes: 1, weightKg: 49.5, ratePaise: 110_500 }),
+    ],
+    all,
+  );
+  assert.equal(s.rows.length, 1);
+  const [r] = s.rows;
+  assert.equal(r.orderNo.show, "10289, 10290, 10292");
+  assert.deepEqual(r.cans, { show: "30", copy: "30" });
+  assert.deepEqual(r.boxes, { show: "7", copy: "7" });
+  assert.equal(r.litres.copy, "150");
+  assert.deepEqual(r.weight, { show: "247.5 kg", copy: "247.5" });
+  assert.equal(r.amount?.copy, "33150.00");
+  assert.deepEqual(r.rate, { show: "₹1,105", copy: "1105.00" });
+});
+
+test("it is generic: any number of orders and products fold by their own figures, nothing is special-cased", () => {
+  const lines: BillingLine[] = [];
+  for (let o = 1; o <= 40; o++) {
+    lines.push(line({ orderNo: 5000 + o, description: "Product A", qtyCans: o, ratePaise: 20_000 }));
+    lines.push(line({ orderNo: 5000 + o, description: "Product B", qtyCans: 2, ratePaise: 30_000, gstBp: 1200 }));
+  }
+  const [s] = billingSheets(lines, all);
+  assert.equal(s.rows.length, 2);
+  const a = s.rows.find((r) => r.description.show === "Product A")!;
+  const b = s.rows.find((r) => r.description.show === "Product B")!;
+  assert.equal(a.cans.copy, String((40 * 41) / 2));
+  assert.equal(b.cans.copy, "80");
+  assert.equal(a.orderNo.show.split(", ").length, 40);
+  assert.equal(b.gst.copy, "12");
+});
+
+test("a different rate, GST, discount, pack, or per keeps its own row", () => {
+  const base = line({ orderNo: 1, qtyCans: 2 });
+  const [byRate] = billingSheets([base, line({ orderNo: 2, qtyCans: 2, ratePaise: 100_051 })], all);
+  assert.equal(byRate.rows.length, 2);
+  const [byGst] = billingSheets([base, line({ orderNo: 2, qtyCans: 2, gstBp: 1200 })], all);
+  assert.equal(byGst.rows.length, 2);
+  const [byDiscount] = billingSheets([base, line({ orderNo: 2, qtyCans: 2, discountBp: 500 })], all);
+  assert.equal(byDiscount.rows.length, 2);
+  const [byPack] = billingSheets([base, line({ orderNo: 2, qtyCans: 2, description: "Nano Thinner - 10 Liter (Loose)" })], all);
+  assert.equal(byPack.rows.length, 2);
+  const [byPer] = billingSheets([base, line({ orderNo: 2, qtyCans: 2, type: "Drum" })], all);
+  assert.equal(byPer.rows.length, 2);
+});
+
+test("no discount, however it is spelt (null or 0), is the same discount", () => {
+  const [s] = billingSheets([line({ orderNo: 1, discountBp: null }), line({ orderNo: 2, discountBp: 0 })], all);
+  assert.equal(s.rows.length, 1);
+});
+
+test("rows hidden from the viewer still fold by the real figures, and never leak them", () => {
+  const [s] = billingSheets([line({ orderNo: 1, ratePaise: 100_000 }), line({ orderNo: 2, ratePaise: 100_000 }), line({ orderNo: 3, ratePaise: 90_000 })], { rates: false, amounts: false });
+  assert.equal(s.rows.length, 2, "different hidden rates are not one row");
+  assert.equal(s.rows[0].orderNo.show, "1, 2");
+  assert.ok(s.rows.every((r) => r.rate === null && r.amount === null));
+  assert.ok(!JSON.stringify(s).includes("1000.00"));
+});
+
+test("a weight is shown only if every line folded in carries one; boxes add up when the pack is boxed", () => {
+  const [s] = billingSheets([line({ orderNo: 1, weightKg: 10 }), line({ orderNo: 2, weightKg: null })], all);
+  assert.equal(s.rows.length, 1);
+  assert.equal(s.rows[0].weight, null);
+  const [boxed] = billingSheets([line({ orderNo: 1, boxes: 2, weightKg: 10 }), line({ orderNo: 2, boxes: 3, weightKg: 15 })], all);
+  assert.equal(boxed.rows.length, 1);
+  assert.equal(boxed.rows[0].boxes?.copy, "5");
+  assert.equal(boxed.rows[0].weight?.copy, "25");
+});
+
+test("folding moves nothing: totals, GST, round-off and the invoice total are the same as for the unfolded lines", () => {
+  const rate = 33_333;
+  const together = billingSheets([line({ orderNo: 1, qtyCans: 3, ratePaise: rate, discountBp: 500, transportCostPaise: 10_000, weightKg: 7.7 }), line({ orderNo: 2, qtyCans: 5, ratePaise: rate, discountBp: 500, transportCostPaise: 4_000, weightKg: 12.3 })], all);
+  /* Same two lines, made unfoldable by a distinct description: the unfolded reference. */
+  const apart = billingSheets([line({ orderNo: 1, description: "X1", qtyCans: 3, ratePaise: rate, discountBp: 500, transportCostPaise: 10_000, weightKg: 7.7 }), line({ orderNo: 2, description: "X2", qtyCans: 5, ratePaise: rate, discountBp: 500, transportCostPaise: 4_000, weightKg: 12.3 })], all);
+  assert.equal(together[0].rows.length, 1);
+  assert.equal(apart[0].rows.length, 2);
+  assert.equal(fig(together[0]), fig(apart[0]));
+  /* And the folded row's amount is exactly the two rows' amounts added. */
+  const sum = apart[0].rows.reduce((n, r) => n + Math.round(Number(r.amount!.copy) * 100), 0);
+  assert.equal(Math.round(Number(together[0].rows[0].amount!.copy) * 100), sum);
+  assert.deepEqual(together[0].notes, apart[0].notes);
+  assert.equal(together[0].orderCount, apart[0].orderCount);
+});
+
+test("a folded sheet still prints the same invoice total as the same lines one by one", () => {
+  const lines = [101, 102, 103, 104].map((o) => line({ orderNo: o, qtyCans: o - 100, ratePaise: 55_750, gstBp: 1800 }));
+  const [folded] = billingSheets(lines, all);
+  const singles = lines.map((l) => billingSheets([l], all)[0]);
+  assert.equal(folded.rows.length, 1);
+  const grossSingles = singles.reduce((n, s) => n + Math.round(Number(total(s, "Value of goods")) * 100), 0);
+  assert.equal(Math.round(Number(total(folded, "Value of goods")) * 100), grossSingles);
+  assert.equal(total(folded, "Taxable value"), "5575.00");
+  assert.equal(total(folded, "GST 18%"), "1003.50");
+  assert.equal(total(folded, "Round off"), "0.50");
+  assert.equal(total(folded, "Invoice total"), "6579.00");
+});
+
+test("product identity and pack count even where the wording is identical: a different SKU, litres per can, or loose-versus-boxed never folds", () => {
+  const a = line({ orderNo: 1 });
+  assert.equal(billingSheets([a, line({ orderNo: 2 })], all)[0].rows.length, 1, "control: the same SKU does fold");
+  assert.equal(billingSheets([a, line({ orderNo: 2, skuId: "sku-other" })], all)[0].rows.length, 2, "same wording, different SKU");
+  assert.equal(billingSheets([a, line({ orderNo: 2, litresPerCan: 10 })], all)[0].rows.length, 2, "same wording, different litres per can");
+  assert.equal(billingSheets([a, line({ orderNo: 2, boxes: 2 })], all)[0].rows.length, 2, "loose versus boxed");
 });
