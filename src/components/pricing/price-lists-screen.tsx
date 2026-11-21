@@ -5,7 +5,7 @@
  *
  * One screen rendered in four apps. The CRM and the Sales Dashboard READ it —
  * a telecaller quoting a price and a sales manager checking one — and the
- * Accounts desk and the Founder Dashboard also make, change and retire lists
+ * Accounts desk and HQ also make, change and retire lists
  * from it. What differs is `canManage`, decided by the door (see
  * `priceListDoorCanManage`), and where the links lead.
  *
@@ -345,7 +345,7 @@ export function PriceListsScreen({
       {!canManage ? (
         <div className="mb-3.5 flex items-center gap-2 rounded-[6px] border border-line bg-canvas px-3 py-2 text-[13px] text-muted">
           <Icon name="lock" />
-          <span>Read-only here. Every list can be opened, compared, printed and exported; the Accounts desk and the Founder Dashboard make and change them.</span>
+          <span>Read-only here. Every list can be opened, compared, printed and exported; the Accounts desk and HQ make and change them.</span>
         </div>
       ) : null}
 

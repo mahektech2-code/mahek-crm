@@ -27,6 +27,9 @@ import { getConfig } from '../../data/config';
 import { noteScreen } from '../../native/reload-guard';
 import { noteCrashScreen } from '../../native/crash-log';
 
+/** How tall the bar that pins under the status bar once the page scrolls is. */
+const PINNED_BAR_HEIGHT = 44;
+
 /**
  * The GPS light, from the radio rather than from a flag.
  *
@@ -296,6 +299,19 @@ export function AppFrame({
   const topSheet = useTopSheet();
   const keyboardHeight = useKeyboardHeight();
   const reveal = useRevealFocusedField(keyboardHeight);
+  /* Whether the page has scrolled far enough that the header is passing under
+     the status bar — see the pinned bar below. Set only when it flips, so a
+     scroll is not a render per frame. */
+  const [scrolledUnder, setScrolledUnder] = React.useState(false);
+  const trackOffset = reveal.onScroll;
+  const onScroll = React.useCallback(
+    (e: Parameters<typeof trackOffset>[0]) => {
+      trackOffset(e);
+      const under = e.nativeEvent.contentOffset.y > PINNED_BAR_HEIGHT;
+      setScrolledUnder((was) => (was === under ? was : under));
+    },
+    [trackOffset],
+  );
   const [footerHeight, setFooterHeight] = React.useState(0);
   const unreadOrNull = useUnreadCountOrNull();
   const unread = unreadOrNull ?? 0;
@@ -448,6 +464,7 @@ export function AppFrame({
   const back = hideBack ? undefined : onBack ?? (isRoot ? undefined : cameFrom.go);
   const heroTone: HeroTone = tone ?? (here === 'home' || here === 'journey' ? 'navy' : 'lavender');
   const showsTabBar = keyboardHeight === 0 && !footer;
+  const pinnedTitle = title === 'MBOS' && FROM_LABEL[here] ? FROM_LABEL[here] : title;
   const header = (
     <Header
       /* Twelve screens passed "MBOS" as their title, so the bar said the app's
@@ -483,7 +500,7 @@ export function AppFrame({
   const body = scroll ? (
     <ScrollView
       ref={reveal.ref}
-      onScroll={reveal.onScroll}
+      onScroll={onScroll}
       scrollEventThrottle={16}
       style={{ flex: 1 }}
       contentContainerStyle={[{ paddingBottom: barClearance }, keyboardHeight > 0 && { paddingBottom: keyboardHeight + 24 }]}
@@ -531,6 +548,42 @@ export function AppFrame({
           reaching the top of the glass. */}
       <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: insets.top, backgroundColor: heroTone === 'navy' ? C.navy : heroTone === 'canvas' ? C.canvas : C.lavender }} />
       {body}
+      {/*
+        THE PAGE WAS CUT BY AN EDGE NOBODY COULD SEE. The header scrolls with
+        the page, and the only thing over it was the status-bar strip in the
+        hero's own colour — so a scrolled page showed half a row of figures
+        sliced off under the clock, navy on navy, reading as a broken layout
+        on every screen. Once the page has scrolled under the status bar a
+        pinned bar takes over: the screen's name, a hairline and a shadow, so
+        what scrolls away disappears under something rather than into nothing.
+      */}
+      {scroll && scrolledUnder ? (
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            top: insets.top,
+            left: 0,
+            right: 0,
+            height: PINNED_BAR_HEIGHT,
+            justifyContent: 'center',
+            paddingHorizontal: 20,
+            backgroundColor: heroTone === 'navy' ? C.navy : heroTone === 'canvas' ? C.canvas : C.lavender,
+            borderBottomWidth: StyleSheet.hairlineWidth,
+            borderBottomColor: heroTone === 'navy' ? 'rgba(255,255,255,0.12)' : C.hairline,
+            shadowColor: '#000',
+            shadowOpacity: 0.12,
+            shadowRadius: 6,
+            shadowOffset: { width: 0, height: 2 },
+            elevation: 4,
+          }}>
+          <Text
+            numberOfLines={1}
+            style={[{ fontSize: 16, lineHeight: 21, color: heroTone === 'navy' ? C.onNavy : C.ink }, weight(700)]}>
+            {pinnedTitle}
+          </Text>
+        </View>
+      ) : null}
 
       {/*
         THE WAY BACK INTO A SHOP HE IS ALREADY STANDING OUTSIDE.

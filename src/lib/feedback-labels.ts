@@ -187,7 +187,7 @@ export const FEEDBACK_APP_PATHS = {
   sales: "/sales/feedback",
   erp: "/erp/feedback",
   hrms: "/hrms/feedback",
-  founder: "/founder/feedback",
+  founder: "/hq/feedback",
 } as const;
 export type FeedbackApp = keyof typeof FEEDBACK_APP_PATHS;
 

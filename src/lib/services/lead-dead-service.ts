@@ -161,9 +161,17 @@ export type RequestDeadInput = {
   customerId: string;
   reasonCode: string;
   note?: string | null;
+  /**
+   * Send the approver no bell message of its own. A BATCH of requests sends one
+   * summary instead (`requestDeadLeads`), so fifteen leads do not ring fifteen
+   * times. The request, its audit row and its timeline entry are unaffected.
+   */
+  quiet?: boolean;
 };
 
-export async function requestLeadDead(input: RequestDeadInput): Promise<Result<{ requestId: string; approverName: string }>> {
+export type DeadRequested = { requestId: string; approverName: string; approverUserId: string };
+
+export async function requestLeadDead(input: RequestDeadInput): Promise<Result<DeadRequested>> {
   const config = await getConfig();
   const reason = config["leads.deadReasons"].find((r) => r.code === input.reasonCode);
   if (!reason) {
@@ -243,7 +251,7 @@ export async function requestLeadDead(input: RequestDeadInput): Promise<Result<{
       });
 
       /* ONLY the assigned manager is told. */
-      await tx.insert(notifications).values({
+      if (!input.quiet) await tx.insert(notifications).values({
         id: newId("ntf"),
         userId: approver.approverUserId,
         title: `Dead request: ${lead.name}`,
@@ -280,7 +288,10 @@ export async function requestLeadDead(input: RequestDeadInput): Promise<Result<{
         summary: `Marked Dead requested — ${reason.label}${acting ? ` (on behalf of ${acting.ownerName}, who has left)` : ""}. Waiting on ${approver.approverName}.`,
       });
 
-      return ok({ requestId, approverName: approver.approverName }, `Sent to ${approver.approverName} for approval.`);
+      return ok(
+        { requestId, approverName: approver.approverName, approverUserId: approver.approverUserId },
+        `Sent to ${approver.approverName} for approval.`,
+      );
     });
   } catch (e) {
     if (e instanceof DeadRefusal) return e.result;

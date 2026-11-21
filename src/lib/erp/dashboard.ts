@@ -1,4 +1,5 @@
 import "server-only";
+import { drumsInUse } from "./drums";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { APP_TIMEZONE, calendarDate } from "@/lib/business-date";
@@ -451,19 +452,34 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
     const drums = await q(sql`select id, status, godown, supplier, recorded_on as on from (
       select d.id, d.status, g.name as godown, s.name as supplier, (d.recorded_at at time zone ${APP_TIMEZONE})::date::text as recorded_on
         from erp_empty_drums d join erp_godowns g on g.id = d.godown_id left join erp_suppliers s on s.id = d.supplier_id) x`);
+    /* Drums still full, by owner — read off the GRNs, never stored. */
+    const full = await drumsInUse();
+    const fullOf = (o: string | null, here = false) => full.filter((l) => l.ownership === o && (!here || inG(l.godown))).reduce((n, l) => n + l.inUse, 0);
     if (has("emptyDrums")) {
       const avail = drums.filter((d) => d.status === "available" && inG(d.godown)).map((d) => String(d.id));
-      scrap.push({ l: "Mahek-owned empty drums available", v: nf(avail.length), sub: godownName ? `at ${godownName}` : "every godown", href: tileHref("emptyDrums", null, "") });
+      const mahekFull = fullOf("mahek", true);
+      scrap.push({ l: "Mahek-owned empty drums available", v: nf(avail.length), sub: (godownName ? `at ${godownName}` : "every godown") + (mahekFull ? ` · ${nf(mahekFull)} still in use` : ""), href: tileHref("emptyDrums", null, "") });
       const review = drums.filter((d) => d.status === "review").map((d) => String(d.id));
-      if (review.length) scrap.push({ l: "Empty drums to classify", v: nf(review.length), sub: "ownership not recorded", tone: "warn", href: tileHref("drumReview", null, "") });
+      const unsetFull = fullOf(null);
+      if (review.length || unsetFull)
+        scrap.push({
+          l: "Drums with no owner recorded",
+          v: nf(review.length + unsetFull),
+          sub: [review.length ? `${nf(review.length)} empty to classify` : null, unsetFull ? `${nf(unsetFull)} still in use` : null].filter(Boolean).join(" · "),
+          tone: "warn",
+          href: tileHref("drumReview", null, ""),
+        });
     }
     if (has("emptyDrums") || has("drumReturns")) {
       const ret = drums.filter((d) => d.status === "returnable");
       const oldest = ret.map((d) => String(d.on)).sort()[0];
+      /* A supplier's drums still full are owed back too, only not yet. */
+      const inUse = fullOf("returnable");
+      const inUseLine = inUse ? ` · ${nf(inUse)} still in use` : "";
       scrap.push({
         l: "Supplier-returnable drums pending",
         v: nf(ret.length),
-        sub: oldest ? `oldest waiting since ${fd(oldest)} · ${new Set(ret.map((d) => d.supplier)).size} supplier${new Set(ret.map((d) => d.supplier)).size === 1 ? "" : "s"}` : "nothing waiting",
+        sub: (oldest ? `oldest waiting since ${fd(oldest)} · ${new Set(ret.map((d) => d.supplier)).size} supplier${new Set(ret.map((d) => d.supplier)).size === 1 ? "" : "s"}` : "nothing empty yet") + inUseLine,
         tone: oldest && Date.parse(day) - Date.parse(oldest) > 60 * 86_400_000 ? "warn" : undefined,
         href: tileHref(has("drumReturns") ? "drumPending" : "drumReturnable", null, ""),
       });

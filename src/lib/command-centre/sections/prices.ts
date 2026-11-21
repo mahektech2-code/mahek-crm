@@ -35,7 +35,7 @@ import type { ActSpec, Cell, FigureDrawer, Metric, RecordView, Row, TableDef, Ta
 /* ---------------------------------------------------------------------------
  * PRICE LISTS — PRD §17, the design's `prices` section.
  *
- * Read through the Founder desk's own service (`price-list-service.ts`):
+ * Read through HQ's own service (`price-list-service.ts`):
  * `listPriceLists`, `listRequests`, `coverageReport`, `varianceReport`,
  * `pricingCounts`. Approving and refusing a special price is the desk's own
  * `decidePriceRequest`, so a decision here is the decision there.
@@ -588,7 +588,7 @@ async function record(ctx: Ctx, table: string, id: string): Promise<RecordView> 
       timeline,
       audit,
       acts: r.status === "pending" ? REQUEST_ACTS : [],
-      href: { label: "Open the request on the price lists desk", url: "/founder/price-lists/requests" },
+      href: { label: "Open the request on the price lists desk", url: "/hq/price-lists/requests" },
       noteTarget: { kind: "price_request", id },
     };
   }
@@ -639,7 +639,7 @@ async function record(ctx: Ctx, table: string, id: string): Promise<RecordView> 
       timeline,
       audit,
       acts: [],
-      href: { label: "Open the list on the price lists desk", url: `/founder/price-lists/${id}` },
+      href: { label: "Open the list on the price lists desk", url: `/hq/price-lists/${id}` },
       noteTarget: { kind: "price_list", id },
     };
   }

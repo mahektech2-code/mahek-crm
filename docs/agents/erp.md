@@ -548,6 +548,22 @@ kept as the record they are and read by nothing. The Quotation manager's grid
 lists its rows LATEST FIRST — newest date on top, the last entered first within
 a date (`visibleRows` in `engines/quote-sheet.ts`).
 
+**FULL EDIT IN PURCHASE, EXCEPT WHAT THE SYSTEM GENERATES (owner, Nov 2026).**
+Requirements, POs, goods receipt lines and register lots all offer Edit at every
+stage (a PO not once Cancelled), and everything typed can change — the item on a
+requirement, the supplier and every figure on a PO, the PO and PO item a receipt
+or lot sits on. Numbers (PO, PR, requirement), statuses and the lot number are
+never typed. A receipt moved to another PO line, or under a PO whose supplier
+changed, goes through ONE routine, `retargetReceipt` (`screens/purchase.ts`): the
+inward line, its tests, its lots and their stock entries follow in the caller's
+transaction, and the lot number is worked out again from the new party and item.
+It refuses only a lot something already NAMES (`lotUseBlocker` without counts —
+a transfer, SFG line, return, empty drums, adjustment), because those carry the
+old lot number. A PO edit keeps its lines by requirement and changes them in
+place, since receipts name the line; a line goods arrived on is not removed, and
+a PO already shared gets `revision + 1`. A blank `po` on an inward or register
+edit means "keep it", which is what an older page sends.
+
 **PURCHASE IT WRITES THE PURCHASE ORDER, not only its number.** The dialog asks
 the requirement (or none, and one is raised with the purchase, remarked
 `QM_RAISED_REMARK`), the quantity, the godown and the delivery date, and
@@ -781,3 +797,12 @@ screens) could not take back a line entered in error. `mayDeleteProduction`
 any ERP manager or administrator; associates still cannot. The impact modal's
 blockers — stock the entry made has been packed, moved or used — remain the
 real guard (Nov 2026, owner).
+
+**EDIT ORDER IS A GRANTABLE POWER, NOT ONLY THE PRODUCTION HEAD'S.** Edit
+order (goods, cans, rates, discounts, parties, transporter, dispatch day —
+until billed) was `administrator || productionCheck`, so the accounts desk
+that bills every order (Puja, ~500 bills a month) had no Edit on an unbilled
+order and asked for one in Feedback (2026-11-19). `editOrders` ("Edit orders
+before billing") now opens the same `editsOrders` gate without the MRP check
+that `productionCheck` carries; it maps to `erp.orders` in access-bulk.
+Granted per person on the Admin Console like any ERP power.

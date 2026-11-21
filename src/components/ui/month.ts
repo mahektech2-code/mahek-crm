@@ -8,7 +8,7 @@
  * called it directly (not as JSX) got exactly the runtime 500 `lib/words.ts`'s
  * own comment already describes for `plural()`: a type check does not see it,
  * only a request does. `/crm/performance` called it unconditionally in its
- * subtitle and crashed on every load; `/founder/team` only called it from an
+ * subtitle and crashed on every load; `/hq/team` only called it from an
  * empty-state branch demo data happened not to reach, which is why the same
  * bug looked "fixed" there when it had only gone uncrawled.
  * ------------------------------------------------------------------------- */

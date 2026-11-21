@@ -26,6 +26,8 @@ import {
   recordEmptyDrum,
   recordReceipt,
   requestDrumAdjustment,
+  drumsInUse,
+  returnableInUse,
   returnDrums,
   saleRows,
   sellScrap,
@@ -408,5 +410,81 @@ describe("a cancel or a void says what moves before it is confirmed", () => {
     const r = await screenModule("scrapBuyers")!.actions!.retire(await ctxOf(head), "buyer_a", values);
     assert.ok(r.ok, r.ok ? "" : r.error);
     await db.update(erpScrapBuyers).set({ active: true }).where(eq(erpScrapBuyers.id, "buyer_a"));
+  });
+});
+
+describe("a supplier's drums are listed from the GRN, not only once emptied", () => {
+  /** A returnable-terms lot received on `on`, apart from the lots the scenarios above share. */
+  async function lotOn(lot: string, supplier: string, drums: number, on: string) {
+    const inward = id("pin");
+    await db.insert(erpInward).values({ id: inward, prNumber: 5000 + Math.floor(Math.random() * 1000), receivedDate: on, supplierId: supplier, godownId: BHW, materialType: "Chemical", rawMaterialId: "rm_tol", drums, weightWithDrum: 1000, emptyDrumWeight: 8, quantity: 900, unit: "Kg", testingRequired: false });
+    await db.insert(erpPurchases).values({ id: id("pur"), prNumber: 2, purchaseDate: on, supplierId: supplier, rawMaterialId: "rm_tol", lotNo: lot, quantity: 900, unit: "Kg", drums, godownId: BHW, inwardId: inward, source: "inward" });
+  }
+  const theirs = async () => (await returnableInUse()).filter((l) => l.supplierId === "sup_inuse");
+
+  before(async () => {
+    await setting("erp.drums.inUseFrom", "2026-10-11", "text");
+    await db.insert(erpSuppliers).values([
+      { id: "sup_inuse", name: "Lent Drums Ltd", partyCode: "LD", drumOwnership: "returnable" },
+      { id: "sup_inuse_own", name: "Sold With Drums", partyCode: "SW", drumOwnership: "mahek" },
+      { id: "sup_inuse_unk", name: "Terms Not Written", partyCode: "TN" },
+    ]);
+    await lotOn("LD-NEW-1", "sup_inuse", 3, "2026-11-01");
+    await lotOn("LD-OLD-1", "sup_inuse", 2, "2026-09-15");
+    await lotOn("SW-NEW-1", "sup_inuse_own", 4, "2026-11-01");
+    await lotOn("TN-NEW-1", "sup_inuse_unk", 2, "2026-11-01");
+  });
+
+  test("a returnable lot's drums are in use from the day the GRN is saved", async () => {
+    const lots = await theirs();
+    assert.deepEqual(lots.map((l) => [l.lotNo, l.inUse]), [["LD-NEW-1", 3]], "the old lot predates tracking; Mahek's own drums are never listed");
+    const screen = await screenModule("drumReturnable")!.load(await ctxOf(admin));
+    const rows = screen.rows.filter((r) => r.v.supplier === "Lent Drums Ltd");
+    assert.equal(rows.length, 3);
+    assert.ok(rows.every((r) => r.flags.includes("drumInUse") && r.actions?.[0]?.id === "empty"));
+    const pending = (await screenModule("drumPending")!.load(await ctxOf(admin))).rows.find((r) => r.id === "sup_inuse");
+    assert.equal(pending?.v.inUse, 3);
+    assert.equal(pending?.v.pending, 0);
+  });
+
+  test("recording one empty moves it from in use to waiting to return", async () => {
+    await empties(staff, "LD-NEW-1", 1);
+    assert.deepEqual((await theirs()).map((l) => [l.lotNo, l.inUse, l.recorded]), [["LD-NEW-1", 2, 1]]);
+    const rows = (await screenModule("drumReturnable")!.load(await ctxOf(admin))).rows.filter((r) => r.v.supplier === "Lent Drums Ltd");
+    assert.equal(rows.filter((r) => r.flags.includes("drumInUse")).length, 2);
+    assert.equal(rows.filter((r) => !r.flags.includes("drumInUse")).length, 1);
+    const pending = (await screenModule("drumPending")!.load(await ctxOf(admin))).rows.find((r) => r.id === "sup_inuse");
+    assert.equal(pending?.v.pending, 1);
+    assert.equal(pending?.v.inUse, 2);
+    /* A full drum cannot go back: only the emptied one is returnable. */
+    const over = await returnDrums(actor(head), { supplierId: "sup_inuse", date: "2026-11-20", quantity: 2, challanRef: null, remark: null });
+    assert.equal(over.ok, false);
+  });
+
+  test("Mahek's full drums are on Mahek stock, never offered for sale", async () => {
+    const lots = (await drumsInUse()).filter((l) => l.supplierId === "sup_inuse_own");
+    assert.deepEqual(lots.map((l) => [l.lotNo, l.inUse, l.ownership]), [["SW-NEW-1", 4, "mahek"]]);
+    const rows = (await screenModule("emptyDrums")!.load(await ctxOf(admin))).rows.filter((r) => r.v.supplier === "Sold With Drums");
+    assert.equal(rows.length, 4);
+    assert.ok(rows.every((r) => r.flags.includes("drumInUse") && r.actions?.length === 1 && r.actions[0].id === "empty"), "Record empty only — no Sell as scrap");
+    /* Recording one empty puts it in stock, sellable, and leaves three in use. */
+    await empties(staff, "SW-NEW-1", 1);
+    const after = (await screenModule("emptyDrums")!.load(await ctxOf(admin))).rows.filter((r) => r.v.supplier === "Sold With Drums");
+    assert.equal(after.filter((r) => r.flags.includes("drumInUse")).length, 3);
+    assert.equal(after.find((r) => !r.flags.includes("drumInUse"))?.actions?.[0]?.id, "sell");
+  });
+
+  test("a lot whose owner nobody recorded is on Needs review while still full", async () => {
+    const rows = (await screenModule("drumReview")!.load(await ctxOf(admin))).rows.filter((r) => r.v.supplier === "Terms Not Written");
+    assert.equal(rows.length, 2);
+    assert.ok(rows.every((r) => r.flags.includes("drumInUse") && !r.flags.includes("drumReview") && r.v.reason));
+    const register = (await screenModule("drumRegister")!.load(await ctxOf(admin))).rows.filter((r) => r.flags.includes("drumInUse"));
+    assert.ok(["Lent Drums Ltd", "Sold With Drums", "Terms Not Written"].every((n) => register.some((r) => r.v.supplier === n)), "All drums lists every owner's");
+  });
+
+  test("moving the start date earlier brings older lots in", async () => {
+    await setting("erp.drums.inUseFrom", "2026-09-01", "text");
+    assert.deepEqual((await theirs()).map((l) => l.lotNo).sort(), ["LD-NEW-1", "LD-OLD-1"]);
+    await setting("erp.drums.inUseFrom", "2026-10-11", "text");
   });
 });

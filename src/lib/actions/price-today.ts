@@ -18,7 +18,7 @@ import { err, fieldErr, fromThrown, ok, okVoid, type Result } from "@/lib/result
 
 function refresh() {
   try {
-    for (const base of ["/accounts/price-lists", "/founder/price-lists", "/crm/price-lists"]) revalidatePath(`${base}/today`);
+    for (const base of ["/accounts/price-lists", "/hq/price-lists", "/crm/price-lists"]) revalidatePath(`${base}/today`);
   } catch {
     /* No request context — a test. */
   }

@@ -47,14 +47,14 @@ export async function serviceHistory(limit = 20) {
 }
 
 /**
- * The capability, AND worn as the Founder Dashboard. An administrator holds
+ * The capability, AND worn as HQ. An administrator holds
  * `whatsapp.activate` like everything else; without the second half, holding
  * the Admin Console would be holding the founder's switch.
  */
 export async function requireFounderDesk() {
   const ctx = await requireCapability("whatsapp.activate");
   // Asked of the GRANTS, not of which hat `requireCapability` happened to
-  // credit: an administrator who also holds the Founder Dashboard carries the
+  // credit: an administrator who also holds HQ carries the
   // capability in every app, and the hat it reports can be any of them.
   const [founder] = await db
     .select({ id: appAccess.id })

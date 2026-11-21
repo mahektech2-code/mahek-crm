@@ -14,7 +14,7 @@ import { canOpenModule } from "@/lib/access";
 /**
  * `pricelist.manage`, AND THE DESK IT WAS WORN AT.
  *
- * The capability rides on the APP grant — every Founder Dashboard and Accounts
+ * The capability rides on the APP grant — every HQ and Accounts
  * level carries it — while the price desk inside each of those apps is a
  * MODULE that can be withheld. Asking only the capability meant a Command
  * Centre delegate given Money alone, or an Accounts clerk narrowed off the

@@ -105,7 +105,7 @@ export async function sendToFounder(input: {
     if (input.groupKey && !group) return err("That group is not in this window any more.", "not_found");
 
     const founders = (await founderHolders()).filter((u) => u !== ctx.user.id);
-    if (!founders.length) return err("Nobody else holds the Founder Dashboard to send this to.", "validation");
+    if (!founders.length) return err("Nobody else holds HQ to send this to.", "validation");
 
     const note = input.note?.trim().slice(0, 500);
     const window = `${parsed.data.from} to ${parsed.data.to}`;
@@ -113,7 +113,7 @@ export async function sendToFounder(input: {
     const body = group
       ? `${group.lines} lines, ${group.cans} cans billed at ${money(group.billedMinPaise)}–${money(group.billedMaxPaise)} against ${group.listExPaise == null ? "—" : money(group.listExPaise)} on the book. Given away ${money(group.givenAwayPaise)} (${money(group.unapprovedPaise)} with nothing on record approving it), ${window}.`
       : `${report.totals.below} of ${report.totals.priced} priced lines billed below the book. Given away ${money(report.totals.givenAwayPaise)}, of which ${money(report.totals.unapprovedPaise)} has nothing on record approving it.`;
-    const href = `/founder/price-lists/watch?preset=custom&from=${parsed.data.from}&to=${parsed.data.to}`;
+    const href = `/hq/price-lists/watch?preset=custom&from=${parsed.data.from}&to=${parsed.data.to}`;
 
     await db.transaction(async (tx) => {
       await audit(tx, ctx, {

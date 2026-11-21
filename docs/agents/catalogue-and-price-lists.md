@@ -135,7 +135,7 @@ until a customer price list actually exists.
 
 **A PRICE LIST IS CHANGED AT TWO DESKS AND READ AT THREE.** `pricelist.manage`
 is the Price Desk's (`PRICE_DESK` in `access-control.ts`), granted by name at
-both levels of Accounts and of the Founder Dashboard, and nowhere else. It
+both levels of Accounts and of HQ, and nowhere else. It
 shipped in `ACCOUNTS_OR_MANAGER`, which spread it into every CRM and Sales
 Dashboard manager; Mahek's instruction was that the two apps that QUOTE prices
 never set them. The screens enforce the other half by MOUNT —
@@ -146,7 +146,7 @@ somebody also wears the Accounts hat. `price-desk-grant.test.ts` pins both.
 **THE SALES DASHBOARD SHOWS NO PRICES, NO CATALOGUE AND NO PAY.** Mahek's
 instruction: Catalogue & rates, Price lists and Salary were removed from it
 outright — routes, sidebar, modules and the queries only they read. Prices
-belong to the price desk (Accounts, Founder) and pay to HRMS; a sales manager
+belong to the price desk (Accounts, HQ) and pay to HRMS; a sales manager
 is the person whose number both move, which is the same reason `order.approve`
 is kept off managers. Two consequences worth knowing. **Cost & return counts
 field SPEND, never salary** — a cost column of salary plus expenses beside an
@@ -156,7 +156,7 @@ NO screen now: the Catalogue page was the only editor, so they are read by the
 phone as they stand until a desk that owns prices is given one. The handset's
 payslip stays — a salesman reading his own pay is HRMS's channel to him, not
 a manager's view of it. `pricelist.read` is named on Accounts and
-Founder too: it arrives with `BOOK_WORK`, which neither is given, and without
+HQ too: it arrives with `BOOK_WORK`, which neither is given, and without
 it the desk that uploads a PDF could not poll it being read.
 
 **A LIST MADE HERE IS THE IMPORTER'S MIRROR IMAGE.** `lib/price-sheet.ts` holds

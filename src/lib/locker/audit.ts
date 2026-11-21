@@ -35,9 +35,29 @@ export type AuditInput = {
 const GENESIS = "0".repeat(64);
 const LOCK = 7_244_310; /* any constant: the Locker's audit chain */
 
+/**
+ * `detail` in the order Postgres's jsonb gives it back: keys shorter first,
+ * then bytewise. The hash is taken when the row is written and checked against
+ * what jsonb returns, so a detail written `{ attachmentId, sha256 }` came back
+ * `{ sha256, attachmentId }` and its row read as altered the moment it was
+ * saved. Hashing this order makes write and read agree; a detail already
+ * read from jsonb is unchanged by it, so every row that verified still does.
+ */
+export function jsonbOrder(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(jsonbOrder);
+  if (!v || typeof v !== "object") return v;
+  const keys = Object.keys(v as Record<string, unknown>).sort((a, b) => {
+    const x = Buffer.from(a), y = Buffer.from(b);
+    return x.length - y.length || Buffer.compare(x, y);
+  });
+  const out: Record<string, unknown> = {};
+  for (const k of keys) out[k] = jsonbOrder((v as Record<string, unknown>)[k]);
+  return out;
+}
+
 function rowHash(prev: string, r: { at: string; actorId: string | null; action: string; entityType: string; entityId: string; summary: string; reason: string | null; detail: unknown }): string {
   return createHash("sha256")
-    .update(JSON.stringify([prev, r.at, r.actorId, r.action, r.entityType, r.entityId, r.summary, r.reason, r.detail]))
+    .update(JSON.stringify([prev, r.at, r.actorId, r.action, r.entityType, r.entityId, r.summary, r.reason, jsonbOrder(r.detail)]))
     .digest("hex");
 }
 

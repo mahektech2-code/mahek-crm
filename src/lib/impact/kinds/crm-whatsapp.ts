@@ -135,7 +135,7 @@ export const waTemplateArchiveImpact: ImpactSource = {
           note: "It leaves all three pickers. Restore brings it back.",
         },
         {
-          app: "Founder",
+          app: "HQ",
           label: `automation ${many(rules.length, "rule")} sending on it`,
           effect: "kept",
           count: rules.length,

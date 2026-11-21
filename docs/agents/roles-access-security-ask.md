@@ -431,7 +431,7 @@ signs in. Never yourself; never the last platform administrator.
 **THE PERSON PAGE NAMES EVERY SCOPE SET ELSEWHERE.** Its "Set elsewhere" card
 (`person-access-extras-service.ts`) now also reads the Sales Dashboard's
 oversight regions and working places, and live website assignments. A person
-whose manager-level grant in the CRM, the Sales Dashboard or Founder makes
+whose manager-level grant in the CRM, the Sales Dashboard or HQ makes
 regions decide what they see (`managerScope`), and who has none, gets a warning
 line: no region means the WHOLE COUNTRY, and that used to be invisible. ERP
 godown staff are offered and saved under a label that names one person (the

@@ -11,7 +11,7 @@ import { canOpenModule } from "@/lib/access";
  * `pricelist.manage` is held at both levels of Accounts and of the Founder
  * Dashboard, and narrowed by each app's own Price lists module; a platform
  * administrator holds everything. So: everybody granted Accounts or the
- * Founder Dashboard whose grant reaches its Price lists module, and the
+ * HQ whose grant reaches its Price lists module, and the
  * platform administrators. Each is linked to the door they would open.
  * ------------------------------------------------------------------------- */
 
@@ -33,7 +33,7 @@ export async function priceDeskPeople(): Promise<DeskPerson[]> {
     if (apps.includes("accounts") && (await canOpenModule(r.id, "accounts.price-lists"))) {
       out.push({ id: r.id, name: r.name, basePath: "/accounts/price-lists" });
     } else if (apps.includes("founder") && (await canOpenModule(r.id, "founder.price-lists"))) {
-      out.push({ id: r.id, name: r.name, basePath: "/founder/price-lists" });
+      out.push({ id: r.id, name: r.name, basePath: "/hq/price-lists" });
     } else if (r.admin) {
       out.push({ id: r.id, name: r.name, basePath: "/accounts/price-lists" });
     }

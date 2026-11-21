@@ -6,7 +6,7 @@ Every value quoted from a setting is the one your CRM is using right now.
 
 <Cards cols={2}>
 <Card title="Reading a price" tone="brand">Every signed-in person who opens the CRM's Price lists. A telecaller pricing an order and a salesman standing in a shop both need the customer's list in front of them — a price they cannot see is a price they guess.</Card>
-<Card title="Setting a price" tone="warn">The **Accounts desk** (both levels) and the **Founder Dashboard** (both levels), plus administrators. Importing, editing, publishing, scoping, duplicating, assigning a list to a shop and deciding a special price.</Card>
+<Card title="Setting a price" tone="warn">The **Accounts desk** (both levels) and **HQ** (both levels), plus administrators. Importing, editing, publishing, scoping, duplicating, assigning a list to a shop and deciding a special price.</Card>
 </Cards>
 
 <Callout kind="why" title="Why the CRM is read-only for everybody">
@@ -18,7 +18,7 @@ The person chasing a number must not also set the price that number is measured 
 | Telecaller (CRM associate) | Read every list, see which list applies to a shop and why, export and print, ask for a special price, withdraw their own request, give a discount up to the associate ceiling |
 | CRM manager | All of that, see everybody's special price requests, give a discount up to the manager ceiling |
 | Admin | Any discount; but the CRM screens still draw no editing controls |
-| Accounts desk / Founder Dashboard | Make and change lists — on their own Price lists screens, not the CRM's |
+| Accounts desk / HQ | Make and change lists — on their own Price lists screens, not the CRM's |
 
 ## Which list applies to a shop
 
@@ -106,7 +106,7 @@ A list with no prices is refused. A list that names nobody is published with the
 
 ### Where lists come from
 
-Most lists start as a **file somebody was sent** — a PDF in Mahek's own layout, or a photograph. The Documents tab shows each file being read: the layout found, prices turned into paise, every row and pack-size column matched to a SKU in the catalogue, GST and the derivation checked. A document the reader is less than <Setting k="pricing.parseConfidenceFloor" />% sure of is marked **Needs a person**; none is ever published without somebody opening it. Lists can also be built from scratch, from every active product, copied, derived from another list by a rule, or imported from a spreadsheet — all on the Accounts and Founder desks.
+Most lists start as a **file somebody was sent** — a PDF in Mahek's own layout, or a photograph. The Documents tab shows each file being read: the layout found, prices turned into paise, every row and pack-size column matched to a SKU in the catalogue, GST and the derivation checked. A document the reader is less than <Setting k="pricing.parseConfidenceFloor" />% sure of is marked **Needs a person**; none is ever published without somebody opening it. Lists can also be built from scratch, from every active product, copied, derived from another list by a rule, or imported from a spreadsheet — all on the Accounts and HQ desks.
 
 ## GST
 

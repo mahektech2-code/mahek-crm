@@ -64,7 +64,7 @@ export async function explainAccountsDelays(input: {
       `);
     }
     revalidatePath("/accounts", "layout");
-    revalidatePath("/founder/accounts-deadlines");
+    revalidatePath("/hq/accounts-deadlines");
     return { ok: true, data: { saved: toSave.length }, message: toSave.length === 1 ? "Reason saved." : `${toSave.length} reasons saved.` };
   } catch (e) {
     return fromThrown(e);
@@ -103,7 +103,7 @@ export async function nudgeAccounts(input: { breachId: string; body: string }): 
         href: SLA_HREF[b.kind],
       })),
     );
-    revalidatePath("/founder/accounts-deadlines");
+    revalidatePath("/hq/accounts-deadlines");
     return okVoid(`Sent to ${desk.length} ${desk.length === 1 ? "person" : "people"} on the accounts desk.`);
   } catch (e) {
     return fromThrown(e);
@@ -119,7 +119,7 @@ export async function acknowledgeDeadline(breachId: string): Promise<Result> {
        where id = ${breachId} and resolved_at is null returning id
     `);
     if (!r.length) return err("That has been decided already.", "not_found");
-    revalidatePath("/founder/accounts-deadlines");
+    revalidatePath("/hq/accounts-deadlines");
     return okVoid("Marked as seen. It stays with accounts until they decide it.");
   } catch (e) {
     return fromThrown(e);

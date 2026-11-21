@@ -91,7 +91,7 @@ export const ROLE_CONFLICTS: RoleConflict[] = [
   {
     hats: [{ app: "sales" }, { app: "founder" }],
     sentence:
-      "Runs the field team and edits price lists from the Founder desk, so one person can set the price their team's orders are measured in.",
+      "Runs the field team and edits price lists from HQ, so one person can set the price their team's orders are measured in.",
   },
 ];
 

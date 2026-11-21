@@ -156,16 +156,16 @@ exactly the right day. **It cannot be backfilled**, and the screen says "we
 cannot say yet" rather than drawing a movement of zero.
 
 **The Reports app is RETIRED, and its engine and service are not.** It was
-the owner's five on screens of their own, and the Founder Command Centre now
+the owner's five on screens of their own, and the HQ (the command centre) now
 reads the same `owner-dashboard-service` functions — so the screens went and
 the numbers stayed. `reports` stays an `APP_IDS` value with `retiredInto:
 "founder"`, the same treatment `people` got: a grant made before the
 retirement still resolves, nothing draws it, and `/reports` redirects to the
-launcher rather than to `/founder`, which is granted separately. The nightly
+launcher rather than to `/hq`, which is granted separately. The nightly
 health snapshot still runs, because the founder's retention movement reads it.
 
 **THE FOUNDER'S MARGINS ARE ONE DESK, AND EVERY FIGURE IS THE ERP'S OWN.**
-`/founder/margins` (module `founder.margins`, section key `margins`, one
+`/hq/margins` (module `founder.margins`, section key `margins`, one
 sidebar entry under Sell) reads the ERP's billed, dispatch-verified lines for
 the period and the equal span before it through `detailRows` — the same
 reading the Order details register's Margin column makes — in

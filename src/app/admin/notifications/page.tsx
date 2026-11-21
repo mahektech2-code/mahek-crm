@@ -10,7 +10,7 @@ import { PreviewButton } from "./preview-button";
 /**
  * NOTIFICATIONS & MESSAGING — the bell, the pushes that ride on it, WhatsApp,
  * and the announcements the office sends. Read-only: templates are edited on
- * the CRM's WhatsApp screen and linked to Wati on the Founder Dashboard, and an
+ * the CRM's WhatsApp screen and linked to Wati in HQ, and an
  * announcement is sent from the Sales Dashboard or HRMS.
  */
 

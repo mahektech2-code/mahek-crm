@@ -184,7 +184,7 @@ export async function settleDoubleListed(answers: Array<{ customerId: string; ke
     });
     try {
       revalidatePath("/accounts/price-lists");
-      revalidatePath("/founder/price-lists");
+      revalidatePath("/hq/price-lists");
       revalidatePath("/crm/price-lists");
     } catch {
       /* no request — a test */

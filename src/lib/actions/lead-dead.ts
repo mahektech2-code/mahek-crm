@@ -1,13 +1,18 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import { assertCustomerInScope, requireCapability } from "@/lib/access-control";
+import { db } from "@/db";
+import { notifications } from "@/db/schema";
+import { requireCapability } from "@/lib/access-control";
 import { requireUser } from "@/lib/auth";
 import { getConfig } from "@/lib/config/store";
-import { deadRequestEligibility } from "@/lib/lead-dead";
+import { BULK_DEAD_MAX, deadRequestEligibility } from "@/lib/lead-dead";
+import { REASON_CODE_NEEDING_REMARKS } from "@/lib/lead-labels";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
+import { assertLeadInScope } from "@/lib/services/lead-scope";
 import { leadRow } from "@/lib/services/lead-service";
 import {
   decideLeadDead,
@@ -79,9 +84,37 @@ export async function requestDeadLead(input: z.input<typeof requestSchema>): Pro
     const p = parsed.data;
 
     const ctx = await requireCapability("lead.work");
-    const lead = await leadRow(p.customerId);
+    const sent = await requestOne(ctx, p.customerId, p.reasonCode, p.note, false);
+    refresh();
+    return sent.ok ? ok(null, sent.message) : sent;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+type Actor = Awaited<ReturnType<typeof requireCapability>>;
+
+/**
+ * ONE LEAD'S REQUEST — the checks `requestDeadLead` has always made, in one
+ * place so the single door and the batch cannot come apart: the lead exists, is
+ * in this person's reach, is a Lost lead nobody has already killed or asked
+ * about, and then the service asks again under the row lock. A refusal (a scope
+ * error included) comes back as a result, so a batch can name it and carry on.
+ */
+async function requestOne(
+  ctx: Actor,
+  customerId: string,
+  reasonCode: string,
+  note: string | undefined,
+  quiet: boolean,
+) {
+  try {
+    const lead = await leadRow(customerId);
     if (!lead) return err("That lead is not on MahekOne.", "not_found");
-    await assertCustomerInScope({
+    /* Asked the way the lead LISTS ask it (`assertLeadInScope`): a lead on this
+       person's list — through her team or her Sales Manager seat — is one she may
+       work. The bare CRM scope check refused it with a sentence about levels. */
+    await assertLeadInScope(customerId, {
       kind: lead.kind,
       ownerId: lead.ownerId,
       salesAmId: lead.salesAmId,
@@ -92,7 +125,7 @@ export async function requestDeadLead(input: z.input<typeof requestSchema>): Pro
 
     /* Eligibility, read from the database rather than from anything the client
        said — and asked again inside the service under the row lock. */
-    const facts = await deadFactsOf(p.customerId);
+    const facts = await deadFactsOf(customerId);
     const eligibility = deadRequestEligibility({
       stage: lead.leadStage,
       deadAt: facts.deadAt,
@@ -100,15 +133,100 @@ export async function requestDeadLead(input: z.input<typeof requestSchema>): Pro
     });
     if (!eligibility.offer) return err(eligibility.reason, "rule_violation");
 
-    const sent = await requestLeadDead({
+    return await requestLeadDead({
       actorUserId: ctx.user.id,
       hat: { app: ctx.authorisedIn, role: ctx.authorisedBy },
-      customerId: p.customerId,
-      reasonCode: p.reasonCode,
-      note: p.note,
+      customerId,
+      reasonCode,
+      note,
+      quiet,
     });
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/* ------------------------------------------------------- several at once */
+
+const bulkSchema = z.object({
+  customerIds: z.array(z.string().min(1)).min(1, "Pick at least one lead.").max(BULK_DEAD_MAX, `At most ${BULK_DEAD_MAX} leads at once.`),
+  reasonCode: z.string().trim().min(1, "Why are they Dead?").max(60),
+  note: z.string().trim().max(1000).optional(),
+});
+
+export type BulkDeadResult = {
+  /** How many requests were raised — one per lead, each decided on its own. */
+  requested: number;
+  approverName: string | null;
+  /** Leads that were NOT sent, each with the sentence the single action would have given. */
+  refused: Array<{ id: string; name: string; why: string }>;
+};
+
+/**
+ * MARK SEVERAL LOST LEADS AS DEAD — every selected lead goes for approval.
+ *
+ * Not a second path to Dead: each lead goes through exactly the checks and the
+ * service the single request uses (`requestOne`), so each gets its own request,
+ * its own audit row and timeline entry, and its own decision by the approver —
+ * who is the same person for the whole batch, fixed from the Org Chart above
+ * the person asking. Sequential, so a lead refused part-way is named and the
+ * others still go. The approver gets ONE bell message for the batch, not one per
+ * lead.
+ */
+export async function requestDeadLeads(input: z.input<typeof bulkSchema>): Promise<Result<BulkDeadResult>> {
+  try {
+    const parsed = bulkSchema.safeParse(input);
+    if (!parsed.success) {
+      return err(parsed.error.issues[0]?.message ?? "Pick why they are Dead.", "validation");
+    }
+    const p = parsed.data;
+    const ids = [...new Set(p.customerIds)];
+    const ctx = await requireCapability("lead.work");
+
+    /* What cannot differ from lead to lead is settled once, up front, so a bad
+       reason or an Org Chart that cannot name an approver is said ONCE and not
+       once per lead. */
+    const config = await getConfig();
+    if (!config["leads.deadReasons"].some((r) => r.code === p.reasonCode)) {
+      return err("Pick one of the listed reasons for marking these leads Dead.", "validation");
+    }
+    if (p.reasonCode === REASON_CODE_NEEDING_REMARKS && !p.note) {
+      return err("You picked Other — say in words why these leads are Dead.", "validation");
+    }
+    const routed = await resolveDeadApprover(ctx.user.id);
+    if (!routed.ok) return err(routed.message, "rule_violation");
+
+    const refused: BulkDeadResult["refused"] = [];
+    let requested = 0;
+    let approver: { id: string; name: string } | null = null;
+    for (const id of ids) {
+      const sent = await requestOne(ctx, id, p.reasonCode, p.note, true);
+      if (sent.ok) {
+        requested += 1;
+        approver = { id: sent.data.approverUserId, name: sent.data.approverName };
+      } else {
+        const row = await leadRow(id).catch(() => null);
+        refused.push({ id, name: row?.name ?? id, why: sent.error });
+      }
+    }
+
+    if (requested > 0 && approver) {
+      await db.insert(notifications).values({
+        id: `ntf_${randomUUID().slice(0, 12)}`,
+        userId: approver.id,
+        title: `${requested} Dead ${requested === 1 ? "request" : "requests"} from ${ctx.user.name}`,
+        body: `${ctx.user.name} asked to mark ${requested} ${requested === 1 ? "lead" : "leads"} permanently Dead. Each is decided on its own; approving locks that lead for ever.`,
+        kind: "warn",
+        href: "/crm/leads/dead?tab=queue",
+      });
+    }
     refresh();
-    return sent.ok ? ok(null, sent.message) : sent;
+    return ok(
+      { requested, approverName: approver?.name ?? null, refused },
+      requested
+        ? `${requested} ${requested === 1 ? "lead" : "leads"} sent to ${approver?.name} for approval${refused.length ? `, ${refused.length} not sent` : ""}.`
+        : "Nothing was sent.",
+    );
   } catch (e) {
     return fromThrown(e);
   }

@@ -361,7 +361,7 @@ describe("the order to the bill to the lorry (Order-to-Delivery PRD)", () => {
     const boxed = await orderFor(boxedId);
     const a = mod("orders").actions!;
     assert.match(msg(await a.bill(ctx, loose.id, {})), /The Tally invoice number is required/);
-    assert.equal(msg(await a.moveOut(ctx, boxed.id, { qty: "24" })), "Goods, cans, prices and parties are changed with Edit order (the Production Head), until it is billed.");
+    assert.equal(msg(await a.moveOut(ctx, boxed.id, { qty: "24" })), "Goods, cans, prices and parties are changed with Edit order (the Production Head, or whoever holds Edit orders), until it is billed.");
     const [bc] = await db.select().from(erpBatchCodes).where(eq(erpBatchCodes.orderId, boxed.id));
     assert.match(msg(await mod("batchCodes").actions!.release(ctx, bc.id, {})), /Check what this affects/);
     const release = await confirmed("erp-batch-release", bc.id);
@@ -385,7 +385,7 @@ describe("the order to the bill to the lorry (Order-to-Delivery PRD)", () => {
     const [d] = await db.select().from(erpOrderDetails).where(eq(erpOrderDetails.orderId, loose.id));
     assert.equal(d.invoiceCheck, "Pending", "a new bill waits for the invoice check");
     assert.ok((await mod("invoiceCheck").load(ctx)).rows.some((r) => r.id === loose.id), "and is on Invoice check");
-    assert.equal(msg(await mod("orders").forms!.more(ctx, { orderFixed: String(l.orderNo), source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: LOOSE, qty: "1" }])), "Goods, cans, prices and parties are changed with Edit order (the Production Head), until it is billed.");
+    assert.equal(msg(await mod("orders").forms!.more(ctx, { orderFixed: String(l.orderNo), source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: LOOSE, qty: "1" }])), "Goods, cans, prices and parties are changed with Edit order (the Production Head, or whoever holds Edit orders), until it is billed.");
   });
 
   test("the invoice check comes before dispatch, and the checker is not the person who billed", async () => {
@@ -598,7 +598,7 @@ describe("editing an order until Bill it (Option A)", () => {
     const placed = await placeOrder(ctx, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: LOOSE, qty: "5" }]);
     assert.ok(placed.ok);
     const [line] = await db.select().from(erpOrders).where(eq(erpOrders.orderNo, placed.orderNo!));
-    assert.equal(msg(await mod("orders").actions!.moveOut(ctx, line.id, { qty: "1" })), "Goods, cans, prices and parties are changed with Edit order (the Production Head), until it is billed.");
+    assert.equal(msg(await mod("orders").actions!.moveOut(ctx, line.id, { qty: "1" })), "Goods, cans, prices and parties are changed with Edit order (the Production Head, or whoever holds Edit orders), until it is billed.");
     assert.ok(mod("orders").formLoaders!.editOrder, "the whole-order form loads");
     const row = (await mod("orders").load(ctx)).rows.find((r) => r.id === line.id)!;
     const ids = (typeof row.actions === "function" ? (row.actions as () => { id: string }[])() : (row.actions ?? [])).map((x) => x.id);

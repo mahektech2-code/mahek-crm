@@ -44,7 +44,7 @@ Every requirement on a PO must be for that PO's vendor, may appear only once, an
 A PO is ready to send and receive against the moment it is created or linked. POs raised before this change that still say **Pending approval** keep their **Approve** and **Send back** buttons until they are decided.
 </Callout>
 
-**Edit** corrects an **Approved** PO — one created here or on a requirement — while nothing has been received and before it is shared (purchase money needed). A Quotation manager PO is Sent from the start, so it is not edited here.
+**Edit** corrects a PO at any stage except Cancelled — the supplier, dates, terms, freight, remarks, and each item's quantity, rate and GST; items can be added or removed (purchase money needed). The PO number and status are the system's and do not change. A PO already shared or received against gets a new revision: share it again so the supplier has it. A new supplier moves everything received on the PO with it, lot numbers included. An item goods were received on cannot be taken off — void those receipt lines first.
 
 ## Sharing it with the vendor
 
@@ -125,7 +125,7 @@ Only vendors with a requirement ready for a PO, and already given that vendor, a
 </Faq>
 
 <Faq q="Can I change the rate on a direct-purchase PO?">
-Create PO always takes the item's price in Masters → Raw materials, so the right fix is usually to change the price there. **Edit** on this screen does let the rate be typed while the PO is still Approved — not yet shared, nothing received — and it must then be above zero. The supplier's bill rate is entered on the register as before.
+Create PO always takes the item's price in Masters → Raw materials, so the right fix is usually to change the price there. **Edit** on this screen lets the rate be typed at any stage, and it must then be above zero. The supplier's bill rate is entered on the register as before.
 </Faq>
 
 <Faq q="Goods arrived but Receive goods is greyed out.">

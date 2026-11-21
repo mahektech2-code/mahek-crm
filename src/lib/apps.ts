@@ -140,7 +140,7 @@ export const APPS: AppDefinition[] = [
     name: "Reports",
     initials: "RP",
     description: "Retired — the owner's figures are in HQ.",
-    href: "/founder",
+    href: "/hq",
     tone: "neutral",
     built: false,
     retiredInto: "founder",
@@ -176,7 +176,7 @@ export const APPS: AppDefinition[] = [
     initials: "HQ",
     description:
       "Every record and every decision in the company, in one place — and what needs you today.",
-    href: "/founder",
+    href: "/hq",
     tone: "neutral",
     built: true,
   },

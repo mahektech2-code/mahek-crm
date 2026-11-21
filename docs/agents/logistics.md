@@ -116,7 +116,7 @@ and TBB are shown and greyed. The bill is split over the ticked ORDER LINES by
 litres with `allocateByLitres`, written to `erp_freight_bill_lines` on save —
 one live share per order line (a partial unique index) — and `detailRows`
 reads it (`freightSharesFor`), so it reaches the line's costing, margin and
-the Founder's Margins desk with nobody typing it; a sheet-costed line shows it
+HQ's Margins desk with nobody typing it; a sheet-costed line shows it
 and does not add it again. The screen is three stages — Bill to enter, To pay,
 Paid — each grouped by transporter, and work is done on a SELECTION: ticked
 trips are entered together (`saveFreightBills`, each row its own save, so one

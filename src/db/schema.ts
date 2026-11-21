@@ -2214,7 +2214,7 @@ export const customers = pgTable(
      * automatic or by hand. Deliberately NOT `do_not_contact`: that one takes
      * the customer off the calling list as well, and a shop that asked us to
      * stop messaging it has not asked us to stop ringing. Set and cleared on
-     * the Founder desk's Contacts tab, always with a remark; the history is
+     * HQ's Contacts tab, always with a remark; the history is
      * `whatsapp_dnd_events`, and these four columns are its newest row.
      */
     whatsappDnd: boolean("whatsapp_dnd").notNull().default(false),
@@ -4124,7 +4124,7 @@ export const waTemplates = pgTable("wa_templates", {
    * The Meta-approved template in Wati this one is sent as. Null means it is
    * never sent through the API — WhatsApp refuses a business-initiated message
    * that is not an approved template, so an unlinked template can only ever go
-   * out the manual way. Set from the Founder Dashboard, beside the switch.
+   * out the manual way. Set from HQ, beside the switch.
    */
   watiTemplateName: text("wati_template_name"),
   /**
@@ -15330,7 +15330,12 @@ export const hrmsWorkdayClaims = pgTable(
     decidedNote: text("decided_note"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("hrms_workday_claims_emp_idx").on(t.employeeId, t.date), index("hrms_workday_claims_status_idx").on(t.status)],
+  (t) => [
+    index("hrms_workday_claims_emp_idx").on(t.employeeId, t.date),
+    index("hrms_workday_claims_status_idx").on(t.status),
+    /* pending | approved | declined | withdrawn (by the claimant, 0368). */
+    check("hrms_workday_claims_status", sql`${t.status} in ('pending','approved','declined','withdrawn')`),
+  ],
 );
 
 /** A leave or half-day request (spec §7.1). */
@@ -18526,9 +18531,13 @@ export const lockerRenewals = pgTable("locker_renewals", {
   startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
   completedAt: timestamp("completed_at", { withTimezone: true }),
   completedById: text("completed_by_id").references(() => users.id),
+  /** Abandoned before it completed (0369): kept, with who and why. A cancelled task is not open. */
+  cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+  cancelledById: text("cancelled_by_id").references(() => users.id),
+  cancelReason: text("cancel_reason"),
 }, (t) => [
   index("locker_renewals_asset_idx").on(t.assetId),
-  uniqueIndex("locker_renewals_one_open").on(t.assetId).where(sql`${t.completedAt} is null`),
+  uniqueIndex("locker_renewals_one_open").on(t.assetId).where(sql`${t.completedAt} is null and ${t.cancelledAt} is null`),
 ]);
 
 /** Reminder schedules, one per importance: offsets in days from the action day. */

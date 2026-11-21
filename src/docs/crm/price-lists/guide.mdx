@@ -1,4 +1,4 @@
-Price lists tell you **what each shop pays**. In the CRM you can open every list, see which one applies to a customer and why, print or export it, and ask for a special price when a customer wants to pay less. You cannot change a list here — the Accounts desk and the Founder Dashboard make, publish and retire them.
+Price lists tell you **what each shop pays**. In the CRM you can open every list, see which one applies to a customer and why, print or export it, and ask for a special price when a customer wants to pay less. You cannot change a list here — the Accounts desk and HQ make, publish and retire them.
 
 <Callout kind="live">
 Figures on this page that come from settings — the GST rate, how long a list stays valid, how much discount you may give — are the values your CRM is using right now.
@@ -24,7 +24,7 @@ Figures on this page that come from settings — the GST rate, how long a list s
   </WfBar>
   <WfTabs items={["Lists", "Documents", "Requests", "Coverage", "Variance"]} active="Lists" />
   <WfCard>
-    <WfBar><WfText muted>Read-only here. Every list can be opened, compared, printed and exported; the Accounts desk and the Founder Dashboard make and change them.</WfText><Hotspot n={3} /></WfBar>
+    <WfBar><WfText muted>Read-only here. Every list can be opened, compared, printed and exported; the Accounts desk and HQ make and change them.</WfText><Hotspot n={3} /></WfBar>
   </WfCard>
   <WfBar>
     <WfPill tone="brand">All 19</WfPill><WfPill>In force 12</WfPill><WfPill>Drafts 3</WfPill><WfPill>Needs attention 3</WfPill><WfPill>Superseded 3</WfPill><WfPill>Withdrawn 1</WfPill>
@@ -62,7 +62,7 @@ A **price book** is one audience's prices — "Mumbai Paid", "Standard list — 
 | **Shop prices** | Pick a shop and see, product by product, what it pays and where each price comes from. |
 | **Watch** | Every order line checked against the price that was in force on its own date — who was billed below, by how much, and who took the order. |
 
-### Changing prices on a book (Accounts and Founder desks)
+### Changing prices on a book (Accounts and HQ desks)
 
 1. Open the book and press **Edit prices**. You get a copy of the live prices to edit — shops keep paying the live ones.
 2. Type new prices in the grid (the old price is struck through beside each), or use the tools: **Bulk change** on ticked rows, **Paste from Excel**, **Copy from a book**, **Add a product**, or **Describe the change** in plain words ("everything up 5%, Nano held, round to the rupee"). Describe the change always shows you every price before anything is written.
@@ -201,7 +201,7 @@ You see *Asked. Whoever decides prices has been told.* The request appears under
 <Flow caption="A special price request" chart={`
 flowchart TD
   A["Telecaller asks<br/>(price incl GST + reason)"] --> B["Request waiting<br/>deciders get a notification"]
-  B --> C{"Accounts or Founder desk decides"}
+  B --> C{"Accounts or HQ decides"}
   C -- "Approved" --> D["The shop gets its own<br/>'agreed prices' list with that rate"]
   C -- "Refused" --> E["Shop stays on its list"]
   B -- "You withdraw it" --> W["Withdrawn"]
@@ -222,7 +222,7 @@ flowchart TD
 ## Questions people ask
 
 <Faq q="Why can't I edit a price here?">
-Prices are set by the Accounts desk and the Founder Dashboard only. The CRM and the Sales Dashboard quote prices; the person chasing a number must not also set the price it is measured in.
+Prices are set by the Accounts desk and HQ only. The CRM and the Sales Dashboard quote prices; the person chasing a number must not also set the price it is measured in.
 </Faq>
 <Faq q="The customer says they were quoted a different price.">
 Open their Prices tab. If it says *Changed since their last order*, their last order came from a different list — tell them. If the list is *Expired*, check with accounts before confirming.
@@ -234,7 +234,7 @@ The Prices tab shows **Incl GST** by default with the ex-GST figure beneath. Lis
 The narrowest one: a list for the customer by name, then their salesman, beat, area, city, district, state, customer type, and finally everybody. Press **Why this price?** to see it.
 </Faq>
 <Faq q="I asked for a special price and heard nothing.">
-Check the Requests tab. A request stays <i>Waiting</i> until somebody at the Accounts desk or the Founder Dashboard decides it; you are notified either way.
+Check the Requests tab. A request stays <i>Waiting</i> until somebody at the Accounts desk or HQ decides it; you are notified either way.
 </Faq>
 <Faq q="The discount box is missing on my order lines.">
 Your discount limit is zero, so the box is not drawn. Ask a manager, or ask for a special price.

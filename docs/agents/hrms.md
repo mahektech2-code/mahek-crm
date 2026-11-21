@@ -272,3 +272,19 @@ copy it (Position types → `employees.department`, Positions → `position` and
 category/particular/location, asset names); a list not mapped there is said as
 "stored nowhere by name". Records keep the value; add a mapping when a new form
 starts saving a list.
+
+**The person a record belongs to changes it from its own row (Nov 2026).** HR
+edits an asset assignment (quantity never below what came back, date,
+responsibility) and deletes one made in error — the `hr` power, not only the
+HRMS administrator, since HR is who assigns. Whoever asked edits a pending help
+request's times and details (the type stays). Whoever raised a grievance
+WITHDRAWS it while it is Pending: status `Withdrawn` (`GRIEVANCE_WITHDRAWN`),
+kept, and the addressee and resolvers are told. The claimant edits or
+withdraws a pending workday claim — their row offers that and never the
+decision; `withdrawn` is a real status (`0368_hrms_workday_claim_withdrawn`,
+whose check constraint is now declared in the schema too) and the time stays a
+break. Documents: whoever manages them edits title, description and audience;
+an audience that takes a document off the handsets writes the same
+`mbos_deletions` tombstone a withdrawal does. Every new handler is in
+`feature-ledger.ts` ADDED.
+

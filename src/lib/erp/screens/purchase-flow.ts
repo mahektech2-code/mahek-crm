@@ -4,10 +4,12 @@ import { db } from "@/db";
 import {
   erpFgLevels,
   erpGodowns,
+  erpInward,
   erpPoCorrections,
   erpPoLines,
   erpProductPacking,
   erpPurchaseOrders,
+  erpPurchases,
   erpRawMaterials,
   erpRequisitions,
   erpRmLevels,
@@ -466,7 +468,9 @@ export async function requisitionForm(ctx: ErpContext, init?: Record<string, str
       id: "edit",
       recordId: r!.id,
       title: `Edit ${r!.reqNo ? `${requirementLabel(r!.reqNo)} · ` : ""}${editing.item}`,
-      sub: "The item and its purchase rule are fixed; the rest can change until it is on a PO.",
+      sub: editing.po
+        ? `On ${editing.po.name}: a different item changes that PO's item too, and anything already received on it.`
+        : "A different item takes that item's purchase rule.",
       submit: "Save item",
       init: {
         date: r!.reqDate,
@@ -485,7 +489,9 @@ export async function requisitionForm(ctx: ErpContext, init?: Record<string, str
         { k: "requiredBy", l: "Required by", t: "date", req: true, hint: "The date the department needs the goods in hand." },
         { k: "department", l: "Department", t: "select", req: true, opts: departments },
         { k: "godown", l: "Deliver to godown", t: "select", req: true, opts: gds.map((g) => g.name) },
-        { k: "item", l: "Item", t: "select", req: true, opts: [label], readOnly: true, sec: "Item" },
+        r!.productId
+          ? { k: "item", l: "Item", t: "select", req: true, opts: [label], readOnly: true, sec: "Item" }
+          : { k: "item", l: "Item", t: "select", req: true, sec: "Item", optsBy: { by: "department", map: Object.fromEntries(departments.map((d) => [d, itemsBy[d].includes(label) ? itemsBy[d] : [label, ...itemsBy[d]]])) } },
         { k: "rule", l: "Purchase rule", t: "derived", calc: "requisitions.rule" },
         { k: "onHand", l: "Available stock", t: "derived", calc: "requisitions.onHand" },
         { k: "required", l: "Quantity", t: "num", req: true, min: 0.001, qtyUnit: { by: ["item"], map: unitOf } },
@@ -718,9 +724,9 @@ const requisitions: ScreenModule = {
         const st = stageOf(v);
         const r = v.r;
         const actions: ActionSpec[] = [];
-        const open = st.step >= 0 && !v.po && !v.legacy;
         if (v.po) actions.push({ id: "openPo", l: `Open ${v.po.name}`, href: erpLink("purchaseOrders", { open: v.po.id }) });
-        if (open) actions.push({ id: "edit", l: "Edit", loadsForm: true });
+        /* Full edit at every stage (Nov 2026); the number, stage and PO are the system's. */
+        actions.push({ id: "edit", l: "Edit", loadsForm: true });
         if (st.step >= 0 && st.step < FLOW_STEPS.length && (!v.po || v.legacy))
           actions.push({
             id: "cancel",
@@ -871,15 +877,59 @@ async function saveRequirement(ctx: ErpContext, h: Record<string, string>, id?: 
   if (id) {
     const [v] = await requirementViews({ ids: [id] });
     if (!v) return err("That requirement no longer exists.", "not_found");
-    if (v.po || v.legacy || v.r.status === "Cancelled") return err("A requirement on a PO, received or cancelled is not edited.", "conflict");
+    /* FULL EDIT (Nov 2026), at every stage. The item too: on a PO, that PO line's item follows, and so does
+       anything received on it (`retargetReceipt`, which renumbers the lots and refuses one already in use). */
     if (!requirementVisibleTo(ctx.department, v.r.department, v.r.createdById === ctx.user.id)) return err("That requirement belongs to another department.", "not_permitted");
+    let mat: Awaited<ReturnType<typeof materials>>[number] | undefined;
+    const pick = text(h.item);
+    if (!v.r.productId && pick && pick !== v.item) {
+      const mats = await materials();
+      const named = itemPickLabels(mats).get(pick);
+      mat = named ? mats.find((m) => m.name === named.name && m.materialType === named.type) : undefined;
+      if (!mat) return fieldErr("item", `"${pick}" is not an active item`);
+      if (mat.id === v.r.rawMaterialId) mat = undefined;
+    }
     /* An older requirement may keep the label it was raised under; moving it is held to the four. */
-    const refusedEdit = department === v.r.department ? null : requirementRefusal(ctx.department, department, v.itemType);
-    if (refusedEdit) return fieldErr(refusedEdit.field, refusedEdit.message);
-    const values = { reqDate: date, requiredBy, department, godownId, requiredQty: qty, priority, remarks: text(h.remarks), updatedAt: new Date(), updatedById: ctx.user.id };
-    await db.update(erpRequisitions).set(values).where(eq(erpRequisitions.id, id));
-    await erpAudit(ctx, "erp.requisition.edit", "erp_requisition", id, v.r, values);
-    return okVoid("Requirement saved");
+    const kept = department === v.r.department;
+    const refusedEdit = kept && !mat ? null : requirementRefusal(ctx.department, department, mat?.materialType ?? v.itemType);
+    /* A label it already carries is not held against it; only the new item's category is asked about. */
+    if (refusedEdit && !(kept && refusedEdit.field === "department")) return fieldErr(refusedEdit.field === "type" ? "item" : refusedEdit.field, refusedEdit.message);
+    const values = {
+      reqDate: date,
+      requiredBy,
+      department,
+      godownId,
+      requiredQty: qty,
+      priority,
+      remarks: text(h.remarks),
+      ...(mat
+        ? {
+            materialType: mat.materialType,
+            rawMaterialId: mat.id,
+            unit: purchaseUnit(mat.unit, mat.materialType),
+            /* Not yet on a PO, the new item's rule decides how it is bought; on one, the PO already did. */
+            ...(v.po ? {} : { purchaseRule: mat.purchaseMethod as PurchaseMethod, method: mat.purchaseMethod === "buyer" ? null : (mat.purchaseMethod as "direct" | "quotation") }),
+          }
+        : {}),
+      updatedAt: new Date(),
+      updatedById: ctx.user.id,
+    };
+    const lineId = v.po?.lineId;
+    const res = await inTx(async (tx) => {
+      await tx.update(erpRequisitions).set(values).where(eq(erpRequisitions.id, id));
+      if (mat && lineId) {
+        await tx.update(erpPoLines).set({ rawMaterialId: mat.id, unit: purchaseUnit(mat.unit, mat.materialType) }).where(eq(erpPoLines.id, lineId));
+        const { retargetReceipt } = await import("./purchase");
+        const inward = await tx.select({ id: erpInward.id }).from(erpInward).where(eq(erpInward.poLineId, lineId));
+        const manual = await tx.select({ id: erpPurchases.id }).from(erpPurchases).where(and(eq(erpPurchases.poLineId, lineId), eq(erpPurchases.source, "manual")));
+        for (const r of inward) await retargetReceipt(tx, ctx, { inwardId: r.id }, { poLineId: lineId });
+        for (const r of manual) await retargetReceipt(tx, ctx, { purchaseId: r.id }, { poLineId: lineId });
+        if (v.po) await tx.update(erpPurchaseOrders).set({ revision: sql`${erpPurchaseOrders.revision} + 1`, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpPurchaseOrders.id, v.po.id));
+      }
+      return okVoid(mat ? `Requirement saved · item is now ${mat.name}${v.po ? ` on ${v.po.name} too` : ""}` : "Requirement saved");
+    });
+    if (res.ok) await erpAudit(ctx, "erp.requisition.edit", "erp_requisition", id, v.r, values);
+    return res;
   }
   return err("A new requirement is raised with its items.", "validation");
 }
@@ -1124,10 +1174,16 @@ export async function purchaseOrderForm(ctx: ErpContext, opts: { supplierId?: st
   const gstOf: Record<string, string> = {};
   const itemOf: Record<string, string> = {};
   const unitOf: Record<string, string> = {};
+  /* Editing, the PO's own items go with whichever supplier it is moved to, and any supplier may be picked. */
+  const own = (v: ReqView) => !!opts.poId && v.po?.id === opts.poId;
+  const active = sups.filter((s) => s.active);
   map.forEach((v, l) => {
     const vendor = supById.get(v.r.supplierId ?? "")?.name;
-    if (!vendor) return;
-    (byVendor[vendor] ??= []).push(l);
+    if (own(v)) {
+      for (const s of active) if (!(byVendor[s.name] ??= []).includes(l)) byVendor[s.name].push(l);
+      if (vendor && !(byVendor[vendor] ??= []).includes(l)) byVendor[vendor].push(l);
+    } else if (vendor) (byVendor[vendor] ??= []).push(l);
+    else return;
     qtyOf[l] = String(v.r.requiredQty);
     itemOf[l] = v.item;
     unitOf[l] = v.r.unit;
@@ -1164,7 +1220,9 @@ export async function purchaseOrderForm(ctx: ErpContext, opts: { supplierId?: st
     recordId: po?.po.id,
     title: po ? `Edit ${poName(po.po)}` : "New purchase order",
     sub: po
-      ? "Only a PO not yet sent or received against is edited."
+      ? ["Sent", "Partly received", "Received", "Closed"].includes(po.po.status)
+        ? "Already with the supplier: saving makes a new revision — share it again so they have it. A new supplier moves what was received too."
+        : "Everything here can change. The PO number and status are the system's."
       : "No approval: the PO is ready to share with the supplier and receive against as soon as it is saved.",
     submit: po ? "Save PO" : "Create PO",
     lineLabel: "Item",
@@ -1189,7 +1247,7 @@ export async function purchaseOrderForm(ctx: ErpContext, opts: { supplierId?: st
         t: "select",
         req: true,
         opts: vendors,
-        readOnly: !!vendor,
+        readOnly: !!vendor && !po,
         hint: vendors.length ? undefined : "No requirement is ready for a PO. A requirement is ready once its supplier is chosen.",
       },
       { k: "deliverTo", l: "Deliver to", t: "select", req: true, opts: gds.map((g) => g.name) },
@@ -1234,7 +1292,8 @@ async function savePurchaseOrder(ctx: ErpContext, h: Record<string, string>, lin
     if (!v) return fieldErr(`l${i}.requirement`, "Pick a requirement ready for a PO");
     if (seen.has(v.r.id)) return fieldErr(`l${i}.requirement`, "This requirement is already on the PO");
     seen.add(v.r.id);
-    if (v.r.supplierId !== vendor.id) return fieldErr(`l${i}.requirement`, `This requirement's supplier is not ${vendor.name}`);
+    /* An item already on this PO follows the PO to a new supplier; one being added must be that supplier's. */
+    if (v.r.supplierId !== vendor.id && !(poId && v.po?.id === poId)) return fieldErr(`l${i}.requirement`, `This requirement's supplier is not ${vendor.name}`);
     const qty = num(l.qty);
     if (qty == null || qty <= 0) return fieldErr(`l${i}.qty`, qty != null && qty < 0 ? "Quantity cannot be below 0." : "Quantity is required");
     const rate = paise(l.rate);
@@ -1261,15 +1320,64 @@ async function savePurchaseOrder(ctx: ErpContext, h: Record<string, string>, lin
     if (cancelled.length) refuse(err("A requirement on this PO was cancelled meanwhile.", "conflict"));
     const header = { poDate: date, supplierId: vendor.id, godownId, deliveryDate, paymentTerms: terms, freightPaise: freight, remarks: text(h.remarks), updatedAt: new Date(), updatedById: ctx.user.id };
     if (poId) {
+      /* FULL EDIT (Nov 2026), at every stage but Cancelled. Lines are kept by their requirement and changed in
+         place, because what was received names the line; a line goods arrived on is not taken off — void those
+         receipts first. A new supplier carries everything received onto it, lot numbers included. */
       const [before] = await tx.select().from(erpPurchaseOrders).where(eq(erpPurchaseOrders.id, poId)).for("update");
-      if (!before) refuse(err("That PO no longer exists.", "not_found"));
-      if (!["Pending approval", "Approved"].includes(before.status)) refuse(err(`${poName(before)} is ${before.status} — only a PO not yet sent is edited.`, "conflict"));
-      const got = await receivedByLine(tx);
-      const had = await tx.select({ id: erpPoLines.id }).from(erpPoLines).where(eq(erpPoLines.poId, poId));
-      if (had.some((l) => (got.get(l.id) ?? 0) > 0)) refuse(err(`Goods were received against ${poName(before)} — it is no longer edited.`, "conflict"));
+      if (!before) return refuse(err("That PO no longer exists.", "not_found"));
+      if (before.status === "Cancelled") refuse(err(`${poName(before)} is cancelled.`, "conflict"));
       number = before.poNumber;
-      await tx.update(erpPurchaseOrders).set(header).where(eq(erpPurchaseOrders.id, poId));
-      await tx.delete(erpPoLines).where(eq(erpPoLines.poId, poId));
+      const got = await receivedByLine(tx);
+      const had = await tx.select().from(erpPoLines).where(eq(erpPoLines.poId, poId));
+      const keep = new Set(parsed.map((p) => p.v.r.id));
+      const dropped = had.filter((l) => !keep.has(l.requisitionId));
+      const stuck = dropped.find((l) => (got.get(l.id) ?? 0) > 0);
+      if (stuck) {
+        refuse(err(`Goods were received on ${poName(before)} against an item being taken off. Void those goods receipt lines first, then remove it.`, "rule_violation"));
+      }
+      const withCorrections = dropped.length
+        ? await tx.select({ id: erpPoCorrections.poLineId }).from(erpPoCorrections).where(inArray(erpPoCorrections.poLineId, dropped.map((l) => l.id)))
+        : [];
+      if (withCorrections.length) refuse(err(`An item being taken off ${poName(before)} has gate corrections on it. Leave it on the PO.`, "rule_violation"));
+      const revised = ["Sent", "Partly received", "Received", "Closed"].includes(before.status);
+      await tx
+        .update(erpPurchaseOrders)
+        .set({ ...header, ...(revised ? { revision: sql`${erpPurchaseOrders.revision} + 1` } : {}) })
+        .where(eq(erpPurchaseOrders.id, poId));
+      if (dropped.length) {
+        await tx.delete(erpPoLines).where(inArray(erpPoLines.id, dropped.map((l) => l.id)));
+        /* Off the PO, a requirement waits for one again. */
+        await tx.update(erpRequisitions).set({ status: "Pending", updatedAt: new Date() }).where(inArray(erpRequisitions.id, dropped.map((l) => l.requisitionId)));
+      }
+      /* The PO's items belong to its supplier: a requirement moved with it says so. */
+      await tx
+        .update(erpRequisitions)
+        .set({ supplierId: vendor.id, updatedAt: new Date(), updatedById: ctx.user.id })
+        .where(and(inArray(erpRequisitions.id, [...keep]), sql`${erpRequisitions.supplierId} is distinct from ${vendor.id}`));
+      const byReq = new Map(had.map((l) => [l.requisitionId, l]));
+      let i = 0;
+      for (const p of parsed) {
+        const line = byReq.get(p.v.r.id);
+        const values = { quantity: p.qty, ratePaise: p.rate, gstBp: p.gstBp, sortOrder: i++ };
+        if (line) await tx.update(erpPoLines).set(values).where(eq(erpPoLines.id, line.id));
+        else await tx.insert(erpPoLines).values({ id: erpId("pol"), poId, requisitionId: p.v.r.id, rawMaterialId: p.v.r.rawMaterialId!, unit: p.v.r.unit, ...values });
+      }
+      if (before.supplierId !== vendor.id) {
+        const { retargetReceipt } = await import("./purchase");
+        const lineIds = had.filter((l) => keep.has(l.requisitionId)).map((l) => l.id);
+        if (lineIds.length) {
+          const inward = await tx.select({ id: erpInward.id, line: erpInward.poLineId }).from(erpInward).where(inArray(erpInward.poLineId, lineIds));
+          const manual = await tx
+            .select({ id: erpPurchases.id, line: erpPurchases.poLineId })
+            .from(erpPurchases)
+            .where(and(inArray(erpPurchases.poLineId, lineIds), eq(erpPurchases.source, "manual")));
+          for (const r of inward) await retargetReceipt(tx, ctx, { inwardId: r.id }, { poLineId: r.line!, supplierId: vendor.id });
+          for (const r of manual) await retargetReceipt(tx, ctx, { purchaseId: r.id }, { poLineId: r.line!, supplierId: vendor.id });
+        }
+      }
+      await refreshPurchaseOrder(tx, id);
+      const t = poTotals(parsed.map((p) => ({ quantity: p.qty, ratePaise: p.rate, gstBp: p.gstBp })), freight);
+      return ok({ id }, `${poLabel(number)} saved · ${inr(t.totalPaise)}${revised ? " · revised — share it with the supplier again" : ""}`);
     } else {
       number = await nextNumber(tx, "po");
       /* No approval on any route (Oct 2026): a PO is ready to send and receive against once saved. */
@@ -1430,7 +1538,8 @@ const purchaseOrders: ScreenModule = {
           prompt: { title: `Send back ${poName(p.po)}`, sub: "Its requirements go back to waiting for a PO, to be raised again corrected.", submit: "Send back", fields: [{ k: "reason", l: "What needs changing", t: "area", req: true }] },
         });
       }
-      if (s === "Pending approval" || (s === "Approved" && !anyReceived)) actions.push({ id: "edit", l: "Edit", loadsForm: true, why: money ? "" : MONEY_WHY });
+      /* Full edit at every stage but Cancelled (Nov 2026): what was typed can always be corrected; the number and status are the system's. */
+      if (s !== "Cancelled") actions.push({ id: "edit", l: "Edit", loadsForm: true, why: money ? "" : MONEY_WHY });
       if (s === "Approved" || s === "Sent" || s === "Partly received" || s === "Received") {
         actions.push({
           id: "share",

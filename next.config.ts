@@ -198,7 +198,7 @@ const nextConfig: NextConfig = {
 
       /*
        * The Reports app is retired. A bookmark lands on the launcher rather
-       * than a 404 — not on /founder, which is granted separately and would
+       * than a 404 — not on /hq, which is granted separately and would
        * only refuse most of the people holding an old Reports link.
        */
       { source: "/reports", destination: "/apps", permanent: false },
@@ -225,13 +225,23 @@ const nextConfig: NextConfig = {
        */
       /*
        * The Founder Dashboard's four read-only tabs became sections of the
-       * Founder Command Centre, addressed `/founder?s=<section>`. Their old
-       * paths keep working for every bookmark that still names them.
+       * command centre, addressed `?s=<section>`. Their old paths keep
+       * working for every bookmark that still names them.
        */
-      { source: "/founder/team", destination: "/founder?s=team", permanent: true },
-      { source: "/founder/money", destination: "/founder?s=money", permanent: true },
-      { source: "/founder/people", destination: "/founder?s=people", permanent: true },
-      { source: "/founder/crm", destination: "/founder?s=sales", permanent: true },
+      { source: "/founder/team", destination: "/hq?s=team", permanent: true },
+      { source: "/founder/money", destination: "/hq?s=money", permanent: true },
+      { source: "/founder/people", destination: "/hq?s=people", permanent: true },
+      { source: "/founder/crm", destination: "/hq?s=sales", permanent: true },
+
+      /*
+       * The Founder Command Centre is HQ, and its slug moved with the name:
+       * /founder is /hq. The rest of the path and the query are carried, so a
+       * bookmark, a notification or task link already stored in the database,
+       * or a link pasted into WhatsApp lands on the same screen. Permanent,
+       * because the old path is not coming back.
+       */
+      { source: "/founder", destination: "/hq", permanent: true },
+      { source: "/founder/:path*", destination: "/hq/:path*", permanent: true },
 
       /*
        * The ERP's lists that were each their own screen in Mahek Plus are tabs

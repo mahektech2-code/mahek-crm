@@ -195,7 +195,7 @@ function toRow(r: Raw): ChangeRow {
     return {
       ...base,
       title: "WhatsApp through Wati",
-      area: "Founder",
+      area: "HQ",
       from: on ? "Off" : "On",
       to: on ? "On" : "Off",
     };
