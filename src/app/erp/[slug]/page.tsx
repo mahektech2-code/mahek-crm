@@ -3,7 +3,6 @@ import { erpContext } from "@/lib/erp/access";
 import { erpScreenBySlug } from "@/lib/erp/registry";
 import { screenModule } from "@/lib/erp/screens";
 import { ListScreen } from "../_ui/list-screen";
-import { PURCHASE_STAGE_MODULES, PurchaseStages } from "../_ui/purchase-stages";
 import { screenTabs } from "../_ui/screen-tabs";
 import { LIST_QUERY_KEYS, pageOf, parseListQuery } from "@/lib/erp/list-query";
 import { FLAG } from "@/lib/erp/ui";
@@ -67,15 +66,7 @@ export default async function ErpScreenPage({
   const found = sp.open ? (rows.flatMap((r) => [r, ...(r.sub ?? [])]).find((r) => r.id === sp.open) ?? null) : null;
   const openRow = found ? lightRow(mod, found) : null;
 
-  /* A purchase step draws the stage bar over its title, and the bar replaces the Purchases screen's own tab strip. */
-  const staged = PURCHASE_STAGE_MODULES.has(key);
   return (
-    <>
-    {staged ? (
-      <div className="px-6 pt-6 -mb-2">
-        <PurchaseStages ctx={ctx} current={key} />
-      </div>
-    ) : null}
     <ListScreen
       key={`${key}|${sp.open ?? ""}|${sp.f ?? ""}`}
       initialNew={initialNew}
@@ -83,14 +74,13 @@ export default async function ErpScreenPage({
       rows={page.rows}
       server={{ ...page, query }}
       openRow={openRow}
-      label={staged ? (views.find((v) => v.key === key)?.label ?? screen.label) : screen.label}
-      tabs={staged ? undefined : tabs}
+      label={screen.label}
+      tabs={tabs}
       sections={sections}
-      toggle={staged ? undefined : toggle}
+      toggle={toggle}
       initialOpen={sp.open ?? null}
       filter={filter}
       godowns={ctx.assignedGodowns.map((g) => ({ v: g.name, l: g.name }))}
     />
-    </>
   );
 }

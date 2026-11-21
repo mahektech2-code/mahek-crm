@@ -807,16 +807,11 @@ before billing") now opens the same `editsOrders` gate without the MRP check
 that `productionCheck` carries; it maps to `erp.orders` in access-bulk.
 Granted per person on the Admin Console like any ERP power.
 
-**PURCHASE IS ONE WORKSPACE, NOT FIVE PLACES (Nov 2026).** The sidebar draws
-the Purchase group as ONE row (`ERP_WORKSPACES` in `registry.ts`; the layout
-folds the group's screens into it, lands on the first held, lights it on every
-step via `match`, and sums every step's badge onto it). Every purchase screen
-draws `_ui/purchase-stages.tsx` over its title: Requirements → Purchase orders
-→ Receive (the GRN view) → Testing → Bills (the Register view), each with the
-same count its badge always had, then Supplier rates and Drum labels as tools.
-The bar REPLACES the Purchases screen's own tab strip, and the title is the
-view's label. Grants are untouched — each step is still its own module, and a
-step not held is neither drawn nor counted.
+**NAVIGATION STAYS IN THE SIDEBAR (owner, Nov 2026, a reversal).** A
+horizontal purchase "stage bar" over every purchase screen, with the sidebar's
+Purchase group folded into one row, was built and taken out the same day: the
+owner wants the sidebar and its sub-navigation as they are, and no tab-like
+bars drawn as navigation. Narrowing a list belongs to its sub-tabs (below).
 
 **A LIST OPENS ON THE WORK WAITING: SUB-TABS (`ListSpec.subtabs`).** A
 sub-tab is a named set of one column's values (`k`, else the chips column),

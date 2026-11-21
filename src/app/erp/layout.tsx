@@ -4,7 +4,7 @@ import { initialsOf } from "@/lib/format";
 import { hatForHeader } from "@/lib/hat-for-header";
 import { isErpAdministrator, requireErpApp } from "@/lib/erp/access";
 import { erpPreviewTargets } from "@/lib/services/erp-designation-service";
-import { ERP_GROUPS, ERP_WORKSPACES, erpHref, erpKeysOf } from "@/lib/erp/registry";
+import { ERP_GROUPS, erpHref, erpKeysOf } from "@/lib/erp/registry";
 import { erpNavCounts } from "@/lib/erp/counts";
 import { withRenderMemo } from "@/lib/erp/read-memo";
 import { getConfig } from "@/lib/config/store";
@@ -54,29 +54,11 @@ export default async function ErpLayout({ children }: { children: React.ReactNod
      screen's badge is its Pending LR count. By href, which is what a nav row is. */
   /* A held order is not work waiting: the MRP check's badge is its Pending checks alone (its On hold tab keeps its own count). */
   const NOT_WAITING = new Set(["mrpHold"]);
-  /* A WORKSPACE group (`ERP_WORKSPACES`) is one sidebar row: the steps are its
-     own stage bar (_ui/purchase-stages.tsx), so the sidebar does not list them
-     again. Its row lands on the first step held and carries every step's badge. */
-  const workspaceHome = new Map<string, string>();
-  for (const g of ERP_GROUPS) {
-    if (!ERP_WORKSPACES.has(g.id)) continue;
-    const mine = g.screens.filter((s) => s.built && ctx.screens.has(s.key));
-    for (const s of mine) workspaceHome.set(erpHref(s), erpHref(mine[0]));
-  }
-  const badges = counts.then((c) => {
-    const out: Record<string, number> = {};
-    for (const s of held) {
-      const n = erpKeysOf(s).filter((k) => !NOT_WAITING.has(k)).reduce((t, k) => t + (c[k] ?? 0), 0);
-      const at = workspaceHome.get(erpHref(s)) ?? erpHref(s);
-      out[at] = (out[at] ?? 0) + n;
-    }
-    return out;
-  });
+  const badges = counts.then((c) => Object.fromEntries(held.map((s) => [erpHref(s), erpKeysOf(s).filter((k) => !NOT_WAITING.has(k)).reduce((n, k) => n + (c[k] ?? 0), 0)])));
   const nav: NavGroup[] = ERP_GROUPS.map((g) => {
-    const mine = g.screens.filter((s) => s.built && ctx.screens.has(s.key));
-    if (ERP_WORKSPACES.has(g.id) && mine.length > 1)
-      return { id: g.id, label: g.label, icon: g.icon, single: true, screens: [{ key: mine[0].key, label: g.label, href: erpHref(mine[0]), match: mine.slice(1).map((s) => erpHref(s)) }] };
-    const screens = mine.map((s) => ({ key: s.key, label: s.label, href: erpHref(s) }));
+    const screens = g.screens
+      .filter((s) => s.built && ctx.screens.has(s.key))
+      .map((s) => ({ key: s.key, label: s.label, href: erpHref(s) }));
     return {
       id: g.id,
       label: g.label,
