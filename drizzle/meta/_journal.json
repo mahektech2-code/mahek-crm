@@ -2556,6 +2556,13 @@
       "when": 1794948728699,
       "tag": "0372_erp_purchases_split",
       "breakpoints": true
+    },
+    {
+      "idx": 366,
+      "version": "7",
+      "when": 1794948768699,
+      "tag": "0373_erp_label_prints",
+      "breakpoints": true
     }
   ]
 }

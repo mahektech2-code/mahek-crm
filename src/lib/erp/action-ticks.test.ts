@@ -86,3 +86,24 @@ test("Purchase orders and Goods in (Phase 4): receiving is Access, changing a PO
   assert.equal(menuBlock("inward", { id: "receiveAll", loadsForm: true }), 0);
   assert.equal(menuBlock("inward", { id: "void" }), 2);
 });
+
+test("Lot testing, Bills and Drum labels: what each new act needs", () => {
+  /* Lot testing: recording a test on a To test row is the department's ordinary work; deciding it is the verifier's change. */
+  assert.equal(menuBlock("testing", { id: "record", loadsForm: true }), 0, "Record test is Access");
+  assert.equal(menuBlock("testing", { id: "edit", loadsForm: true }), 0, "Record evidence is Access");
+  assert.equal(menuBlock("testing", { id: "addLot", loadsForm: true }), 0);
+  assert.equal(menuBlock("testing", { id: "verify" }), 1);
+  assert.equal(menuBlock("testing", { id: "unverify" }), 1);
+  /* Bills: open-the-lot work, then the changes, then the take-backs — the design's menu. */
+  for (const a of ["trace", "inquiry", "label", "aiBillRead"]) assert.equal(menuBlock("register", { id: a }), 0, a);
+  for (const a of ["rate", "billReceived", "billNotReceived", "status"]) assert.equal(menuBlock("register", { id: a }), 1, a);
+  assert.equal(menuBlock("register", { id: "edit", loadsForm: true }), 1);
+  assert.equal(menuBlock("register", { id: "aiBill", loadsForm: true }), 1);
+  assert.equal(menuBlock("register", { id: "void" }), 2);
+  /* Record bill for n lots is the bulk Record the bill, so it needs Edit on Bills. */
+  assert.equal(tickFor("register", "bulk", "billReceived"), "edit");
+  /* Drum labels is print-only: printing a lot, printing the ticked lots and tracing are Access. */
+  assert.equal(PURCHASE_TICKS.barcode, undefined);
+  assert.equal(tickFor("barcode", "bulk", "print"), undefined);
+  assert.equal(menuBlock("barcode", { id: "trace" }), 0);
+});

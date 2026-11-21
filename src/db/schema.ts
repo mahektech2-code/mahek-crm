@@ -12491,6 +12491,30 @@ export const erpPurchases = pgTable(
 );
 
 /**
+ * 0373: EVERY TIME A PURCHASED LOT'S DRUM LABELS WENT TO PAPER, reprints
+ * included — one row per lot per print, written where the label page actually
+ * printed (sent to the label printer, saved as a print file, or the print
+ * dialog shown). Drum labels reads it: To print is a chemical lot with no row,
+ * Printed is a lot with one, its last time, who and how many prints. `reprint`
+ * says whether the lot had been printed before this one.
+ */
+export const erpLabelPrints = pgTable(
+  "erp_label_prints",
+  {
+    id: text("id").primaryKey(),
+    purchaseId: text("purchase_id")
+      .notNull()
+      .references(() => erpPurchases.id, { onDelete: "cascade" }),
+    /** Labels printed for the lot this time — one a drum unless the page was asked for another number. */
+    copies: integer("copies").notNull(),
+    reprint: boolean("reprint").notNull().default(false),
+    printedById: text("printed_by_id").references(() => users.id),
+    printedAt: timestamp("printed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("erp_label_prints_purchase_idx").on(t.purchaseId, t.printedAt), check("erp_label_prints_copies_check", sql`${t.copies} > 0`)],
+);
+
+/**
  * A vendor's quotation against one requirement, from when a requirement's
  * Quotations tab collected and compared them. RETIRED (Oct 2026): supplier
  * rates are kept on the Quotation manager, and nothing reads or writes this

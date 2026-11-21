@@ -74,27 +74,38 @@ The original PO line always stays as it was ordered. The PO's revision goes up b
 
 ## Testing a chemical
 
-Every chemical lot is tested before it reaches the register. The tester records evidence for the tests the item requires; only the **verifier** decides.
+Every chemical lot is tested before it reaches the register, and it is held out of stock until it is. The tester records evidence for the tests the item requires; only the **verifier** decides. **Lot testing** opens on the lots waiting, in four sub-tabs:
+
+| Sub-tab | What is on it |
+|---|---|
+| **To test** | Lots routed to testing at the gate with nothing recorded yet. They are listed as soon as the GRN is saved — there is no test to open until somebody records one |
+| **To verify** | A test recorded, waiting for the verifier |
+| **Verified** | Passed — the lot went on to the register |
+| **Failed** | Marked not verified |
+
+To test and To verify show **every lot waiting, oldest first**, whatever the period — there is no date filter on them. Verified and Failed follow the period picker.
 
 <Wireframe url="/erp/testing" nav={["Dashboard", "#Purchase", "Requirements", "Purchase orders", "Goods in", "Lot testing", "Bills", "#Tools", "Quotation manager", "Drum labels"]} active="Lot testing" caption="Lot testing">
-  <WfBar><WfTitle sub="Test evidence for each chemical lot, for the verifier to verify.">Lot testing</WfTitle><WfSpacer /><WfButton primary>New test</WfButton></WfBar>
+  <WfBar><WfTitle>Lot testing</WfTitle><WfSpacer /><WfButton primary>New test</WfButton></WfBar>
   <WfTable
-    highlight={0}
-    columns={["Verification", "Date", "PR no", "Item", "Tests required", "Smell", "Density", "Tester", "Godown"]}
+    highlight={1}
+    columns={["Lot", "Item", "Received", "Waiting", "Tests required", "Godown", "Stock", ""]}
     rows={[
-      [<span key="a"><WfPill tone="warn">Pending</WfPill> <Hotspot n={1} /></span>, "6 Oct", "1230", <b key="b">Solvent A</b>, "Smell, Density", "Good", "0.87", "A tester", "Godown A"],
-      [<WfPill key="c" tone="success">Verified</WfPill>, "3 Oct", "1224", <b key="d">Solvent C</b>, "PH, Color", "—", "—", "A tester", "Godown A"],
+      ["ASTOL1501", <span key="a"><b>Solvent A</b><br />PR-15 · PO-2 · Supplier D</span>, "19 Nov, 9:40 am", "2 hours", "Smell, Density", "Godown A", <WfPill key="b" tone="warn">Held until tested</WfPill>, <WfButton key="c" primary>Record test</WfButton>],
+      ["ASMEK0902", <span key="d"><b>Solvent B</b><br />PR-15 · PO-16 · Supplier D</span>, "17 Nov, 4:15 pm", <span key="e">2 days <Hotspot n={1} /></span>, "Smell, Density", "Godown A", <WfPill key="f" tone="warn">Held until tested</WfPill>, <WfButton key="g" primary>Record test</WfButton>],
     ]}
   />
 </Wireframe>
 
 <Hotspots items={[
-  <span key="1"><b>Verification.</b> Pending until the verifier presses <b>Verify</b> or <b>Mark not verified</b>.</span>,
+  <span key="1"><b>Waiting.</b> How long since the lot arrived. It turns red once a lot has waited longer than <Setting k="erp.purchase.testWaitingHours" /> (a day, unless an administrator changes it).</span>,
 ]} />
 
+The row's button is its next step: **Record test** on To test, **Verify** on To verify (or **Record evidence** while something the item's tests need is still missing). The **⋯** menu has the rest — Record evidence, Read test photos and Review / reject photo readings (when AI is on), Add another test, then Verify and Not verified.
+
 <Steps>
-<Step title="Record evidence">
-Open the test and press **Record evidence**. The form asks only for the tests this item requires.
+<Step title="Record the test">
+Press **Record test** on the lot (or **Record evidence** on one already started). The form is already on that lot and asks only for the tests this item requires.
 </Step>
 <Step title="Take the photos and readings">
 | Test | Evidence |
@@ -112,25 +123,39 @@ Open the test and press **Record evidence**. The form asks only for the tests th
 </Step>
 </Steps>
 
-**Add another lot** copies a test to another lot of the same delivery. If AI photo reading is on, **Read test photos** fills the readings for you to review; nothing is saved until you save the review.
+**Add another test** copies a test to another lot of the same delivery. If AI photo reading is on, **Read test photos** fills the readings for you to review; nothing is saved until you save the review.
 
-## The purchase register
+## The purchase register (Bills)
 
 Every lot bought, with what it cost. A row arrives on its own — from a receipt line that needed no test, or from a verified test — at the PO line's rate and GST.
+
+**Bills** opens on the work waiting, in sub-tabs:
+
+| Sub-tab | What is on it |
+|---|---|
+| **Bill to come** | In the godown, the supplier's bill not yet received (needs purchase money) |
+| **Rate missing** | No rate yet — held out of stock until one is entered |
+| **Rate differs** | The rate on the lot is not the PO line's |
+| **Matched** | Bill in hand, rate entered and agreeing with the PO (needs purchase money) |
+| **Every lot** | Everything in the period |
+
+The lots are **grouped by party**: one bill comes from one party. Each party's heading says how many lots, the total on the bill and the party's GSTIN where the purchase party master has it, and carries **Record bill for n lots** — it asks for the bill number once and puts it on every lot of that party in the open sub-tab that has no bill yet.
 
 ### A purchase moves along one line
 
 **Arrived** (or **Tested**) → **Bill received** → **Matched** → **Verified**.
 
+Each row's **⋯** menu lists, in this order: open the lot, **Trace this lot**, **Stock inquiry**, **Print drum label**, **Read supplier bill**; then the changes — **Edit lot**, **Enter rate**, **Bill received** / **Bill not received**, **Set status**, **Review bill reading**; then, in red, **Void this lot…** and **Back to pending**. A lot with no rate has **Enter rate** as its button.
+
 | Action | Who | What it does |
 |---|---|---|
 | **Enter rate** | Purchase money | Only on a row with no rate. "Posted · … of lot … now in stock" |
-| **Record the bill** | Purchase money | Records the supplier's bill number; the stage becomes Bill received |
-| **Bill Not Received** | Purchase money | Undoes it — refused once the purchase is matched |
-| **Change status** | Purchase money | Invoice Received or Purchase Matched; the verifier sets only Purchase Verified |
+| **Bill received** | Purchase money | Records the supplier's bill number; the stage becomes Bill received |
+| **Bill not received** | Purchase money | Undoes it — refused once the purchase is matched |
+| **Set status** | Purchase money | Invoice Received or Purchase Matched; the verifier sets only Purchase Verified |
 | **Back to pending** | The reopen power (an admin) | Sets a verified purchase back to Pending |
 | **Read supplier bill** | Purchase money, AI bills on | Reads a photo or PDF of the bill and matches it to this PR's rows for you to review |
-| **New purchase**, **Edit**, **Add another** | The screen | Enter a lot by hand against a PO, correct a row, or add another lot to the PR |
+| **New purchase**, **Edit lot** | The screen | Enter a lot by hand against a PO, or correct a row |
 | **Print drum label** | The screen | Opens the lot's drum label to print — see below |
 
 <Callout kind="money">
@@ -169,7 +194,9 @@ Opening one row, editing it and adding another lot stay on the row itself.
 
 ## Drum labels
 
-A list of chemical purchases at **your working godown**, with each lot's short label name, litres, drums, litres per drum, density and PR bill number — the figures printed on a drum label. **Print drum label** on a row (also on the register) opens that lot's label, 80 × 80 mm and one per drum, to send to the label printer, save as a printer file or print from the browser. The list can still be downloaded.
+The chemical lots at **every godown you are assigned to**, in two sub-tabs: **To print** (the lot's drum labels have never been printed) and **Printed** (printed at least once, with when it was last printed, by whom and how many times). Each row shows the received date, lot, the short label name, drums, litres per drum, density, PR and godown.
+
+**Print n** on a row opens that lot's labels, 80 × 80 mm and one per drum. Tick several lots and **Print n labels** opens all of them in one go. Either way the label page sends them to the label printer, saves a printer file or opens the browser's print dialog — and **every print is recorded**, reprints included, which is what moves a lot from To print to Printed. Both sub-tabs follow the period picker: lots bought before prints were recorded read as To print.
 
 ## Common questions
 
@@ -186,5 +213,5 @@ Nobody has set the rate yet. Until an administrator sets <Setting k="erp.purchas
 </Faq>
 
 <Faq q="A test was verified by mistake.">
-The verifier can mark it **Mark not verified**. The register row it created stays — correct or remove that with the office.
+The verifier can mark it **Not verified** from the row's ⋯ menu. The register row it created stays — correct or remove that with the office.
 </Faq>

@@ -12,11 +12,11 @@
 import { runCalc } from "./calc";
 
 import { roundedTotal } from "@/lib/bill-round";
-import { groupIndian, rupeesFromPaise } from "@/lib/format";
+import { groupIndian, rupeesFromPaise, stamp } from "@/lib/format";
 import { measureOfBase } from "./engines/uom";
 
-/** Column types, from the design: bold, text, number, money, date, status, flags, phone, email, map, mono. */
-export type ColType = "b" | "t" | "n" | "m" | "d" | "s" | "f" | "ph" | "em" | "map" | "mono";
+/** Column types, from the design: bold, text, number, money, date, status, flags, phone, email, map, mono — and `at`, a moment (an ISO timestamp, drawn "19 Nov, 9:40 am" in the business's zone, sorted as it is stored). */
+export type ColType = "b" | "t" | "n" | "m" | "d" | "s" | "f" | "ph" | "em" | "map" | "mono" | "at";
 
 export type ColSpec = {
   k: string;
@@ -45,6 +45,12 @@ export type ColSpec = {
    * rounded once — the bill's own figure — and never a sum of rounded lines.
    */
   whole?: boolean;
+  /** The row value drawn UNDER the cell's own, small and muted — an item's "PR-15 · PO-2 · Asian Solvents". Searched and exported with the row. */
+  sub?: string;
+  /** The row value that, when set, draws the cell in red — "2 days" waiting past its threshold. The rule is the server's. */
+  alert?: string;
+  /** The value is a comma-separated list drawn as small chips ("Smell, Density" → two chips). Still one text value to search, sort and export. */
+  tags?: boolean;
 };
 
 /**
@@ -484,6 +490,17 @@ export type BulkSpec = {
    * first and its values travel with the confirmation.
    */
   impact?: { kind: string };
+  /**
+   * Navigates instead of acting: `href` with the ticked ids appended,
+   * comma-separated — Print labels opens the label page over every ticked lot.
+   */
+  href?: string;
+  /**
+   * The button says a figure over the ticked rows: `l` carries `{n}`, the sum
+   * of row value `k` over the ticked rows the page holds ("Print {n} labels"
+   * over the drums of each lot).
+   */
+  countK?: string;
 };
 
 /**
@@ -574,6 +591,18 @@ export type ListSubtab = {
    * alike, so a sub-tab's columns, groups and cards cannot drift apart.
    */
   view?: SubtabView;
+  /**
+   * The work WAITING, read whole: the period picker is not drawn on this
+   * sub-tab and `note` says so. The loader must read these rows whatever the
+   * window — a lot waiting a month is still waiting.
+   */
+  allTime?: boolean;
+  /** One short line said at the right of the toolbar on this sub-tab ("Every lot waiting, oldest first"). */
+  note?: string;
+  /** This sub-tab's own default order, in place of the list's `sortDefault` — oldest first on a queue, newest first on a record. */
+  sort?: [string, 1 | -1];
+  /** Columns not drawn on this sub-tab, because they say nothing there (a print count on To print). Still in the record and the export. */
+  hide?: string[];
 };
 
 /** What a sub-tab may read differently (`ListSubtab.view`). */
@@ -597,6 +626,17 @@ export type ListSpec = {
    * Stickers tab groups by transporter and prints every order the lorry takes.
    */
   groupPrint?: { k: string; l: string; href: string };
+  /**
+   * A button on each group's heading that runs the bulk action `id` (one of
+   * `bulk`, so a missing tick takes it away with the bulk) over the group's
+   * rows that can take it — every page of the group, after the filters and the
+   * sub-tab. `l` carries `{n}`, how many rows that is, and `{noun}`, the
+   * `groupNoun` that fits it ("Record bill for {n} {noun}" — "1 lot", "3
+   * lots"); a group none of whose rows can take it draws no button.
+   */
+  groupBulk?: { id: string; l: string };
+  /** What a group heading counts its rows as: ["lot", "lots"]. Rows, where unsaid. */
+  groupNoun?: [string, string];
   /** Action ids drawn in a ⋯ menu at the end of every row (each row's own `actions` of those ids). */
   rowMenu?: string[];
   /** Leave the row count out of each group's heading — where the heading already says it ("4 open lines"). */
@@ -752,6 +792,7 @@ export const TONES: Record<Tone, [string, string]> = {
 
 /** The tone a status value is drawn in, wherever it appears. */
 export const ST_TONE: Record<string, Tone> = {
+  "Held until tested": "warn", Released: "success", "Held — failed": "danger",
   "Under Process": "info", Ready: "success", Today: "brand", Tomorrow: "neutral", Delay: "danger",
   "Hold From Office": "warn", Cancel: "muted", Pending: "warn", Verified: "success", Verify: "success",
   "Not Verified": "danger", "Not verified": "warn", "Not Verify": "warn", Active: "success", Deactive: "muted",
@@ -966,6 +1007,7 @@ export function moneyText(col: Pick<ColSpec, "whole">, v: CellValue | undefined)
 
 export function cellText(col: ColSpec, v: CellValue | undefined): string {
   if (col.t === "d") return fd(v) || "—";
+  if (col.t === "at") return v == null || v === "" ? "—" : stamp(String(v));
   if (col.t === "m") return v === "" || v == null ? "—" : moneyText(col, v);
   if (col.t === "n") return v === "" || v == null ? "—" : typeof v === "number" ? nf(v) + (col.u ?? "") : String(v);
   return v == null || v === "" ? "—" : String(v);

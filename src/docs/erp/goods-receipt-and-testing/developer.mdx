@@ -11,8 +11,9 @@ The receipt side of the purchase flow is `lib/erp/screens/purchase.ts`: the `inw
 | What's next | same | `whatsNext` turns what `inward.new` did — each line's routing, register row and lot — into labels / testing / bill; the save answers `{ next: GrnNext }` and the dialog draws it as step 5 |
 | Sub-tabs | `screens/purchase.ts`, `lib/erp/list-query.ts` | Goods in's rows are two kinds (`v.kind`: `expected`, `receipt`, `receiptToday`); **Expected at the gate** and **Received today** carry a `view` (`specForSubtab` merges it over the spec — columns, groups, `groupAction`, cards) and are `unwindowed` |
 | Register row | same | `createPurchase`, `syncPurchaseEntry`, `refreshCache`, `savePurchase`, `register` module, `purchaseStage` |
-| Testing | same | `TEST_FIELDS`, `missingEvidence`, `testForm`, `saveTest`, `testing` module (`verify`, `unverify`, AI read) |
-| Drum labels | same | `barcode` module — working godown's chemical lots; each row (and each register row) links to `erpLabelsHref({ purchase })`, the `?purchase=` view of `app/erp/print-labels` |
+| Testing | same | `TEST_FIELDS`, `missingEvidence`, `testForm`, `saveTest`, `testing` module (`verify`, `unverify`, `formLoaders.record`, AI read) |
+| Testing queue (pure) | `src/lib/erp/engines/lot-testing.ts` | `testBucket` (To test · To verify · Verified · Failed), `waitingText`, `waitedTooLong`, `STOCK_WORDS` |
+| Drum labels | same | `barcode` module — chemical lots at every godown the person is assigned to, To print / Printed off `labelPrintsOf`; each row links to `erpLabelsHref({ purchase })`, the bulk to `erpLabelsHref({ purchases: [] })` + the ticked ids; `recordLabelPrints` is the print log's one writer, reached through `erpRecordLabelPrints` (`lib/actions/erp-trace.ts`) from `LabelPrinter` |
 | Date window | `src/lib/erp/window.ts` | `INWARD_WINDOW`, `TEST_WINDOW`, `REGISTER_WINDOW`, `BARCODE_WINDOW` open on the last seven days (`REGISTER_DEFAULT`); an unrouted inward line and an undecided test always show |
 | Landed cost | `src/lib/erp/stock.ts` | `lotLandings` — shares by PR on read; `rmLots` values stock at the landed litre rate |
 | PO back-link | `src/lib/erp/screens/purchase-flow.ts` | `refreshPurchaseOrder`, `receivedByLine` |
@@ -76,6 +77,8 @@ sequenceDiagram
 
 <Code file="src/lib/erp/screens/purchase.ts" symbol="missingEvidence" />
 
+The list is a queue (`engines/lot-testing.ts`): its rows are the undecided and windowed tests PLUS every inward line routed to Testing with no `erp_tests` row (`bucket: "toTest"`, the row id is the inward line's). `formLoaders.record` answers Record test with the ordinary `new` form already on that line. To test and To verify are `ListSubtab.allTime` (no period picker, their own `sort`, oldest first); `waiting` is from the inward line's `created_at` and `late` past `erp.purchase.testWaitingHours`, drawn red by `ColSpec.alert`.
+
 `verify` checks `verifyTest`, refuses on missing evidence, then in one transaction marks the test Verified and — if no register row names this test — calls `createPurchase` with `source: "test"`, the tested density and the PO terms of its inward line (`poTermsOfInward`). A refused lot number rolls the whole verification back.
 
 ## Landed cost on read
@@ -123,6 +126,8 @@ Shares are computed every time stock is read, so a rate entered later moves the 
   source: "inward · test · manual.",
 }} />
 
+<DbTable name="erp_label_prints" note={{ copies: "Labels printed for the lot this time — one a drum unless the page was asked for another number.", reprint: "The lot had been printed before this print.", printed_by_id: "Who pressed print." }} />
+
 <DbTable name="erp_rm_entries" note={{ source_type: "purchase · transfer.", source_id: "The register row or transfer that wrote it — one entry per source." }} />
 
 ## Permissions
@@ -130,8 +135,9 @@ Shares are computed every time stock is read, so a rate entered later moves the 
 - **Modules:** <ModuleRef k="erp.inward" /> (Goods in), <ModuleRef k="erp.testing" />, <ModuleRef k="erp.register" /> (Bills), <ModuleRef k="erp.barcode" /> (Drum labels) — one Purchases page with three tabs until Nov 2026 (`0372` split its grant).
 - **Powers:** `viewPurchaseMoney` (also the register's bulk `rate`, `billReceived`, `status` and `billNotReceived`), `verifyTest`, `verifyPurchase` (with `viewPurchaseMoney`, the register's bulk `verifyMany`), `reopenPurchase` (also the bulk `reopen`).
 - **A selection's shape:** a `BulkSpec` with `same` is offered only while every ticked row shares those values (`["pr"]`, `["party"]`, `["item", "unit"]`), and `asRow` runs that one record's own row action once (`bulk-fit.ts`). The act refuses a mixed selection itself, because the bar cannot judge rows past its page. **Combined view** (`client: "combinedView"`, `ListSpec.combined`) reads exactly the ticked rows through the screen's own loader (`erpCombinedView`), so its values and actions are the list's.
-- **Labels:** a purchase label opens for anybody holding `barcode`, `register`, `stock` or `inward` (`SCREENS` in `app/erp/print-labels/page.tsx`) — Goods in since the GRN's What's next prints them.
+- **Labels:** a purchase label opens for anybody holding `barcode`, `register`, `stock` or `inward` (`SCREENS` in `app/erp/print-labels/page.tsx`) — Goods in since the GRN's What's next prints them — and the same may record its print (`erpRecordLabelPrints`). A preview ("View the ERP as") records nothing.
 - **Expected at the gate:** Receive and Receive from <supplier> are Access on Goods in (`action-ticks.ts` names neither). What's next offers **Record bill** only with Bills, its Edit tick and `viewPurchaseMoney`.
+- **Bills' group action:** `ListSpec.groupBulk` names the bulk `billReceived`; `groupBulkIds` (`list-query.ts`) gives the group's rows that carry the row act without a `why` or a tick lock, across every page, so `applyTicks` removing the bulk removes the button.
 
 ## Tests that pin this
 
@@ -146,6 +152,8 @@ Shares are computed every time stock is read, so a rate entered later moves the 
 | | "Purchase orders and Goods in" | Expected at the gate: only lines still to come, the group with the most overdue line first, late then by due date, done and cancelled POs left out; Receive opens the GRN on one line and Receive from <supplier> on that delivery's lines; the save's What's next (labels after testing or Print n labels, Sent to Mixing & Blending, Record bill only with money); a PR keeps to its supplier |
 | `npm run test` | `src/lib/erp/engines/purchase-flow.test.ts` | `expectedAtGate`, `gateGroupLine`, `supplierDelivery` (one line per item), `whatsNext` |
 | | "a selection, by its shape" | One rate only for one item, one bill only for one party; bulk status, bill not received and back to pending keep the row's rules; Transport & costs only for one PR's lines; sending on goes line by line |
+| `npm run test:integration` | `src/lib/erp/erp-purchase-desks.integration.test.ts` | Lot testing's buckets with untested lines as rows, Record test opening on the line, the period ignored on the queue, Waiting red past the setting; Bills by party and Record bill for n lots on one party's lots in the open sub-tab, without money or Edit no button; Drum labels' print log with reprints, To print / Printed, godowns by assignment |
+| `npm run test` | `src/lib/erp/engines/lot-testing.test.ts` | The four buckets (an undecided "Not Verified" is waiting), waiting words, the threshold |
 | `npm run test` | `src/lib/erp/bulk-fit.test.ts` | Which bulk actions a selection is offered by its rows' own actions and by its shape, and what a narrower selection would add |
 
 ## Changing it safely

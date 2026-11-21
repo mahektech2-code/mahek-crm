@@ -2,7 +2,7 @@
 
 import { useState, useSyncExternalStore, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { erpMarkLabelsPrinted } from "@/lib/actions/erp-trace";
+import { erpMarkLabelsPrinted, erpRecordLabelPrints } from "@/lib/actions/erp-trace";
 import { Button } from "@/components/ui/primitives";
 import { printRuns } from "@/lib/erp/engines/labels";
 import { dots, qrGrid, rasterFromRgba, tsplCalibrate, tsplJob, type PrinterSetup, type Raster } from "@/lib/erp/engines/tspl";
@@ -184,7 +184,24 @@ function saveFile(bytes: Uint8Array, name: string) {
 
 const noop = () => () => {};
 
-export function LabelPrinter({ ids, count, what, mm, setup, fileName }: { ids: string[]; count: number; what: string; mm: number; setup: PrinterSetup; fileName: string }) {
+export function LabelPrinter({
+  ids,
+  lots = [],
+  count,
+  what,
+  mm,
+  setup,
+  fileName,
+}: {
+  ids: string[];
+  /** Purchased lots on the page and the labels each takes: every print of them is recorded, reprints included. */
+  lots?: { id: string; copies: number }[];
+  count: number;
+  what: string;
+  mm: number;
+  setup: PrinterSetup;
+  fileName: string;
+}) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [note, setNote] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
@@ -194,6 +211,11 @@ export function LabelPrinter({ ids, count, what, mm, setup, fileName }: { ids: s
 
   /* For box labels: each box says when its label was printed, and how many times. */
   const mark = async () => {
+    if (lots.length) {
+      /* For drum labels: each lot's print goes in its log, so Drum labels can say To print or Printed. */
+      const res = await erpRecordLabelPrints(lots);
+      if (!res.ok) setNote({ tone: "bad", text: res.error });
+    }
     if (!ids.length) return;
     const res = await erpMarkLabelsPrinted(ids);
     if (!res.ok) setNote({ tone: "bad", text: res.error });

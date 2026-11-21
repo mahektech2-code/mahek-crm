@@ -23,7 +23,15 @@ export async function inwardAwaitingIds(): Promise<string[]> {
 
 /** Tests the verifier has not decided yet. */
 export async function testsAwaitingIds(): Promise<string[]> {
-  return (await db.select({ id: erpTests.id }).from(erpTests).where(isNull(erpTests.decidedAt))).map((r) => r.id);
+  /* Lot testing's To test (a line routed to testing with no test yet — its row is the inward line) and To verify. */
+  const [untested, undecided] = await Promise.all([
+    db
+      .select({ id: erpInward.id })
+      .from(erpInward)
+      .where(and(eq(erpInward.routed, "Testing"), sql`not exists (select 1 from erp_tests t where t.inward_id = ${erpInward.id})`)),
+    db.select({ id: erpTests.id }).from(erpTests).where(isNull(erpTests.decidedAt)),
+  ]);
+  return [...untested, ...undecided].map((r) => r.id);
 }
 
 /** Register rows with no rate — which is why they are not in stock. */
