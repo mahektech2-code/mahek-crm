@@ -84,7 +84,7 @@ npm run jobs -- access-screens-backfill --dry-run
                            # model), compared power by power. Refuses any grant
                            # that would lose something; lists what each gains
 npm run jobs -- access-screens-backfill    # write them — idempotent, audited.
-                           # Nothing reads the rows until the checks switch over
+                           # A written grant is answered from its ticks from then on
 npm run jobs -- customer-master-sync        # the EMP 2.0 shop master -> staging
 npm run jobs -- customer-master-project --dry-run
                            # what the shop master would create, writing nothing

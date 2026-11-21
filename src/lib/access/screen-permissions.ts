@@ -105,3 +105,14 @@ export function differenceForLevel(app: AppId, role: Role): LevelDifference {
   }
   return { app, role, gained, lost };
 }
+
+/** One app's stored screen rows, as the draft every check reads. */
+export function grantFromRows(
+  position: Position,
+  rows: readonly { screen: string; edit: boolean; del: boolean; auto: boolean }[],
+): AppGrantDraft {
+  const screens = new Map<string, ScreenTicks>();
+  for (const r of rows) screens.set(r.screen, { edit: r.edit || r.del, delete: r.del, autoEdit: r.auto });
+  /* Modules are the sidebar sections these screens sit in; the checks read screens only. */
+  return { position, modules: new Set(), screens };
+}

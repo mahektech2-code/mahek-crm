@@ -170,10 +170,9 @@ describe("who owns which action", () => {
    *   Access gives every ordinary action on a screen. Today it is a
    *   manager's. An associate exports only their own book (position).
    *   Signed off: an associate may export what they can see.
-   * - AWAITING SIGN-OFF: sending WhatsApp in bulk and writing templates sit
-   *   on Edit on WhatsApp, and every CRM associate held WhatsApp's old Write
-   *   level ("reply and send"), which is that Edit now. So every telecaller
-   *   gains them. Not to be switched on until decided.
+   * - WhatsApp: replying and sending is Edit (the old Write level every
+   *   telecaller held); bulk sending and templates are Delete on WhatsApp,
+   *   so nobody gains them.
    */
   test("what the screen model gives beyond today's levels is exactly the signed-off list", () => {
     const gained: Record<string, Capability[]> = {};
@@ -184,7 +183,7 @@ describe("who owns which action", () => {
       }
     }
     assert.deepEqual(gained, {
-      "crm associate": ["customer.export", "whatsapp.bulk", "whatsapp.template.write"],
+      "crm associate": ["customer.export"],
       "sales associate": ["customer.export"],
     });
   });

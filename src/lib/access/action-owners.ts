@@ -85,8 +85,9 @@ export const ACTION_OWNERS: Record<Capability, Partial<Record<AppId, Owner[]>>> 
     founder: [mgr(a("founder.overview"))],
   },
 
-  "whatsapp.bulk": { crm: [e("crm.whatsapp")], sales: [e("sales.notify")] },
-  "whatsapp.template.write": { crm: [e("crm.whatsapp")], sales: [e("sales.notify")] },
+  /* Bulk sending and templates are Delete on WhatsApp: replying is Edit, and every telecaller replies. */
+  "whatsapp.bulk": { crm: [d("crm.whatsapp")], sales: [e("sales.notify")] },
+  "whatsapp.template.write": { crm: [d("crm.whatsapp")], sales: [e("sales.notify")] },
   "whatsapp.activate": { founder: [e("founder.whatsapp")] },
 
   "order.approve": { accounts: [e("accounts.approvals")] },

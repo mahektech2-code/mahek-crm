@@ -17,8 +17,8 @@ import { compareConversion, convertGrant, type ConversionDifference, type GrantT
  * `app_access.position` and the `app_screen_access` rows.
  *
  * IT REFUSES A GRANT THAT WOULD LOSE ANYTHING on a screen the person still
- * holds: that grant is left unconverted and listed. Nothing reads the new rows
- * yet, so a refusal costs nothing but a line in the report to look at.
+ * holds: that grant is left unconverted and listed, and goes on meaning what
+ * its level meant. A converted grant is answered from its ticks from then on.
  *
  * Idempotent: a converted grant is rewritten from the same inputs, so a
  * second run writes the same rows. `--dry-run` converts and compares

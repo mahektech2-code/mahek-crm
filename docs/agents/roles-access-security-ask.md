@@ -498,8 +498,7 @@ ERP godown's staff, and each Sales Dashboard oversight region. Active accounts
 only. `seatsOverview()` in `access-overview-service.ts`; each kind is changed
 where it is set, named under its heading.
 
-**THE SCREEN MODEL IS BEING BUILT BESIDE LEVELS, and nothing reads it yet**
-(branch `admin/access-position-and-permissions`). A level used to decide both
+**THE SCREEN MODEL: POSITION AND SCREEN TICKS.** A level used to decide both
 whose records somebody saw and what they could do. It is being split in two:
 POSITION per app (associate own, manager own + HRMS team, everyone the whole
 company) decides only what is seen, and per SCREEN — the app's sidebar items,
@@ -519,3 +518,21 @@ model gives that levels did not; `convert-grant.ts` converts one grant and
 `app_access.position` and `app_screen_access` and REFUSES any grant that would
 lose something on a screen still held. Unlike `app_module_access`, no
 `app_screen_access` rows means no screens.
+
+**HOW IT IS SWITCHED ON, grant by grant.** A grant is converted once
+`app_access.position` is set — by `access-screens-backfill`, or by saving it in
+the Manage access dialog (`app/admin/access/screen-access-dialog.tsx`, which
+`setAccess` takes as `screenGrants`). For a converted grant `hatsFor` puts the
+ticks on the hat (`Hat.holds`) and `can()` answers from them, and
+`scopeForUser` reads the position: associate own, manager team, everyone all.
+An unconverted grant goes on meaning what its level meant, so the switch can
+roll out a person at a time. EVERYTHING ELSE READS WHAT IT ALWAYS READ:
+`setAccess` derives `app_module_access`, the level and the ERP/HRMS/Tasks
+power rows from the ticks (`legacyFromScreens`), on the server and in the same
+transaction, ignoring whatever the request sent for them — so every sidebar,
+route gate and app access file stays right without being rewritten. A save
+that moves only ticks (Edit to Delete) moves nothing in those tables, which is
+why `screensDiffer` is part of "No change.". `requestHat` returns the hat from
+`hatsFor` for the same reason: a second read of the grant would carry no ticks,
+and the app in force would answer from the level while the union answered from
+the screens.

@@ -963,7 +963,8 @@ export const appAccess = pgTable(
     role: roleEnum("role"),
     /**
      * Whose records they see in this app, under the screen model. NULL until
-     * `access-screens-backfill` has converted the grant; nothing reads it yet.
+     * the grant is converted (`access-screens-backfill`, or a save in the
+     * Manage access dialog); set, it decides the scope and turns on the ticks.
      */
     position: accessPositionEnum("position"),
     grantedById: text("granted_by_id").references(() => users.id),
@@ -1024,8 +1025,9 @@ export const appModuleAccess = pgTable(
  * save both run.
  *
  * Unlike `app_module_access`, NO ROWS MEANS NO SCREENS: every converted grant
- * is written out in full. Filled by `npm run jobs -- access-screens-backfill`;
- * nothing reads it until the checks are switched over.
+ * is written out in full. Filled by `npm run jobs -- access-screens-backfill`
+ * and by every save in the Manage access dialog; read by `hatsFor` for every
+ * grant whose `app_access.position` is set.
  */
 export const appScreenAccess = pgTable(
   "app_screen_access",

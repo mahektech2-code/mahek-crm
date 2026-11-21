@@ -1633,8 +1633,8 @@ export async function runJob(
         ),
       ];
     case "access-screens-backfill":
-      /* THE SCREEN MODEL OF ACCESS, written beside today's grants. Nothing reads it yet. A grant that
-         would lose anything on a screen still held is refused and listed, never written. */
+      /* THE SCREEN MODEL OF ACCESS, written beside today's grants; a written grant is answered from its
+         ticks. A grant that would lose anything on a screen still held is refused and listed, never written. */
       return [
         await run(
           "access-screens-backfill",
