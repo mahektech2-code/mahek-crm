@@ -83,16 +83,16 @@ Deciding **where a salesman works** — which states, districts or towns reach h
 Go to [Salesmen](/docs/sales/salesmen) and press **Where they work** on his row.
 </Step>
 <Step title="Pick the states first">
-*Pick the states they cover* — a dropdown where you can tick several. Each state shows how many shops it holds.
+*Pick the states they cover* — a dropdown where you can tick several. All 28 states and 8 union territories are always listed, including any with no shops yet (shown as 0). Each shows how many shops it holds.
 </Step>
 <Step title="Narrow to districts, if you want to">
-*Narrow to districts, if you want to* — a second dropdown, listing the districts of the states you picked, biggest first. A state with no district picked means **the whole state**; picking Thane inside Maharashtra means **Thane district only**.
+*Narrow to districts, if you want to* — a second dropdown, listing the districts of the states you picked, biggest first. A state with no district picked means **the whole state**; picking Thane inside Maharashtra means **Thane district only**. Every district of a picked state is listed, including those with no shops (shown as 0). A district marked *in the book only* is in your customer data but is not on the list of districts, so it is kept as its own entry and never merged with a similar-looking name. A district marked *provisional* comes from a single source that has not been confirmed.
 </Step>
 <Step title="Narrow to towns, if you want to">
 Each district you picked opens its towns underneath, with a shop count on each. Tick none and he works the whole district; tick Kalyan and Bhiwandi and he works those two towns. The narrowest pick in a branch is what he works.
 </Step>
 <Step title="Save">
-His phone drops the shops outside the new area on its next sync and he is told *"Where you work has changed"*. Nothing is taken out of his book — only off his phone.
+If you have narrowed a state to districts, towns or an earlier typed city and some shops in that state are not placed in any district and are not reached by what you picked, the footer says how many active shops in each state (deactivated and deleted ones are not counted), and how many of them are on his phone now. If a place you picked holds no shops yet, the dialog says so in a warning — you can still save, but nothing is added to his list by that place until shops are placed in it. **Save stays disabled until you tick "I understand"**, and the server checks every state's number again when you save. A save that changes nothing never asks. His phone drops the shops outside the new area on its next sync and he is told *"Where you work has changed"*. Nothing is taken out of his book — only off his phone.
 </Step>
 </Steps>
 
@@ -118,7 +118,7 @@ A shop he raised himself as a lead on his phone stays on his phone wherever it i
 No. An area only narrows his own book. Whose shops are whose is decided separately.
 </Faq>
 <Faq q="Where do the districts and towns come from?">
-From the reviewed location tree — the same state, district and town every customer list filters by — not from what was typed as the city on the record. A shop the tree could place only as far as its state (the town typed on it matched two places, or none) is reached by a whole-state pick and by no district; the dialog counts those shops.
+States and districts come from a fixed list of the states, union territories and districts of India, so they are offered whether or not any shop is there. Their shop counts, and the towns under each district, come from the reviewed location tree — the same state, district and town every customer list filters by — not from what was typed as the city on the record. The district list is provisional and carries no official codes yet. A shop the tree could place only as far as its state (the town typed on it matched two places, or none) is reached by a whole-state pick and by no district; the dialog counts those shops.
 </Faq>
 <Faq q="He was given a city before districts existed. Is it gone?">
 No. It goes on meaning what it meant, and the dialog lists it under *Picked before districts existed*, where you can keep it or take it off.
