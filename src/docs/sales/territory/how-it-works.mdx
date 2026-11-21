@@ -48,6 +48,14 @@ The districts and towns on offer are the reviewed location tree — state, distr
 
 A state's own count is the shops whose typed state is that state, because that is what a whole-state pick has always matched. A shop the tree placed no further than its state is reached by a whole-state pick and by no district, and the dialog says how many there are. Shops naming no state at all are counted and said out loud: no territory can reach them.
 
+### States and districts are a fixed list
+
+Which states and districts are offered no longer depends on the book. `src/lib/geography/india-districts.ts` lists 28 states, 8 union territories and their districts, and `mergeMasterWithBook` puts the book's counts beside them — `0` where nothing is placed. A master district is linked to the tree **only when the folded names match under the same state**. A district the tree has that the list does not name stays as its own *in the book only* entry, and a district already allocated that neither names is kept as an earlier pick; nothing is merged or renamed on a guess. The list is **provisional**: one public source, no official codes, and four West Bengal districts (Basirhat, Sundarbans, Jangipur, Arambagh) are marked provisional.
+
+### Narrowing asks before it leaves shops outside
+
+In a state with a district, a town or an earlier typed city picked under it, a shop placed in no district is reached by a district or town pick never, and by a typed city only when its city text matches. `previewAreaHandover` returns, per such state, how many **active** shops (customers and leads, not deleted and not deactivated — the same shops the hand-over counts) no pick in that state reaches and how many of them are on his phone now, plus whether the save would change anything. `setSalesmanTerritories` takes `acknowledgedOutside` as a list of states with counts, recomputes them for exactly the areas sent, and compares them **state by state**: a missing state, or a stale count in any one, is refused. A save that changes nothing, or leaves nothing outside, needs none. A typed city that never named its state has no state to count under and is not guessed into one. No shop is moved and no district is guessed for it.
+
 A lead raised on a phone inside a district is placed on the tree **as it is saved**, by the same matcher that let it in, so it does not drop off its own salesman's phone until the nightly pass.
 
 ## No territory now means no book — and that was a reversal

@@ -29,6 +29,7 @@ import { placeFilterOptions, placeFilterSql, placeNameSql } from "@/lib/services
 import type { PlaceFilterOptions, PlaceFilterValues } from "@/lib/place-filters";
 import { rankShopCities } from "@/lib/journey-days";
 import { canonicalState, stateKey, stateVariants } from "@/lib/india-states";
+import { mergeMasterWithBook } from "@/lib/geography/territory-options";
 import { metresBetween } from "@/lib/geo";
 import { NOBODY, type TerritorySeat } from "@/lib/territory-seats";
 import { dropInaccurateFixes } from "../engines/trail-gaps";
@@ -5966,6 +5967,10 @@ export type DistrictNode = {
   towns: TownNode[];
   /** Shops the tree places in it — what a whole-district pick reaches. */
   shops: number;
+  /** In the book, but named by nothing on the geography master — kept as its own entry, never merged. */
+  bookOnly?: boolean;
+  /** On the master from one source only and not yet confirmed. */
+  provisional?: boolean;
 };
 
 export type StateNode = {
@@ -5995,6 +6000,16 @@ export type PlaceTree = {
    */
   statelessShops: number;
 };
+
+/**
+ * THE PLACES THE "WHERE THEY WORK" DIALOG OFFERS: every state, union territory
+ * and district on the geography master, with this book's shop counts beside
+ * them (zero where nothing is placed), plus the book's own districts that the
+ * master does not name. See `territory-options.ts`. `knownPlaces` is untouched.
+ */
+export async function territoryPlaces(): Promise<PlaceTree> {
+  return mergeMasterWithBook(await knownPlaces());
+}
 
 export async function knownPlaces(): Promise<PlaceTree> {
   const [typed, placed] = await Promise.all([
