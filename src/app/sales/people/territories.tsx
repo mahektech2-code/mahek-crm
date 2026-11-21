@@ -434,8 +434,7 @@ export function Territories({
           and move into theirs when you save unless you untick it.
         </p>
 
-        {(
-          <>
+        <>
             <Step n={1} title="Pick the states they cover" />
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
               <MultiSelect
@@ -646,8 +645,7 @@ export function Territories({
                 allocated to anybody.
               </p>
             ) : null}
-          </>
-        )}
+        </>
 
         {error ? (
           <p className="mt-3 rounded-[4px] bg-danger-soft px-3 py-2 text-[13px] text-danger">
