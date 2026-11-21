@@ -2549,6 +2549,13 @@
       "when": 1794948688699,
       "tag": "0371_journey_plan_cities",
       "breakpoints": true
+    },
+    {
+      "idx": 365,
+      "version": "7",
+      "when": 1794948728699,
+      "tag": "0372_erp_purchases_split",
+      "breakpoints": true
     }
   ]
 }

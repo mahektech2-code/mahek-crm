@@ -1,13 +1,12 @@
-When a lorry arrives at the gate, three things happen in the ERP: the goods are **received against their purchase order** (a GRN, numbered as a PR), a chemical is **tested** before anybody may use it, and every lot ends up in the **purchase register** with a rate — which is what puts it into stock. The Purchases screen has three tabs for this — Goods receipt (GRN), Register and Drum labels — and Lot testing is its own screen.
+When a lorry arrives at the gate, three things happen in the ERP: the goods are **received against their purchase order** (a GRN, numbered as a PR), a chemical is **tested** before anybody may use it, and every lot ends up in the **purchase register** with a rate — which is what puts it into stock. In the Purchase menu these are steps 3 to 5 — **Goods in**, **Lot testing** and **Bills** (the register) — with **Drum labels** under Tools.
 
 ## Receiving goods at the gate
 
-<Wireframe url="/erp/register" nav={["Dashboard", "#Purchase", "Requirements", "Purchase orders", "Purchases", "Lot testing", "Quotation manager"]} active="Purchases" caption="Purchases → Goods receipt (GRN)">
+<Wireframe url="/erp/goods-in" nav={["Dashboard", "#Purchase", "Requirements", "Purchase orders", "Goods in", "Lot testing", "Bills", "#Tools", "Quotation manager", "Drum labels"]} active="Goods in" caption="Purchases → Goods receipt (GRN)">
   <WfBar>
-    <WfTitle sub="Goods received against a PO, and the lots they become.">Purchases</WfTitle>
+    <WfTitle sub="Goods received against a PO at the gate, line by line.">Goods in</WfTitle>
     <WfSpacer /><WfButton primary>Receive goods</WfButton><Hotspot n={1} />
   </WfBar>
-  <WfTabs items={["Goods receipt (GRN)", "Register", "Drum labels"]} active="Goods receipt (GRN)" />
   <WfTable
     columns={["PR no", "PO", "Date", "Supplier", "Item", "Drums", "Weight with drum", "Empty drum weight", "Quantity", "Testing required", "Sent to"]}
     rows={[
@@ -67,7 +66,7 @@ The original PO line always stays as it was ordered. The PO's revision goes up b
 
 Every chemical lot is tested before it reaches the register. The tester records evidence for the tests the item requires; only the **verifier** decides.
 
-<Wireframe url="/erp/testing" nav={["Dashboard", "#Purchase", "Requirements", "Purchase orders", "Purchases", "Lot testing", "Quotation manager"]} active="Lot testing" caption="Lot testing">
+<Wireframe url="/erp/testing" nav={["Dashboard", "#Purchase", "Requirements", "Purchase orders", "Goods in", "Lot testing", "Bills", "#Tools", "Quotation manager", "Drum labels"]} active="Lot testing" caption="Lot testing">
   <WfBar><WfTitle sub="Test evidence for each chemical lot, for the verifier to verify.">Lot testing</WfTitle><WfSpacer /><WfButton primary>New test</WfButton></WfBar>
   <WfTable
     highlight={0}

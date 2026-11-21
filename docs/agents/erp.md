@@ -813,6 +813,25 @@ Purchase group folded into one row, was built and taken out the same day: the
 owner wants the sidebar and its sub-navigation as they are, and no tab-like
 bars drawn as navigation. Narrowing a list belongs to its sub-tabs (below).
 
+**PURCHASE IS A NUMBERED FLOW, AND GOODS IN, BILLS AND DRUM LABELS ARE PAGES
+(owner, Nov 2026 — a reversal of "a filter is a tab").** The sidebar's
+Purchase group draws 1 Requirements · 2 Purchase orders · 3 Goods in · 4 Lot
+testing · 5 Bills, then a "Tools" heading over Quotation manager and Drum
+labels; there is no Purchase overview page. `ErpScreen.step` and `.heading`
+in the registry say it once, and the shared `CollapsibleNav` draws a step in
+place of the row's icon and a heading above its row (v4 keeps a step's slot
+where it hides nested icons). Goods in (`inward`, /erp/goods-in), Bills
+(`register` — the key the register always had, /erp/bills) and Drum labels
+(`barcode`, /erp/drum-labels) were the three tabs of one Purchases page; they
+are different stages with their own tables and their own people, so each is a
+page, a module and an Access · Edit · Delete of its own. `0372_erp_purchases_split`
+carried every grant: a whole Purchases page became all three with the same
+ticks, a page narrowed to tabs became exactly the pages it held, designations
+the same, and the old tab rows went (`erp-purchases-split.integration.test.ts`).
+Manage access and the sidebar read the registry, so neither needed a change.
+`next.config.ts` redirects /erp/register (and its `?view=`), /erp/inward and
+/erp/barcode. Checks asking `screens.has("register")` still mean the register.
+
 **A LIST OPENS ON THE WORK WAITING: SUB-TABS (`ListSpec.subtabs`).** A
 sub-tab is a named set of one column's values (`k`, else the chips column),
 or a flag; the first is what the list opens on, `?st=` names another, and one

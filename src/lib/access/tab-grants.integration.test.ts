@@ -35,16 +35,16 @@ async function account(name: string) {
   return u;
 }
 
-/** Purchase given; Purchases at Edit, narrowed to whichever of its tabs are named. */
-function erpPurchase(tabs: string[]): ScreenGrantInput {
+/** Material returns given; Supplier returns at Edit, narrowed to whichever of its tabs are named. */
+function erpReturns(tabs: string[]): ScreenGrantInput {
   return {
     app: "erp",
     position: "associate",
-    modules: ["ERP · Purchase"],
+    modules: ["ERP · Material returns"],
     screens: [
-      { screen: "erp.requisitions", edit: false, delete: false, autoEdit: false },
-      { screen: "erp.register", edit: true, delete: false, autoEdit: false },
-      ...tabs.map((t) => ({ screen: `erp.register.${t}`, edit: false, delete: false, autoEdit: false })),
+      { screen: "erp.customerReturns", edit: false, delete: false, autoEdit: false },
+      { screen: "erp.vendorReturns", edit: true, delete: false, autoEdit: false },
+      ...tabs.map((t) => ({ screen: `erp.vendorReturns.${t}`, edit: false, delete: false, autoEdit: false })),
     ],
   };
 }
@@ -82,54 +82,54 @@ after(async () => {
 
 test("a page given whole holds every tab; narrowed, only the tabs ticked — and their writes", async () => {
   const p = await account("Gate Clerk");
-  assert.ok((await setAccess({ userId: p.id, grants: [], screenGrants: [erpPurchase([])] })).ok);
+  assert.ok((await setAccess({ userId: p.id, grants: [], screenGrants: [erpReturns([])] })).ok);
   let ctx = await asPerson(p);
-  assert.ok(ctx.screens.has("inward") && ctx.screens.has("barcode"), "no tab ticked means every tab");
+  assert.ok(ctx.screens.has("debitNotes") && ctx.screens.has("returnOutwards"), "no tab ticked means every tab");
   assert.equal(ctx.withheld?.size ?? 0, 0);
 
   setTestUser(boss);
-  const r = await setAccess({ userId: p.id, grants: [], screenGrants: [erpPurchase(["inward"])] });
+  const r = await setAccess({ userId: p.id, grants: [], screenGrants: [erpReturns(["debitNotes"])] });
   assert.ok(r.ok, r.ok ? "" : r.error);
   const stored = await db.select({ screen: appScreenAccess.screen }).from(appScreenAccess).where(eq(appScreenAccess.userId, p.id));
-  assert.ok(stored.some((s) => s.screen === "erp.register.inward"), "the tab is a screen row");
+  assert.ok(stored.some((s) => s.screen === "erp.vendorReturns.debitNotes"), "the tab is a screen row");
   const modules = await db.select({ module: appModuleAccess.module }).from(appModuleAccess).where(eq(appModuleAccess.userId, p.id));
-  assert.ok(!modules.some((m) => m.module.startsWith("erp.register.")), "and never a module row");
+  assert.ok(!modules.some((m) => m.module.startsWith("erp.vendorReturns.")), "and never a module row");
 
   ctx = await asPerson(p);
-  assert.ok(ctx.screens.has("register"), "the page still opens — its key is also its Register tab's");
-  assert.ok(ctx.screens.has("inward"));
-  assert.equal(ctx.screens.has("barcode"), false, "Drum labels withheld");
-  assert.ok(ctx.withheld?.has("register") && ctx.withheld.has("barcode"));
-  assert.ok(ctx.powers.has("viewPurchaseMoney"), "Edit on the page still carries its powers");
+  assert.ok(ctx.screens.has("vendorReturns"), "the page still opens — its key is also its Purchase returns tab's");
+  assert.ok(ctx.screens.has("debitNotes"));
+  assert.equal(ctx.screens.has("returnOutwards"), false, "Return outwards withheld");
+  assert.ok(ctx.withheld?.has("vendorReturns") && ctx.withheld.has("returnOutwards"));
+  assert.ok(ctx.powers.has("returnApprove"), "Edit on the page still carries its powers");
 
-  await assert.doesNotReject(requireErpWrite("inward"), "Goods receipt writes go through");
-  await assert.rejects(requireErpWrite("register"), /not on your account/, "a Register write is refused");
-  await assert.rejects(requireErpWrite("barcode"), /not on your account/);
+  await assert.doesNotReject(requireErpWrite("debitNotes"), "Debit note writes go through");
+  await assert.rejects(requireErpWrite("vendorReturns"), /not on your account/, "a Purchase returns write is refused");
+  await assert.rejects(requireErpWrite("returnOutwards"), /not on your account/);
 });
 
 test("the dialog opens on the narrowing it saved", async () => {
   const p = await account("Bill Clerk");
-  assert.ok((await setAccess({ userId: p.id, grants: [], screenGrants: [erpPurchase(["register", "barcode"])] })).ok);
+  assert.ok((await setAccess({ userId: p.id, grants: [], screenGrants: [erpReturns(["vendorReturns", "returnOutwards"])] })).ok);
   const view = await loadScreenAccess(p.id);
   assert.ok(view.ok);
   const erp = view.data.apps.find((a) => a.app === "erp")!;
   const keys = erp.screens.map((s) => s.screen);
-  assert.ok(keys.includes("erp.register.register") && keys.includes("erp.register.barcode") && !keys.includes("erp.register.inward"));
+  assert.ok(keys.includes("erp.vendorReturns.vendorReturns") && keys.includes("erp.vendorReturns.returnOutwards") && !keys.includes("erp.vendorReturns.debitNotes"));
 });
 
 test("every tab ticked is stored as none, and the backfill job keeps a narrowing", async () => {
   const p = await account("Store Keeper");
-  assert.ok((await setAccess({ userId: p.id, grants: [], screenGrants: [erpPurchase(["inward", "register", "barcode"])] })).ok);
+  assert.ok((await setAccess({ userId: p.id, grants: [], screenGrants: [erpReturns(["debitNotes", "vendorReturns", "returnOutwards"])] })).ok);
   const all = await db.select({ screen: appScreenAccess.screen }).from(appScreenAccess).where(eq(appScreenAccess.userId, p.id));
-  assert.ok(!all.some((s) => s.screen.startsWith("erp.register.")), "all three is the same as none");
+  assert.ok(!all.some((s) => s.screen.startsWith("erp.vendorReturns.")), "all three is the same as none");
 
-  assert.ok((await setAccess({ userId: p.id, grants: [], screenGrants: [erpPurchase(["inward"])] })).ok);
+  assert.ok((await setAccess({ userId: p.id, grants: [], screenGrants: [erpReturns(["debitNotes"])] })).ok);
   await accessScreensBackfill();
   const after = await db
     .select({ screen: appScreenAccess.screen })
     .from(appScreenAccess)
     .where(and(eq(appScreenAccess.userId, p.id), eq(appScreenAccess.app, "erp")));
-  assert.ok(after.some((s) => s.screen === "erp.register.inward"), "reconverting from the older tables does not widen the page back");
+  assert.ok(after.some((s) => s.screen === "erp.vendorReturns.debitNotes"), "reconverting from the older tables does not widen the page back");
   const ctx = await asPerson(p);
-  assert.equal(ctx.screens.has("barcode"), false);
+  assert.equal(ctx.screens.has("returnOutwards"), false);
 });

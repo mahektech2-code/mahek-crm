@@ -44,7 +44,7 @@ import { IconButton } from "./look";
  * I looking at.
  * ------------------------------------------------------------------------- */
 
-export type NavScreen = { key: string; label: string; href: string };
+export type NavScreen = { key: string; label: string; href: string; step?: number; heading?: string };
 export type NavGroup = { id: string; label: string; icon: string; single: boolean; screens: NavScreen[] };
 
 /** Every sub-item carries its own icon, as the CRM's do. */
@@ -187,6 +187,8 @@ export function ErpShell({
     label: s.label,
     icon: SCREEN_ICON[s.key] ?? fallback,
     exact: s.href === "/erp",
+    ...(s.step ? { step: s.step } : {}),
+    ...(s.heading ? { heading: s.heading } : {}),
   });
   const pinned: NavRowItem[] = nav.filter((g) => PINNED_GROUPS.has(g.id)).flatMap((g) => g.screens.map((s) => toRow(s, g.icon)));
   const groups: NavRowGroup[] = nav

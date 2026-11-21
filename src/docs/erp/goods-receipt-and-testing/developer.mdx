@@ -1,4 +1,4 @@
-The receipt side of the purchase flow is `lib/erp/screens/purchase.ts`: the `inward` (Goods receipt), `register` and `barcode` (Drum labels) tabs of the Purchases screen, the `testing` screen, and the raw-material stock tabs `rmStock` / `rmLog` that the Stock screen draws. The arithmetic is pure in `lib/erp/engines/purchase.ts`; the PO side it reports back to is `screens/purchase-flow.ts`; landed cost is read in `lib/erp/stock.ts`.
+The receipt side of the purchase flow is `lib/erp/screens/purchase.ts`: the `inward` (Goods in), `register` (Bills) and `barcode` (Drum labels) pages (until Nov 2026 the three tabs of one Purchases screen), the `testing` screen, and the raw-material stock tabs `rmStock` / `rmLog` that the Stock screen draws. The arithmetic is pure in `lib/erp/engines/purchase.ts`; the PO side it reports back to is `screens/purchase-flow.ts`; landed cost is read in `lib/erp/stock.ts`.
 
 ## Map of the code
 
@@ -124,7 +124,7 @@ Shares are computed every time stock is read, so a rate entered later moves the 
 
 ## Permissions
 
-- **Modules:** <ModuleRef k="erp.register" /> (Goods receipt, Register, Drum labels), <ModuleRef k="erp.testing" />.
+- **Modules:** <ModuleRef k="erp.inward" /> (Goods in), <ModuleRef k="erp.testing" />, <ModuleRef k="erp.register" /> (Bills), <ModuleRef k="erp.barcode" /> (Drum labels) — one Purchases page with three tabs until Nov 2026 (`0372` split its grant).
 - **Powers:** `viewPurchaseMoney` (also the register's bulk `rate`, `billReceived`, `status` and `billNotReceived`), `verifyTest`, `verifyPurchase` (with `viewPurchaseMoney`, the register's bulk `verifyMany`), `reopenPurchase` (also the bulk `reopen`).
 - **A selection's shape:** a `BulkSpec` with `same` is offered only while every ticked row shares those values (`["pr"]`, `["party"]`, `["item", "unit"]`), and `asRow` runs that one record's own row action once (`bulk-fit.ts`). The act refuses a mixed selection itself, because the bar cannot judge rows past its page. **Combined view** (`client: "combinedView"`, `ListSpec.combined`) reads exactly the ticked rows through the screen's own loader (`erpCombinedView`), so its values and actions are the list's.
 - **Labels:** a purchase label opens for anybody holding `barcode`, `register` or `stock` (`SCREENS` in `app/erp/print-labels/page.tsx`).
