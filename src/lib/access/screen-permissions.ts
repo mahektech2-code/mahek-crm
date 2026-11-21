@@ -3,6 +3,7 @@ import { CAPABILITIES, can, type Capability } from "../capability-matrix";
 import { moduleGroupsForApp, writeLevelsForApp } from "../modules";
 import type { Role } from "../role-levels";
 import { ACTION_OWNERS, EVERYONE, type Owner } from "./action-owners";
+import { HANDSET_SHAPE } from "./handset-screens";
 import type { AppGrantDraft, ModuleShape, Position, ScreenTicks } from "./permission-rules";
 
 /* ---------------------------------------------------------------------------
@@ -22,6 +23,7 @@ import type { AppGrantDraft, ModuleShape, Position, ScreenTicks } from "./permis
 
 /** The app's sidebar as modules and screens — write levels are ticks, not screens. */
 export function moduleShape(app: AppId): ModuleShape[] {
+  if (app === "field") return HANDSET_SHAPE;
   const writes = new Set(writeLevelsForApp(app).values());
   return moduleGroupsForApp(app)
     .map((g) => ({ module: g.group, screens: g.modules.map((m) => m.key).filter((k) => !writes.has(k)) }))

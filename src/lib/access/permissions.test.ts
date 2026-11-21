@@ -168,9 +168,6 @@ describe("who owns which action", () => {
    * - Exporting the customer list comes with opening Customers, because
    *   Access gives every ordinary action on a screen. Today it is a
    *   manager's. An associate exports only their own book (position).
-   * - The Salesman App is one screen, so its Edit carries every decision a
-   *   field manager takes there. Until the handset grant has screens of its
-   *   own, an associate with Edit on it holds them too.
    */
   test("what the screen model gives beyond today's levels is exactly the signed-off list", () => {
     const gained: Record<string, Capability[]> = {};
@@ -182,7 +179,6 @@ describe("who owns which action", () => {
     }
     assert.deepEqual(gained, {
       "crm associate": ["customer.export"],
-      "field associate": ["lead.override", "lead.verify", "sample.approve", "distributor.terms"],
       "sales associate": ["customer.export"],
     });
   });
