@@ -64,8 +64,9 @@ function plainValue(f: FieldSpec, v: string): string {
  * its label does not already say so. Empty answers are the dash, never blank.
  */
 function valueOf(f: FieldSpec, h: Record<string, string>, l: Record<string, string>, lines: Record<string, string>[], i: number, data: Record<string, unknown>): string {
-  if (f.t === "derived" || f.t === "suggest") return runCalc(f.calc, { h, l, lines, i, data }) || NONE;
-  const v = plainValue(f, l[f.k] ?? "");
+  /* A header field (i = -1) is calculated with no line, `l: {}`, exactly as its box beside the form is — and read from the header. */
+  if (f.t === "derived" || f.t === "suggest") return runCalc(f.calc, { h, l: i < 0 ? {} : l, lines, i, data }) || NONE;
+  const v = plainValue(f, (i < 0 ? h : l)[f.k] ?? "");
   if (!v) return NONE;
   return f.ub && !/\(/.test(f.l) ? `${v} ${f.ub}` : v;
 }
@@ -120,7 +121,7 @@ export function grnReview(x: GrnReviewInput): GrnReviewModel {
   for (const f of header) {
     if (HEADER_SAID.has(f.k) || !whenHolds(f.when, h, data)) continue;
     const r = resolveField(f, h, data);
-    delivery.push({ label: f.l, value: valueOf(r, h, h, lines, -1, data) });
+    delivery.push({ label: f.l, value: valueOf(r, h, {}, lines, -1, data) });
   }
 
   return { items, orders, lines: blocks, delivery };
