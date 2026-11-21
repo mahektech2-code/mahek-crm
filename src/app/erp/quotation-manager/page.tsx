@@ -1,3 +1,4 @@
+import { PurchaseStages } from "../_ui/purchase-stages";
 import { redirect } from "next/navigation";
 import { erpContext } from "@/lib/erp/access";
 import { erpScreen } from "@/lib/erp/registry";
@@ -37,6 +38,7 @@ export default async function ErpQuotationManager({ searchParams }: { searchPara
 
   return (
     <div className="px-6 pt-6 pb-10">
+      <PurchaseStages ctx={ctx} current="quoteManager" />
       <QuoteGrid
         title={SCREEN.label}
         key={`${from}|${to}|${q}`}

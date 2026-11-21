@@ -80,6 +80,14 @@ const v = (key: string, label: string, alt?: ErpView["alt"], section?: string): 
 /** A tab under a sub-module (`ErpView.section`). */
 const sv = (section: string, key: string, label: string): ErpView => v(key, label, undefined, section);
 
+/**
+ * Groups drawn as ONE sidebar row and a stage bar across their screens
+ * (`app/erp/_ui/purchase-stages.tsx`), because their screens are the steps of
+ * one flow rather than separate places. Grants are untouched: each step is
+ * still its own module, and a step not held is neither drawn nor counted.
+ */
+export const ERP_WORKSPACES: ReadonlySet<string> = new Set(["purchase"]);
+
 export const ERP_GROUPS: ErpGroup[] = [
   {
     id: "dashboard",

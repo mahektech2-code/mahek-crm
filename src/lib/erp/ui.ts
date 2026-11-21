@@ -505,6 +505,13 @@ export type ListRow = {
  */
 export type SelectSum = { k: string; l: string; one?: string; kind?: "sum" | "distinct"; missing?: string };
 
+/**
+ * One sub-tab: `in` the values it shows and `notIn` those it hides — of column
+ * `k`, the chips column where it names none — and `flag` a flag every row it
+ * shows carries. A sub-tab with none of them is All.
+ */
+export type ListSubtab = { id: string; l: string; k?: string; in?: string[]; notIn?: string[]; flag?: string; hint?: string };
+
 export type ListSpec = {
   screen: string;
   cols: ColSpec[];
@@ -564,6 +571,12 @@ export type ListSpec = {
   /** A header fact left out when it says the same as another: { delivery: "billing" }. */
   groupHeadUnlessSame?: Record<string, string>;
   chips?: string;
+  /**
+   * SUB-TABS over the chips column, drawn as a segmented row above the list:
+   * each a named set of its values (or a flag). The first is what the screen
+   * opens on, so a list opens on the work waiting, not on everything.
+   */
+  subtabs?: ListSubtab[];
   /**
    * The figure cards above the list (`StatSpec`), worked out on the server over
    * every row the filters reach. Absent: a Total card and one per `agg`.
