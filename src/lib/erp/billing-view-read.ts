@@ -31,6 +31,7 @@ export async function billingViewFor(ctx: ErpContext, lineIds: string[]): Promis
     billing: party(l.billing),
     delivery: party(l.delivery),
     description: l.sku.name,
+    skuId: l.sku.id,
     type: l.type,
     qtyCans: l.o.qtyCans,
     litresPerCan: l.sku.litresPerCan,

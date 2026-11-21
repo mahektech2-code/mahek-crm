@@ -4,7 +4,9 @@
  * Ticked order lines become ONE sheet, whichever orders and parties they come
  * from: several orders are routinely clubbed onto one Tally bill, and the
  * office asked for the selection to read as that one bill rather than as an
- * invoice per order. Each row keeps its own order number. Only lines NOT yet
+ * invoice per order. A row lists the order number(s) it came from; lines that
+ * differ in nothing but quantity (product, per, GST, rate, discount) are one
+ * row, quantities and amount added, and the totals never read the rows. Only lines NOT yet
  * billed are drawn — a billed line already has its invoice, in Tally and in
  * order details — and the sheet says how many it left out. The one split kept
  * is the company: GST decides it, and Mylac and Mahek Marketing India are never
@@ -44,6 +46,8 @@ export type BillingLine = {
   billing: BillingParty;
   delivery: BillingParty;
   description: string;
+  /** Which product this is, apart from how it is worded: two lines fold only if it is the same SKU. */
+  skuId: string;
   type: OrderType;
   qtyCans: number;
   litresPerCan: number;
@@ -133,15 +137,34 @@ export function billingSheets(all: BillingLine[], sight: BillingSight): BillingS
       const consignees = new Map(group.map((f) => [f.l.delivery.id, f.l.delivery]));
       const transporters = group.map((f) => f.l.transporter?.trim() ?? "").filter((t) => t && t !== "—");
 
-      const rows = group.map(({ l, gstBp, bill }): BillingRow => {
-        const net = bill.amountPaise == null ? null : bill.amountPaise - (bill.discountedPaise ?? 0);
+      /* Lines that differ in nothing but quantity fold into one row. Display only: the totals
+         below are read from `group`, never from these rows. The key is the REAL figures, not what
+         the viewer may see, so two lines at different hidden rates never share a row; a null and
+         a zero discount both mean none. */
+      const folded = new Map<string, typeof group>();
+      for (const f of group) {
+        /* Product and pack, wherever they are held apart from the wording: the SKU, the litres in a
+           can, and loose versus boxed (a box is a different pack). Then per, GST, rate, discount. */
+        const key = JSON.stringify([f.l.skuId, f.l.description, f.l.litresPerCan, f.l.boxes != null, f.l.type, f.gstBp, f.l.ratePaise, f.l.discountBp ?? 0]);
+        folded.set(key, [...(folded.get(key) ?? []), f]);
+      }
+
+      const rows = [...folded.values()].map((members): BillingRow => {
+        const { l, gstBp } = members[0];
+        /* Whole numbers (paise, grams, millilitres), so a folded figure is exactly the sum of the lines it replaces. */
+        const cans = members.reduce((n, f) => n + f.l.qtyCans, 0);
+        const litres = Math.round(members.reduce((n, f) => n + f.bill.litres * 1000, 0)) / 1000;
+        const boxes = members.every((f) => f.l.boxes != null) ? members.reduce((n, f) => n + f.l.boxes!, 0) : null;
+        const grams = members.every((f) => f.l.weightKg != null) ? members.reduce((n, f) => n + Math.round(f.l.weightKg! * 1000), 0) : null;
+        const nets = members.map((f) => (f.bill.amountPaise == null ? null : f.bill.amountPaise - (f.bill.discountedPaise ?? 0)));
+        const net = nets.every((n) => n != null) ? nets.reduce<number>((n, v) => n + v!, 0) : null;
         return {
-          orderNo: text(String(l.orderNo)),
+          orderNo: text(listed(members.map((f) => String(f.l.orderNo)))),
           description: text(l.description),
-          cans: { show: nf(l.qtyCans), copy: String(l.qtyCans) },
-          boxes: l.boxes == null ? null : { show: nf(l.boxes), copy: String(l.boxes) },
-          litres: { show: qty(bill.litres), copy: String(bill.litres) },
-          weight: l.weightKg == null ? null : kg(l.weightKg),
+          cans: { show: nf(cans), copy: String(cans) },
+          boxes: boxes == null ? null : { show: nf(boxes), copy: String(boxes) },
+          litres: { show: qty(litres), copy: String(litres) },
+          weight: grams == null ? null : kg(grams / 1000),
           rate: sight.rates && l.ratePaise != null ? { show: inrRate(l.ratePaise), copy: rupees(l.ratePaise) } : null,
           per: text(l.type === "Drum" ? "Litre" : "Can"),
           discount: sight.amounts && l.discountBp ? percent(l.discountBp) : null,
