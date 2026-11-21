@@ -12,11 +12,11 @@
 import { runCalc } from "./calc";
 
 import { roundedTotal } from "@/lib/bill-round";
-import { groupIndian, rupeesFromPaise } from "@/lib/format";
+import { groupIndian, rupeesFromPaise, stamp } from "@/lib/format";
 import { measureOfBase } from "./engines/uom";
 
-/** Column types, from the design: bold, text, number, money, date, status, flags, phone, email, map, mono. */
-export type ColType = "b" | "t" | "n" | "m" | "d" | "s" | "f" | "ph" | "em" | "map" | "mono";
+/** Column types, from the design: bold, text, number, money, date, status, flags, phone, email, map, mono — and `at`, a moment (an ISO timestamp, drawn "19 Nov, 9:40 am" in the business's zone, sorted as it is stored). */
+export type ColType = "b" | "t" | "n" | "m" | "d" | "s" | "f" | "ph" | "em" | "map" | "mono" | "at";
 
 export type ColSpec = {
   k: string;
@@ -26,12 +26,31 @@ export type ColSpec = {
   u?: string;
   /** Minimum width override in px. */
   w?: number;
+  /** The row value drawn after a number as its unit, where units differ row by row ("1,500 Litre", "100 Pcs"). */
+  uk?: string;
+  /** The row value that, when set, says the date is late ("2 days late"): drawn after it, in red. */
+  late?: string;
+  /** A figure read beside the others, not first: drawn in the muted ink. */
+  quiet?: boolean;
+  /** The row value drawn after it in the ordinary ink when `late` is not set ("in 2 days", "today"). */
+  after?: string;
+  /**
+   * The row value, 0–1, drawn as a progress bar before the text — how much of
+   * a PO has arrived ("450 of 900"). The figure is the text; the bar only shows it.
+   */
+  bar?: string;
   /**
    * Money shown to the RUPEE, as Tally rounds a bill's final amount. Only how
    * it is SHOWN: the value stays exact, so a group's total is the exact sum
    * rounded once — the bill's own figure — and never a sum of rounded lines.
    */
   whole?: boolean;
+  /** The row value drawn UNDER the cell's own, small and muted — an item's "PR-15 · PO-2 · Asian Solvents". Searched and exported with the row. */
+  sub?: string;
+  /** The row value that, when set, draws the cell in red — "2 days" waiting past its threshold. The rule is the server's. */
+  alert?: string;
+  /** The value is a comma-separated list drawn as small chips ("Smell, Density" → two chips). Still one text value to search, sort and export. */
+  tags?: boolean;
 };
 
 /**
@@ -286,11 +305,21 @@ export type ActionSpec = {
   /** Stable id the server dispatches on. */
   id: string;
   l: string;
+  /** The shorter words a list row's next-step button says ("Link PO no." for "Link PO number"). */
+  short?: string;
   primary?: boolean;
+  /** A primary drawn outlined on its row: the next step, but one that asks for something typed first. */
+  soft?: boolean;
   /** An AI action (drawn distinctly; absent when AI is off). */
   ai?: boolean;
   /** Why it is not available yet; drawn disabled with this reason. */
   why?: string;
+  /**
+   * Held back because the person lacks the page's Edit or Delete tick
+   * (`action-ticks.ts`): left out of a row's menu altogether, and drawn locked
+   * with `why` in the opened record.
+   */
+  tickHidden?: boolean;
   /** "Are you sure" text, when the act needs one. */
   confirm?: string;
   /**
@@ -323,6 +352,18 @@ export type ActionSpec = {
   loadsForm?: boolean;
   /** Navigates to a screen (e.g. "Open record"). */
   href?: string;
+  /**
+   * Started INSIDE the record: pressed on a row, the record opens and its
+   * panel takes it from there (Create PO's three pages, the PO number box).
+   * The panel runs the action itself, through the same handler.
+   */
+  opens?: boolean;
+  /**
+   * The act belongs to another screen's record — a requirement's "Receive
+   * goods" is its PO's. Run (and its form loaded) as that screen's, on that id,
+   * so the server checks that screen's grant and ticks.
+   */
+  on?: { screen: string; id: string };
   /**
    * Opens the Share window (`_ui/share-dialog.tsx`): how it goes, who it goes
    * to, the message. Its Send runs this action with `channel`, `to` (the ticked
@@ -407,9 +448,12 @@ export type BulkSpec = {
    * Handled on the page rather than by the server: "printInvoices" opens the
    * Print invoices pop-up over the selection, "billingView" the invoice to make
    * in Tally, "combinedView" the ticked rows read together with what can be
-   * done to them as a set (`combined-view.tsx`).
+   * done to them as a set (`combined-view.tsx`). "startInRecord" opens the
+   * first ticked row that can take `fits` and starts that action in its record
+   * with the other ticked rows chosen (Create one PO: Create PO with every
+   * ticked requirement already on it).
    */
-  client?: "printInvoices" | "billingView" | "combinedView";
+  client?: "printInvoices" | "billingView" | "combinedView" | "startInRecord";
   /**
    * Row values every ticked row must share for this to be offered at all —
    * `["pr"]` is "only while the ticks are one PR", `["party"]` one party. It is
@@ -446,6 +490,17 @@ export type BulkSpec = {
    * first and its values travel with the confirmation.
    */
   impact?: { kind: string };
+  /**
+   * Navigates instead of acting: `href` with the ticked ids appended,
+   * comma-separated — Print labels opens the label page over every ticked lot.
+   */
+  href?: string;
+  /**
+   * The button says a figure over the ticked rows: `l` carries `{n}`, the sum
+   * of row value `k` over the ticked rows the page holds ("Print {n} labels"
+   * over the drums of each lot).
+   */
+  countK?: string;
 };
 
 /**
@@ -484,7 +539,13 @@ export type ListRow = {
   hiddenFields?: number;
   /** Free-form panels a screen draws in the record (allocation, evidence…). */
   /** `covers`: column keys the panel already draws, left out of the record's field list. */
-  panel?: { kind: string; data: unknown; covers?: string[] };
+  panel?: { kind: string; data: unknown; covers?: string[]; whole?: boolean };
+  /**
+   * Said after the screen's name above the title ("Requirements · REQ-14").
+   * With `panel.whole` the panel IS the record: it draws every fact itself, so
+   * there is no Details tab and the status is said beside the title.
+   */
+  ref?: string;
   /** More screen-drawn panels, each a tab after `panel` (an order's Invoice beside its Customer tracking). */
   panels?: { kind: string; data: unknown }[];
   /**
@@ -510,7 +571,44 @@ export type SelectSum = { k: string; l: string; one?: string; kind?: "sum" | "di
  * `k`, the chips column where it names none — and `flag` a flag every row it
  * shows carries. A sub-tab with none of them is All.
  */
-export type ListSubtab = { id: string; l: string; k?: string; in?: string[]; notIn?: string[]; flag?: string; hint?: string };
+export type ListSubtab = {
+  id: string;
+  l: string;
+  k?: string;
+  in?: string[];
+  notIn?: string[];
+  flag?: string;
+  hint?: string;
+  /** One line said under the sub-tabs while this one is open — how to work it. */
+  line?: string;
+  /** Read whole rather than through the list's period (work waiting now, or today's): the period picker is not drawn on it. */
+  unwindowed?: boolean;
+  /**
+   * How the list reads while this sub-tab is open, where its rows are a
+   * different thing from the others' — Goods in's Expected at the gate lists
+   * PO lines still to come beside the receipts. Merged over the spec
+   * (`specForSubtab`, list-query.ts) by the page, the export and the browser
+   * alike, so a sub-tab's columns, groups and cards cannot drift apart.
+   */
+  view?: SubtabView;
+  /**
+   * The work WAITING, read whole: the period picker is not drawn on this
+   * sub-tab and `note` says so. The loader must read these rows whatever the
+   * window — a lot waiting a month is still waiting.
+   */
+  allTime?: boolean;
+  /** One short line said at the right of the toolbar on this sub-tab ("Every lot waiting, oldest first"). */
+  note?: string;
+  /** This sub-tab's own default order, in place of the list's `sortDefault` — oldest first on a queue, newest first on a record. */
+  sort?: [string, 1 | -1];
+  /** Columns not drawn on this sub-tab, because they say nothing there (a print count on To print). Still in the record and the export. */
+  hide?: string[];
+};
+
+/** What a sub-tab may read differently (`ListSubtab.view`). */
+export type SubtabView = Partial<
+  Pick<ListSpec, "cols" | "groups" | "groupHead" | "groupHeadStrong" | "groupSel" | "groupAction" | "groupNoCount" | "stats" | "filters" | "bulk" | "combined" | "selectSum" | "sortDefault" | "noDataLine" | "agg">
+>;
 
 export type ListSpec = {
   screen: string;
@@ -528,8 +626,28 @@ export type ListSpec = {
    * Stickers tab groups by transporter and prints every order the lorry takes.
    */
   groupPrint?: { k: string; l: string; href: string };
+  /**
+   * A button on each group's heading that runs the bulk action `id` (one of
+   * `bulk`, so a missing tick takes it away with the bulk) over the group's
+   * rows that can take it — every page of the group, after the filters and the
+   * sub-tab. `l` carries `{n}`, how many rows that is, and `{noun}`, the
+   * `groupNoun` that fits it ("Record bill for {n} {noun}" — "1 lot", "3
+   * lots"); a group none of whose rows can take it draws no button.
+   */
+  groupBulk?: { id: string; l: string };
+  /** What a group heading counts its rows as: ["lot", "lots"]. Rows, where unsaid. */
+  groupNoun?: [string, string];
   /** Action ids drawn in a ⋯ menu at the end of every row (each row's own `actions` of those ids). */
   rowMenu?: string[];
+  /** Leave the row count out of each group's heading — where the heading already says it ("4 open lines"). */
+  groupNoCount?: boolean;
+  /**
+   * A button on each group's heading: the group's first row's action of this
+   * id, run on that row — "Receive from Asian Solvents" on Goods in's
+   * Expected at the gate opens one GRN with every open line of the group.
+   * Its words are the action's own, its lock and reason too.
+   */
+  groupAction?: string;
   /**
    * Draw the rows as image cards instead of table rows: the same rows,
    * search, chips and paging, and a card opens the same record. `img` names
@@ -674,6 +792,7 @@ export const TONES: Record<Tone, [string, string]> = {
 
 /** The tone a status value is drawn in, wherever it appears. */
 export const ST_TONE: Record<string, Tone> = {
+  "Held until tested": "warn", Released: "success", "Held — failed": "danger",
   "Under Process": "info", Ready: "success", Today: "brand", Tomorrow: "neutral", Delay: "danger",
   "Hold From Office": "warn", Cancel: "muted", Pending: "warn", Verified: "success", Verify: "success",
   "Not Verified": "danger", "Not verified": "warn", "Not Verify": "warn", Active: "success", Deactive: "muted",
@@ -760,6 +879,9 @@ export const FLAG: Record<string, [string, Tone]> = {
   rateOffPo: ["Rate differs from PO", "warn"],
   awaitingApproval: ["Awaiting approval", "warn"],
   deliveryLate: ["Delivery overdue", "danger"],
+  dueSoon: ["Due in 3 days", "neutral"],
+  lateLine: ["Late", "danger"],
+  gateToday: ["Due today", "neutral"],
   qtyDiffers: ["Quantity differs from PO", "warn"],
   qcPending: ["Waiting for SFG QC", "warn"],
   qcRejected: ["Failed SFG QC", "danger"],
@@ -851,6 +973,15 @@ export function inrRate(paise: CellValue | undefined): string {
   return (r < 0 ? "−" : "") + "₹" + (Number.isInteger(r) ? RATE_WHOLE : RATE_PAISE).format(Math.abs(r));
 }
 
+/** A RATE in paise → "₹118.00" — always two places, for a column of rates read side by side (the Quotation manager). */
+export function inrRateFixed(paise: CellValue | undefined): string {
+  if (paise == null || paise === "") return "";
+  const n = Number(paise);
+  if (!Number.isFinite(n)) return String(paise);
+  const r = n / 100;
+  return (r < 0 ? "−" : "") + "₹" + RATE_PAISE.format(Math.abs(r));
+}
+
 /** 12345.5 → "12,345.5" in Indian grouping, up to two decimals. */
 /* One formatter, built once. `toLocaleString` with options builds a fresh
    Intl formatter on EVERY call, and a list of ten thousand rows formats a
@@ -885,6 +1016,7 @@ export function moneyText(col: Pick<ColSpec, "whole">, v: CellValue | undefined)
 
 export function cellText(col: ColSpec, v: CellValue | undefined): string {
   if (col.t === "d") return fd(v) || "—";
+  if (col.t === "at") return v == null || v === "" ? "—" : stamp(String(v));
   if (col.t === "m") return v === "" || v == null ? "—" : moneyText(col, v);
   if (col.t === "n") return v === "" || v == null ? "—" : typeof v === "number" ? nf(v) + (col.u ?? "") : String(v);
   return v == null || v === "" ? "—" : String(v);

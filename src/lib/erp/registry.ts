@@ -61,6 +61,13 @@ export type ErpScreen = {
   built: boolean;
   /** Tabs, the first being what the screen opens on. Absent: the screen is one list, its own key. */
   views?: ErpView[];
+  /**
+   * Its place in a flow the sidebar numbers — Purchase is 1 Requirements …
+   * 5 Bills, in the order the work happens. Drawn in place of the row's icon.
+   */
+  step?: number;
+  /** A small heading drawn above this row inside its group ("Tools"), starting a set of rows that are not steps. */
+  heading?: string;
 };
 
 export type ErpGroup = {
@@ -70,13 +77,15 @@ export type ErpGroup = {
   screens: ErpScreen[];
 };
 
-const s = (key: string, slug: string, label: string, sub: string, built = false, views?: ErpView[]): ErpScreen => ({
+const s = (key: string, slug: string, label: string, sub: string, built = false, views?: ErpView[], place?: { step?: number; heading?: string }): ErpScreen => ({
   key,
   slug,
   label,
   sub,
   built,
   ...(views ? { views } : {}),
+  ...(place?.step ? { step: place.step } : {}),
+  ...(place?.heading ? { heading: place.heading } : {}),
 });
 
 const v = (key: string, label: string, alt?: ErpView["alt"], section?: string): ErpView => ({ key, label, ...(alt ? { alt } : {}), ...(section ? { section } : {}) });
@@ -122,15 +131,16 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Purchase",
     icon: "cart",
     screens: [
-      s("requisitions", "requisitions", "Requirements", "What each department needs bought, from its purchase method through the PO to the goods.", true),
-      s("purchaseOrders", "purchase-orders", "Purchase orders", "Created from requirements or linked from the Quotation manager, shared and received against.", true),
-      s("register", "register", "Purchases", "Goods received against a PO, and the lots they become.", true, [
-        v("inward", "Goods receipt (GRN)"),
-        v("register", "Register"),
-        v("barcode", "Drum labels"),
-      ]),
-      s("testing", "testing", "Lot testing", "Test evidence for each chemical lot, for the verifier to verify.", true),
-      s("quoteManager", "quotation-manager", "Quotation manager", "Supplier rates by date, party and material, kept like the desk's sheet: every row, column and cell editable.", true),
+      /* The purchase flow in the order the work happens, numbered in the sidebar,
+         then the two tools that serve it. Goods in, Bills and Drum labels were
+         tabs of one "Purchases" screen until Nov 2026 (0372 split the grant). */
+      s("requisitions", "requisitions", "Requirements", "What each department needs bought, from its purchase method through the PO to the goods.", true, undefined, { step: 1 }),
+      s("purchaseOrders", "purchase-orders", "Purchase orders", "Created from requirements or linked from the Quotation manager, shared and received against.", true, undefined, { step: 2 }),
+      s("inward", "goods-in", "Goods in", "Goods received against a PO at the gate, line by line.", true, undefined, { step: 3 }),
+      s("testing", "testing", "Lot testing", "Test evidence for each chemical lot, for the verifier to verify.", true, undefined, { step: 4 }),
+      s("register", "bills", "Bills", "The lots goods became, with their rates and the supplier's bill.", true, undefined, { step: 5 }),
+      s("quoteManager", "quotation-manager", "Quotation manager", "Supplier rates by date, party and material, kept like the desk's sheet: every row, column and cell editable.", true, undefined, { heading: "Tools" }),
+      s("barcode", "drum-labels", "Drum labels", "Labels for the drums goods arrived in, to print and reprint.", true),
     ],
   },
   {
@@ -412,6 +422,16 @@ export function erpKeysOf(screen: ErpScreen): string[] {
 
 export function erpGroupOf(key: string): ErpGroup | undefined {
   return ERP_GROUPS.find((g) => g.screens.some((x) => x.key === key));
+}
+
+/**
+ * Whether a list key is drawn in the Purchase group — its own screen or a tab
+ * of one. The shared list draws Purchase's sub-tabs as a segmented control and
+ * its rows' actions as a primary button and a ⋯ menu in blocks; every other
+ * screen keeps its own look.
+ */
+export function isPurchaseScreen(key: string): boolean {
+  return erpGroupOf(erpScreen(key)?.key ?? key)?.id === "purchase";
 }
 
 /**

@@ -58,7 +58,7 @@ export default async function ErpLayout({ children }: { children: React.ReactNod
   const nav: NavGroup[] = ERP_GROUPS.map((g) => {
     const screens = g.screens
       .filter((s) => s.built && ctx.screens.has(s.key))
-      .map((s) => ({ key: s.key, label: s.label, href: erpHref(s) }));
+      .map((s) => ({ key: s.key, label: s.label, href: erpHref(s), ...(s.step ? { step: s.step } : {}), ...(s.heading ? { heading: s.heading } : {}) }));
     return {
       id: g.id,
       label: g.label,

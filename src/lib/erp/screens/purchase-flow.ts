@@ -26,7 +26,8 @@ import { categoriesFor, categoriesForDepartment, requirementDepartmentsFor, requ
 import { erpLink } from "../registry";
 import { erpPoHref } from "../trace-links";
 import { erpAudit, erpId, nextNumber, num, paise, rupeesField, stampLine, text, visibleCols, withoutHidden, type ScreenModule } from "../server";
-import type { ActionSpec, ColSpec, FormSpec, ListRow } from "../ui";
+import type { ActionSpec, ColSpec, FormSpec, ListRow, StatSpec } from "../ui";
+import { dueWithin } from "../engines/goods-in";
 import { fd, inr, inrRate, nf } from "../ui";
 import {
   FLOW_STEPS,
@@ -46,7 +47,10 @@ import {
   poStatusAfterReceipt,
   poTotals,
   purchaseUnit,
+  requirementBucket,
   requirementLabel,
+  poBucket,
+  deliveryWords,
   requirementStage,
   type PurchaseMethod,
   type Stage,
@@ -57,6 +61,8 @@ import { notifyStockFlag, openCount } from "../stock-check";
 import { writeCounted } from "./stock-check";
 import { confirmImpact } from "@/lib/impact/registry";
 import { readConfirmation } from "@/lib/impact/types";
+import { holdsTick } from "../action-ticks";
+import type { HistoryItem } from "./requirement-history";
 
 /* ---------------------------------------------------------------------------
  * THE PURCHASE FLOW (docs: AGENTS.md, "The purchase flow"):
@@ -389,9 +395,12 @@ async function presentQuantities() {
     db.select({ id: erpProductPacking.productId, empty: erpProductPacking.emptyBoxesRequired }).from(erpProductPacking),
   ]);
   const rm = new Map(rmLevels.map((l) => [`${l.rawMaterialId}|${l.godownId}`, l.materialType]));
+  const rmMin = new Map(rmLevels.map((l) => [`${l.rawMaterialId}|${l.godownId}`, Number(l.minQty)]));
   const fg = new Set(fgLevels.map((l) => `${l.productId}|${l.godownId}`));
   const boxed = new Map(packing.map((p) => [p.id, (p.empty ?? 0) > 0]));
-  return (r: Req): string | number => {
+  /* The re-order level's minimum, where the item has one at that godown — said beside what is in stock. */
+  const min = (r: Req): number | null => (r.rawMaterialId ? (rmMin.get(`${r.rawMaterialId}|${r.godownId}`) ?? null) : null);
+  const present = (r: Req): string | number => {
     if (r.productId) {
       if (!fg.has(`${r.productId}|${r.godownId}`)) return "no level set";
       return fgAvail(r.productId, boxed.get(r.productId) ?? false, r.godownId);
@@ -401,6 +410,7 @@ async function presentQuantities() {
     if (!type) return "no level set";
     return rmAvail(type, r.rawMaterialId, r.godownId);
   };
+  return { present, min };
 }
 
 /**
@@ -556,6 +566,8 @@ export type CreatePoChoices = {
   terms: string[];
   gstPercent: number;
   canCreate: boolean;
+  /** Edit on Requirements: linking, creating or unlinking its PO. */
+  canEdit: boolean;
 };
 
 /**
@@ -566,7 +578,37 @@ export type CreatePoChoices = {
  */
 export type PoCompanion = { id: string; reqNo: string | null; item: string; qty: string; unit: string; vendor: string | null; hasPrice: boolean; ratePaise: number | null };
 
-function flowPanel(v: ReqView, st: Stage, money: boolean, choices: CreatePoChoices, prices: Map<string, number | null>, companions: PoCompanion[]) {
+/** What a requirement's record says down its left side — every fact, so it needs no Details tab. */
+type ReqSummary = {
+  qty: string;
+  unit: string;
+  inStock: string;
+  requiredBy: string | null;
+  late: string | null;
+  team: string | null;
+  deliverTo: string;
+  priority: string | null;
+  method: string;
+  raisedBy: string;
+  remarks: string | null;
+};
+
+/** "2 days late" — said beside a required-by date that has passed while the requirement is still open. */
+export function lateWords(requiredBy: string | null, day: string, open: boolean): string | null {
+  if (!open || !requiredBy || requiredBy >= day) return null;
+  const n = Math.round((Date.parse(`${day}T00:00:00Z`) - Date.parse(`${requiredBy}T00:00:00Z`)) / 86_400_000);
+  return n === 1 ? "1 day late" : `${n} days late`;
+}
+
+function flowPanel(
+  v: ReqView,
+  st: Stage,
+  money: boolean,
+  choices: CreatePoChoices,
+  prices: Map<string, number | null>,
+  companions: PoCompanion[],
+  extra: { summary: ReqSummary; history: HistoryItem[]; shared: string | null; nextSub: string | null },
+) {
   const route = poRouteOf({ rule: v.rule, method: v.method });
   const open = st.step >= 0 && !v.po && !v.legacy && !!v.r.rawMaterialId;
   const price = v.r.rawMaterialId ? (prices.get(v.r.rawMaterialId) ?? null) : null;
@@ -575,6 +617,8 @@ function flowPanel(v: ReqView, st: Stage, money: boolean, choices: CreatePoChoic
   const fig = poTotals([{ quantity: v.r.requiredQty, ratePaise: price ?? 0, gstBp: rateBp }], 0);
   return {
     kind: "purchaseFlow",
+    /* The record IS this panel: it says every fact down its left side, so there is no Details tab. */
+    whole: true,
     covers: ["reqNo", "method", "stage", "vendor", "po"],
     data: {
       id: v.r.id,
@@ -582,9 +626,11 @@ function flowPanel(v: ReqView, st: Stage, money: boolean, choices: CreatePoChoic
       step: st.step,
       stage: st.stage,
       next: st.next,
+      nextSub: extra.nextSub,
+      summary: extra.summary,
+      history: extra.history,
+      /* What the summary does not already say. */
       facts: [
-        ...(v.r.reqNo ? [{ l: "Requirement", v: requirementLabel(v.r.reqNo) }] : []),
-        { l: "Purchase method · the item's rule", v: route === "link" ? "Quotation — bought on the Quotation manager" : route === "create" ? "Direct purchase — no quotation" : "Buyer decision — create or link" },
         ...(v.r.methodNote ? [{ l: "Buyer's note", v: v.r.methodNote }] : []),
         ...(v.r.cancelReason ? [{ l: "Cancelled because", v: v.r.cancelReason }] : []),
       ],
@@ -598,12 +644,15 @@ function flowPanel(v: ReqView, st: Stage, money: boolean, choices: CreatePoChoic
             gst: `${v.po.gstBp / 100}%`,
             drums: v.po.drums,
             received: `${nf(v.po.received)} of ${nf(v.po.ordered)} ${v.r.unit}`,
+            /* How far it has come, 0–1, for the bar under Received. */
+            progress: v.po.ordered > 0 ? Math.min(1, v.po.received / v.po.ordered) : 0,
+            shared: extra.shared,
             href: erpLink("purchaseOrders", { open: v.po.id }),
-            canUnlink: v.po.source === "quotation_manager" && v.po.received === 0,
+            canUnlink: choices.canEdit && v.po.source === "quotation_manager" && v.po.received === 0,
           }
         : null,
       entry:
-        open && v.r.status !== "Cancelled"
+        open && v.r.status !== "Cancelled" && choices.canEdit
           ? {
               link: route !== "create",
               create:
@@ -616,7 +665,8 @@ function flowPanel(v: ReqView, st: Stage, money: boolean, choices: CreatePoChoic
                       unit: v.r.unit,
                       godown: v.godown,
                       requiredBy: v.r.requiredBy,
-                      vendor: defaultVendor ?? "",
+                      /* The supplier it already has, else the item's default. */
+                      vendor: v.supplier ?? defaultVendor ?? "",
                       defaultVendor,
                       hasPrice: price != null,
                       ratePaise: money ? (price ?? 0) : null,
@@ -667,7 +717,7 @@ async function cancelRequirement(ctx: ErpContext, id: string, values: Record<str
 const requisitions: ScreenModule = {
   key: "requisitions",
   async load(ctx) {
-    const [views, config, form, present, sups, gds, terms, priceRows] = await Promise.all([
+    const [views, config, form, stock, sups, gds, terms, priceRows] = await Promise.all([
       requirementViews(),
       getConfig(),
       requisitionForm(ctx),
@@ -685,6 +735,8 @@ const requisitions: ScreenModule = {
       terms,
       gstPercent: config["erp.purchase.poGstPercent"],
       canCreate: ctx.screens.has("purchaseOrders"),
+      /* Linking, creating and unlinking a PO change the requirement: Edit on Requirements (`action-ticks.ts`). */
+      canEdit: holdsTick(ctx, "requisitions", "edit"),
     };
     const prices = new Map(priceRows.map((x) => [x.id, x.p == null ? null : Number(x.p)]));
     const money = ctx.powers.has("viewPurchaseMoney");
@@ -697,48 +749,110 @@ const requisitions: ScreenModule = {
         const price = prices.get(v.r.rawMaterialId!) ?? null;
         return { id: v.r.id, reqNo: v.r.reqNo ? requirementLabel(v.r.reqNo) : null, item: v.item, qty: String(v.r.requiredQty), unit: v.r.unit, vendor: v.supplier ?? null, hasPrice: price != null, ratePaise: money ? (price ?? 0) : null };
       });
+    /* The ORDER is the list's priority (`fit-columns.ts`): what the design draws first, then what folds into the record. */
     const cols: ColSpec[] = [
-      { k: "reqNo", l: "Requirement", t: "mono" },
-      { k: "date", l: "Date", t: "d" },
       { k: "item", l: "Item", t: "b" },
       { k: "type", l: "Category", t: "s" },
-      { k: "required", l: "Quantity", t: "n" },
-      { k: "unit", l: "Unit", t: "t" },
-      { k: "present", l: "Present qty", t: "n" },
-      { k: "requiredBy", l: "Required by", t: "d" },
-      { k: "department", l: "Department", t: "t" },
-      { k: "godown", l: "Godown", t: "t" },
-      { k: "priority", l: "Priority", t: "s" },
+      { k: "required", l: "Quantity", t: "n", uk: "unit" },
+      { k: "present", l: "In stock", t: "n", uk: "unit", quiet: true, w: 120 },
+      { k: "requiredBy", l: "Required by", t: "d", late: "late", w: 170 },
       { k: "method", l: "Method", t: "s" },
-      { k: "stage", l: "Stage", t: "s" },
       { k: "vendor", l: "Supplier", t: "t" },
+      { k: "stage", l: "Stage", t: "s" },
       { k: "po", l: "PO", t: "mono" },
+      { k: "priority", l: "Priority", t: "s" },
+      { k: "department", l: "Team", t: "t" },
+      { k: "godown", l: "Godown", t: "t" },
+      { k: "date", l: "Date", t: "d" },
+      { k: "reqNo", l: "Requirement", t: "mono" },
+      { k: "unit", l: "Unit", t: "t" },
       { k: "remarks", l: "Remarks", t: "t" },
-      { k: "f", l: "Flags", t: "f" },
     ];
-    const out: ListRow[] = views
-      .filter((v) => requirementVisibleTo(ctx.department, v.r.department, v.r.createdById === ctx.user.id))
+    const visible = views.filter((v) => requirementVisibleTo(ctx.department, v.r.department, v.r.createdById === ctx.user.id));
+    const stages = new Map(visible.map((v) => [v.r.id, stageOf(v)]));
+    const poIds = [...new Set(visible.map((v) => v.po?.id).filter((x): x is string => !!x))];
+    const [history, poMore] = await Promise.all([
+      (await import("./requirement-history")).requirementHistory(visible, (v) => stages.get(v.r.id)!.stage),
+      poIds.length
+        ? (db.execute(sql`
+            select p.id, p.delivery_date::text as "deliveryDate", g.name as godown, p.sent_via as "sentVia", p.sent_at as "sentAt",
+                   (select s.channel from erp_po_shares s where s.po_id = p.id and s.status <> 'failed' order by s.created_at limit 1) as channel,
+                   (select s.created_at from erp_po_shares s where s.po_id = p.id and s.status <> 'failed' order by s.created_at limit 1) as "sharedAt"
+              from erp_purchase_orders p join erp_godowns g on g.id = p.godown_id
+             where p.id in (${sql.join(poIds.map((x) => sql`${x}`), sql`, `)})
+          `) as unknown as Promise<{ id: string; deliveryDate: string; godown: string; sentVia: string | null; sentAt: Date | null; channel: string | null; sharedAt: Date | null }[]>)
+        : Promise.resolve([]),
+    ]);
+    const poInfo = new Map(poMore.map((p) => [p.id, p]));
+    const CHANNEL: Record<string, string> = { whatsapp: "WhatsApp", email: "Email", link: "Link copied" };
+    const out: ListRow[] = visible
       .slice()
       .reverse()
       .map((v) => {
-        const st = stageOf(v);
+        const st = stages.get(v.r.id)!;
         const r = v.r;
+        const route = poRouteOf({ rule: v.rule, method: v.method });
+        const live = st.step >= 0 && st.step < FLOW_STEPS.length;
+        const toOrder = st.step >= 0 && !v.po && !v.legacy && !!r.rawMaterialId && r.status !== "Cancelled";
+        const defaultVendor = v.preferredSupplierId ? (choices.nameOf.get(v.preferredSupplierId) ?? null) : null;
+        const info = v.po ? poInfo.get(v.po.id) : undefined;
+        /* The actions in the order the record's foot reads them right to left: Edit, Cancel requirement, Open the PO, then the next step. */
         const actions: ActionSpec[] = [];
         if (v.po) actions.push({ id: "openPo", l: `Open ${v.po.name}`, href: erpLink("purchaseOrders", { open: v.po.id }) });
-        /* Full edit at every stage (Nov 2026); the number, stage and PO are the system's. */
-        actions.push({ id: "edit", l: "Edit", loadsForm: true });
-        if (st.step >= 0 && st.step < FLOW_STEPS.length && (!v.po || v.legacy))
+        if (live && (!v.po || v.legacy))
           actions.push({
             id: "cancel",
             l: "Cancel requirement",
             prompt: { title: "Cancel this requirement", sub: `${v.item} · ${nf(r.requiredQty)} ${r.unit}`, submit: "Cancel requirement", fields: [{ k: "reason", l: "Reason", t: "area", req: true }] },
             impact: { kind: "erp-requirement-cancel", id: r.id },
           });
-        else if (v.po && st.step >= 0 && st.step < FLOW_STEPS.length)
-          actions.push({ id: "cancel", l: "Cancel requirement", why: `It is on ${v.po.name} — cancel or send back the PO first` });
+        else if (v.po && live) actions.push({ id: "cancel", l: "Cancel requirement", why: `It is on ${v.po.name} — cancel or send back the PO first` });
+        /* Full edit at every stage (Nov 2026); the number, stage and PO are the system's. */
+        actions.push({ id: "edit", l: "Edit", loadsForm: true });
+        /* THE NEXT STEP, by the item's purchase rule: drawn as the row's button and the record's primary. Create PO and the PO number box are started IN the record (`opens`). */
+        if (toOrder && route !== "link") actions.push({ id: "createPo", l: "Create PO", primary: true, opens: true, why: choices.canCreate ? "" : "Purchase orders is not on your account" });
+        if (toOrder && route !== "create") actions.push({ id: "linkPo", l: "Link PO number", short: "Link PO no.", primary: route === "link", soft: true, opens: true });
+        if (v.po && RECEIVABLE_PO.includes(v.po.status))
+          actions.push({
+            id: "receive",
+            l: "Receive goods",
+            primary: true,
+            loadsForm: true,
+            on: { screen: "purchaseOrders", id: v.po.id },
+            why: ctx.screens.has("purchaseOrders") && ctx.screens.has("inward") ? "" : "Goods receipt is not on your account",
+          });
         const flags: string[] = [];
-        if (r.requiredBy && r.requiredBy < day && st.step >= 0 && st.step < FLOW_STEPS.length) flags.push("requiredOverdue");
+        if (r.requiredBy && r.requiredBy < day && live) flags.push("requiredOverdue");
         if (v.legacy) flags.push("noPo");
+        const present = stock.present(r);
+        const min = stock.min(r);
+        const late = lateWords(r.requiredBy, day, live);
+        const supplier = v.po ? v.po.supplier : route === "link" ? "on Quotation manager" : (v.supplier ?? defaultVendor);
+        const nextSub = !v.po
+          ? toOrder
+            ? route === "link"
+              ? `${r.requiredBy ? `Needed by ${fd(r.requiredBy)}` : "No required-by date"} at ${v.godown} · type the number below`
+              : `${r.requiredBy ? `Needed by ${fd(r.requiredBy)}` : "No required-by date"} at ${v.godown}${supplier ? ` · ${supplier}` : ""}`
+            : null
+          : st.stage === "Waiting for goods"
+            ? `Expected ${info ? fd(info.deliveryDate) : "—"} at ${info?.godown ?? v.godown} · nothing received yet`
+            : st.stage === "Partly received"
+              ? `${nf(v.po.received)} of ${nf(v.po.ordered)} ${r.unit} received · expected ${info ? fd(info.deliveryDate) : "—"}`
+              : null;
+        const shared = info?.sharedAt ? `${CHANNEL[info.channel ?? ""] ?? info.channel} · ${fd(calendarDate(new Date(info.sharedAt)))}` : info?.sentAt ? `${info.sentVia ?? "Sent"} · ${fd(calendarDate(new Date(info.sentAt)))}` : null;
+        const summary: ReqSummary = {
+          qty: nf(r.requiredQty),
+          unit: r.unit,
+          inStock: typeof present === "number" ? `${nf(present)} ${r.unit}${min != null ? ` · min ${nf(min)}` : ""}` : present,
+          requiredBy: r.requiredBy ? fd(r.requiredBy) : null,
+          late,
+          team: r.department,
+          deliverTo: v.godown,
+          priority: r.priority,
+          method: route === "link" ? "Quotation — bought on the Quotation manager" : route === "create" ? (v.rule === "buyer" ? "Direct purchase — the buyer's choice" : "Direct purchase — the item's rule") : "Buyer decision — create or link",
+          raisedBy: `${v.by ?? "—"} · ${fd(calendarDate(r.createdAt))}`,
+          remarks: r.remarks,
+        };
         return {
           id: r.id,
           v: {
@@ -748,22 +862,25 @@ const requisitions: ScreenModule = {
             type: r.materialType,
             required: r.requiredQty,
             unit: r.unit,
-            present: present(r),
+            present,
             requiredBy: r.requiredBy,
+            late,
             department: r.department,
             godown: v.godown,
             priority: r.priority,
             method: methodLabel(v.method ?? v.rule),
             stage: st.stage,
-            vendor: v.supplier,
+            bucket: requirementBucket(st.stage),
+            vendor: supplier,
             po: v.po ? v.po.name : null,
             remarks: r.remarks,
           },
           flags,
           title: v.item,
-          header: `${r.reqNo ? `${requirementLabel(r.reqNo)} · ` : ""}${nf(r.requiredQty)} ${r.unit} · ${v.godown}${r.department ? ` · ${r.department}` : ""} · ${st.next}`,
+          ref: r.reqNo ? requirementLabel(r.reqNo) : undefined,
+          header: [`${nf(r.requiredQty)} ${r.unit}`, v.godown, r.department, v.po ? `on ${v.po.name} with ${v.po.supplier}` : null].filter(Boolean).join(" · "),
           actions,
-          panel: flowPanel(v, st, money, choices, prices, companions),
+          panel: flowPanel(v, st, money, choices, prices, companions, { summary, history: history.get(r.id) ?? [], shared, nextSub }),
           by: stampLine(v.by, r.createdAt),
         };
       });
@@ -775,11 +892,12 @@ const requisitions: ScreenModule = {
         groups: ["reqNo"],
         groupHead: ["date", "department", "godown"],
         chips: "stage",
+        /* Four sub-tabs over where each requirement is (`requirementBucket`), opening on the work waiting: To order. */
         subtabs: [
-          { id: "needs", l: "Needs a PO", in: ["Waiting for PO number", "Create PO", "Create or link PO", "PO awaiting approval"], hint: "Waiting on the buyer: create the PO, or link the number the Quotation manager made" },
-          { id: "onOrder", l: "On order", in: ["Waiting for goods", "Partly received"], hint: "On a PO, waiting for the goods at the gate" },
-          { id: "received", l: "Received", in: ["Received", "Closed short"] },
-          { id: "all", l: "All" },
+          { id: "toOrder", l: "To order", k: "bucket", in: ["toOrder"], hint: "Owed a PO: create it, or link the number the Quotation manager made" },
+          { id: "onOrder", l: "On order", k: "bucket", in: ["onOrder"], hint: "On a PO, waiting for the goods at the gate" },
+          { id: "received", l: "Received", k: "bucket", in: ["received"] },
+          { id: "cancelled", l: "Cancelled", k: "bucket", in: ["cancelled"] },
         ],
         godownKey: "godown",
         /* Quantity is not summed: items mix kg, litres and pieces. */
@@ -789,7 +907,10 @@ const requisitions: ScreenModule = {
           { l: "Urgent", where: { k: "priority", in: ["Urgent"] }, tone: "danger" },
           { l: "Past required by", where: { flag: "requiredOverdue" }, tone: "danger" },
         ],
-        filters: ["item", "type", "department", "priority", "method", "vendor"],
+        filters: ["item", "type", "department", "priority", "method", "vendor", "godown"],
+        /* CREATE ONE PO: requirements of one supplier ticked together become one PO, every one a line — Create PO started on the first with the rest already on it. */
+        bulk: [{ id: "createOnePo", l: "Create one PO", client: "startInRecord", fits: "createPo", same: ["vendor"] }],
+        selectSum: [{ k: "vendor", l: "suppliers", one: "supplier", kind: "distinct" }],
         newForm: form,
         newLabel: "New requirement",
         noDataLine: "No purchase requirements yet.",
@@ -1504,30 +1625,46 @@ const purchaseOrders: ScreenModule = {
     const approver = ctx.powers.has("approvePurchaseOrder");
     const canReceive = ctx.screens.has("inward");
     const day = today();
+    /* The design's columns, in its order (`fit-columns.ts` keeps them in this priority). The status is the sub-tab, so it is not a column. */
     const all: Col[] = [
-      { k: "po", l: "PO no", t: "mono" },
-      { k: "date", l: "PO date", t: "d" },
-      { k: "vendor", l: "Supplier", t: "b" },
-      { k: "items", l: "Items", t: "t" },
-      { k: "deliverTo", l: "Deliver to", t: "t" },
-      { k: "deliveryDate", l: "Delivery date", t: "d" },
-      { k: "value", l: "PO value", t: "m", pw: "viewPurchaseMoney" },
-      { k: "terms", l: "Payment terms", t: "t" },
-      { k: "received", l: "Received", t: "t" },
-      { k: "status", l: "Status", t: "s" },
-      { k: "shared", l: "Last shared", t: "t" },
-      { k: "f", l: "Flags", t: "f" },
+      { k: "po", l: "PO no", t: "mono", w: 84 },
+      { k: "vendor", l: "Supplier", t: "b", w: 150 },
+      { k: "items", l: "Items", t: "t", w: 120 },
+      { k: "deliverTo", l: "Deliver to", t: "t", w: 100 },
+      { k: "deliveryDate", l: "Delivery", t: "d", late: "late", after: "dueWords", w: 164 },
+      { k: "received", l: "Received", t: "t", bar: "progress", w: 168 },
+      { k: "value", l: "PO value", t: "m", pw: "viewPurchaseMoney", w: 100 },
+      { k: "shared", l: "Last shared", t: "t", w: 106 },
     ];
     const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
     const rows: ListRow[] = pos.map((p) => {
       const s = p.po.status;
       const t = poTotals(pricedLines(p), p.po.freightPaise);
       const anyReceived = p.lines.some((l) => l.received > 0);
+      const bucket = poBucket(s, anyReceived);
+      const open = bucket === "toSend" || bucket === "waiting" || bucket === "part";
       const doneLines = p.lines.filter((l) => lineDone({ ordered: l.expected, received: l.received })).length;
       const differs = p.lines.map((l) => quantityDifferenceNote(l.quantity, l.expected, l.received, flagPercent)).filter((x): x is string => !!x);
       const liveCorrections = p.lines.flatMap((l, li) => l.corrections.map((c, ci) => ({ c, l, label: correctionLabel(li, ci) }))).filter((x) => !x.c.cancelledAt);
       const self = p.po.createdById === ctx.user.id && !ctx.administrator;
+      /* The menu reads in blocks (`menuBlock`): print and receive, then the changes, then the take-backs — so the actions are pushed in that order. */
       const actions: ActionSpec[] = [];
+      if (p.po.approvedAt && s !== "Rejected") actions.push({ id: "print", l: "Print PO", href: erpPoHref(p.po.id) });
+      /* THE NEXT STEP, by where the PO is: Share… while nobody has it, Receive while goods are owed, nothing once done. */
+      if (RECEIVABLE_PO.includes(s)) {
+        actions.push({ id: "receive", l: "Receive goods", short: "Receive", primary: s !== "Approved", loadsForm: true, why: canReceive ? "" : "Goods in is not on your account" });
+      }
+      /* Full edit at every stage but Cancelled (Nov 2026): what was typed can always be corrected; the number and status are the system's. */
+      if (s !== "Cancelled") actions.push({ id: "edit", l: "Edit PO", loadsForm: true, why: money ? "" : MONEY_WHY });
+      if (s === "Approved" || s === "Sent" || s === "Partly received" || s === "Received") {
+        actions.push({
+          id: "share",
+          l: "Share…",
+          primary: s === "Approved",
+          why: money ? "" : "Sharing sends the PO with its rates to the supplier, so it needs purchase money on your account. Print PO gives you a copy without rates.",
+          share: shareSpecs.get(p.po.id),
+        });
+      }
       const approveWhy = approver ? "" : "Only the PO approver approves";
       if (s === "Pending approval") {
         actions.push({
@@ -1544,52 +1681,16 @@ const purchaseOrders: ScreenModule = {
           prompt: { title: `Send back ${poName(p.po)}`, sub: "Its requirements go back to waiting for a PO, to be raised again corrected.", submit: "Send back", fields: [{ k: "reason", l: "What needs changing", t: "area", req: true }] },
         });
       }
-      /* Full edit at every stage but Cancelled (Nov 2026): what was typed can always be corrected; the number and status are the system's. */
-      if (s !== "Cancelled") actions.push({ id: "edit", l: "Edit", loadsForm: true, why: money ? "" : MONEY_WHY });
-      if (s === "Approved" || s === "Sent" || s === "Partly received" || s === "Received") {
-        actions.push({
-          id: "share",
-          l: "Share…",
-          primary: s === "Approved",
-          why: money ? "" : "Sharing sends the PO with its rates to the supplier, so it needs purchase money on your account. Print PO gives you a copy without rates.",
-          share: shareSpecs.get(p.po.id),
-        });
-      }
-      if (s === "Approved" || s === "Sent" || s === "Partly received") {
-        actions.push({ id: "receive", l: "Receive goods", primary: s !== "Approved", loadsForm: true, why: canReceive ? "" : "Goods receipt is not on your account" });
-      }
       if (s === "Partly received")
         actions.push({
           id: "close",
-          l: "Close short",
+          l: "Close short…",
           prompt: { title: `Close ${poName(p.po)} short`, sub: "Nothing more is expected against it; its requirements count as received.", submit: "Close PO", fields: [{ k: "reason", l: "Why", t: "area", req: true }] },
           impact: { kind: "erp-po-close", id: p.po.id },
         });
-      if (["Pending approval", "Approved", "Sent"].includes(s))
-        actions.push({
-          id: "cancel",
-          l: "Cancel PO",
-          why: anyReceived ? "Goods were received against it — close it short instead" : "",
-          prompt: { title: `Cancel ${poName(p.po)}`, sub: "Its requirements go back to waiting for a PO, keeping their supplier.", submit: "Cancel PO", fields: [{ k: "reason", l: "Reason", t: "area", req: true }] },
-          impact: { kind: "erp-po-cancel", id: p.po.id },
-        });
-      if (p.po.approvedAt && s !== "Rejected") actions.push({ id: "print", l: "Print PO", href: erpPoHref(p.po.id) });
-      /* A correction line made at the gate is undone by cancelling it, with a reason; only an ERP administrator re-rates one. */
-      if (liveCorrections.length) {
-        const opts = liveCorrections.map((x) => `${x.label} · ${x.l.item} ${x.c.quantity > 0 ? "+" : "−"}${nf(Math.abs(x.c.quantity))} ${x.l.unit}`);
-        actions.push({
-          id: "cancelCorrection",
-          l: "Cancel a correction",
-          prompt: {
-            title: `Cancel a correction on ${poName(p.po)}`,
-            sub: "The line goes back to what it expected before. Goods already received stay received. The correction stays on the PO, struck through, with your reason.",
-            submit: "Cancel correction",
-            fields: [
-              { k: "correction", l: "Correction", t: "select", req: true, opts, def: opts.length === 1 ? opts[0] : undefined },
-              { k: "reason", l: "Why", t: "area", req: true },
-            ],
-          },
-        });
+      const opts = liveCorrections.map((x) => `${x.label} · ${x.l.item} ${x.c.quantity > 0 ? "+" : "−"}${nf(Math.abs(x.c.quantity))} ${x.l.unit}`);
+      /* Only an ERP administrator re-rates a correction made at the gate. */
+      if (liveCorrections.length)
         actions.push({
           id: "correctionRate",
           l: "Change a correction's rate",
@@ -1605,38 +1706,77 @@ const purchaseOrders: ScreenModule = {
             ],
           },
         });
-      }
+      if (["Pending approval", "Approved", "Sent"].includes(s))
+        actions.push({
+          id: "cancel",
+          l: "Cancel PO…",
+          why: anyReceived ? "Goods were received against it — close it short instead" : "",
+          prompt: { title: `Cancel ${poName(p.po)}`, sub: "Its requirements go back to waiting for a PO, keeping their supplier.", submit: "Cancel PO", fields: [{ k: "reason", l: "Reason", t: "area", req: true }] },
+          impact: { kind: "erp-po-cancel", id: p.po.id },
+        });
+      /* A correction line made at the gate is undone by cancelling it, with a reason: struck through, never deleted. */
+      if (liveCorrections.length)
+        actions.push({
+          id: "cancelCorrection",
+          l: "Cancel a correction…",
+          prompt: {
+            title: `Cancel a correction on ${poName(p.po)}`,
+            sub: "The line goes back to what it expected before. Goods already received stay received. The correction stays on the PO, struck through, with your reason.",
+            submit: "Cancel correction",
+            fields: [
+              { k: "correction", l: "Correction", t: "select", req: true, opts, def: opts.length === 1 ? opts[0] : undefined },
+              { k: "reason", l: "Why", t: "area", req: true },
+            ],
+          },
+        });
+      const delivery = deliveryWords(p.po.deliveryDate, day, open);
       const flags: string[] = [];
       if (s === "Pending approval") flags.push("awaitingApproval");
       if (differs.length) flags.push("qtyDiffers");
-      if (RECEIVABLE_PO.includes(s) && p.po.deliveryDate < day) flags.push("deliveryLate");
+      if (delivery?.late) flags.push("deliveryLate");
+      if (open && dueWithin(p.po.deliveryDate, day, 3)) flags.push("dueSoon");
+      /* Received, READ from the gate against what each line now expects: one unit adds up, mixed units count lines in full. */
+      const units = new Set(p.lines.map((l) => l.unit));
+      const expected = p.lines.reduce((a, l) => a + l.expected, 0);
+      const got = p.lines.reduce((a, l) => a + Math.min(l.received, l.expected), 0);
+      const sameUnit = units.size === 1 && expected > 0;
+      const progress = sameUnit ? got / expected : p.lines.length ? doneLines / p.lines.length : 0;
+      const receivedText = !p.lines.length
+        ? "—"
+        : sameUnit
+          ? `${nf(p.lines.reduce((a, l) => a + l.received, 0))} of ${nf(expected)}${p.lines.some((l) => l.expected !== l.quantity) ? ` (ordered ${nf(p.lines.reduce((a, l) => a + l.quantity, 0))})` : ""}`
+          : `${doneLines} of ${p.lines.length} items in full`;
       return {
         id: p.po.id,
         v: withoutHidden(
           {
             po: poName(p.po),
-            date: p.po.poDate,
             vendor: p.supplier,
             items: p.lines.map((l) => l.item).join(", "),
             deliverTo: p.godown,
             deliveryDate: p.po.deliveryDate,
+            late: delivery?.late ? delivery.words : null,
+            dueWords: delivery && !delivery.late ? delivery.words : null,
+            received: receivedText,
+            progress: Math.round(progress * 1000) / 1000,
             value: t.totalPaise,
-            terms: p.po.paymentTerms,
-            received:
-              p.lines.length === 1
-                ? `${nf(p.lines[0].received)} of ${nf(p.lines[0].expected)} ${p.lines[0].unit}${p.lines[0].expected !== p.lines[0].quantity ? ` (ordered ${nf(p.lines[0].quantity)})` : ""}`
-                : p.lines.length
-                  ? `${doneLines} of ${p.lines.length} items in full`
-                  : "—",
-            status: s,
             shared: shareSpecs.get(p.po.id)?.last ?? (p.po.sentVia ? `${p.po.sentVia}${p.po.sentAt ? ` · ${fd(calendarDate(p.po.sentAt))}` : ""}` : null),
+            status: s,
+            bucket,
           },
           hiddenKeys,
         ),
         flags,
         title: `${poName(p.po)}${p.po.revision ? ` · Rev ${p.po.revision}` : ""} · ${p.supplier}`,
-        header: `${differs.length ? `Quantity differs from PO: ${differs.join(", ")} · ` : ""}${fd(p.po.poDate)} · deliver to ${p.godown} by ${fd(p.po.deliveryDate)} · ${p.po.paymentTerms}`,
-        fields: [{ l: "Remarks", v: p.po.remarks || "—" }],
+        /* Where it is, in the sub-tab's words, and what it is worth to somebody who may see it. */
+        ref: [{ toSend: "To send", waiting: "Waiting for goods", part: "Part received", done: "Done", cancelled: "Cancelled" }[bucket], money ? inr(t.totalPaise) : ""].filter(Boolean).join(" · "),
+        header: `${differs.length ? `Quantity differs from PO: ${differs.join(", ")} · ` : ""}${fd(p.po.poDate)} · deliver to ${p.godown} by ${fd(p.po.deliveryDate)}${delivery ? ` (${delivery.words})` : ""} · ${p.po.paymentTerms}`,
+        fields: [
+          { l: "Status", v: s },
+          { l: "PO date", v: fd(p.po.poDate) },
+          { l: "Payment terms", v: p.po.paymentTerms || "—" },
+          { l: "Remarks", v: p.po.remarks || "—" },
+        ],
         contacts: [
           ...(p.supplierPhone ? [{ l: `Call ${p.supplierPhone}`, href: `tel:${p.supplierPhone.replace(/\D/g, "")}` }] : []),
           ...(p.supplierEmail ? [{ l: "Email", href: `mailto:${p.supplierEmail}` }] : []),
@@ -1646,30 +1786,36 @@ const purchaseOrders: ScreenModule = {
         by: stampLine(p.by, p.po.createdAt),
       };
     });
+    /* Each sub-tab's cards name it, and are worked out over its own rows. */
+    const openCards = (first: string): StatSpec[] => [
+      { l: first, kind: "count" },
+      { l: "Value on order", kind: "sum", k: "value" },
+      { l: "Delivery late", where: { flag: "deliveryLate" }, tone: "danger" },
+      { l: "Due in 3 days", where: { flag: "dueSoon" }, tone: "warn" },
+    ];
+    const closedCards = (first: string): StatSpec[] => [
+      { l: first, kind: "count" },
+      { l: "Suppliers", kind: "distinct", k: "vendor" },
+      { l: "PO value", kind: "sum", k: "value" },
+      { l: "Quantity differs", where: { flag: "qtyDiffers" }, tone: "warn" },
+    ];
     return {
       spec: {
         screen: "purchaseOrders",
-        rowMenu: ["share", "print", "receive", "edit", "close", "cancel", "cancelCorrection", "correctionRate"],
         cols,
         hidden,
-        groups: ["status"],
-        chips: "status",
+        /* Five sub-tabs over where each PO is (`poBucket`), opening on the work waiting: To send. */
         subtabs: [
-          { id: "toSend", l: "To send", in: ["Pending approval", "Approved"], hint: "Raised, not yet shared with the supplier" },
-          { id: "awaiting", l: "Awaiting goods", in: ["Sent", "Partly received"], hint: "With the supplier, goods still to come" },
-          { id: "done", l: "Done", in: ["Received", "Closed"] },
-          { id: "all", l: "All" },
+          { id: "toSend", l: "To send", k: "bucket", in: ["toSend"], hint: "Raised, not yet shared with the supplier", view: { stats: openCards("To send") } },
+          { id: "waiting", l: "Waiting for goods", k: "bucket", in: ["waiting"], hint: "With the supplier, nothing received yet", view: { stats: openCards("Waiting for goods") } },
+          { id: "part", l: "Part received", k: "bucket", in: ["part"], hint: "Some goods in, more expected", view: { stats: openCards("Part received") } },
+          { id: "done", l: "Done", k: "bucket", in: ["done"], hint: "Received in full, or closed short", view: { stats: closedCards("Done"), sortDefault: ["deliveryDate", -1] } },
+          { id: "cancelled", l: "Cancelled", k: "bucket", in: ["cancelled"], view: { stats: closedCards("Cancelled"), sortDefault: ["deliveryDate", -1] } },
         ],
-        stats: [
-          { l: "POs" },
-          { l: "Suppliers", kind: "distinct", k: "vendor" },
-          { l: "PO value", kind: "sum", k: "value" },
-          /* Only POs raised the old way wait on an approver; the card goes once none is left. */
-          ...(rows.some((r) => r.flags?.includes("awaitingApproval")) ? [{ l: "Awaiting approval", where: { flag: "awaitingApproval" }, tone: "warn" as const }] : []),
-          { l: "Delivery late", where: { flag: "deliveryLate" }, tone: "danger" },
-          { l: "Quantity differs", where: { flag: "qtyDiffers" }, tone: "warn" },
-        ],
-        filters: ["vendor", "deliverTo", "terms", "value"],
+        /* Late first, then by delivery date — the order the gate needs them. */
+        sortDefault: ["deliveryDate", 1],
+        stats: openCards("To send"),
+        filters: ["vendor", "deliverTo", "value"],
         newForm: money ? (form ?? undefined) : undefined,
         newLabel: "New PO",
         noDataLine: "No purchase orders yet. Create one from a direct-purchase requirement, or link one from the Quotation manager.",

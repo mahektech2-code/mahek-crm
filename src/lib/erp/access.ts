@@ -63,6 +63,12 @@ export type ErpContext = {
    * withheld.
    */
   withheld?: ReadonlySet<string>;
+  /**
+   * The Edit and Delete ticks per page (key without `erp.`), for a grant
+   * converted to the screen model. Undefined — an unconverted grant, an
+   * administrator, a preview — holds every tick (`action-ticks.ts`).
+   */
+  ticks?: ReadonlyMap<string, { edit: boolean; delete: boolean }>;
   /** Godowns the person is assigned to and may work at. */
   assignedGodowns: ErpGodownRef[];
   /** The working location, or the first assigned godown, or null. */
@@ -98,6 +104,18 @@ async function tabRowsOf(userId: string): Promise<Set<string>> {
   return new Set(rows.map((r) => r.screen));
 }
 
+/** Edit and Delete per page for a converted grant; null where the grant is not converted (it holds every tick). */
+async function ticksOf(userId: string): Promise<Map<string, { edit: boolean; delete: boolean }> | null> {
+  const rows = await db
+    .select({ screen: appScreenAccess.screen, edit: appScreenAccess.canEdit, del: appScreenAccess.canDelete })
+    .from(appScreenAccess)
+    .innerJoin(appAccess, and(eq(appAccess.userId, appScreenAccess.userId), eq(appAccess.app, appScreenAccess.app)))
+    .where(and(eq(appScreenAccess.userId, userId), eq(appScreenAccess.app, "erp"), isNotNull(appAccess.position)));
+  const [grant] = await db.select({ position: appAccess.position }).from(appAccess).where(and(eq(appAccess.userId, userId), eq(appAccess.app, "erp"))).limit(1);
+  if (!grant?.position) return null;
+  return new Map(rows.filter((r) => !TAB_KEYS.includes(r.screen)).map((r) => [r.screen.replace(/^erp\./, ""), { edit: r.edit, delete: r.del }]));
+}
+
 async function allActiveGodowns(): Promise<ErpGodownRef[]> {
   return db
     .select({ id: erpGodowns.id, name: erpGodowns.name, reserved: erpGodowns.reserved })
@@ -127,6 +145,7 @@ async function resolveFor(user: User): Promise<Resolved> {
       .limit(1),
     level ? tabRowsOf(user.id) : Promise.resolve(new Set<string>()),
   ]);
+  const ticks = level && !administrator ? await ticksOf(user.id) : null;
 
   const powers = new Set<ErpPower>(
     administrator ? ERP_POWERS : powerRows.map((r) => r.power).filter((p): p is ErpPower => (ERP_POWERS as readonly string[]).includes(p)),
@@ -162,6 +181,7 @@ async function resolveFor(user: User): Promise<Resolved> {
     powers,
     screens,
     withheld,
+    ...(ticks ? { ticks } : {}),
     assignedGodowns: assigned,
     workingGodown,
     designation: designationRow[0]?.name ?? null,

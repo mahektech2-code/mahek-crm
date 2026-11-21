@@ -5,11 +5,13 @@ import { and, asc, desc, eq, inArray, isNull, or, sql, type SQL } from "drizzle-
 import { adjustStockRow, stockRowActions } from "../stock-adjust";
 import { erpStockInquiryHref } from "../stock-links";
 import { erpTraceHref } from "../trace-links";
+import { erpLink } from "../registry";
 import { inWindow, STOCK_ROW_CAP, STOCK_WINDOW, tooWide, unscoped, windowWhere } from "../window";
 import { db } from "@/db";
 import {
   erpGodowns,
   erpInward,
+  erpLabelPrints,
   erpPoCorrections,
   erpPoLines,
   erpPrCosts,
@@ -21,7 +23,9 @@ import {
   erpTests,
   users,
 } from "@/db/schema";
-import { err, fieldErr, okVoid, type Result } from "@/lib/result";
+import { err, fieldErr, ok, okVoid, type Result } from "@/lib/result";
+import { holdsTick } from "../action-ticks";
+import { testingTeamFor } from "../departments";
 import { powerRefusal, type ErpContext } from "../access";
 import { refValues } from "../refs";
 import { erpLabelsHref } from "../trace-links";
@@ -39,7 +43,7 @@ import {
   withoutHidden,
   type ScreenModule,
 } from "../server";
-import type { ActionSpec, ColSpec, FieldSpec, FormSpec, PromptSpec } from "../ui";
+import type { ActionSpec, ColSpec, FieldSpec, FormSpec, ListRow, PromptSpec } from "../ui";
 import { fd, inr, inrRate, nf } from "../ui";
 import {
   TRANSPORT_MODES,
@@ -62,11 +66,15 @@ import { confirmImpact } from "@/lib/impact/registry";
 import { readConfirmation } from "@/lib/impact/types";
 import { EXTRA_OPTS, RECEIVABLE_PO, SHORT_OPTS, correctionFor, normalisePoNo, poLabel, poName, receiptGap } from "../engines/purchase-flow";
 import { OWNERSHIP_LABEL, ownershipByLabel } from "../engines/drums";
+import { STOCK_WORDS, testBucket, waitedTooLong, waitingText } from "../engines/lot-testing";
+import { MAX_COPIES as MAX_LABEL_COPIES } from "../engines/labels";
 
 /** The GRN line's drum ownership: the supplier's usual answer unless the line says otherwise. */
 const DRUM_OWNER_OPTS = ["As the supplier's master says", OWNERSHIP_LABEL.mahek, OWNERSHIP_LABEL.returnable];
 import { sortPoLines, type GrnItem, type GrnPoLine } from "../engines/grn-pick";
 import { poOption, purchaseOrderViews, refreshPurchaseOrder, type PoView } from "./purchase-flow";
+import { deliveryWords } from "../engines/purchase-flow";
+import { expectedAtGate, gateGroupLine, supplierDelivery, whatsNext, type GateLine, type GateRow, type GrnNext, type SavedGrnLine } from "../engines/goods-in";
 import { REGISTER_DEFAULT } from "../period";
 import { roundedTotal } from "@/lib/bill-round";
 
@@ -340,12 +348,15 @@ async function receivable(money = false, include: string[] = []) {
   /* The same open lines, by the item they bring: the receipt is searched by what arrived. */
   const openByItem = new Map<string, GrnPoLine[]>();
   const doneByItem = new Map<string, GrnPoLine[]>();
+  /* A PO line by its id, as the form names it — what Goods in's Receive starts a GRN on. */
+  const keyOfLine = new Map<string, { po: string; poLine: string; item: string }>();
   for (const [label, p] of byLabel) {
     godownOf[label] = p.godown;
     supplierOf[label] = `${p.supplier} · deliver to ${p.godown} by ${fd(p.po.deliveryDate)}`;
     linesBy[label] = p.lines.map((l) => l.label);
     for (const l of p.lines) {
       const key = `${label}|${l.label}`;
+      keyOfLine.set(l.id, { po: label, poLine: l.label, item: l.item });
       typeOf[key] = l.itemType;
       itemOf[key] = l.item;
       const left = Math.max(0, Math.round((l.expected - l.received) * 1000) / 1000);
@@ -373,10 +384,52 @@ async function receivable(money = false, include: string[] = []) {
   for (const [k, v] of openByItem) openByItem.set(k, sortPoLines(v));
   /* A line received in full is offered after every open one, for a late truck, and never ahead of them. */
   for (const [k, v] of doneByItem) openByItem.set(k, [...(openByItem.get(k) ?? []), ...sortPoLines(v)]);
-  return { pos, byLabel, find, linesBy, typeOf, itemOf, pendingOf, pendingQtyOf, rateOf, qtyOf, supplierOf, godownOf, openByItem };
+  return { pos, byLabel, find, linesBy, typeOf, itemOf, pendingOf, pendingQtyOf, rateOf, qtyOf, supplierOf, godownOf, openByItem, keyOfLine };
 }
 
-async function inwardForm(ctx: ErpContext, init?: Record<string, string>, opts: { poId?: string; fixed?: boolean } = {}): Promise<FormSpec> {
+/**
+ * EXPECTED AT THE GATE: every line of an approved, sent or part-received PO
+ * that still has goods to come, in the gate's order (`expectedAtGate`). What
+ * has arrived is READ (`receivedByLine`), against what the line now expects.
+ */
+async function gateRows(day: string): Promise<GateRow[]> {
+  const pos = await purchaseOrderViews({ status: RECEIVABLE_PO });
+  const lines: GateLine[] = pos.flatMap((p) =>
+    p.lines.map((l) => ({
+      lineId: l.id,
+      poId: p.po.id,
+      po: poName(p.po),
+      supplier: p.supplier,
+      supplierId: p.po.supplierId,
+      godown: p.godown,
+      item: l.item,
+      type: l.itemType,
+      unit: l.unit,
+      expected: l.expected,
+      received: l.received,
+      due: p.po.deliveryDate ?? null,
+      ratePaise: l.ratePaise,
+      gstBp: l.gstBp,
+    })),
+  );
+  return expectedAtGate(lines, day);
+}
+
+/**
+ * The GRN started from Goods in's Expected at the gate: the item-first receipt
+ * with these PO lines already on it — one line (Receive), or every open line of
+ * that line's supplier at its godown (Receive from <supplier>): one GRN is one
+ * supplier's delivery. Null where the line has nothing left to come.
+ */
+async function gateReceiptForm(ctx: ErpContext, lineId: string, whole: boolean): Promise<FormSpec | null> {
+  const rows = await gateRows(today());
+  const at = rows.find((r) => r.lineId === lineId);
+  if (!at) return null;
+  const picked = whole ? supplierDelivery(rows, at) : [at];
+  return inwardForm(ctx, { godown: at.godown }, { start: picked.map((r) => r.lineId) });
+}
+
+async function inwardForm(ctx: ErpContext, init?: Record<string, string>, opts: { poId?: string; fixed?: boolean; start?: string[] } = {}): Promise<FormSpec> {
   const [gds, config, types] = await Promise.all([godownOptions(ctx, { lost: false }), getConfig(), refValues("materialType")]);
   const all = await db.select().from(erpRawMaterials);
   const rx = await receivable(ctx.powers.has("viewPurchaseMoney"));
@@ -434,6 +487,8 @@ async function inwardForm(ctx: ErpContext, init?: Record<string, string>, opts: 
       pendingQtyOf: rx.pendingQtyOf,
       rateOf: rx.rateOf,
       ...(itemFirst ? { grn } : {}),
+      /* Started on PO lines from Expected at the gate: the receipt opens on Receipt details with them on it. */
+      ...(itemFirst && opts.start?.length ? { grnStart: opts.start.map((id) => rx.keyOfLine.get(id)).filter((x): x is { po: string; poLine: string; item: string } => !!x) } : {}),
     },
     header: [
       { k: "pr", l: "PR number", t: "derived", calc: "inward.pr" },
@@ -897,11 +952,26 @@ const inward: ScreenModule = {
   window: INWARD_WINDOW,
   async load(ctx, s) {
     const sc = s ?? unscoped();
-    const where = sc.ids?.length ? windowWhere(sql`${erpInward.receivedDate}`, sql`${erpInward.id}`, sc) : sql`(${windowWhere(sql`${erpInward.receivedDate}`, sql`${erpInward.id}`, sc)} or ${erpInward.routed} is null)`;
+    const day = today();
+    /* A line not yet routed is work, and today's lines are Received today: both show whatever the period. */
+    const where = sc.ids?.length
+      ? windowWhere(sql`${erpInward.receivedDate}`, sql`${erpInward.id}`, sc)
+      : sql`(${windowWhere(sql`${erpInward.receivedDate}`, sql`${erpInward.id}`, sc)} or ${erpInward.routed} is null or ${erpInward.receivedDate} = ${day}::date)`;
     const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(erpInward).where(where);
     const wide = tooWide(Number(n), sc);
     const rows = await db
-      .select({ r: erpInward, supplier: erpSuppliers.name, item: erpRawMaterials.name, godown: erpGodowns.name, by: users.name, poNumber: erpPurchaseOrders.poNumber, poStatus: erpPurchaseOrders.status })
+      .select({
+        r: erpInward,
+        supplier: erpSuppliers.name,
+        partyCode: erpSuppliers.partyCode,
+        item: erpRawMaterials.name,
+        itemCode: erpRawMaterials.code,
+        godown: erpGodowns.name,
+        by: users.name,
+        poNumber: erpPurchaseOrders.poNumber,
+        qmPoNo: erpPurchaseOrders.qmPoNo,
+        poStatus: erpPurchaseOrders.status,
+      })
       .from(erpInward)
       .innerJoin(erpSuppliers, eq(erpSuppliers.id, erpInward.supplierId))
       .leftJoin(erpPurchaseOrders, eq(erpPurchaseOrders.id, erpInward.poId))
@@ -911,7 +981,13 @@ const inward: ScreenModule = {
       .where(wide ? sql`false` : where)
       .orderBy(desc(erpInward.prNumber), asc(erpInward.createdAt));
     const prs = [...new Set(rows.map((x) => x.r.prNumber))];
-    const [form, costRows] = await Promise.all([inwardForm(ctx), prs.length ? db.select().from(erpPrCosts).where(inArray(erpPrCosts.prNumber, prs)) : Promise.resolve([] as (typeof erpPrCosts.$inferSelect)[])]);
+    const [form, costRows, gate] = await Promise.all([
+      inwardForm(ctx),
+      prs.length ? db.select().from(erpPrCosts).where(inArray(erpPrCosts.prNumber, prs)) : Promise.resolve([] as (typeof erpPrCosts.$inferSelect)[]),
+      /* Expected at the gate is work waiting now: read whole, never through the period (a dashboard's ids name receipts only). */
+      sc.ids?.length ? Promise.resolve([] as GateRow[]) : gateRows(day),
+    ]);
+    const money = ctx.powers.has("viewPurchaseMoney");
     const costs = new Map(costRows.map((c) => [c.prNumber, c]));
     const cols: ColSpec[] = [
       { k: "pr", l: "PR no", t: "mono" },
@@ -932,16 +1008,118 @@ const inward: ScreenModule = {
       { k: "routed", l: "Sent to", t: "s" },
       { k: "f", l: "Flags", t: "f" },
     ];
+    /* EXPECTED AT THE GATE reads PO lines, not receipts: its own columns, grouped by one supplier's delivery to one godown. */
+    const gateCols: ColSpec[] = [
+      { k: "po", l: "PO", t: "mono", w: 80 },
+      { k: "item", l: "Item", t: "b", w: 150 },
+      { k: "type", l: "Category", t: "s", w: 100 },
+      { k: "ordered", l: "Ordered", t: "n", uk: "unit", w: 110 },
+      { k: "receivedQty", l: "Received", t: "n", w: 90 },
+      { k: "toCome", l: "Still to come", t: "n", uk: "unit", w: 120 },
+      { k: "due", l: "Due", t: "d", late: "late", after: "dueWords", w: 160 },
+      { k: "deliverTo", l: "Deliver to", t: "t", w: 100 },
+      { k: "supplier", l: "Supplier", t: "t" },
+      { k: "group", l: "From", t: "t" },
+      { k: "groupLine", l: "", t: "t" },
+    ];
+    const canReceive = ctx.screens.has("purchaseOrders") || ctx.screens.has("inward");
+    const groupLines = new Map<string, string>();
+    for (const g of new Set(gate.map((r) => r.group))) groupLines.set(g, gateGroupLine(gate.filter((r) => r.group === g), day, money ? (p) => inr(Math.round(p / 100) * 100) : undefined));
+    const expectedRows: ListRow[] = gate.map((r) => {
+      const due = deliveryWords(r.due, day, true);
+      return {
+        id: r.lineId,
+        v: {
+          kind: "expected",
+          po: r.po,
+          item: r.item,
+          type: r.type,
+          ordered: r.expected,
+          unit: r.unit,
+          receivedQty: r.received,
+          toCome: r.toCome,
+          due: r.due,
+          late: due?.late ? due.words : null,
+          dueWords: due && !due.late ? due.words : null,
+          deliverTo: r.godown,
+          supplier: r.supplier,
+          group: r.group,
+          groupLine: groupLines.get(r.group) ?? "",
+        },
+        flags: [...(r.late ? ["lateLine"] : []), ...(r.due === day ? ["gateToday"] : [])],
+        title: `${r.item} · ${r.po}`,
+        ref: r.po,
+        header: `${r.supplier} · deliver to ${r.godown}${r.due ? ` by ${fd(r.due)}${due ? ` (${due.words})` : ""}` : ""} · ${nf(r.toCome)} ${r.unit} still to come`,
+        fields: [
+          { l: "Ordered", v: `${nf(r.expected)} ${r.unit}`, der: true },
+          { l: "Received so far", v: `${nf(r.received)} ${r.unit}`, der: true },
+        ],
+        actions: [
+          /* THE NEXT STEP: the GRN, with this PO line already on it. */
+          { id: "receive", l: "Receive", primary: true, loadsForm: true, why: canReceive ? "" : "Goods in is not on your account" },
+          /* One GRN for the whole truck: every open line of this supplier at this godown. */
+          { id: "receiveAll", l: `Receive from ${r.supplier}`, loadsForm: true, why: canReceive ? "" : "Goods in is not on your account" },
+          { id: "openPo", l: `Open ${r.po}`, href: erpLink("purchaseOrders", { open: r.poId }) },
+        ],
+      };
+    });
+    /* RECEIVED TODAY: the design's few columns — what came, from whom, where it went. */
+    const todayCols: ColSpec[] = [
+      { k: "pr", l: "PR", t: "mono", w: 88 },
+      { k: "supplierPo", l: "Supplier · PO", t: "t" },
+      { k: "item", l: "Item", t: "b" },
+      { k: "receivedText", l: "Received", t: "t", w: 160 },
+      { k: "routed", l: "Sent to", t: "s" },
+      { k: "transport", l: "Transport", t: "s" },
+      { k: "f", l: "Flags", t: "f" },
+    ];
     return {
       spec: {
         screen: "inward",
         cols,
         hidden: [],
         groups: ["pr"],
+        /* Three sub-tabs, opening on the work waiting at the gate. Expected at the gate lists PO lines; the other two, receipt lines. */
         subtabs: [
-          { id: "all", l: "All receipts" },
-          { id: "notSent", l: "Not sent on", flag: "awaitingRoute", hint: "Received, not yet sent to Testing or to Purchase" },
-          { id: "testing", l: "Going to testing", k: "routed", in: ["Testing"] },
+          {
+            id: "expected",
+            l: "Expected at the gate",
+            k: "kind",
+            in: ["expected"],
+            unwindowed: true,
+            hint: "Every PO line still to come, late first",
+            line: "A truck arrived? Press Receive from its supplier — every open line of that supplier comes into one GRN. Not listed? Use Receive goods and search the item.",
+            view: {
+              cols: gateCols,
+              groups: ["group"],
+              groupHead: ["groupLine"],
+              groupHeadStrong: [],
+              groupSel: false,
+              groupAction: "receiveAll",
+              groupNoCount: true,
+              bulk: [],
+              selectSum: [],
+              /* The gate reads the list itself: no figure cards (the design's). */
+              stats: [],
+              filters: ["supplier", "item", "type", "deliverTo"],
+              noDataLine: "Nothing is expected at the gate — every PO with a supplier has arrived",
+            },
+          },
+          {
+            id: "today",
+            l: "Received today",
+            k: "kind",
+            in: ["receiptToday"],
+            unwindowed: true,
+            hint: "What was saved today — still correctable here",
+            view: {
+              cols: todayCols,
+              groups: [],
+              stats: [],
+              noDataLine: "Nothing received today yet",
+            },
+          },
+          { id: "all", l: "All receipts", k: "kind", in: ["receipt", "receiptToday"] },
         ],
         groupHead: ["po", "date", "supplier", "godown", "transport"],
         groupSel: true,
@@ -986,7 +1164,7 @@ const inward: ScreenModule = {
         noDataLine: "No goods received yet. Goods are received against a PO.",
       },
       tooWide: wide,
-      rows: rows.map((x) => {
+      rows: [...expectedRows, ...rows.map((x): ListRow => {
         const actions: ActionSpec[] = [];
         if (!x.r.routed && x.r.testingRequired)
           actions.push({ id: "toTesting", l: "Send to Testing", primary: true });
@@ -996,7 +1174,7 @@ const inward: ScreenModule = {
         const receivableHere = !!poText && RECEIVABLE_PO.includes(x.poStatus ?? "");
         actions.push({
           id: "addMore",
-          l: "Add another",
+          l: "Add another item from this truck",
           why: !x.r.poId ? "Received before POs — receive new goods against a PO" : receivableHere ? "" : `${poLabel(x.poNumber!)} is ${x.poStatus} — nothing more is received against it`,
           form: receivableHere
             ? {
@@ -1011,10 +1189,13 @@ const inward: ScreenModule = {
               }
             : undefined,
         });
-        actions.push({ id: "edit", l: "Edit", loadsForm: true });
+        /* The lot this line is (or, once tested, will be) registered under — traced from here. */
+        const lot = lotNumber(x.partyCode, x.itemCode, x.r.prNumber);
+        actions.push({ id: "trace", l: "Trace this lot", href: erpTraceHref(lot) });
+        actions.push({ id: "edit", l: "Edit receipt line", loadsForm: true });
         actions.push({
           id: "void",
-          l: "Void line",
+          l: "Void this line…",
           why: mayVoidInward(ctx) ? "" : VOID_WHY,
           prompt: {
             title: `Void ${x.item} on PR ${x.r.prNumber}?`,
@@ -1043,11 +1224,16 @@ const inward: ScreenModule = {
         const transport = !c
           ? "Not recorded"
           : [transportModeLabel(c.transportMode), c.transportMode === "none" ? "" : inr(c.transportCostPaise), c.tempoNumber ?? ""].filter(Boolean).join(" · ");
+        const poShown = x.poNumber == null ? null : poName({ poNumber: x.poNumber, qmPoNo: x.qmPoNo });
         return {
           id: x.r.id,
           v: {
+            /* Today's receipts are Received today and All receipts alike. */
+            kind: x.r.receivedDate === day ? "receiptToday" : "receipt",
             pr: String(x.r.prNumber),
-            po: x.poNumber == null ? null : poLabel(x.poNumber),
+            po: poShown,
+            supplierPo: [x.supplier, poShown].filter(Boolean).join(" · "),
+            receivedText: [`${nf(x.r.quantity)} ${x.r.unit}`, x.r.drums ? `${nf(x.r.drums)} drum${x.r.drums === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · "),
             date: x.r.receivedDate,
             supplier: x.supplier,
             type: x.r.materialType,
@@ -1065,6 +1251,7 @@ const inward: ScreenModule = {
           },
           flags: [...(x.r.routed ? [] : ["awaitingRoute"]), ...(x.r.poId ? [] : ["noPo"])],
           title: x.item,
+          ref: `PR ${x.r.prNumber}`,
           header: [x.r.drums ? `${x.r.drums} drums` : "", x.item, `${nf(x.r.quantity)} ${x.r.unit}`].filter(Boolean).join(" · "),
           fields: [
             { l: "Transport", v: transport },
@@ -1077,7 +1264,7 @@ const inward: ScreenModule = {
           actions,
           by: stampLine(x.by, x.r.createdAt),
         };
-      }),
+      })],
     };
   },
   forms: {
@@ -1153,6 +1340,11 @@ const inward: ScreenModule = {
       }
       /* "Add more" on a PR keeps its number; a new inward draws the next one. */
       const fixed = int(h.prFixed);
+      /* One PR is one supplier's delivery: more items on it come from the same supplier. */
+      if (fixed != null) {
+        const [onPr] = await db.select({ supplierId: erpInward.supplierId }).from(erpInward).where(eq(erpInward.prNumber, fixed)).limit(1);
+        if (onPr && onPr.supplierId !== parsed[0].po.po.supplierId) return err(`PR ${fixed} is another supplier's delivery — receive ${parsed[0].po.supplier}'s goods on their own GRN.`, "rule_violation");
+      }
       /* A new PR records how it came in; "Add more" leaves the PR's costs alone. */
       const costRow = fixed == null ? readPrCosts(h, config["erp.purchase.ownVehicleRatePerKmPaise"]) : null;
       if (costRow && !costRow.ok) return costRow;
@@ -1171,8 +1363,10 @@ const inward: ScreenModule = {
       const po = parsed[0].po;
       const poIds = [...new Set(parsed.map((x) => x.po.po.id))];
       const poNames = [...new Set(parsed.map((x) => poName(x.po.po)))];
-      const [sup] = await db.select({ own: erpSuppliers.drumOwnership }).from(erpSuppliers).where(eq(erpSuppliers.id, po.po.supplierId));
+      const [sup] = await db.select({ own: erpSuppliers.drumOwnership, partyCode: erpSuppliers.partyCode }).from(erpSuppliers).where(eq(erpSuppliers.id, po.po.supplierId));
       const supplierDrumOwnership = sup?.own ?? null;
+      /* What each line became, for the receipt's What's next. */
+      const saved: SavedGrnLine[] = [];
       await db.transaction(async (tx) => {
         if (fixed != null) pr = fixed;
         else {
@@ -1231,8 +1425,10 @@ const inward: ScreenModule = {
               .where(eq(erpPurchaseOrders.id, po.po.id));
             corrected.push(`${poName(po.po)} ${correction.quantity > 0 ? "+" : "−"}${nf(Math.abs(correction.quantity))} ${line.unit} ${m.name}`);
           }
+          const line0 = { item: m.name, type: m.materialType, quantity: qty, unit: unit === "Unit" ? "Pcs" : unit, drums: m.materialType === "Chemical" ? int(l.drums) : null, lot: lotNumber(sup?.partyCode ?? "", m.code, pr), po: poName(po.po) };
           if (testing) {
             sent.testing++;
+            saved.push({ ...line0, routed: "Testing", purchaseId: null });
             continue;
           }
           const made = await createPurchase(tx, ctx, {
@@ -1253,13 +1449,37 @@ const inward: ScreenModule = {
           if (made.ok) {
             await tx.update(erpInward).set({ routed: "Purchase", routedAt: new Date(), routedById: ctx.user.id }).where(eq(erpInward.id, inwardId));
             sent.register++;
-          } else sent.stuck.push(m.name);
+            saved.push({ ...line0, lot: made.data.lotNo, routed: "Purchase", purchaseId: made.data.id });
+          } else {
+            sent.stuck.push(m.name);
+            saved.push({ ...line0, routed: null, purchaseId: null });
+          }
         }
         for (const id of poIds) await refreshPurchaseOrder(tx, id);
       });
       await erpAudit(ctx, "erp.inward.create", "erp_inward", String(pr), null, { lines: parsed.length, po: poNames.join(", "), supplier: po.supplier, ...sent, corrected });
       const where = [sent.testing ? `${sent.testing} to testing` : "", sent.register ? `${sent.register} in the register` : ""].filter(Boolean).join(", ");
-      return okVoid(
+      const godownName = (await db.select({ name: erpGodowns.name }).from(erpGodowns).where(eq(erpGodowns.id, godownId)))[0]?.name ?? "";
+      return ok(
+        {
+          /* WHAT'S NEXT (the GRN's step 5): every line's labels, testing and bill, from what this save did. */
+          next: {
+            pr,
+            supplier: po.supplier,
+            godown: godownName,
+            pos: poNames,
+            lines: whatsNext(saved, {
+              /* The label print answers to these screens (`app/erp/print-labels`). */
+              canLabels: ["barcode", "register", "stock", "inward"].some((k) => ctx.screens.has(k)),
+              /* Recording the bill is Bills' act: the page, its Edit tick and purchase money. */
+              canBill: ctx.screens.has("register") && holdsTick(ctx, "register", "edit") && ctx.powers.has("viewPurchaseMoney"),
+              testedBy: testingTeamFor,
+              labelsHref: (id) => erpLabelsHref({ purchase: id }),
+              billHref: (id) => erpLink("register", { open: id }),
+              nf,
+            }),
+          } satisfies GrnNext,
+        },
         `PR ${pr} · ${parsed.length} line${parsed.length > 1 ? "s" : ""} received against ${poNames.join(", ")}${where ? ` · ${where}` : ""}` +
           (corrected.length ? ` · PO corrected: ${corrected.join("; ")}` : "") +
           (sent.stuck.length ? ` · ${sent.stuck.join(", ")} not in the register: that lot number is taken — change the PR number and send it` : ""),
@@ -1347,6 +1567,9 @@ const inward: ScreenModule = {
   },
   formLoaders: {
     edit: (ctx, id) => inwardEditForm(ctx, id),
+    /* Goods in's Expected at the gate: the GRN on one PO line, or on every open line of its supplier at its godown. */
+    receive: (ctx, id) => gateReceiptForm(ctx, id, false),
+    receiveAll: (ctx, id) => gateReceiptForm(ctx, id, true),
   },
   bulk: {
     /* The row act on each ticked line in turn: each line is its own decision,
@@ -1582,7 +1805,14 @@ function missingEvidence(t: typeof erpTests.$inferSelect): string[] {
   return miss;
 }
 
-/** Testing is a register by testing date; a test nobody has decided is work and always shows. */
+/**
+ * LOT TESTING IS A QUEUE (Nov 2026): To test · To verify · Verified · Failed
+ * (`engines/lot-testing.ts`). A line routed to testing at the gate is To test
+ * BEFORE any test row exists — its row is the inward line, and Record test
+ * opens the test form on it. To test and To verify are read whole, oldest
+ * first: a lot waiting is work whatever the period. Only Verified and Failed
+ * follow the period picker, by testing date.
+ */
 const TEST_WINDOW = { label: "Testing date", default: REGISTER_DEFAULT } as const;
 
 const testing: ScreenModule = {
@@ -1590,18 +1820,63 @@ const testing: ScreenModule = {
   window: TEST_WINDOW,
   async load(ctx, s) {
     const sc = s ?? unscoped();
-    const where = sc.ids?.length ? windowWhere(sql`${erpTests.testingDate}`, sql`${erpTests.id}`, sc) : sql`(${windowWhere(sql`${erpTests.testingDate}`, sql`${erpTests.id}`, sc)} or ${erpTests.decidedAt} is null)`;
-    const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(erpTests).where(where);
+    /* Decided tests follow the window; an undecided one is waiting, and always read. */
+    const decided = windowWhere(sql`${erpTests.testingDate}`, sql`${erpTests.id}`, sc);
+    const where = sc.ids?.length ? decided : sql`(${decided} or ${erpTests.decidedAt} is null)`;
+    const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(erpTests).where(sql`${decided} and ${erpTests.decidedAt} is not null`);
     const wide = tooWide(Number(n), sc);
-    const rows = await db
-      .select({ t: erpTests, item: erpRawMaterials.name, godown: erpGodowns.name, tester: users.name, supplier: erpSuppliers.name })
-      .from(erpTests)
-      .innerJoin(erpRawMaterials, eq(erpRawMaterials.id, erpTests.rawMaterialId))
-      .innerJoin(erpGodowns, eq(erpGodowns.id, erpTests.godownId))
-      .leftJoin(users, eq(users.id, erpTests.testerId))
-      .leftJoin(erpSuppliers, eq(erpSuppliers.id, erpTests.supplierId))
-      .where(wide ? sql`false` : where)
-      .orderBy(desc(erpTests.testingDate), desc(erpTests.prNumber));
+    const [rows, untested, config] = await Promise.all([
+      db
+        .select({
+          t: erpTests,
+          item: erpRawMaterials.name,
+          itemCode: erpRawMaterials.code,
+          godown: erpGodowns.name,
+          tester: users.name,
+          supplier: erpSuppliers.name,
+          partyCode: erpSuppliers.partyCode,
+          receivedAt: erpInward.createdAt,
+          poNumber: erpPurchaseOrders.poNumber,
+          qmPoNo: erpPurchaseOrders.qmPoNo,
+        })
+        .from(erpTests)
+        .innerJoin(erpRawMaterials, eq(erpRawMaterials.id, erpTests.rawMaterialId))
+        .innerJoin(erpGodowns, eq(erpGodowns.id, erpTests.godownId))
+        .leftJoin(users, eq(users.id, erpTests.testerId))
+        .leftJoin(erpSuppliers, eq(erpSuppliers.id, erpTests.supplierId))
+        .leftJoin(erpInward, eq(erpInward.id, erpTests.inwardId))
+        .leftJoin(erpPurchaseOrders, eq(erpPurchaseOrders.id, erpInward.poId))
+        .where(wide ? sql`${erpTests.decidedAt} is null` : where)
+        .orderBy(desc(erpTests.testingDate), desc(erpTests.prNumber)),
+      /* TO TEST: routed to testing, nothing recorded yet. */
+      db
+        .select({
+          inw: erpInward,
+          item: erpRawMaterials.name,
+          itemCode: erpRawMaterials.code,
+          tests: erpRawMaterials.testingList,
+          godown: erpGodowns.name,
+          supplier: erpSuppliers.name,
+          partyCode: erpSuppliers.partyCode,
+          poNumber: erpPurchaseOrders.poNumber,
+          qmPoNo: erpPurchaseOrders.qmPoNo,
+        })
+        .from(erpInward)
+        .innerJoin(erpRawMaterials, eq(erpRawMaterials.id, erpInward.rawMaterialId))
+        .innerJoin(erpGodowns, eq(erpGodowns.id, erpInward.godownId))
+        .innerJoin(erpSuppliers, eq(erpSuppliers.id, erpInward.supplierId))
+        .leftJoin(erpPurchaseOrders, eq(erpPurchaseOrders.id, erpInward.poId))
+        .where(
+          and(
+            eq(erpInward.routed, "Testing"),
+            sql`not exists (select 1 from erp_tests t where t.inward_id = ${erpInward.id})`,
+            sc.ids?.length ? inArray(erpInward.id, sc.ids) : undefined,
+          ),
+        ),
+      getConfig(),
+    ]);
+    const waitHours = config["erp.purchase.testWaitingHours"];
+    const now = Date.now();
     const testIds = rows.map((x) => x.t.id);
     const withRegister = new Set(
       (testIds.length ? await db.select({ testId: erpPurchases.testId }).from(erpPurchases).where(inArray(erpPurchases.testId, testIds)) : []).map((x) => x.testId!),
@@ -1613,120 +1888,183 @@ const testing: ScreenModule = {
     const photosOn = (await ai.featureState("photos", true)).on;
     const why = verifier ? "" : "Only the verifier decides a purchase test";
     const cols: ColSpec[] = [
-      { k: "status", l: "Verification", t: "s" },
-      { k: "date", l: "Date", t: "d" },
-      { k: "pr", l: "PR no", t: "mono" },
-      { k: "item", l: "Item", t: "b" },
-      { k: "tests", l: "Tests required", t: "t" },
+      { k: "lot", l: "Lot", t: "mono" },
+      { k: "item", l: "Item", t: "b", sub: "line" },
+      { k: "received", l: "Received", t: "at" },
+      { k: "waiting", l: "Waiting", t: "t", alert: "late" },
+      { k: "tests", l: "Tests required", t: "t", tags: true },
+      { k: "godown", l: "Godown", t: "t" },
+      { k: "stock", l: "Stock", t: "s" },
+      { k: "tester", l: "Tested by", t: "t" },
       { k: "smell", l: "Smell", t: "s" },
       { k: "density", l: "Density", t: "n" },
-      { k: "tester", l: "Tester", t: "t" },
-      { k: "godown", l: "Godown", t: "t" },
+      { k: "date", l: "Testing date", t: "d" },
+      { k: "pr", l: "PR no", t: "mono" },
+      { k: "supplier", l: "Supplier", t: "t" },
     ];
+    /* "PR-15 · PO-2 · Asian Solvents": where the lot came from, under its item. */
+    const lineOf = (pr: number, po: { poNumber: number | null; qmPoNo: string | null }, supplier: string | null) =>
+      [`PR-${pr}`, po.poNumber != null ? poName({ poNumber: po.poNumber, qmPoNo: po.qmPoNo }) : null, supplier].filter(Boolean).join(" · ");
+    const waited = (at: Date | string | null) => {
+      if (!at) return { waiting: null, late: null };
+      const ms = now - new Date(at).getTime();
+      return { waiting: waitingText(ms), late: waitedTooLong(ms, waitHours) ? "late" : null };
+    };
+    const QUEUE = "Every lot waiting, oldest first";
+    const toTestRows: ListRow[] = untested.map((x) => {
+      const i = x.inw;
+      const line = lineOf(i.prNumber, x, x.supplier);
+      return {
+        id: i.id,
+        v: {
+          bucket: "toTest",
+          lot: lotNumber(x.partyCode, x.itemCode, i.prNumber),
+          item: x.item,
+          line,
+          received: i.createdAt.toISOString(),
+          ...waited(i.createdAt),
+          tests: x.tests.join(", ") || null,
+          godown: x.godown,
+          stock: STOCK_WORDS.toTest,
+          tester: null,
+          smell: null,
+          density: null,
+          date: null,
+          pr: String(i.prNumber),
+          supplier: x.supplier,
+        },
+        flags: [],
+        title: x.item,
+        ref: `PR-${i.prNumber}`,
+        header: `${line} · ${nf(i.quantity)} ${i.unit} · nothing recorded yet`,
+        fields: [{ l: "Remark", v: i.remark || "—" }],
+        /* Recording a test is Access: the department tests what it receives. */
+        actions: [{ id: "record", l: "Record test", primary: true, loadsForm: true }],
+      };
+    });
     return {
       spec: {
         screen: "testing",
         cols,
         hidden: [],
-        groups: ["status"],
-        chips: "status",
         subtabs: [
-          { id: "pending", l: "Waiting to verify", in: ["Pending"] },
-          { id: "notVerified", l: "Not verified", in: ["Not Verified"] },
-          { id: "verified", l: "Verified", in: ["Verified"] },
-          { id: "all", l: "All" },
+          { id: "toTest", l: "To test", k: "bucket", in: ["toTest"], allTime: true, note: QUEUE, sort: ["received", 1], hide: ["tester", "smell", "density", "date"], hint: "Arrived and routed to testing; no test recorded yet" },
+          { id: "toVerify", l: "To verify", k: "bucket", in: ["toVerify"], allTime: true, note: QUEUE, sort: ["received", 1], hide: ["stock", "date"], hint: "Recorded, waiting for the verifier" },
+          { id: "verified", l: "Verified", k: "bucket", in: ["verified"], hide: ["waiting"] },
+          { id: "failed", l: "Failed", k: "bucket", in: ["failed"], hide: ["waiting"], hint: "Marked not verified by the verifier" },
         ],
+        sortDefault: ["received", -1],
         godownKey: "godown",
-        stats: [
-          { l: "Tests" },
-          { l: "Items", kind: "distinct", k: "item" },
-          { l: "PRs", kind: "distinct", k: "pr" },
-          { l: "Waiting to decide", where: { k: "status", in: ["Pending"] }, tone: "warn" },
-          { l: "Not verified", where: { k: "status", in: ["Not Verified"] }, tone: "danger" },
-        ],
-        filters: ["item", "tester", "smell", "density"],
+        /* The sub-tabs carry the counts; the design draws no figure cards here. */
+        stats: [],
+        filters: ["item", "supplier", "tester", "godown"],
         newForm: newForm ?? undefined,
         newLabel: "New test",
-        noDataLine: "No tests yet. Chemical lots arrive here as they are received.",
+        noDataLine: "No lots to test. Chemical lots arrive here as they are received.",
       },
       tooWide: wide,
-      rows: rows.map((x) => {
-        const reg = withRegister.has(x.t.id);
-        const miss = missingEvidence(x.t);
-        /* Stored "Not Verified" is also the default before anybody decides;
-           an undecided test reads as waiting, never as rejected. */
-        const shown = x.t.decidedAt ? x.t.status : "Pending";
-        const actions: ActionSpec[] = [];
-        if (x.t.status !== "Verified")
-          actions.push({
-            id: "verify",
-            l: "Verify",
-            primary: true,
-            why: why || (miss.length ? `Evidence missing: ${miss.join(", ")}` : ""),
-          });
-        if (shown !== "Not Verified" || reg)
-          actions.push({
-            id: "unverify",
-            l: "Mark not verified",
-            why,
-            confirm: reg
-              ? `A purchase register row already exists for this lot. Marking it Not Verified leaves that row in place — remove it from the register separately.`
-              : `Mark ${x.item} (PR ${x.t.prNumber}) Not Verified?`,
-          });
-        if (x.t.status !== "Verified") actions.push({ id: "edit", l: "Record evidence", loadsForm: true });
-        if (x.t.status !== "Verified" && pendingPhotos.has(x.t.id)) {
-          actions.unshift({ id: "aiTest", l: "Review photo readings", ai: true, primary: true, loadsForm: true });
-          actions.push({ id: "aiTestReject", l: "Reject photo readings", confirm: "Reject the AI readings? Nothing changes." });
-        } else if (x.t.status !== "Verified" && photosOn && (x.t.densityPhotoId || x.t.phPhotoId))
-          actions.push({ id: "aiTestRead", l: "Read test photos", ai: true });
-        actions.push({ id: "addLot", l: "Add another", loadsForm: true });
-        return {
-          id: x.t.id,
-          v: {
-            status: shown,
-            date: x.t.testingDate,
-            pr: String(x.t.prNumber),
-            item: x.item,
-            tests: x.t.tests.join(", ") || "—",
-            smell: x.t.smell,
-            density: x.t.density,
-            tester: x.tester,
-            godown: x.godown,
-          },
-          flags: [],
-          title: x.item,
-          header: `PR ${x.t.prNumber}${x.supplier ? ` · ${x.supplier}` : ""}${x.t.quantity ? ` · ${nf(x.t.quantity)} ${x.t.unit ?? ""}` : ""}`,
-          fields: [{ l: "Remark", v: x.t.remark || "—" }],
-          actions,
-          panel: {
-            kind: "testEvidence",
-            data: {
-              status: shown,
-              tests: x.t.tests,
+      rows: [
+        ...toTestRows,
+        ...rows.map((x): ListRow => {
+          const reg = withRegister.has(x.t.id);
+          const miss = missingEvidence(x.t);
+          const bucket = testBucket(x.t);
+          /* Stored "Not Verified" is also the default before anybody decides;
+             an undecided test reads as waiting, never as rejected. */
+          const shown = x.t.decidedAt ? x.t.status : "Pending";
+          const open = x.t.status !== "Verified";
+          const actions: ActionSpec[] = [];
+          /* The next step: evidence still missing is recorded first, then the verifier decides. */
+          if (open) actions.push({ id: "edit", l: "Record evidence", loadsForm: true, ...(bucket === "toVerify" && miss.length ? { primary: true } : {}) });
+          if (open && pendingPhotos.has(x.t.id)) {
+            actions.push({ id: "aiTest", l: "Review photo readings", ai: true, loadsForm: true });
+            actions.push({ id: "aiTestReject", l: "Reject photo readings", confirm: "Reject the AI readings? Nothing changes." });
+          } else if (open && photosOn && (x.t.densityPhotoId || x.t.phPhotoId)) actions.push({ id: "aiTestRead", l: "Read test photos", ai: true });
+          actions.push({ id: "addLot", l: "Add another test", loadsForm: true });
+          if (open)
+            actions.push({
+              id: "verify",
+              l: "Verify",
+              primary: bucket === "toVerify" && !miss.length,
+              why: why || (miss.length ? `Evidence missing: ${miss.join(", ")}` : ""),
+            });
+          if (shown !== "Not Verified" || reg)
+            actions.push({
+              id: "unverify",
+              l: "Not verified",
+              why,
+              confirm: reg
+                ? `A purchase register row already exists for this lot. Marking it Not Verified leaves that row in place — remove it from the register separately.`
+                : `Mark ${x.item} (PR ${x.t.prNumber}) Not Verified?`,
+            });
+          const line = lineOf(x.t.prNumber, x, x.supplier);
+          const from = x.receivedAt ?? x.t.createdAt;
+          return {
+            id: x.t.id,
+            v: {
+              bucket,
+              lot: lotNumber(x.partyCode, x.itemCode, x.t.prNumber),
+              item: x.item,
+              line,
+              received: new Date(from).toISOString(),
+              /* Only a lot still waiting has a waiting time; a decided one is a record. */
+              ...(bucket === "toVerify" ? waited(from) : { waiting: null, late: null }),
+              tests: x.t.tests.join(", ") || null,
+              godown: x.godown,
+              stock: STOCK_WORDS[bucket],
+              tester: x.tester,
               smell: x.t.smell,
               density: x.t.density,
-              phValue: x.t.phValue,
-              photos: {
-                PH: x.t.phPhotoId,
-                Color: x.t.colorPhotoId,
-                "Oil Paint": x.t.oilPhotoId,
-                "Fast Paints": x.t.fastPhotoId,
-                "Nc Paints": x.t.ncPhotoId,
-                Primer: x.t.primerPhotoId,
-                Density: x.t.densityPhotoId,
-                "Tharmakol Pass": x.t.thermocolPhotoId,
-              },
-              video: x.t.videoId,
-              registerExists: reg,
+              date: x.t.testingDate,
+              pr: String(x.t.prNumber),
+              supplier: x.supplier,
+              status: shown,
             },
-          },
-          by: stampLine(x.tester, x.t.createdAt),
-        };
-      }),
+            flags: [],
+            title: x.item,
+            ref: `PR-${x.t.prNumber}`,
+            header: `${line}${x.t.quantity ? ` · ${nf(x.t.quantity)} ${x.t.unit ?? ""}` : ""}`,
+            fields: [{ l: "Remark", v: x.t.remark || "—" }],
+            actions,
+            panel: {
+              kind: "testEvidence",
+              data: {
+                status: shown,
+                tests: x.t.tests,
+                smell: x.t.smell,
+                density: x.t.density,
+                phValue: x.t.phValue,
+                photos: {
+                  PH: x.t.phPhotoId,
+                  Color: x.t.colorPhotoId,
+                  "Oil Paint": x.t.oilPhotoId,
+                  "Fast Paints": x.t.fastPhotoId,
+                  "Nc Paints": x.t.ncPhotoId,
+                  Primer: x.t.primerPhotoId,
+                  Density: x.t.densityPhotoId,
+                  "Tharmakol Pass": x.t.thermocolPhotoId,
+                },
+                video: x.t.videoId,
+                registerExists: reg,
+              },
+            },
+            by: stampLine(x.tester, x.t.createdAt),
+          };
+        }),
+      ],
     };
   },
   formLoaders: {
     edit: (ctx, id) => testForm(ctx, id),
+    /* Record test on a To test row: the new test's form, already on that inward line. */
+    record: async (ctx, inwardId) => {
+      const f = await testForm(ctx);
+      if (!f) return null;
+      const line = Object.entries((f.data?.lineId ?? {}) as Record<string, string>).find(([, v]) => v === inwardId)?.[0];
+      if (!line) return null;
+      const [inw] = await db.select({ godown: erpGodowns.name }).from(erpInward).innerJoin(erpGodowns, eq(erpGodowns.id, erpInward.godownId)).where(eq(erpInward.id, inwardId));
+      return { ...f, init: { ...f.init, line, godown: inw?.godown ?? f.init?.godown ?? "" } };
+    },
     aiTest: async (ctx, id) => {
       const base = await testForm(ctx, id);
       return base ? (await import("../ai-photos")).testReviewForm(base, id) : null;
@@ -1912,6 +2250,7 @@ type RegRow = {
   p: typeof erpPurchases.$inferSelect;
   supplier: string;
   partyCode: string | null;
+  gstin: string | null;
   item: string;
   itemCode: string | null;
   type: string;
@@ -1926,6 +2265,7 @@ async function registerRows(where: SQL): Promise<RegRow[]> {
       p: erpPurchases,
       supplier: erpSuppliers.name,
       partyCode: erpSuppliers.partyCode,
+      gstin: erpSuppliers.gstin,
       item: erpRawMaterials.name,
       itemCode: erpRawMaterials.code,
       type: erpRawMaterials.materialType,
@@ -2088,6 +2428,8 @@ export function purchaseStage(p: { status: string; billReceived: string | null; 
 
 /** The statuses that say a bill is in hand. */
 const BILLED = ["Invoice Received", "Purchase Matched", "Purchase Verified"];
+/** The stages past the bill (`purchaseStage`). */
+const BILLED_STAGES = new Set(["Bill received", "Matched", "Verified"]);
 
 /**
  * Landing cost on a register row: material (before GST, the stock rate's own
@@ -2137,23 +2479,28 @@ const register: ScreenModule = {
     const aiBills = (await featureState("bills", true)).on || (await pendingFor("bills")).size > 0;
     const pendingBills = await pendingFor("bills");
     const reopen = ctx.powers.has("reopenPurchase");
+    /* The design's columns first (Lot no, PR · PO, Item, Quantity, PO rate,
+       Amount, Received, Flags) — what does not fit folds into the record. */
     const all: Col[] = [
-      { k: "date", l: "Date", t: "d" },
-      { k: "pr", l: "PR no", t: "mono" },
-      { k: "po", l: "PO", t: "mono" },
-      { k: "lot", l: "Lot no", t: "mono" },
-      { k: "party", l: "Party", t: "t" },
+      { k: "lot", l: "Lot no", t: "mono", w: 112 },
+      { k: "prPo", l: "PR · PO", t: "mono", w: 128 },
       { k: "item", l: "Item", t: "b" },
-      { k: "qty", l: "Quantity", t: "n" },
-      { k: "unit", l: "Unit", t: "t" },
+      { k: "qty", l: "Quantity", t: "n", uk: "unit" },
+      { k: "poRate", l: "PO rate", t: "m", pw: "viewPurchaseMoney" },
+      { k: "final", l: "Amount", t: "m", whole: true, pw: "viewPurchaseMoney" },
+      { k: "date", l: "Received", t: "d" },
+      { k: "f", l: "Flags", t: "f" },
+      { k: "party", l: "Party", t: "t" },
       { k: "rate", l: "Rate", t: "m", pw: "viewPurchaseMoney" },
       { k: "gst", l: "GST %", t: "n", pw: "viewPurchaseMoney" },
-      { k: "final", l: "Final amount", t: "m", whole: true, pw: "viewPurchaseMoney" },
       { k: "landing", l: "Landing cost", t: "m", pw: "viewPurchaseMoney" },
       { k: "stage", l: "Stage", t: "s", pw: "viewPurchaseMoney" },
       { k: "billNo", l: "Bill no", t: "t" },
       { k: "posting", l: "Inventory", t: "s" },
-      { k: "f", l: "Flags", t: "f" },
+      { k: "pr", l: "PR no", t: "mono" },
+      { k: "po", l: "PO", t: "mono" },
+      { k: "unit", l: "Unit", t: "t" },
+      { k: "gstin", l: "GSTIN", t: "mono" },
     ];
     const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
     return {
@@ -2161,25 +2508,30 @@ const register: ScreenModule = {
         screen: "register",
         cols,
         hidden,
-        groups: ["pr"],
+        /* BY PARTY: one bill comes from one party, so the party is the group,
+           its heading says the lots, the total on the bill and its GSTIN, and
+           Record bill for n lots runs the bulk Record the bill over that
+           party's lots in the open sub-tab (`groupBulk`). */
+        groups: ["party"],
+        groupHead: ["gstin"],
+        groupNoun: ["lot", "lots"],
+        groupBulk: money ? { id: "billReceived", l: "Record bill for {n} {noun}" } : undefined,
         subtabs: [
-          /* The stage column needs purchase money; without it the tab would always read 0. */
+          /* Bill to come and Matched read the stage, which needs purchase money; without it they would always read 0. */
           ...(money ? [{ id: "billToCome", l: "Bill to come", k: "stage", in: ["Arrived", "Tested"], hint: "In the godown, the supplier's bill not yet received" }] : []),
           { id: "rateMissing", l: "Rate missing", flag: "rateMissing", hint: "Held out of stock until the rate is entered" },
-          { id: "rateOff", l: "Rate differs from PO", flag: "rateOffPo" },
-          { id: "all", l: "All lots" },
+          { id: "rateOff", l: "Rate differs", flag: "rateOffPo", hint: "The rate on the lot is not the PO line's" },
+          ...(money ? [{ id: "matched", l: "Matched", k: "matched", in: ["yes"], hint: "Bill in hand, rate entered and agreeing with the PO" }] : []),
+          { id: "all", l: "Every lot" },
         ],
-        groupHead: ["date", "po", "party", "billNo"],
         agg: money ? { k: "final", l: "on the bill" } : undefined,
         godownKey: "godown",
         /* The money cards drop out on their own where the power withholds the column. */
         stats: [
           { l: "Lots" },
-          { l: "Parties", kind: "distinct", k: "party" },
           { l: "On the bill", kind: "sum", k: "final", missing: "without a rate" },
-          { l: "Rate missing", where: { flag: "rateMissing" }, tone: "danger" },
-          { l: "Rate differs from PO", where: { flag: "rateOffPo" }, tone: "warn" },
-          { l: "Bill to come", where: { k: "stage", in: ["Arrived", "Tested"] }, tone: "warn" },
+          { l: "Parties", kind: "distinct", k: "party" },
+          { l: "Rate differs from PO", where: { flag: "rateOffPo" }, tone: "danger" },
         ],
         filters: ["party", "item", "stage", "posting", "unit", "final"],
         newForm: newForm ?? undefined,
@@ -2257,7 +2609,29 @@ const register: ScreenModule = {
         const p = r.p;
         const f = purchaseFigures(figIn(p));
         const posted = postsToStock(p.ratePaise);
+        const rateOff = !!p.poId && !!p.poLineId && poRate.has(p.poLineId) && p.ratePaise != null && p.ratePaise !== poRate.get(p.poLineId);
         const actions: ActionSpec[] = [];
+        /* The ⋯ menu, in the design's order: open it and its ordinary work, then the changes, then the take-backs (`menuBlock`). */
+        actions.push({ id: "trace", l: "Trace this lot", href: erpTraceHref(p.lotNo) });
+        actions.push({ id: "inquiry", l: "Stock inquiry", href: erpStockInquiryHref({ stage: "rm", item: p.rawMaterialId, godown: p.godownId }) });
+        actions.push({ id: "label", l: "Print drum label", href: erpLabelsHref({ purchase: p.id }) });
+        if (money && aiBills && !pendingBills.has(p.id))
+          actions.push({
+            id: "aiBillRead",
+            l: "Read supplier bill",
+            ai: true,
+            prompt: {
+              title: "Read the supplier bill",
+              sub: `PR ${p.prNumber} · ${r.supplier}. The bill is read and matched to this PR's rows; you review every value before anything is saved.`,
+              submit: "Read the bill",
+              fields: [
+                { k: "photo", l: "Bill photo or PDF", t: "photo", req: true },
+                { k: "photo2", l: "Second page", t: "photo" },
+              ],
+            },
+          });
+        actions.push({ id: "edit", l: "Edit lot", loadsForm: true });
+        /* A lot with no rate is held out of stock: entering it is the row's one next step. */
         if (money && !posted)
           actions.push({
             id: "rate",
@@ -2274,13 +2648,13 @@ const register: ScreenModule = {
           if (p.billReceived !== "Received")
             actions.push({
               id: "billReceived",
-              l: "Record the bill",
+              l: "Bill received",
               prompt: { title: "Bill received", submit: "Save", fields: [{ k: "billNo", l: "Bill number", t: "text", req: true }], init: { billNo: p.billNumber ?? "" } },
             });
-          else actions.push({ id: "billNotReceived", l: "Bill Not Received", why: p.status === "Purchase Matched" || p.status === "Purchase Verified" ? "It has been matched to its bill" : "" });
+          else actions.push({ id: "billNotReceived", l: "Bill not received", why: p.status === "Purchase Matched" || p.status === "Purchase Verified" ? "It has been matched to its bill" : "" });
           actions.push({
             id: "status",
-            l: "Change status",
+            l: verifier ? "Set status — Purchase Verified" : "Set status",
             /* A verifier's one choice is Purchase Verified, so a verified row has nothing left to set. This `why` is also what tells the selection bar it cannot take Verify purchase. */
             why: verifier && p.status === "Purchase Verified" ? "Already Purchase Verified" : "",
             prompt: {
@@ -2290,35 +2664,15 @@ const register: ScreenModule = {
               fields: [{ k: "status", l: "Status", t: "select", req: true, opts: settableStatuses(verifier) }],
             },
           });
-          if (p.status === "Purchase Verified" || p.status === "")
-            actions.push({ id: "reopen", l: "Back to pending", why: reopen ? "" : "Only an admin sets a verified purchase back to Pending" });
         }
-        if (money && aiBills) {
-          if (pendingBills.has(p.id)) {
-            actions.unshift({ id: "aiBill", l: "Review bill reading", ai: true, primary: true, loadsForm: true });
-            actions.push({ id: "aiBillReject", l: "Reject bill reading", confirm: "Reject the AI reading of this bill? Nothing on the register changes." });
-          } else
-            actions.push({
-              id: "aiBillRead",
-              l: "Read supplier bill",
-              ai: true,
-              prompt: {
-                title: "Read the supplier bill",
-                sub: `PR ${p.prNumber} · ${r.supplier}. The bill is read and matched to this PR's rows; you review every value before anything is saved.`,
-                submit: "Read the bill",
-                fields: [
-                  { k: "photo", l: "Bill photo or PDF", t: "photo", req: true },
-                  { k: "photo2", l: "Second page", t: "photo" },
-                ],
-              },
-            });
+        if (money && aiBills && pendingBills.has(p.id)) {
+          actions.push({ id: "aiBill", l: "Review bill reading", ai: true, loadsForm: true });
+          actions.push({ id: "aiBillReject", l: "Reject bill reading", confirm: "Reject the AI reading of this bill? Nothing on the register changes." });
         }
-        actions.push({ id: "edit", l: "Edit", loadsForm: true });
-        actions.push({ id: "addMore", l: "Add another", loadsForm: true });
         const inwardId = p.inwardId ?? (p.testId ? (testInward.get(p.testId) ?? null) : null);
         actions.push({
           id: "void",
-          l: "Void line",
+          l: "Void this lot…",
           why: !inwardId ? "This lot was entered on the register, not received on a GRN — Edit it instead." : mayVoidInward(ctx) ? "" : VOID_WHY,
           prompt: {
             title: `Void ${r.item} on PR ${p.prNumber}?`,
@@ -2328,7 +2682,8 @@ const register: ScreenModule = {
           },
           ...(inwardId ? { impact: { kind: "erp-inward-void", id: inwardId } } : {}),
         });
-        actions.push({ id: "label", l: "Print drum label", href: erpLabelsHref({ purchase: p.id }) });
+        if (money && (p.status === "Purchase Verified" || p.status === ""))
+          actions.push({ id: "reopen", l: "Back to pending", why: reopen ? "" : "Only an admin sets a verified purchase back to Pending" });
         const moneyFields = money
           ? [
               { l: "Litre rate", v: f.literRatePaise == null ? "—" : inr(f.literRatePaise), der: true },
@@ -2350,6 +2705,9 @@ const register: ScreenModule = {
               date: p.purchaseDate,
               pr: String(p.prNumber),
               po: p.poNumber,
+              prPo: [`PR-${p.prNumber}`, p.poNumber].filter(Boolean).join(" · "),
+              poRate: p.poLineId && poRate.has(p.poLineId) ? poRate.get(p.poLineId)! : null,
+              gstin: r.gstin,
               lot: p.lotNo,
               party: r.supplier,
               item: r.item,
@@ -2363,15 +2721,18 @@ const register: ScreenModule = {
               billNo: p.billNumber,
               posting: posted ? "Posted" : "Not posted: rate missing",
               godown: r.godown,
+              /* Matched: the bill is in hand and the rate is entered and agrees with the PO — nothing left to chase. */
+              matched: money && BILLED_STAGES.has(purchaseStage(p)) && !!p.ratePaise && p.ratePaise > 0 && !rateOff ? "yes" : null,
             },
             hiddenKeys,
           ),
           flags: [
             ...(p.ratePaise && p.ratePaise > 0 ? [] : ["rateMissing"]),
             ...(p.aiFilled ? ["aiFilled"] : []),
-            ...(!p.poId ? ["noPo"] : p.poLineId && poRate.has(p.poLineId) && p.ratePaise != null && p.ratePaise !== poRate.get(p.poLineId) ? ["rateOffPo"] : []),
+            ...(!p.poId ? ["noPo"] : rateOff ? ["rateOffPo"] : []),
           ],
           title: r.item,
+          ref: `PR-${p.prNumber} · ${r.supplier}`,
           header: `Lot ${p.lotNo} · ${r.godown}`,
           fields: [
             { l: "Party code", v: r.partyCode ?? "—" },
@@ -2734,7 +3095,22 @@ async function savePurchase(ctx: ErpContext, h: Record<string, string>, id?: str
 
 /* ============================================================= barcode */
 
-const BARCODE_WINDOW = { label: "Purchase date", default: REGISTER_DEFAULT } as const;
+/**
+ * DRUM LABELS: TO PRINT · PRINTED (Nov 2026). Every print of a lot's drum
+ * labels is a row in `erp_label_prints` (0373), written by the label page
+ * where it actually printed, reprints included — so To print is a chemical
+ * lot never printed and Printed says when, by whom and how many times. Lots
+ * bought before the print log carry no row and read as To print, which is
+ * why both sub-tabs keep the period (opening on the last seven days).
+ *
+ * It lists every godown the person is assigned to, not only the working one:
+ * labels are printed for the lots at the godowns somebody works, and an empty
+ * list because the header said another godown was the commonest dead end on
+ * this page. The godown is a column and a section of the Filters.
+ *
+ * Print-only: printing is Access, so it has no Edit or Delete acts.
+ */
+const BARCODE_WINDOW = { label: "Received date", default: REGISTER_DEFAULT } as const;
 
 const barcode: ScreenModule = {
   key: "barcode",
@@ -2742,73 +3118,134 @@ const barcode: ScreenModule = {
   async load(ctx, s) {
     const sc = s ?? unscoped();
     const pairs = await refValues("shortLabel");
-    const here = ctx.workingGodown?.id ?? null;
-    const where = sql`${windowWhere(sql`${erpPurchases.purchaseDate}`, sql`${erpPurchases.id}`, sc)} and ${erpRawMaterials.materialType} = 'Chemical' and ${here ? sql`${erpPurchases.godownId} = ${here}` : sql`false`}`;
+    const mine = ctx.assignedGodowns.map((g) => g.id);
+    const where = sql`${windowWhere(sql`${erpPurchases.purchaseDate}`, sql`${erpPurchases.id}`, sc)} and ${erpRawMaterials.materialType} = 'Chemical' and ${mine.length ? inArray(erpPurchases.godownId, mine) : sql`false`}`;
     const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(erpPurchases).innerJoin(erpRawMaterials, eq(erpRawMaterials.id, erpPurchases.rawMaterialId)).where(where);
     const wide = tooWide(Number(n), sc);
     const rows = wide ? [] : await registerRows(where);
+    const prints = await labelPrintsOf(rows.map((r) => r.p.id));
     const cols: ColSpec[] = [
-      { k: "date", l: "Purchase date", t: "d" },
+      { k: "date", l: "Received", t: "d" },
       { k: "lot", l: "Lot", t: "mono" },
-      { k: "item", l: "Item name", t: "b" },
-      { k: "litres", l: "In litre", t: "n" },
+      { k: "item", l: "Item", t: "b" },
       { k: "drums", l: "Drums", t: "n" },
       { k: "perDrum", l: "Litres per drum", t: "n" },
       { k: "density", l: "Density", t: "n" },
-      { k: "qty", l: "Quantity", t: "n" },
-      { k: "unit", l: "Unit", t: "t" },
+      { k: "pr", l: "PR no", t: "mono" },
+      { k: "godown", l: "Godown", t: "t" },
+      { k: "lastPrinted", l: "Last printed", t: "at", sub: "printedLine" },
+      { k: "prints", l: "Prints", t: "n" },
+      { k: "litres", l: "In litre", t: "n" },
+      { k: "qty", l: "Quantity", t: "n", uk: "unit" },
       { k: "remark", l: "Remark", t: "t" },
-      { k: "prBill", l: "PR Bill no", t: "mono" },
-      { k: "pr", l: "PR number", t: "mono" },
-      { k: "testing", l: "Testing id", t: "mono" },
     ];
     return {
       spec: {
         screen: "barcode",
         cols,
         hidden: [],
-        download: true,
         readOnly: true,
-        sortDefault: ["date", -1],
-        stats: [
-          { l: "Lots" },
-          { l: "Items", kind: "distinct", k: "item" },
-          { l: "Litres", kind: "sum", k: "litres", u: "L" },
-          { l: "Drums", kind: "sum", k: "drums", u: "drums", missing: "without a drum count" },
+        subtabs: [
+          { id: "toPrint", l: "To print", k: "printed", in: ["no"], hide: ["lastPrinted", "prints"], hint: "Chemical lots whose drum labels have never been printed" },
+          { id: "printed", l: "Printed", k: "printed", in: ["yes"], hide: ["perDrum", "density"], hint: "Printed at least once — print again from here" },
         ],
-        filters: ["item", "unit", "drums"],
-        scopedLine: ctx.workingGodown ? `Showing ${ctx.workingGodown.name} only · change your working location in the header` : "No working location set — choose one in the header",
-        noDataLine: "No chemical purchases at this godown yet.",
+        sortDefault: ["date", -1],
+        godownKey: "godown",
+        /* The sub-tabs carry the counts; the design draws no figure cards here. */
+        stats: [],
+        filters: ["item", "godown", "drums"],
+        /* Tick lots, print every one's labels in one go: the label page draws them and records the print. */
+        bulk: [{ id: "print", l: "Print {n} labels", href: erpLabelsHref({ purchases: [] }), countK: "labels", fits: false }],
+        selectSum: [{ k: "labels", l: "labels", one: "label" }],
+        noDataLine: "No chemical lots at your godowns in this period.",
       },
       tooWide: wide,
       rows: rows.map((r) => {
         const f = purchaseFigures(figIn(r.p));
+        const pr = prints.get(r.p.id);
+        const labels = labelCopies(r.p.drums);
+        const name = shortLabel(r.item, pairs);
         return {
           id: r.p.id,
           v: {
+            printed: pr ? "yes" : "no",
             date: r.p.purchaseDate,
             lot: r.p.lotNo,
-            item: shortLabel(r.item, pairs),
-            litres: f.inLitre,
+            item: name,
             drums: r.p.drums,
+            labels,
             perDrum: f.litresPerDrum,
             density: r.p.density,
+            pr: `PR-${r.p.prNumber}`,
+            godown: r.godown,
+            lastPrinted: pr ? pr.at.toISOString() : null,
+            printedBy: pr?.by ?? null,
+            printedLine: pr ? `${pr.by ?? "—"} · ${nf(pr.n)} print${pr.n === 1 ? "" : "s"}` : null,
+            prints: pr?.n ?? null,
+            litres: f.inLitre,
             qty: r.p.quantity,
             unit: r.p.unit,
             remark: r.p.remark,
-            prBill: r.p.id,
-            pr: String(r.p.prNumber),
-            testing: r.p.testId,
           },
           flags: [],
-          title: `${shortLabel(r.item, pairs)} · ${r.p.lotNo}`,
-          actions: [{ id: "label", l: "Print drum label", primary: true, href: erpLabelsHref({ purchase: r.p.id }) }],
+          title: `${name} · ${r.p.lotNo}`,
+          ref: `PR-${r.p.prNumber}`,
+          header: `${r.p.drums == null ? "No drum count" : `${nf(r.p.drums)} drum${r.p.drums === 1 ? "" : "s"}`} · ${r.godown}${pr ? ` · printed ${nf(pr.n)}×, last by ${pr.by ?? "—"}` : " · never printed"}`,
+          actions: [
+            { id: "label", l: "Print drum label", short: `Print ${nf(labels)}`, primary: true, soft: true, href: erpLabelsHref({ purchase: r.p.id }) },
+            { id: "trace", l: "Trace this lot", href: erpTraceHref(r.p.lotNo) },
+          ],
           by: stampLine(r.by, r.p.createdAt),
         };
       }),
     };
   },
 };
+
+/** One label a drum; a lot with no drum count still gets one. */
+const labelCopies = (drums: number | null) => Math.max(1, drums ?? 1);
+
+/** Each lot's print log, read once: how many prints, the last one's time and who printed it. */
+export async function labelPrintsOf(purchaseIds: string[]): Promise<Map<string, { n: number; at: Date; by: string | null }>> {
+  if (!purchaseIds.length) return new Map();
+  const rows = (await db.execute(sql`
+    select distinct on (lp.purchase_id) lp.purchase_id as id, lp.printed_at as at, u.name as by,
+           count(*) over (partition by lp.purchase_id)::int as n
+      from erp_label_prints lp
+      left join users u on u.id = lp.printed_by_id
+     where lp.purchase_id in ${purchaseIds}
+     order by lp.purchase_id, lp.printed_at desc
+  `)) as unknown as { id: string; at: string | Date; by: string | null; n: number }[];
+  /* Raw SQL hands a timestamp back as a string. */
+  return new Map(rows.map((r) => [r.id, { n: Number(r.n), at: new Date(r.at), by: r.by }]));
+}
+
+/**
+ * THE PRINT LOG'S ONE WRITER: the label page printed these lots' labels —
+ * sent to the printer, saved as a print file, or the print dialog shown. One
+ * row a lot, `reprint` where the lot had been printed before. A lot that is
+ * not a purchase is skipped, never invented.
+ */
+export async function recordLabelPrints(ctx: ErpContext, lots: { id: string; copies: number }[]): Promise<Result<{ recorded: number; reprints: number }>> {
+  /* One row a lot: a lot named twice on one page is one print of all its copies. */
+  const byLot = new Map<string, number>();
+  for (const l of lots) if (typeof l.id === "string" && l.id && Number.isInteger(l.copies) && l.copies > 0) byLot.set(l.id, Math.min(MAX_LABEL_COPIES, (byLot.get(l.id) ?? 0) + l.copies));
+  const clean = [...byLot].map(([id, copies]) => ({ id, copies }));
+  if (!clean.length) return { ok: true, data: { recorded: 0, reprints: 0 } };
+  const ids = [...new Set(clean.map((l) => l.id))];
+  const known = new Set((await db.select({ id: erpPurchases.id }).from(erpPurchases).where(inArray(erpPurchases.id, ids))).map((r) => r.id));
+  const before = new Set(
+    (await db.execute(sql`select distinct purchase_id as id from erp_label_prints where purchase_id in ${ids}`) as unknown as { id: string }[]).map((r) => r.id),
+  );
+  const rows = clean
+    .filter((l) => known.has(l.id))
+    .map((l) => ({ id: erpId("lbp"), purchaseId: l.id, copies: l.copies, reprint: before.has(l.id), printedById: ctx.user.id }));
+  if (!rows.length) return { ok: true, data: { recorded: 0, reprints: 0 } };
+  await db.insert(erpLabelPrints).values(rows);
+  const reprints = rows.filter((r) => r.reprint).length;
+  await erpAudit(ctx, "erp.purchase.labelPrint", "erp_purchase", rows.slice(0, 50).map((r) => r.purchaseId).join(","), null, { lots: rows.length, reprints, copies: rows.reduce((t, r) => t + r.copies, 0) });
+  return { ok: true, data: { recorded: rows.length, reprints } };
+}
 
 /* ======================================================== raw stock */
 

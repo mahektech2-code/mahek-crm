@@ -191,6 +191,8 @@ export type ListGroup = {
   head: ListRow["v"];
   /** `groupPrint`'s link for the whole group, where the spec asks for one. */
   print?: string;
+  /** `groupBulk`: the group's rows that can take the act — every page of it. Absent where none can. */
+  bulkIds?: string[];
 };
 
 export type ListPage = {
@@ -396,11 +398,12 @@ function byFilter(rows: ListRow[], c: ColSpec, v: string): ListRow[] {
 
 /** The rows the filters, chip and search leave, sorted and grouped — every page of them. */
 export function queryRows(
-  spec: Pick<ListSpec, "cols" | "chips" | "godownKey" | "sortDefault" | "groups" | "fold" | "filters" | "colFilters" | "subtabs">,
+  spec0: Pick<ListSpec, "cols" | "chips" | "godownKey" | "sortDefault" | "groups" | "fold" | "filters" | "colFilters" | "subtabs">,
   rows: ListRow[],
   query: ListQuery,
   flagWords: Record<string, [string, Tone]>,
 ): { list: ListRow[]; beforeFx: ListRow[]; beforeCf: ListRow[]; beforeSubtab: ListRow[]; beforeChip: ListRow[]; sort: ListSort | null; gk: string[] | null; gOf: (r: ListRow) => string; by: Map<string, ListRow[]> | null } {
+  const spec = specForSubtab(spec0, query);
   const cols = spec.cols;
   let all = unfold(spec, rows, query);
   if (query.ids) {
@@ -422,7 +425,9 @@ export function queryRows(
   if (spec.chips && query.chip) all = all.filter((r) => String(r.v[spec.chips!] ?? "") === query.chip);
   const ql = query.q.trim().toLowerCase();
   if (ql) all = all.filter((r) => rowMatches(cols, r, ql, flagWords));
-  const sort = query.sort ?? (spec.sortDefault ? { k: spec.sortDefault[0], d: spec.sortDefault[1] } : null);
+  /* A sub-tab may carry its own order — oldest first on a queue — over the list's. */
+  const byDefault = st?.sort ?? spec.sortDefault;
+  const sort = query.sort ?? (byDefault ? { k: byDefault[0], d: byDefault[1] } : null);
   if (sort) {
     all = all.slice().sort((a, b) => {
       const x = a.v[sort.k];
@@ -431,7 +436,7 @@ export function queryRows(
       return c * sort.d;
     });
   }
-  const gk = spec.groups && query.grp ? spec.groups : null;
+  const gk = spec.groups?.length && query.grp ? spec.groups : null;
   const gOf = (r: ListRow) => (gk ?? []).map((k) => cellText(colOf(cols, k), r.v[k])).join(" · ");
   if (!gk) return { list: all, beforeFx, beforeCf, beforeSubtab, beforeChip, sort, gk, gOf, by: null };
   /* Each group contiguous, in the order its first row appears. Pushed onto
@@ -457,6 +462,15 @@ export function subtabOf(spec: Pick<ListSpec, "subtabs">, query: Pick<ListQuery,
   const tabs = spec.subtabs ?? [];
   if (!tabs.length) return null;
   return tabs.find((t) => t.id === query.st) ?? tabs[0];
+}
+
+/**
+ * The spec as the open sub-tab reads it: its `view` merged over the list's
+ * own. Applied by the page, the export and the browser alike.
+ */
+export function specForSubtab<T extends Pick<ListSpec, "subtabs">>(spec: T, query: Pick<ListQuery, "st">): T {
+  const t = subtabOf(spec, query);
+  return t?.view ? { ...spec, ...t.view } : spec;
 }
 
 export function inSubtab(spec: Pick<ListSpec, "chips">, t: ListSubtab, r: ListRow): boolean {
@@ -533,6 +547,20 @@ export function groupHeadValues(rs: ListRow[], keys: string[]): ListRow["v"] {
     if (seen.length > 1 || (seen.length === 1 && head[k] !== seen[0])) head[k] = seen.join(", ");
   }
   return head;
+}
+
+/**
+ * `groupBulk`'s rows for a group: those carrying the bulk act's row action
+ * (its `fits`, else its id) with nothing in its `why` and not held back for a
+ * tick. Nothing while the spec offers no such bulk act — a person without the
+ * tick has had it taken out of `bulk` already (`applyTicks`).
+ */
+export function groupBulkIds(spec: Pick<ListSpec, "groupBulk" | "bulk">, rs: ListRow[]): string[] {
+  const gb = spec.groupBulk;
+  const b = gb ? spec.bulk?.find((x) => x.id === gb.id) : undefined;
+  if (!b) return [];
+  const key = b.fits || b.id;
+  return rs.filter((r) => r.actions?.some((a) => a.id === key && !a.why && !a.tickHidden)).map((r) => r.id);
 }
 
 /** `groupPrint`'s link for a group: its href with the group's distinct values of the key, in the rows' order. */
@@ -692,8 +720,12 @@ export function isFiltered(q: ListQuery): boolean {
 }
 
 /** One page of a list, with everything the toolbar, the group headers and the pager need about the rest. */
-export function pageOf(spec: ListSpec, rows: ListRow[], query: ListQuery, flagWords: Record<string, [string, Tone]>): ListPage {
+export function pageOf(spec0: ListSpec, rows: ListRow[], query: ListQuery, flagWords: Record<string, [string, Tone]>): ListPage {
+  const spec = specForSubtab(spec0, query);
   const r = queryRows(spec, rows, query, flagWords);
+  /* A sub-tab whose rows are a different thing (`view`) offers filters over its own rows only. */
+  const st = subtabOf(spec, query);
+  const ownRows = (xs: ListRow[]) => (st?.view ? xs.filter((x) => inSubtab(spec, st, x)) : xs);
   const total = r.list.length;
   const pages = Math.max(1, Math.ceil(total / query.size));
   const page = Math.min(query.page, pages);
@@ -713,7 +745,8 @@ export function pageOf(spec: ListSpec, rows: ListRow[], query: ListQuery, flagWo
         return { v: a.t === "avg" ? s / (rs.length || 1) : s, missing };
       });
       const print = groupPrintHref(spec, rs);
-      groups[g] = { n: rs.length, agg, ids: rs.map((x) => x.id), head: groupHeadValues(rs, spec.groupHead ?? []), ...(print ? { print } : {}) };
+      const bulkIds = groupBulkIds(spec, rs);
+      groups[g] = { n: rs.length, agg, ids: rs.map((x) => x.id), head: groupHeadValues(rs, spec.groupHead ?? []), ...(print ? { print } : {}), ...(bulkIds.length ? { bulkIds } : {}) };
     }
   }
   return {
@@ -723,21 +756,22 @@ export function pageOf(spec: ListSpec, rows: ListRow[], query: ListQuery, flagWo
     beforeChip: r.beforeChip.length,
     chips: chipCounts(spec, r.beforeChip),
     ...(spec.subtabs?.length ? { subtabs: subtabCounts(spec, r.beforeSubtab) } : {}),
-    facets: facetCounts(spec, r.beforeFx, query.fx),
+    facets: facetCounts(spec, ownRows(r.beforeFx), query.fx),
     ...(spec.colFilters ? { colFacets: colFacetsOf(spec, r.beforeCf, query.cf ?? {}) } : {}),
     sort: r.sort,
     groupOf,
     groups,
-    badgeChars: badgeWidths(spec.cols, unfold(spec, rows, query), flagWords),
+    badgeChars: badgeWidths(spec.cols, ownRows(unfold(spec, rows, query)), flagWords),
     all: rows.length,
-    stats: statsOf(spec, r.list, unfold(spec, rows, query), query),
-    panel: panelSections(spec, rows, r.beforeCf, query.cf ?? {}),
+    stats: statsOf(spec, r.list, ownRows(unfold(spec, rows, query)), query),
+    panel: panelSections(spec, ownRows(rows), ownRows(r.beforeCf), query.cf ?? {}),
     filtered: isFiltered(query),
   };
 }
 
 /** The filtered list as CSV, every page of it, as the Export button gives it. */
-export function listCsv(spec: ListSpec, rows: ListRow[], query: ListQuery, flagWords: Record<string, [string, Tone]>): { csv: string; n: number } {
+export function listCsv(spec0: ListSpec, rows: ListRow[], query: ListQuery, flagWords: Record<string, [string, Tone]>): { csv: string; n: number } {
+  const spec = specForSubtab(spec0, query);
   const { list } = queryRows(spec, rows, query, flagWords);
   const head = spec.cols.map((c) => c.l).join(",");
   const body = list

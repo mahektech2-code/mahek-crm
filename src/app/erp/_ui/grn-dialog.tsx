@@ -1,10 +1,11 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { Button, Callout, Progress, SectionLabel, controlClass, cx } from "@/components/ui/primitives";
+import type { GrnNext, NextStep } from "@/lib/erp/engines/goods-in";
+import { Button, Callout, Progress, SectionLabel, buttonClass, controlClass, cx } from "@/components/ui/primitives";
 import { DialogBody, DialogTitle, DialogFooter, DialogHeader, ErpDialog, StepBar } from "./dialog";
 import { Badge } from "./badge";
-import { LinkButton, fieldLabelClass } from "./look";
+import { LinkButton, eyebrowClass, fieldLabelClass } from "./look";
 import { runCalc } from "@/lib/erp/calc";
 import "@/lib/erp/calcs";
 import { fd, nf, resolveField, whenHolds, type FieldSpec, type FormSpec } from "@/lib/erp/ui";
@@ -26,7 +27,7 @@ import { formSub } from "./quiet-copy";
  * which reads every line's PO back and refuses what it no longer allows.
  * ------------------------------------------------------------------------- */
 
-type Step = "item" | "po" | "lines" | "review";
+type Step = "item" | "po" | "lines" | "review" | "next";
 type Line = Record<string, string>;
 
 /** Line fields the pick already answered: drawn in the card's heading, not as boxes. */
@@ -36,21 +37,56 @@ const HEADER_SKIP = new Set(["po", "pr", "supplier"]);
 
 const keyOf = (l: Pick<GrnPoLine, "po" | "poLine">) => `${l.po}|${l.poLine}`;
 
+/** The PR's transport is recorded once, with its first lines: a second visit to the same PR does not ask it again. */
+const COST_KEYS = new Set(["transportMode", "transportCost", "km", "ownCost", "tempo", "otherCost", "otherNote", "landing"]);
+
+const STEPS = ["Item received", "Purchase order", "Receipt details", "Review", "What's next"];
+
+/** A picked PO line as a receipt line: the fields that fill from the PO (type, item, the quantity still pending) filled. */
+function lineFor(spec: FormSpec, h: Record<string, string>, it: GrnItem, x: GrnPoLine): Line {
+  let l: Line = { po: x.po, poLine: x.poLine, type: it.type, item: it.item };
+  (spec.line ?? []).forEach((f) => (l[f.k] ??= f.def ?? ""));
+  for (const f of spec.line ?? []) {
+    if (!f.fillBy) continue;
+    const v = f.fillBy.map[f.fillBy.by.map((k) => l[k] ?? h[k] ?? "").join("|")];
+    if (v != null) l = { ...l, [f.k]: v };
+  }
+  return l;
+}
+
+/** The lines a receipt opened from Goods in's Expected at the gate starts with (`data.grnStart`). */
+function startLines(spec: FormSpec, h: Record<string, string>): Line[] {
+  const items = (spec.data?.grn ?? []) as GrnItem[];
+  const start = (spec.data?.grnStart ?? []) as { po: string; poLine: string; item: string }[];
+  return start.flatMap((s) => {
+    const it = items.find((x) => x.item === s.item);
+    const x = it?.lines.find((y) => y.po === s.po && y.poLine === s.poLine);
+    return it && x ? [lineFor(spec, h, it, x)] : [];
+  });
+}
+
 export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose: () => void; onSaved: (msg: string) => void }) {
   const kit = useKit();
   const data = useMemo(() => spec.data ?? {}, [spec.data]);
-  const items = useMemo(() => (data.grn ?? []) as GrnItem[], [data]);
-  const [step, setStep] = useState<Step>("item");
+  /* Items already saved on this PR (same truck, more items): their lot is taken on it, and the open lines the form was sent with are stale. */
+  const [onPr, setOnPr] = useState<string[]>([]);
+  const items = useMemo(() => ((data.grn ?? []) as GrnItem[]).map((it) => (onPr.includes(it.item) ? { ...it, lines: [] } : it)), [data, onPr]);
+  /* Opened on PO lines from Expected at the gate: those lines are on the receipt and it opens on Receipt details. */
+  const [step, setStep] = useState<Step>(() => ((spec.data?.grnStart as unknown[] | undefined)?.length ? "lines" : "item"));
   const [query, setQuery] = useState("");
   const [cursor, setCursor] = useState(0);
   const [picked, setPicked] = useState<GrnItem | null>(null);
   const [choice, setChoice] = useState<string>("");
-  const [lines, setLines] = useState<Line[]>([]);
   const [h, setH] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = { ...(spec.init ?? {}) };
     spec.header.forEach((f) => (init[f.k] = spec.init?.[f.k] ?? f.def ?? ""));
     return init;
   });
+  const [lines, setLines] = useState<Line[]>(() => startLines(spec, h));
+  /* After a save: what is left to do on each line (step 5), and the vendor a second visit to the same PR keeps to. */
+  const [next, setNext] = useState<GrnNext | null>(null);
+  const [savedMsg, setSavedMsg] = useState("");
+  const [sameTruck, setSameTruck] = useState<string | null>(null);
   const [godownTouched, setGodownTouched] = useState(false);
   const [errs, setErrs] = useState<Record<string, string>>({});
   const [topError, setTopError] = useState("");
@@ -64,7 +100,7 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
     for (const it of items) for (const x of it.lines) if (x.po === l.po && x.poLine === l.poLine) return x;
     return undefined;
   };
-  const vendor = lines.length ? lineOf(lines[0])?.supplier ?? null : null;
+  const vendor = lines.length ? (lineOf(lines[0])?.supplier ?? null) : sameTruck;
   const offered = (it: GrnItem) => linesFor(it, vendor).filter((x) => !onReceipt.has(keyOf(x)));
 
   const hits = searchGrnItems(items, query, { supplier: vendor, limit: 40 }).map((hit) => {
@@ -80,12 +116,7 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
 
   /* A picked PO line becomes a receipt line: the fields that fill from the PO (type, item, the quantity still pending) fill now. */
   const addLine = (it: GrnItem, x: GrnPoLine) => {
-    let l: Line = { ...blankLine(), po: x.po, poLine: x.poLine, type: it.type, item: it.item };
-    for (const f of spec.line ?? []) {
-      if (!f.fillBy) continue;
-      const v = f.fillBy.map[f.fillBy.by.map((k) => l[k] ?? h[k] ?? "").join("|")];
-      if (v != null) l = { ...l, [f.k]: v };
-    }
+    const l: Line = { ...blankLine(), ...lineFor(spec, h, it, x) };
     setLines((s) => [...s, l]);
     if (!lines.length && !godownTouched && x.godown) setH((s) => ({ ...s, godown: x.godown }));
     setPicked(null);
@@ -113,7 +144,7 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
 
   const visible = (f: FieldSpec, l: Line = {}) => whenHolds(f.when, { ...h, ...l }, data);
   const resolved = (f: FieldSpec, l: Line = {}) => resolveField(f, { ...h, ...l }, data);
-  const headerFields = spec.header.filter((f) => !HEADER_SKIP.has(f.k) && visible(f)).map((f) => resolved(f));
+  const headerFields = spec.header.filter((f) => !HEADER_SKIP.has(f.k) && !(h.prFixed && COST_KEYS.has(f.k)) && visible(f)).map((f) => resolved(f));
   const lineFields = (l: Line) => (spec.line ?? []).filter((f) => !PICKED.has(f.k) && visible(f, l)).map((f) => resolved(f, l));
 
   /** The same browser checks the save always ran; true when every box passes. */
@@ -158,7 +189,15 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
       inFlight.current = false;
       setBusy(false);
     }
-    if (res.ok) return onSaved(res.message ?? "Saved");
+    if (res.ok) {
+      /* Step 5: what the save did to each line, and what is left to do on it. */
+      const done = (res.data as { next?: GrnNext } | undefined)?.next;
+      if (!done) return onSaved(res.message ?? "Saved");
+      setNext(done);
+      setSavedMsg(res.message ?? "Saved");
+      setStep("next");
+      return;
+    }
     const fe: Record<string, string> = {};
     res.fieldErrors?.forEach((x) => {
       const key = /^l\d+\./.test(x.field) || x.field.startsWith("h.") ? x.field : `h.${x.field}`;
@@ -171,15 +210,33 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
     } else setTopError(res.error);
   };
 
-  /* No closing while the receipt is on its way. */
+  /* No closing while the receipt is on its way; closed after a save, the list behind is drawn again. */
   const close = () => {
-    if (!inFlight.current) onClose();
+    if (inFlight.current) return;
+    if (next) onSaved(savedMsg);
+    else onClose();
   };
 
-  const stepNo = step === "item" ? 1 : step === "po" ? 2 : step === "lines" ? 3 : 4;
+  /* SAME TRUCK, MORE ITEMS: the next item goes on the same PR, from the same vendor; its transport is already recorded. */
+  const sameTruckAgain = () => {
+    if (!next) return;
+    setSameTruck(next.supplier);
+    setH((x) => ({ ...x, pr: String(next.pr), prFixed: String(next.pr) }));
+    setLines([]);
+    setErrs({});
+    setTopError("");
+    setOnPr((x) => [...x, ...lines.map((l) => l.item)]);
+    setNext(null);
+    setStep("item");
+  };
+
+  const stepNo = step === "item" ? 1 : step === "po" ? 2 : step === "lines" ? 3 : step === "review" ? 4 : 5;
+  const prFixed = h.prFixed || spec.init?.prFixed;
   const sub =
-    step === "lines" || step === "review"
-      ? `${vendor ?? ""} · ${spec.init?.prFixed ? `PR ${spec.init.prFixed}` : "PR number on save"}`
+    step === "next" && next
+      ? `${next.supplier} · PR ${next.pr}`
+      : step === "lines" || step === "review"
+      ? `${vendor ?? ""} · ${prFixed ? `PR ${prFixed}` : "PR number on save"}`
       : step === "po"
         ? null
         : vendor
@@ -189,13 +246,13 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
   const poLines = picked ? offered(picked) : [];
 
   return (
-    <ErpDialog onClose={close} label={spec.title} width={step === "lines" || step === "review" ? 920 : 760}>
+    <ErpDialog onClose={close} label={spec.title} width={step === "lines" || step === "review" || step === "next" ? 920 : 760}>
       <DialogHeader onClose={close}>
         <DialogTitle>{spec.title}</DialogTitle>
         {sub ? <div className="mt-0.5 text-meta text-muted">{sub}</div> : null}
       </DialogHeader>
       {/* The steps follow the truck, not a page order: adding a second item goes back to the first. */}
-      <StepBar steps={["Item received", "Purchase order", "Receipt details", "Review"]} active={stepNo - 1} reached={stepNo - 1} onChange={() => {}} />
+      <StepBar steps={STEPS} active={stepNo - 1} reached={stepNo - 1} onChange={() => {}} />
 
       {/* Keyed on the step: a step starts at the top, whatever the last one was scrolled to. */}
       <DialogBody key={step}>
@@ -246,7 +303,7 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
                       <span className="min-w-0">
                         <span className={cx("block text-sm font-semibold", hit.receivable ? "text-ink" : "text-muted")}>{hit.item.item}</span>
                         <span className="mt-0.5 block text-xs text-muted">
-                          {hit.receivable ? hitSummary(hit.lines, nf) : vendor ? `No open PO from ${vendor} for this item` : "No PO is waiting for this item"}
+                          {hit.receivable ? hitSummary(hit.lines, nf) : onPr.includes(hit.item.item) ? `Already received on PR ${h.prFixed} — one lot per item on a PR` : vendor ? `No open PO from ${vendor} for this item` : "No PO is waiting for this item"}
                         </span>
                       </span>
                       <span className="flex-none">
@@ -412,6 +469,7 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
             />
           </>
         ) : null}
+        {step === "next" && next ? <WhatsNext next={next} /> : null}
       </DialogBody>
 
       {/* A refusal that names no box is said here, beside Save, where it cannot be scrolled out of sight. */}
@@ -423,7 +481,17 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
         </div>
       ) : null}
 
-      <DialogFooter left={`Step ${stepNo} of 4`}>
+      <DialogFooter left={step === "next" ? "Same truck, more items?" : `Step ${stepNo} of ${STEPS.length}`}>
+        {step === "next" ? (
+          <>
+            <Button variant="secondary" onClick={sameTruckAgain}>
+              Add another item from this truck
+            </Button>
+            <Button variant="primary" onClick={() => onSaved(savedMsg)}>
+              Done
+            </Button>
+          </>
+        ) : null}
         {step === "item" ? (
           lines.length ? (
             <Button variant="secondary" onClick={() => setStep("lines")}>
@@ -481,5 +549,80 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
         ) : null}
       </DialogFooter>
     </ErpDialog>
+  );
+}
+
+/* ---------------------------------------------------------------------------
+ * STEP 5 · WHAT'S NEXT. The receipt is saved; each line says what is left to
+ * do on it — its drum labels, its testing, its bill — as a button where it can
+ * be done now, or what it waits for. Everything here is the save's own answer
+ * (`whatsNext`, engines/goods-in.ts): the routing it did, the register rows it
+ * made, and what this person may open. A button opens the real screen in a
+ * new tab, so the other lines stay in front of them.
+ * ------------------------------------------------------------------------- */
+
+function WhatsNext({ next }: { next: GrnNext }) {
+  const n = next.lines.length;
+  return (
+    <section className="grid gap-3">
+      <div className="flex items-start gap-3 rounded-card border border-success/30 bg-success-soft px-4 py-3">
+        <span aria-hidden className="mt-0.5 flex size-6 flex-none items-center justify-center rounded-full border-2 border-success text-success">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M5 12l5 5 9-10" />
+          </svg>
+        </span>
+        <span className="min-w-0">
+          <span className="block text-sm font-semibold text-ink">
+            PR {next.pr} saved · {n} line{n === 1 ? "" : "s"} from {next.supplier}
+          </span>
+          <span className="block text-meta text-body">
+            Received at {next.godown}. {listWords(next.pos)} {next.pos.length === 1 ? "is" : "are"} updated.
+          </span>
+        </span>
+      </div>
+      <span className="text-meta font-medium text-muted">Finish each line now — or later from its own screen</span>
+      {next.lines.map((l, i) => (
+        <div key={`${l.item}:${i}`} className="min-w-0 overflow-hidden rounded-card border border-line">
+          <div className="flex flex-wrap items-center gap-2.5 border-b border-divider px-4 py-2.5">
+            <span className="text-sm font-semibold text-ink">{l.item}</span>
+            <Badge label={l.type} tone={l.type === "Chemical" ? "brand" : "neutral"} />
+            <span className="text-meta text-muted">{l.facts}</span>
+          </div>
+          <div className="grid grid-cols-3 divide-x divide-divider">
+            <NextCell title="Drum labels" step={l.labels} />
+            <NextCell title="Testing" step={l.testing} />
+            <NextCell title="Bill" step={l.bill} />
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function listWords(xs: string[]): string {
+  return xs.length <= 1 ? (xs[0] ?? "The PO") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`;
+}
+
+function NextCell({ title, step }: { title: string; step: NextStep }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-2 px-4 py-3">
+      <span className={eyebrowClass}>{title}</span>
+      {step.kind === "print" || step.kind === "record" ? (
+        <a
+          href={step.href}
+          target="_blank"
+          rel="noopener"
+          className={buttonClass({ variant: step.kind === "print" ? "primary" : "secondary", size: "sm", className: "self-start whitespace-nowrap" })}
+        >
+          {step.label}
+        </a>
+      ) : step.kind === "done" ? (
+        <span className="rounded-control bg-success-soft px-2 py-1 text-meta font-medium text-success">✓ {step.label}</span>
+      ) : step.kind === "waiting" ? (
+        <span className={cx("rounded-control px-2 py-1 text-meta font-medium", step.tone === "warn" ? "bg-warn-soft text-warn" : "bg-canvas text-body")}>{step.label}</span>
+      ) : (
+        <span className="text-meta text-body">{step.label}</span>
+      )}
+    </div>
   );
 }

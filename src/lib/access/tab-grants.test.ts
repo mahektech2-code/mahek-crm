@@ -11,95 +11,99 @@ import { legacyFromScreens } from "./legacy-from-screens";
 import { PAGE_TABS, tabsHeld, tabsOfPage, withheldViews } from "./tab-grants";
 
 const shape = moduleShape("erp");
-const PURCHASES = "erp.register";
-const GRN = "erp.register.inward";
-const REGISTER = "erp.register.register";
-const LABELS = "erp.register.barcode";
+/* Supplier returns: three tabs, and the page's own key is also its first tab's
+   (Purchase returns) — the shape that tests "the page still opens". The names
+   below say what each stands for in these tests. */
+const PAGE = "erp.vendorReturns";
+const KEPT = "erp.vendorReturns.debitNotes";
+const OWN = "erp.vendorReturns.vendorReturns";
+const OTHER = "erp.vendorReturns.returnOutwards";
+const MODULE = "ERP · Material returns";
 
-function withPurchase(): AppGrantDraft {
-  return setModule(emptyGrant("associate"), shape, "ERP · Purchase", true);
+function withReturns(): AppGrantDraft {
+  return setModule(emptyGrant("associate"), shape, MODULE, true);
 }
 
 test("every built ERP page with tabs is listed, its tabs in the page's own order", () => {
   assert.deepEqual(
-    tabsOfPage(PURCHASES).map((t) => t.key),
-    [GRN, REGISTER, LABELS],
+    tabsOfPage(PAGE).map((t) => t.key),
+    [OWN, KEPT, OTHER],
   );
   assert.ok(PAGE_TABS.has("erp.transport") && PAGE_TABS.has("erp.expenses"), "Logistics and Petty Cash too");
   assert.equal(tabsOfPage("erp.requisitions").length, 0, "a page of one list has no tabs to grant");
 });
 
 test("a page given holds every tab, with no tab entries stored", () => {
-  const g = withPurchase();
-  assert.ok(g.screens.has(PURCHASES));
-  assert.deepEqual(tabsHeld(g.screens, PURCHASES), [GRN, REGISTER, LABELS]);
-  assert.ok(![...g.screens.keys()].some((k) => k.startsWith(`${PURCHASES}.`)), "no rows means every tab");
+  const g = withReturns();
+  assert.ok(g.screens.has(PAGE));
+  assert.deepEqual(tabsHeld(g.screens, PAGE), [OWN, KEPT, OTHER]);
+  assert.ok(![...g.screens.keys()].some((k) => k.startsWith(`${PAGE}.`)), "no rows means every tab");
 });
 
 test("unticking a tab lists the rest; ticking it back returns to no entries", () => {
-  let g = setTab(withPurchase(), shape, REGISTER, false);
-  assert.equal(holdsTab(g, REGISTER), false);
-  assert.equal(holdsTab(g, GRN), true);
-  assert.deepEqual([...g.screens.keys()].filter((k) => k.startsWith(`${PURCHASES}.`)).sort(), [LABELS, GRN].sort());
-  g = setTab(g, shape, REGISTER, true);
-  assert.ok(![...g.screens.keys()].some((k) => k.startsWith(`${PURCHASES}.`)), "every tab ticked is stored as none");
+  let g = setTab(withReturns(), shape, OWN, false);
+  assert.equal(holdsTab(g, OWN), false);
+  assert.equal(holdsTab(g, KEPT), true);
+  assert.deepEqual([...g.screens.keys()].filter((k) => k.startsWith(`${PAGE}.`)).sort(), [OTHER, KEPT].sort());
+  g = setTab(g, shape, OWN, true);
+  assert.ok(![...g.screens.keys()].some((k) => k.startsWith(`${PAGE}.`)), "every tab ticked is stored as none");
 });
 
 test("the last tab unticked takes the page away; a tab cannot be given without its page", () => {
-  let g = withPurchase();
-  g = setTab(g, shape, REGISTER, false);
-  g = setTab(g, shape, LABELS, false);
-  g = setTab(g, shape, GRN, false);
-  assert.equal(g.screens.has(PURCHASES), false);
-  assert.ok(![...g.screens.keys()].some((k) => k.startsWith(`${PURCHASES}.`)));
-  assert.equal(setTab(g, shape, GRN, true), g, "refused while the page is not held");
+  let g = withReturns();
+  g = setTab(g, shape, OWN, false);
+  g = setTab(g, shape, OTHER, false);
+  g = setTab(g, shape, KEPT, false);
+  assert.equal(g.screens.has(PAGE), false);
+  assert.ok(![...g.screens.keys()].some((k) => k.startsWith(`${PAGE}.`)));
+  assert.equal(setTab(g, shape, KEPT, true), g, "refused while the page is not held");
 });
 
 test("taking the page or its module away takes its tab entries", () => {
-  const narrowed = setTab(withPurchase(), shape, REGISTER, false);
-  const noPage = setAccess(narrowed, shape, PURCHASES, false);
-  assert.ok(![...noPage.screens.keys()].some((k) => k.startsWith(`${PURCHASES}.`)));
-  const noModule = setModule(narrowed, shape, "ERP · Purchase", false);
-  assert.ok(![...noModule.screens.keys()].some((k) => k.startsWith(`${PURCHASES}.`)));
+  const narrowed = setTab(withReturns(), shape, OWN, false);
+  const noPage = setAccess(narrowed, shape, PAGE, false);
+  assert.ok(![...noPage.screens.keys()].some((k) => k.startsWith(`${PAGE}.`)));
+  const noModule = setModule(narrowed, shape, MODULE, false);
+  assert.ok(![...noModule.screens.keys()].some((k) => k.startsWith(`${PAGE}.`)));
 });
 
 test("the server's normalising keeps tabs under a held page only, without ticks, and folds 'all' to none", () => {
   const sent: AppGrantDraft = {
     position: "associate",
-    modules: new Set(["ERP · Purchase"]),
+    modules: new Set([MODULE]),
     screens: new Map([
-      [PURCHASES, { edit: true, delete: false, autoEdit: false }],
-      [GRN, { edit: true, delete: true, autoEdit: false }],
+      [PAGE, { edit: true, delete: false, autoEdit: false }],
+      [KEPT, { edit: true, delete: true, autoEdit: false }],
       ["erp.transport.delivered", { edit: false, delete: false, autoEdit: false }],
       ["erp.not-a-tab", { edit: false, delete: false, autoEdit: false }],
     ]),
   };
   const g = normaliseGrant(sent, shape);
-  assert.deepEqual(g.screens.get(GRN), { edit: false, delete: false, autoEdit: false }, "a tab is Access only");
+  assert.deepEqual(g.screens.get(KEPT), { edit: false, delete: false, autoEdit: false }, "a tab is Access only");
   assert.equal(g.screens.has("erp.transport.delivered"), false, "its page is not held");
   assert.equal(g.screens.has("erp.not-a-tab"), false);
-  const all = normaliseGrant({ ...sent, screens: new Map([...sent.screens, [REGISTER, sent.screens.get(GRN)!], [LABELS, sent.screens.get(GRN)!]]) }, shape);
-  assert.ok(![...all.screens.keys()].some((k) => k.startsWith(`${PURCHASES}.`)), "every tab listed is the same as none");
+  const all = normaliseGrant({ ...sent, screens: new Map([...sent.screens, [OWN, sent.screens.get(KEPT)!], [OTHER, sent.screens.get(KEPT)!]]) }, shape);
+  assert.ok(![...all.screens.keys()].some((k) => k.startsWith(`${PAGE}.`)), "every tab listed is the same as none");
   assert.deepEqual(normaliseGrant(g, shape), g, "running it twice changes nothing");
 });
 
 test("tabs never reach app_module_access, and powers still come from the page", () => {
-  let g = setTab(withPurchase(), shape, REGISTER, false);
-  g = { ...g, screens: new Map(g.screens).set(PURCHASES, { edit: true, delete: false, autoEdit: false }) };
+  let g = setTab(withReturns(), shape, OWN, false);
+  g = { ...g, screens: new Map(g.screens).set(PAGE, { edit: true, delete: false, autoEdit: false }) };
   const legacy = legacyFromScreens("erp", g);
-  assert.ok(legacy.modules.includes(PURCHASES));
-  assert.ok(!legacy.modules.some((m) => m.startsWith(`${PURCHASES}.`)));
-  assert.ok(legacy.powers?.includes("viewPurchaseMoney"), "Edit on Purchases still carries purchase money");
+  assert.ok(legacy.modules.includes(PAGE));
+  assert.ok(!legacy.modules.some((m) => m.startsWith(`${PAGE}.`)));
+  assert.ok(legacy.powers?.includes("returnApprove"), "Edit on the page still carries its power");
 });
 
 test("the ERP withholds exactly the unticked tabs' keys — and nothing where no tab is listed", () => {
-  const pages = new Set(["register", "transport"]);
+  const pages = new Set(["vendorReturns", "transport"]);
   assert.equal(withheldViews(pages, new Set()).size, 0);
-  const w = withheldViews(pages, new Set([GRN]));
-  assert.deepEqual([...w].sort(), ["barcode", "register"]);
-  assert.equal(w.has("inward"), false);
+  const w = withheldViews(pages, new Set([KEPT]));
+  assert.deepEqual([...w].sort(), ["returnOutwards", "vendorReturns"]);
+  assert.equal(w.has("debitNotes"), false);
   const stock = withheldViews(new Set(["stock"]), new Set(["erp.stock.rmStock"]));
   assert.ok(stock.has("sfgStock") && stock.has("sfgLog"), "a withheld tab takes its 'show every entry' toggle with it");
   assert.ok(!stock.has("rmStock") && !stock.has("rmLog"));
-  assert.equal(withheldViews(new Set(), new Set([GRN])).size, 0, "rows under a page not held withhold nothing");
+  assert.equal(withheldViews(new Set(), new Set([KEPT])).size, 0, "rows under a page not held withhold nothing");
 });

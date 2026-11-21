@@ -194,6 +194,8 @@ export type MenuItem = {
   destructive?: boolean;
   disabled?: boolean;
   title?: string;
+  /** A thin rule above this item: the menu read in blocks (ordinary work, changes, take-backs). */
+  divider?: boolean;
 };
 
 /**
@@ -238,7 +240,7 @@ const VIEWPORT_MARGIN = 8;
  * A `fixed` element does not travel with a scrolling ancestor, so the menu
  * CLOSES on any scroll rather than being left behind pointing at nothing.
  */
-export function RowMenu({ items }: { items: MenuItem[] }) {
+export function RowMenu({ items, heading }: { items: MenuItem[]; heading?: { title: string; sub?: string } }) {
   const [at, setAt] = React.useState<{
     top: number;
     /*
@@ -262,7 +264,7 @@ export function RowMenu({ items }: { items: MenuItem[] }) {
     const button = buttonRef.current;
     if (!button) return;
     const rect = button.getBoundingClientRect();
-    const height = items.length * 32 + 8;
+    const height = items.length * 32 + 8 + items.filter((i) => i.divider).length * 9 + (heading ? 52 : 0);
     const below = window.innerHeight - rect.bottom;
     /*
      * How much room there is to the left of the button's right edge. The menu
@@ -348,9 +350,16 @@ export function RowMenu({ items }: { items: MenuItem[] }) {
                  list editor's grid has one per line — was drawn underneath it. */
               className="animate-fade-in fixed z-[95] flex flex-col overflow-hidden rounded-card border border-line bg-surface py-1 shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
             >
+              {heading ? (
+                <span className="mb-1 border-b border-divider px-3 pt-1.5 pb-2 text-xs text-muted">
+                  <span className="block truncate text-sm font-semibold text-ink">{heading.title}</span>
+                  {heading.sub ? <span className="block truncate">{heading.sub}</span> : null}
+                </span>
+              ) : null}
               {items.map((item, i) => (
+                <React.Fragment key={i}>
+                {item.divider && i > 0 ? <span role="separator" className="mx-2 my-1 h-px bg-divider" /> : null}
                 <button
-                  key={i}
                   role="menuitem"
                   title={item.title}
                   disabled={item.disabled}
@@ -379,6 +388,7 @@ export function RowMenu({ items }: { items: MenuItem[] }) {
                 >
                   {item.label}
                 </button>
+                </React.Fragment>
               ))}
             </span>,
             document.body,

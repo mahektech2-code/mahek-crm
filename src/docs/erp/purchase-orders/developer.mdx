@@ -4,7 +4,7 @@ Purchase orders are the `purchaseOrders` screen module in `lib/erp/screens/purch
 
 | Layer | File | What lives there |
 |---|---|---|
-| Engine (pure) | `src/lib/erp/engines/purchase-flow.ts` | `LIVE_PO`, `RECEIVABLE_PO`, `poRouteOf`, `poLabel`, `poName`, `pickQuotePoCell`, `quoteRatePaise`, `poLineFigures`, `poTotals`, `poStatusAfterReceipt`, `expectedQuantity`, `receiptGap`, `correctionFor`, `lineDone`, `quantityDifferenceNote` |
+| Engine (pure) | `src/lib/erp/engines/purchase-flow.ts` | `LIVE_PO`, `RECEIVABLE_PO`, `poRouteOf`, `poLabel`, `poName`, `pickQuotePoCell`, `quoteRatePaise`, `poLineFigures`, `poTotals`, `poStatusAfterReceipt`, `expectedQuantity`, `receiptGap`, `correctionFor`, `lineDone`, `quantityDifferenceNote`, `poBucket` (the sub-tab), `deliveryWords` / `daysUntil` (the Delivery column, against the business date) |
 | Reading | `src/lib/erp/screens/purchase-flow.ts` | `purchaseOrderViews`, `receivedByLine`, `poOption` |
 | Form | same | `poFormData`, `purchaseOrderForm` (New PO and Edit: header + lines from the vendor's requirements ready for a PO; rate and GST typed per line) |
 | Writes | same | `savePurchaseOrder` (New PO and Edit, written Approved); actions `share`, `close`, `cancel`, and `approve` / `sendBack` for a leftover Pending approval PO; form loader `receive` → `inwardFormForPo` |
@@ -19,6 +19,7 @@ Purchase orders are the `purchaseOrders` screen module in `lib/erp/screens/purch
 | Public link | `src/app/po/[token]/route.ts` | The PDF, no sign-in |
 | Window | `src/app/erp/_ui/share-dialog.tsx` | `ShareDialog`, opened by an action carrying `share` (`ShareSpec`) |
 | Badge | `src/lib/erp/screens/purchase-flow.ts` | `purchaseFlowCounts` |
+| The list | same, `purchaseOrders.load` | Sub-tabs **To send · Waiting for goods · Part received · Done · Cancelled** over each row's `bucket` (`poBucket(status, anyReceived)`), each with its own cards (`ListSubtab.view.stats`); the Delivery column draws `late` in red or `dueWords` after the date (`ColSpec.late` / `.after`); Received draws `progress` as a bar (`ColSpec.bar`) — read from `receivedByLine` against each line's `expected`. The row's `primary` is Share… (Approved), Receive (Sent / Partly received) or Approve (an old Pending approval); the ⋯ menu is in `menuBlock` order |
 
 ## Making a PO, end to end
 
@@ -124,7 +125,7 @@ A WhatsApp share goes through Wati only where `poWatiRoute` says so: the founder
 
 ## Permissions
 
-- **Module:** <ModuleRef k="erp.purchaseOrders" />. Receive goods also needs <ModuleRef k="erp.register" /> (the Purchases screen, whose Goods receipt tab is `inward`).
+- **Module:** <ModuleRef k="erp.purchaseOrders" />. Receive goods also needs <ModuleRef k="erp.inward" /> (Goods in).
 - **Powers:** `viewPurchaseMoney` (New PO, Edit, print, share — Create PO on a requirement does not need it), `approvePurchaseOrder` (approve or send back a leftover Pending approval PO).
 - Create PO on a requirement also checks the `purchaseOrders` screen; Link PO checks only that the requirement is visible to the person's department.
 
@@ -133,6 +134,8 @@ A WhatsApp share goes through Wati only where `poWatiRoute` says so: the founder
 | Suite | File | What it pins |
 |---|---|---|
 | `npm run test` | `src/lib/erp/engines/purchase-flow.test.ts` | The item's rule picks Link or Create; the PO drives the requirement's stage; status follows what was received, only in the receiving states; tolerance is a share of what was ordered; totals add GST per line and freight once; a PO number picks the bought cell for this item, or says why not |
+| `npm run test` | `src/lib/erp/engines/purchase-flow.test.ts` | `poBucket` for every status, read receipts included; `deliveryWords` — today, in n days, n days late, across a month end |
+| `npm run test:integration` | `src/lib/erp/erp-purchase.test.ts` — "Purchase orders and Goods in" | Each PO under exactly one sub-tab and the counts are those rows; the next step per state (Share…, Receive, none); delivery in words against the business date; Received read from the gate; the menu in block order |
 | `npm run test:integration` | `src/lib/erp/erp-purchase.test.ts` | The item's rule decides how the PO comes; Create PO at the item's price (₹0 with none), with the vendor's other items on one PO; Purchase it and Link PO give a Sent PO with no approval, a second material joins the same PO and undo takes one line back; cancel, unlink and close short; sharing needs purchase money, records each person, moves the PO to Sent, and its link opens the PDF |
 | `npm run test` | `src/lib/erp/engines/po-share.test.ts` | Who a PO can go to; a party with no number is refused by name; typed entries are checked; the message and the PDF |
 

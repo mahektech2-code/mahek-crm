@@ -9,7 +9,7 @@ import { confirmImpact } from "@/lib/impact/registry";
 import type { ImpactConfirmation } from "@/lib/impact/types";
 import { poLabel } from "./engines/purchase-flow";
 import { refusalResult } from "./screens/common";
-import { joinablePoNumber, orderFromQuote, purchaseChoices, syncQuotePoDrums, withdrawQuotePo, type PurchaseChoices, type QuoteOrder } from "./screens/requirement-po";
+import { joinablePoNumber, orderFromQuote, purchaseChoices, syncQuotePoDrums, withdrawQuotePo, type OpenRequirement, type PurchaseChoices, type QuoteOrder } from "./screens/requirement-po";
 import {
   cleanCell,
   isQuoteStatus,
@@ -71,7 +71,7 @@ export type QuoteSheet = {
   truncated: boolean;
 };
 
-export type { PurchaseChoices, QuoteOrder };
+export type { OpenRequirement, PurchaseChoices, QuoteOrder };
 
 /** What the Purchase it dialog offers besides the sheet: godowns, units and the requirements waiting for a PO. */
 export async function quotePurchaseChoices(ctx: ErpContext): Promise<PurchaseChoices> {

@@ -673,7 +673,7 @@ export function Input({
   className,
   invalid,
   ...props
-}: React.InputHTMLAttributes<HTMLInputElement> & { invalid?: boolean }) {
+}: React.InputHTMLAttributes<HTMLInputElement> & { invalid?: boolean; ref?: React.Ref<HTMLInputElement> }) {
   return (
     <input
       {...props}

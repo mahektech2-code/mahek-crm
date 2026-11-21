@@ -1,5 +1,6 @@
 import "server-only";
 import type { ScreenModule } from "../server";
+import { PURCHASE_TICKS, applyTicks } from "../action-ticks";
 import { MASTER_SCREENS } from "./masters";
 import { PURCHASE_SCREENS } from "./purchase";
 import { PURCHASE_FLOW_SCREENS } from "./purchase-flow";
@@ -27,7 +28,13 @@ import { ORDER_HUB_SCREENS } from "./order-hub";
 
 const ALL: ScreenModule[] = [...MASTER_SCREENS, ...PURCHASE_FLOW_SCREENS, ...PURCHASE_SCREENS, ...PRODUCTION_SCREENS, ...MOVEMENT_SCREENS, ...SALES_SCREENS, ...LOGISTICS_SCREENS, ...COMPLAINT_SCREENS, recipesScreen, alertsScreen, inboxScreen, ...UNIT_SCREENS, uomsScreen, ...STOCK_CHECK_SCREENS, ...SCRAP_SCREENS, ...RETURN_SCREENS, ...CAN_GROUP_SCREENS, ...MONEY_SCREENS, ...ORDER_HUB_SCREENS];
 
-const BY_KEY = new Map(ALL.map((m) => [m.key, m]));
+/* A Purchase page's actions are marked against the person's Edit and Delete
+   ticks as it loads (`action-ticks.ts`) — every list, export, combined view
+   and record reads through here, so none of them can offer an act the server
+   will refuse. */
+const ticked = (m: ScreenModule): ScreenModule => (PURCHASE_TICKS[m.key] ? { ...m, load: async (ctx, scope) => applyTicks(ctx, m.key, await m.load(ctx, scope)) } : m);
+
+const BY_KEY = new Map(ALL.map((m) => [m.key, ticked(m)]));
 
 export function screenModule(key: string): ScreenModule | undefined {
   return BY_KEY.get(key);
