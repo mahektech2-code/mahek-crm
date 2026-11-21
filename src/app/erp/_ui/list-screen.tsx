@@ -564,7 +564,9 @@ export function ListScreen({
   /* The group's own key is the header's first word, so while grouped its rows
      do not repeat it — a godown column reading "Bhiwandi" fourteen times under
      a header that says Bhiwandi is noise. */
-  const lineCols = gk ? cols.filter((c) => !headCols.includes(c) && !gk.includes(c.k)) : cols;
+  /* A sub-tab may leave out columns that say nothing on it (`ListSubtab.hide`) — they stay in the record and the export. */
+  const stHide = subtabOf(spec, query)?.hide;
+  const lineCols = (gk ? cols.filter((c) => !headCols.includes(c) && !gk.includes(c.k)) : cols).filter((c) => !stHide?.includes(c.k));
   /* The longest badge each status and flags column will draw, over every row rather than this page, so widths hold still from page to page. */
   const badgeChars = lp.badgeChars;
   /* A row's actions take a narrow column of their own at the end. A screen
@@ -677,6 +679,8 @@ export function ListScreen({
   const [emptyTitle] = splitFirstSentence(spec.noDataLine ?? "Nothing here yet.");
   /* A register read through a window: the period picker, and what to say when the period is empty or too long. */
   const win = server?.window ?? null;
+  /* The sub-tab open now: a queue (`allTime`) is read whole, so it draws no period picker and says so. */
+  const stNow = subtabOf(spec, query);
   const pickCf = (k: string, f: ColFilter | null) => {
     const cf = { ...(query.cf ?? {}) };
     if (f) cf[k] = f;
@@ -777,7 +781,7 @@ export function ListScreen({
               </button>
             ) : null}
           </div>
-          {win ? <PeriodPicker key={win.pd} pd={win.pd} label={win.label} dateLabel={win.dateLabel} onPick={(pd) => setQuery({ pd, page: 1 })} /> : null}
+          {win && !stNow?.allTime ? <PeriodPicker key={win.pd} pd={win.pd} label={win.label} dateLabel={win.dateLabel} onPick={(pd) => setQuery({ pd, page: 1 })} /> : null}
           {chips.length > MAX_TABS ? (
             <Select value={chip} onChange={(e) => pickChip(e.target.value)} aria-label={colOf(spec.chips!).l} className="cursor-pointer">
               <option value="">All {colOf(spec.chips!).l.toLowerCase()} · {nf(lp.beforeChip)}</option>
@@ -830,6 +834,7 @@ export function ListScreen({
             </span>
           ) : null}
           <span className="flex-1" />
+          {stNow?.note ? <span className="text-meta text-muted">{stNow.note}</span> : null}
           {spec.cards?.toggle || (v4 && spec.chat) ? (
             <span role="group" aria-label="Show as" className="flex gap-0.5 rounded-[7px] bg-divider p-0.5">
               {[
@@ -1090,7 +1095,8 @@ export function ListScreen({
                         const g = lp.groupOf[r.id] ?? "";
                         if (g !== lastG) {
                           const grp = lp.groups[g] ?? { n: 0, agg: [], ids: [], head: {} };
-                          let aggText = `${nf(grp.n)} ${grp.n === 1 ? "row" : "rows"}`;
+                          const [one, many] = spec.groupNoun ?? ["row", "rows"];
+                          let aggText = `${nf(grp.n)} ${grp.n === 1 ? one : many}`;
                           aggsOf(spec.agg).forEach((a, i) => {
                             const got = grp.agg[i];
                             if (got == null) return;
@@ -1124,6 +1130,22 @@ export function ListScreen({
                                       <Icon n="print" s={15} />
                                       {spec.groupPrint.l}
                                     </NavLink>
+                                  ) : null}
+                                  {spec.groupBulk && grp.bulkIds?.length ? (
+                                    <Button
+                                      size="sm"
+                                      variant="primary"
+                                      className={cx("whitespace-nowrap", headShown.length === 0 && !spec.groupPrint && "ml-auto")}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        const b = spec.bulk?.find((x) => x.id === spec.groupBulk!.id);
+                                        if (!b) return;
+                                        if (onBulk) return onBulk(b.id, grp.bulkIds!, () => setSel({}));
+                                        ui.bulk(spec.screen, b, grp.bulkIds!, () => setSel({}));
+                                      }}
+                                    >
+                                      {spec.groupBulk.l.replace("{n}", nf(grp.bulkIds.length)).replace("{noun}", grp.bulkIds.length === 1 ? one : many)}
+                                    </Button>
                                   ) : null}
                                   {spec.groupSel && selectOn ? (
                                     <LinkButton
@@ -1247,9 +1269,11 @@ export function ListScreen({
           {offers.map(({ b, label, row }) => (
             <Button
               key={b.id}
-              variant="dark"
+              variant={b.href ? "primary" : "dark"}
               size="sm"
               onClick={() => {
+                /* A link over the ticked rows (Print labels): the page it opens does the work. */
+                if (b.href) return router.push(`${b.href}${encodeURIComponent(chosen.join(","))}`);
                 if (b.client === "printInvoices") return setPrinting(chosen);
                 if (b.client === "billingView") return setBillingView(chosen);
                 if (b.client === "combinedView") return setCombinedView(chosen);
@@ -1270,7 +1294,7 @@ export function ListScreen({
                 ui.bulk(spec.screen, b, chosen, () => setSel({}));
               }}
             >
-              {label}
+              {b.countK ? label.replace("{n}", nf(chosen.reduce((t, id) => t + (Number(heldRows.find((r) => r.id === id)?.v[b.countK!]) || 0), 0))) : label}
             </Button>
           ))}
           {bulkOn && chosen.length > 0 && !offers.length ? (
@@ -1290,7 +1314,7 @@ export function ListScreen({
 /** The width of a row's ⋯ menu column, and what its Edit button — or a Purchase row's next-step button — adds to it. */
 const MENU_COL = 52;
 const EDIT_COL = 64;
-const PRIMARY_COL = 112;
+const PRIMARY_COL = 136;
 
 /**
  * An action that changes the record itself: "Edit", "Edit order", "Edit TO",
@@ -1494,14 +1518,31 @@ function Cell({ c, r, edge, cols, lead, small }: { c: ColSpec; r: ListRow; edge?
   const txt = `${base}${unit ? ` ${unit}` : ""}${late ? ` · ${late}` : ""}`;
   const num = c.t === "n" || c.t === "m";
   const empty = base === "—";
+  /* A list of short words (`tags`) is a row of small chips, clipped at the column's edge. */
+  if (c.tags && !empty) {
+    const words = txt.split(",").map((w) => w.trim()).filter(Boolean);
+    return (
+      <Td className={cx(edge, "overflow-hidden")} title={txt}>
+        <span className="flex flex-nowrap gap-1 overflow-hidden py-0.5">
+          {words.map((w) => (
+            <span key={w} className="inline-flex h-[22px] items-center rounded-control bg-line/70 px-2 text-xs font-medium whitespace-nowrap text-body">
+              {w}
+            </span>
+          ))}
+        </span>
+      </Td>
+    );
+  }
+  const subText = c.sub ? r.v[c.sub] : null;
+  const alert = !empty && c.alert ? !!r.v[c.alert] : false;
   return (
     <Td
       align={num ? "right" : "left"}
-      title={empty ? undefined : txt}
+      title={empty ? undefined : subText ? `${txt} · ${subText}` : txt}
       className={cx(
         edge,
         "truncate tabular-nums",
-        c.t === "b" ? "font-medium text-ink" : empty ? "text-line-strong" : late ? "font-semibold text-danger" : c.quiet ? "text-muted" : undefined,
+        c.t === "b" ? "font-medium text-ink" : empty ? "text-line-strong" : late || alert ? "font-semibold text-danger" : c.quiet ? "text-muted" : undefined,
         !empty && (c.t === "ph" || c.t === "em" || c.t === "map") && "text-brand",
         c.t === "mono" && "font-mono text-meta",
         small && "text-meta",
@@ -1509,6 +1550,9 @@ function Cell({ c, r, edge, cols, lead, small }: { c: ColSpec; r: ListRow; edge?
     >
       {lead}
       {txt}
+      {subText != null && subText !== "" ? <span className="block overflow-hidden text-xs font-normal whitespace-nowrap text-muted" style={{ textOverflow: "ellipsis" }}>
+          {String(subText)}
+        </span> : null}
     </Td>
   );
 }

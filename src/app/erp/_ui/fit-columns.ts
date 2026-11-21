@@ -42,6 +42,8 @@ const MIN: Record<ColType, number> = {
   map: 112,
   /* A bill number such as MMI/26-27/1100 in monospace, whole. */
   mono: 136,
+  /* "19 Nov, 9:40 am". */
+  at: 132,
 };
 
 /** The selection checkbox. */

@@ -166,7 +166,12 @@ export function visibleCols(
   const shown = cols.filter((c) => !c.pw || has(c.pw));
   const withheld = cols.filter((c) => c.pw && !has(c.pw));
   return {
-    cols: shown.map((c) => ({ k: c.k, l: c.l, t: c.t, u: c.u, w: c.w, ...(c.whole ? { whole: true } : {}) })),
+    /* Every drawing hint travels (unit, sub-line, alert…); only the power that gated it stays here. */
+    cols: shown.map((c) => {
+      const out = { ...c };
+      delete out.pw;
+      return out;
+    }),
     hidden: withheld.map((c) => ({ l: c.l, power: c.pw! })),
     hiddenKeys: withheld.map((c) => c.k),
   };

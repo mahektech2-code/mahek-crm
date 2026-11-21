@@ -161,3 +161,27 @@ export async function erpMarkLabelsPrinted(ids: string[]): Promise<Result<{ prin
     return refused(e);
   }
 }
+
+/**
+ * A purchased lot's drum labels went to paper — sent to the label printer,
+ * saved as a print file, or the print dialog shown. Every print is a row
+ * (`erp_label_prints`), reprints included; Drum labels reads it for To print
+ * and Printed. Whoever may print a purchase label may record one: the screens
+ * the label page itself admits (Drum labels, Bills, Stock).
+ */
+export async function erpRecordLabelPrints(lots: { id: string; copies: number }[]): Promise<Result<{ recorded: number; reprints: number }>> {
+  try {
+    const ctx = await requireOneOf(["barcode", "register", "stock"], "Drum labels are printed by whoever works Drum labels, Bills or the stock.");
+    const { recordLabelPrints } = await import("@/lib/erp/screens/purchase");
+    const res = await recordLabelPrints(ctx, Array.isArray(lots) ? lots.slice(0, 500) : []);
+    if (res.ok)
+      try {
+        revalidatePath("/erp/drum-labels");
+      } catch {
+        /* outside a request; the prints are recorded either way */
+      }
+    return res;
+  } catch (e) {
+    return refused(e);
+  }
+}

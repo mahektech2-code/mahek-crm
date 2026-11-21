@@ -130,7 +130,7 @@ test("Create one PO is Create PO for several: offered with Edit on Requirements,
   const ctx = await asPerson(p);
   const { applyTicks } = await import("@/lib/erp/action-ticks");
   const spec = { screen: "requisitions", cols: [], hidden: [], bulk: [{ id: "createOnePo", l: "Create one PO", client: "startInRecord" as const, fits: "createPo" }] };
-  const rows = [{ id: "r1", v: {}, flags: [], actions: [{ id: "createPo", l: "Create PO", primary: true, opens: true }] }];
+  const rows: import("@/lib/erp/ui").ListRow[] = [{ id: "r1", v: {}, flags: [], actions: [{ id: "createPo", l: "Create PO", primary: true, opens: true }] }];
   const read = applyTicks(ctx, "requisitions", { spec, rows });
   assert.deepEqual(read.spec.bulk, [], "the bulk act is not offered without Edit on Requirements");
   assert.equal(read.rows[0].actions![0].tickHidden, true, "nor the row's Create PO");

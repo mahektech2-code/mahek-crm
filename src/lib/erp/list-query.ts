@@ -191,6 +191,8 @@ export type ListGroup = {
   head: ListRow["v"];
   /** `groupPrint`'s link for the whole group, where the spec asks for one. */
   print?: string;
+  /** `groupBulk`: the group's rows that can take the act — every page of it. Absent where none can. */
+  bulkIds?: string[];
 };
 
 export type ListPage = {
@@ -422,7 +424,9 @@ export function queryRows(
   if (spec.chips && query.chip) all = all.filter((r) => String(r.v[spec.chips!] ?? "") === query.chip);
   const ql = query.q.trim().toLowerCase();
   if (ql) all = all.filter((r) => rowMatches(cols, r, ql, flagWords));
-  const sort = query.sort ?? (spec.sortDefault ? { k: spec.sortDefault[0], d: spec.sortDefault[1] } : null);
+  /* A sub-tab may carry its own order — oldest first on a queue — over the list's. */
+  const byDefault = st?.sort ?? spec.sortDefault;
+  const sort = query.sort ?? (byDefault ? { k: byDefault[0], d: byDefault[1] } : null);
   if (sort) {
     all = all.slice().sort((a, b) => {
       const x = a.v[sort.k];
@@ -533,6 +537,20 @@ export function groupHeadValues(rs: ListRow[], keys: string[]): ListRow["v"] {
     if (seen.length > 1 || (seen.length === 1 && head[k] !== seen[0])) head[k] = seen.join(", ");
   }
   return head;
+}
+
+/**
+ * `groupBulk`'s rows for a group: those carrying the bulk act's row action
+ * (its `fits`, else its id) with nothing in its `why` and not held back for a
+ * tick. Nothing while the spec offers no such bulk act — a person without the
+ * tick has had it taken out of `bulk` already (`applyTicks`).
+ */
+export function groupBulkIds(spec: Pick<ListSpec, "groupBulk" | "bulk">, rs: ListRow[]): string[] {
+  const gb = spec.groupBulk;
+  const b = gb ? spec.bulk?.find((x) => x.id === gb.id) : undefined;
+  if (!b) return [];
+  const key = b.fits || b.id;
+  return rs.filter((r) => r.actions?.some((a) => a.id === key && !a.why && !a.tickHidden)).map((r) => r.id);
 }
 
 /** `groupPrint`'s link for a group: its href with the group's distinct values of the key, in the rows' order. */
@@ -713,7 +731,8 @@ export function pageOf(spec: ListSpec, rows: ListRow[], query: ListQuery, flagWo
         return { v: a.t === "avg" ? s / (rs.length || 1) : s, missing };
       });
       const print = groupPrintHref(spec, rs);
-      groups[g] = { n: rs.length, agg, ids: rs.map((x) => x.id), head: groupHeadValues(rs, spec.groupHead ?? []), ...(print ? { print } : {}) };
+      const bulkIds = groupBulkIds(spec, rs);
+      groups[g] = { n: rs.length, agg, ids: rs.map((x) => x.id), head: groupHeadValues(rs, spec.groupHead ?? []), ...(print ? { print } : {}), ...(bulkIds.length ? { bulkIds } : {}) };
     }
   }
   return {

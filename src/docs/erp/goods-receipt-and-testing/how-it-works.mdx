@@ -56,6 +56,14 @@ The first verification writes the lot's register row, carrying the tested densit
 
 With AI photo reading on, the test photos can be read into readings for the tester to confirm; a reading is a suggestion until somebody saves the review. See [Alerts and AI](/docs/erp/alerts-and-ai).
 
+<Rule title="Lot testing is a queue: a lot is waiting before anybody has opened a test">
+A line routed to testing is **To test** from the moment the GRN is saved — listed by its inward line, because no test exists yet, and **Record test** opens the test form already on it. Recorded and undecided is **To verify**; decided is **Verified** or **Failed**. A stored "Not Verified" is also the default before anybody decides, so a test counts as failed only once somebody decided it. To test and To verify are read whole, oldest first, whatever the period: a lot waiting is work, and a period picker on a queue hides the oldest lot — the one that matters. The sidebar badge counts both.
+</Rule>
+
+<Rule title="How long a lot has waited is measured from the gate, and 'too long' is a setting">
+**Waiting** is the time since the lot was received. It turns red past <Setting k="erp.purchase.testWaitingHours" /> hours — the lot is out of stock all that time — and the threshold is configuration, never a number in the code. 0 never flags. It stops nothing.
+</Rule>
+
 ## The register and stock
 
 <Rule title="A lot is registered at the PO line's rate and GST">
@@ -88,6 +96,10 @@ The bill and the status are one line, so they cannot disagree. Recording the bil
 Mahek Plus carried the test's verdict, a purchase status and a separate "bill received" toggle, and they could disagree — "Purchase Matched" with no bill. Making them one progress line removes the state that cannot be true.
 </Callout>
 
+<Rule title="Bills are grouped by party, because one bill comes from one party">
+Bills opens on **Bill to come** and groups the lots by supplier; **Rate missing**, **Rate differs**, **Matched** and **Every lot** are the other sub-tabs. **Matched** is a lot whose bill is in hand and whose rate is entered and agrees with the PO line. A party's heading carries **Record bill for n lots**: the same act as ticking the lots and pressing Record the bill — one bill number on each of that party's lots in the open sub-tab that has none — over every page of the group. Bill to come and Matched read the purchase stage, which only somebody with purchase money sees, so for anybody else those two sub-tabs and the group button are not drawn rather than drawn empty.
+</Rule>
+
 ## Landing cost
 
 <Rule title="The stock rate is the landed rate">
@@ -108,7 +120,11 @@ With our own vehicle and no approved rate per kilometre, the receipt is refused 
 
 ## Drum labels
 
-Drum labels (Purchase › Tools) is the register's chemical lots **at your working godown only**, with the short label name from the "Short label name (Item=Label)" reference list. Each row's **Print drum label** draws the lot's label from the register — 80 × 80 mm, one per drum — so the printer is never sent typed text; the list can also be downloaded. The label page opens for anybody holding the Purchases screen or Stock on hand.
+Drum labels (Purchase › Tools) is the register's chemical lots **at every godown you are assigned to** (an administrator is assigned to all of them), with the short label name from the "Short label name (Item=Label)" reference list. It used to show the working godown only, and an empty list because the header named another godown was the commonest dead end on the page; the godown is a column and a Filters section instead. Each row's **Print n** draws the lot's labels from the register — 80 × 80 mm, one per drum — so the printer is never sent typed text; ticking lots and pressing **Print n labels** prints them all in one go. The label page opens for anybody holding Drum labels, Bills or Stock on hand.
+
+<Rule title="Every print is recorded, reprints included">
+Each time a lot's drum labels go to paper — sent to the label printer, saved as a print file, or the print dialog shown — the lot gets a row in its print log: how many labels, who, when, and whether it had been printed before. **To print** is a lot with no print; **Printed** says the last print, who printed it and how many times. Lots bought before the log began have no row and read as To print, so both sub-tabs keep the period picker.
+</Rule>
 
 ## Who can do what
 
@@ -116,14 +132,16 @@ Drum labels (Purchase › Tools) is the register's chemical lots **at your worki
 |---|---|
 | Receive goods, add lines, transport and costs | Goods in |
 | Record test evidence | The Lot testing screen |
-| Verify / Mark not verified | Verify quality tests |
+| Verify / Not verified | Verify quality tests, and Edit on Lot testing |
+| Record bill for n lots | See purchase money, and Edit on Bills |
+| Print drum labels | Drum labels, Bills or Stock on hand — printing is Access only |
 | See rates, GST, amounts, landing cost, the stage; enter a rate; record the bill (one row or the ticked rows); change status | See purchase money |
 | Set Purchase Verified | Set a purchase to Purchase Verified |
 | Back to pending | Set a verified purchase back to Pending |
 
 ## Settings
 
-<SettingsTable keys={["erp.purchase.receiptTolerancePercent", "erp.purchase.ownVehicleRatePerKmPaise", "erp.ai.photos.enabled", "erp.ai.qc.densityTolerancePct", "erp.ai.bills.enabled"]} />
+<SettingsTable keys={["erp.purchase.testWaitingHours", "erp.purchase.receiptTolerancePercent", "erp.purchase.ownVehicleRatePerKmPaise", "erp.ai.photos.enabled", "erp.ai.qc.densityTolerancePct", "erp.ai.bills.enabled"]} />
 
 ## Where the code and the intent disagree today
 

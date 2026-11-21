@@ -916,3 +916,47 @@ the audit log, every PO line it was ever on with that PO's audit and
 `erp_po_shares`, and the gate's inward lines, with what it still waits for as
 the last, open entry. `audit_log`'s time column is `at`, and raw SQL hands a
 timestamp back as a string — wrap it in `new Date()` before `calendarDate`.
+
+**LOT TESTING IS A QUEUE: TO TEST · TO VERIFY · VERIFIED · FAILED (Nov 2026).**
+`engines/lot-testing.ts` (pure) buckets each lot. A line routed to testing is
+**To test** before any `erp_tests` row exists, so the loader reads two things:
+the tests (undecided ones always, decided ones through the window) and every
+`erp_inward` line with `routed = 'Testing'` and no test — that row's id is the
+inward line's, its one act is **Record test** (`formLoaders.record`, the
+ordinary `new` form with `line` already picked). A stored "Not Verified" is
+also the default before anybody decides, so failed means DECIDED not verified
+(`decidedAt`). To test and To verify are `ListSubtab.allTime` — no period
+picker, a `note` saying "Every lot waiting, oldest first", and their own
+`sort` — because a queue cut by a period hides its oldest lot. Waiting is from
+the inward line's `created_at`; past `erp.purchase.testWaitingHours` (24, a
+setting, 0 never flags) the row carries `late` and `ColSpec.alert` draws the
+cell red. The row's button is Record test, Verify, or Record evidence while
+the item's evidence is incomplete. `testsAwaitingIds` (the badge) counts the
+untested lines too. The design draws no figure cards here (`stats: []`).
+
+**BILLS ARE GROUPED BY PARTY, WITH ONE BUTTON PER PARTY (Nov 2026).** The
+register's sub-tabs are Bill to come · Rate missing · Rate differs · Matched ·
+Every lot; Bill to come and Matched read the money-gated stage and are left
+out without `viewPurchaseMoney`. Matched is a row value (`matched: "yes"`):
+bill in hand, rate entered, not `rateOffPo`. The list is grouped by `party`
+with `groupHead: ["gstin"]` and `groupNoun: ["lot", "lots"]`, and
+`ListSpec.groupBulk` draws **Record bill for n lots** on each heading: it runs
+the bulk `billReceived` (prompt and all, through `ui.bulk`) over
+`ListGroup.bulkIds` — the group's rows, every page of it in the open sub-tab,
+that carry the row act with no `why` and no tick lock (`groupBulkIds`). No
+bulk (no money, or no Edit tick after `applyTicks`), no button. The columns
+lead with the design's (Lot no, PR · PO, Item, Quantity with its unit via
+`uk`, PO rate, Amount, Received, Flags); the rest fold. Rows have no next-step
+button except Enter rate on a lot with no rate; the ⋯ menu leads with Trace
+this lot, Stock inquiry, Print drum label, Read supplier bill. `visibleCols`
+now carries every drawing hint (`uk`, `sub`, `alert`…) and drops only `pw`.
+
+**THE LIST GAINED FIVE GENERIC PIECES FOR THIS, all in `ui.ts`:** `ColType
+"at"` (an ISO timestamp drawn "19 Nov, 9:40 am" in the business zone, sorting
+as stored), `ColSpec.sub` (a muted line under the value — an item's "PR-15 ·
+PO-2 · supplier"), `ColSpec.alert`, `ColSpec.tags` (a comma list drawn as
+chips), `ListSubtab.allTime/note/sort/hide` (`hide`: columns that say nothing
+on that sub-tab, still in the record and the export), and `BulkSpec.href` /
+`countK` (a selection that navigates — "Print {n} labels" — summing a row
+value into its label). `td .truncate` WRAPS by the global rule
+(`globals.css`); the sub-line ellipsises with an inline `textOverflow` instead.

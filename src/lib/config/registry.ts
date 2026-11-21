@@ -5063,6 +5063,17 @@ export const SETTINGS = [
     max: 100,
   },
   {
+    key: "erp.purchase.testWaitingHours",
+    type: "integer",
+    category: "erp",
+    label: "Lot testing · waiting too long after (hours)",
+    description:
+      "A chemical lot routed to testing is held out of stock until it is tested and verified. On Lot testing, a lot still waiting (to be tested, or for the verifier) longer than this many hours since it arrived at the gate has its Waiting figure drawn in red. 0 never flags. It stops nothing.",
+    default: 24,
+    min: 0,
+    max: 720,
+  },
+  {
     key: "erp.purchase.poWatiTemplate",
     type: "text",
     category: "erp",
@@ -7208,6 +7219,7 @@ export type Config = {
   "erp.orders.duplicateAiModel": string;
   "erp.purchase.ownVehicleRatePerKmPaise": number;
   "erp.purchase.receiptTolerancePercent": number;
+  "erp.purchase.testWaitingHours": number;
   "erp.purchase.poWatiTemplate": string;
   "erp.purchase.poGstPercent": number;
   "erp.money.approvalAbovePaise": number;
