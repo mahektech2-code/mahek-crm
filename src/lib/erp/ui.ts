@@ -523,6 +523,18 @@ export type CombinedSpec = {
 
 /* -------------------------------------------------------------------- rows */
 
+export type RecordFlow = {
+  steps?: string[];
+  /** The step now; steps.length when done; below 0 when stopped (cancelled, void). */
+  step?: number;
+  /** What the record waits on — the Next step card's line. Absent: no card. */
+  next?: string;
+  nextSub?: string;
+  /** The row action the card's button runs; absent, the row's primary action. */
+  act?: string;
+  history?: { at: string; text: string; open?: boolean }[];
+};
+
 export type ListRow = {
   id: string;
   v: Record<string, CellValue>;
@@ -535,6 +547,13 @@ export type ListRow = {
   actions?: ActionSpec[];
   /** "Created by X · 27 Sep, 10:14". */
   by?: string;
+  /**
+   * A Purchase record's flow (Nov 2026 design): the steps and where it is,
+   * what it is waiting on (said on the Next step card beside the row's
+   * primary action) and what happened to it. Read by the record dialog's
+   * Purchase layout, which every Purchase page's pop-up shares.
+   */
+  record?: RecordFlow;
   /** Fields hidden by powers, as a count, so the record can say so. */
   hiddenFields?: number;
   /** Free-form panels a screen draws in the record (allocation, evidence…). */

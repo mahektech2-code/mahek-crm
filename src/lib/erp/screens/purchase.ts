@@ -45,6 +45,7 @@ import {
 } from "../server";
 import type { ActionSpec, ColSpec, FieldSpec, FormSpec, ListRow, PromptSpec } from "../ui";
 import { fd, inr, inrRate, nf } from "../ui";
+import { billRecord, labelRecord, receiptRecord, testRecord, type PrintEntry } from "../engines/record-flow";
 import {
   TRANSPORT_MODES,
   lotNumber,
@@ -1061,6 +1062,10 @@ const inward: ScreenModule = {
           { id: "receiveAll", l: `Receive from ${r.supplier}`, loadsForm: true, why: canReceive ? "" : "Goods in is not on your account" },
           { id: "openPo", l: `Open ${r.po}`, href: erpLink("purchaseOrders", { open: r.poId }) },
         ],
+        record: {
+          next: r.received > 0 ? "Receive the rest at the gate" : "Receive it at the gate",
+          nextSub: `${nf(r.toCome)} ${r.unit} still to come${due ? ` · ${due.late ? due.words : `due ${due.words}`}` : ""} · deliver to ${r.godown}`,
+        },
       };
     });
     /* RECEIVED TODAY: the design's few columns — what came, from whom, where it went. */
@@ -1262,6 +1267,7 @@ const inward: ScreenModule = {
             { l: "Remark", v: x.r.remark || "—" },
           ],
           actions,
+          record: receiptRecord(x.r, x.by),
           by: stampLine(x.by, x.r.createdAt),
         };
       })],
@@ -1940,6 +1946,7 @@ const testing: ScreenModule = {
         fields: [{ l: "Remark", v: i.remark || "—" }],
         /* Recording a test is Access: the department tests what it receives. */
         actions: [{ id: "record", l: "Record test", primary: true, loadsForm: true }],
+        record: testRecord({ arrived: i.createdAt, tests: x.tests }),
       };
     });
     return {
@@ -2048,6 +2055,7 @@ const testing: ScreenModule = {
                 registerExists: reg,
               },
             },
+            record: testRecord({ arrived: from, tests: x.t.tests, recorded: { at: x.t.createdAt, by: x.tester }, bucket, missing: miss, decidedAt: x.t.decidedAt, verifier: !why }),
             by: stampLine(x.tester, x.t.createdAt),
           };
         }),
@@ -2732,6 +2740,7 @@ const register: ScreenModule = {
             ...(!p.poId ? ["noPo"] : rateOff ? ["rateOffPo"] : []),
           ],
           title: r.item,
+          record: money ? billRecord(p, purchaseStage(p), r.by) : undefined,
           ref: `PR-${p.prNumber} · ${r.supplier}`,
           header: `Lot ${p.lotNo} · ${r.godown}`,
           fields: [
@@ -3124,6 +3133,7 @@ const barcode: ScreenModule = {
     const wide = tooWide(Number(n), sc);
     const rows = wide ? [] : await registerRows(where);
     const prints = await labelPrintsOf(rows.map((r) => r.p.id));
+    const log = await labelPrintLog(rows.map((r) => r.p.id));
     const cols: ColSpec[] = [
       { k: "date", l: "Received", t: "d" },
       { k: "lot", l: "Lot", t: "mono" },
@@ -3195,12 +3205,31 @@ const barcode: ScreenModule = {
             { id: "label", l: "Print drum label", short: `Print ${nf(labels)}`, primary: true, soft: true, href: erpLabelsHref({ purchase: r.p.id }) },
             { id: "trace", l: "Trace this lot", href: erpTraceHref(r.p.lotNo) },
           ],
+          record: labelRecord(r.p.createdAt, r.by, labels, log.get(r.p.id) ?? []),
           by: stampLine(r.by, r.p.createdAt),
         };
       }),
     };
   },
 };
+
+/** Every print of these lots' labels, oldest first — the newest twenty a lot. */
+export async function labelPrintLog(purchaseIds: string[]): Promise<Map<string, PrintEntry[]>> {
+  if (!purchaseIds.length) return new Map();
+  const rows = (await db.execute(sql`
+    select id, at, by, copies, reprint from (
+      select lp.purchase_id as id, lp.printed_at as at, u.name as by, lp.copies, lp.reprint,
+             row_number() over (partition by lp.purchase_id order by lp.printed_at desc) as k
+        from erp_label_prints lp
+        left join users u on u.id = lp.printed_by_id
+       where lp.purchase_id in ${purchaseIds}
+    ) x where k <= 20 order by id, at
+  `)) as unknown as { id: string; at: string | Date; by: string | null; copies: number; reprint: boolean }[];
+  const out = new Map<string, PrintEntry[]>();
+  /* Raw SQL hands a timestamp back as a string. */
+  for (const r of rows) (out.get(r.id) ?? out.set(r.id, []).get(r.id)!).push({ at: new Date(r.at), by: r.by, copies: Number(r.copies), reprint: !!r.reprint });
+  return out;
+}
 
 /** One label a drum; a lot with no drum count still gets one. */
 const labelCopies = (drums: number | null) => Math.max(1, drums ?? 1);
