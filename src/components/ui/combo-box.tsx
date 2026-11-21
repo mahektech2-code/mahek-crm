@@ -40,6 +40,7 @@ export function ComboBox({
   value,
   options,
   onChange,
+  onCommit,
   label,
   placeholder,
   disabled,
@@ -61,6 +62,13 @@ export function ComboBox({
   /** The field's own classes — height and type size — where a screen's controls are bigger than the default. */
   inputClassName?: string;
   onChange: (next: string) => void;
+  /**
+   * Called when a row is PICKED — a click, or Enter on a highlighted row — and
+   * not when text is typed. Optional and additive: a field that only wants the
+   * value ignores it, and one that adds picks to a list (the journey planner's
+   * several cities) can tell a choice from a keystroke.
+   */
+  onCommit?: (next: string) => void;
   /** Not drawn — the accessible name for the field and its list. */
   label: string;
   placeholder?: string;
@@ -159,6 +167,7 @@ export function ComboBox({
 
   const commit = (next: string) => {
     onChange(next);
+    onCommit?.(next);
     close();
     fieldRef.current?.focus();
   };

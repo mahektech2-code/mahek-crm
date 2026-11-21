@@ -73,7 +73,9 @@ export function TodayTab({
       adherencePct,
       note,
       hasFixes: points.length > 0,
-      city: plan?.city ?? plan?.shopCities[0] ?? null,
+      /* Every city the day names where it names several, else the one city or — with
+         none proposed — where the shops are. */
+      city: plan?.cities.length ? plan.cities.join(", ") : (plan?.shopCities[0] ?? null),
     };
   });
 

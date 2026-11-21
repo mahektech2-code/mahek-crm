@@ -5,6 +5,7 @@ import { db } from "@/db";
 import { APP_TIMEZONE } from "../business-date";
 import { managerScope, onlyMine } from "./sales-service";
 import { placeNameSql } from "./place-filter-service";
+import { planCityList } from "@/lib/journey-cities";
 
 const IST = sql.raw(`at time zone '${APP_TIMEZONE}'`);
 
@@ -180,6 +181,8 @@ export type TeamPlanDay = {
   planDate: string;
   dayState: "proposed" | "refused" | "agreed" | "planned";
   city: string | null;
+  /** Every city the day names, primary first — `[city]` for a day with one. */
+  cities: string[];
   /** The stops' cities, most shops first — see `dayWhere`. */
   shopCities: string[];
   selfPlanned: boolean;
@@ -226,7 +229,7 @@ export async function teamJourneySummary(
   const [plans, visits, leave, holidays] = await Promise.all([
     db.execute(sql`
       select p.user_id as "userId", p.plan_date::text as "planDate",
-             p.day_state::text as "dayState", p.city, p.self_planned as "selfPlanned",
+             p.day_state::text as "dayState", p.city, p.cities, p.self_planned as "selfPlanned",
              p.refusal_reason as "refusalReason", p.counter_city as "counterCity",
              p.id as "planId",
              coalesce((
@@ -275,7 +278,10 @@ export async function teamJourneySummary(
     `),
   ]);
   return {
-    plans: plans as unknown as TeamPlanDay[],
+    plans: (plans as unknown as Array<Omit<TeamPlanDay, "cities"> & { cities: string[] | null }>).map((p) => ({
+      ...p,
+      cities: planCityList(p),
+    })),
     visits: visits as unknown as TeamVisitDay[],
     leave: (leave as unknown as TeamLeaveDay[]).filter((l) => l.state !== "rejected"),
     holidays: holidays as unknown as CalendarHoliday[],

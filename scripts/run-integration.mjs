@@ -376,6 +376,8 @@ const files = [
   "src/lib/impact/admin-removals.test.ts",
   // Saving where a salesman works can hand him the shops in those places — only the count shown, only with customer.reassign.
   "src/lib/area-handover.test.ts",
+  // A journey day can name several cities: `city` stays the primary, `cities` the full ordered list; a single city is stored as it always was.
+  "src/lib/journey-multi-city.test.ts",
   // Narrowing where a salesman works says what it leaves outside, per state, and Save refuses a missing or stale yes — a district, a town or a typed city.
   "src/lib/where-they-work-outside.test.ts",
   "src/lib/org-chart-verification.test.ts",

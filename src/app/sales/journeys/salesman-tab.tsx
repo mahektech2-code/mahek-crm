@@ -7,7 +7,8 @@ import { money } from "@/lib/format";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { shiftMonth, monthName } from "@/components/ui/month";
 import { useToast } from "@/components/ui/toast";
-import { ComboBox } from "@/components/ui/combo-box";
+import { citiesInWords, normaliseCities, sameCityList } from "@/lib/journey-cities";
+import { CityListInput } from "./city-list-input";
 import { Drawer, DrawerHeader } from "@/components/ui/overlays";
 import { answerRefusal, proposeJourneyDays } from "@/lib/actions/sales";
 import type { JourneyPlan, PlanStop, Salesman, VisitRow } from "@/lib/services/sales-service";
@@ -264,7 +265,7 @@ export function SalesmanTab({
                   onClick={() => setOpen(d.date)}
                   className="cursor-pointer text-left text-[13px] text-body underline decoration-dotted underline-offset-2 hover:text-ink"
                 >
-                  {shortDate(d.date)}: {d.plan?.city} — “{d.plan?.refusalReason}”
+                  {shortDate(d.date)}: {d.plan?.cities.length ? d.plan.cities.join(", ") : d.plan?.city} — “{d.plan?.refusalReason}”
                   {d.plan?.counterCity ? ` (he wants ${d.plan.counterCity})` : ""}
                 </button>
               ))}
@@ -717,8 +718,10 @@ function DayDrawer({
   const toast = useToast();
   const actions = useVisitActions();
   const plan = day.plan;
-  const [city, setCity] = React.useState(
-    plan?.dayState === "planned" || plan?.dayState === "refused" ? "" : (plan?.city ?? ""),
+  /* The cities being proposed for this day — every one of them, the first the
+     primary. (`cities` above is what his book names, offered as a shortcut.) */
+  const [chosen, setChosen] = React.useState<string[]>(
+    plan?.dayState === "planned" || plan?.dayState === "refused" ? [] : (plan?.cities ?? []),
   );
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -816,7 +819,7 @@ function DayDrawer({
             <dl className="grid grid-cols-[150px_minmax(0,1fr)] gap-x-3 gap-y-1">
               <dt className="text-muted">Where</dt>
               <dd>
-                {plan.city ??
+                {(plan.cities.length ? plan.cities.join(", ") : null) ??
                   (plan.shopCities.length ? (
                     <>
                       {plan.shopCities.join(", ")}
@@ -901,49 +904,52 @@ function DayDrawer({
                   Take {plan.counterCity}
                 </Button>
               ) : null}
-              <ComboBox
-                value={city}
+              <CityListInput
+                value={chosen}
                 options={cities}
-                onChange={setCity}
+                onChange={setChosen}
                 disabled={busy}
                 label="A different city"
                 placeholder="Or propose a different city"
                 emptyHint="No city in his book matches — what you type is still proposed"
-                className="w-[230px]"
+                className="min-w-[260px]"
               />
               <Button
                 size="sm"
-                disabled={busy || !city.trim() || city.trim() === plan.city}
-                title={!city.trim() ? "Type the city to put back to him." : undefined}
-                onClick={() => void run(() => answerRefusal({ planId: plan.id, take: "other", city: city.trim() }))}
+                disabled={busy || !chosen.length || sameCityList(chosen, plan.cities)}
+                title={!chosen.length ? "Type the city to put back to him." : undefined}
+                onClick={() => void run(() => answerRefusal({ planId: plan.id, take: "other", city: chosen[0], cities: chosen }))}
               >
                 Propose instead
               </Button>
             </div>
           ) : canPropose ? (
             <div className="mt-3 flex flex-wrap items-center gap-2 rounded-[6px] border border-line bg-canvas px-3 py-2.5">
-              <ComboBox
-                value={city}
+              <CityListInput
+                value={chosen}
                 options={cities}
-                onChange={setCity}
+                onChange={setChosen}
                 disabled={busy}
                 label={`City for ${shortDate(day.date)}`}
                 placeholder="Propose a city"
                 emptyHint="No city in his book matches — what you type is still proposed"
-                className="w-[230px]"
+                className="min-w-[260px]"
               />
               <Button
                 size="sm"
                 tone="primary"
-                disabled={busy || !city.trim() || city.trim() === plan?.city}
-                title={!city.trim() ? "Type a city first." : undefined}
+                disabled={busy || !chosen.length || sameCityList(chosen, plan?.cities ?? [])}
+                title={!chosen.length ? "Type a city first." : undefined}
                 onClick={() =>
                   void run(() =>
-                    proposeJourneyDays({ salesmanId: salesman.id, days: [{ planDate: day.date, city: city.trim() }] }),
+                    proposeJourneyDays({
+                      salesmanId: salesman.id,
+                      days: [{ planDate: day.date, city: chosen[0], cities: chosen }],
+                    }),
                   )
                 }
               >
-                {plan ? "Propose a different city" : "Propose"}
+                {plan ? "Propose different cities" : "Propose"}
               </Button>
               <span className="text-[12px] text-muted">He answers on his handset.</span>
             </div>
@@ -1265,15 +1271,20 @@ function eventSentence(e: JourneyEvent): string {
   const a = e.after ?? {};
   const b = e.before ?? {};
   const str = (x: unknown) => (typeof x === "string" && x.trim() ? x.trim() : null);
+  /* Every city of a proposal where it named several, else the one city. */
+  const cityWords = (o: Record<string, unknown>) => {
+    const list = Array.isArray(o.cities) ? normaliseCities(o.cities as string[]) : [];
+    return list.length > 1 ? citiesInWords(list) : str(o.city);
+  };
   switch (e.action) {
     case "mbos.journey.answered":
       return a.answer === "refused"
         ? `refused ${str(b.city) ?? "the day"} — “${str(a.reason) ?? "no reason"}”${str(a.counterCity) ? `, wanted ${str(a.counterCity)}` : ""}`
         : `agreed ${str(b.city) ?? "the day"}`;
     case "mbos.journey.took_counter":
-      return `took his counter-proposal: ${str(a.city) ?? "his city"}${str(b.refusalReason) ? ` (he had refused ${str(b.city) ?? "it"}: “${str(b.refusalReason)}”)` : ""}`;
+      return `took his counter-proposal: ${cityWords(a) ?? "his city"}${str(b.refusalReason) ? ` (he had refused ${str(b.city) ?? "it"}: “${str(b.refusalReason)}”)` : ""}`;
     case "mbos.journey.reproposed":
-      return `proposed ${str(a.city) ?? "a different city"} instead${str(b.refusalReason) ? ` (he had refused ${str(b.city) ?? "it"}: “${str(b.refusalReason)}”)` : ""}`;
+      return `proposed ${cityWords(a) ?? "a different city"} instead${str(b.refusalReason) ? ` (he had refused ${str(b.city) ?? "it"}: “${str(b.refusalReason)}”)` : ""}`;
     case "mbos.journey.propose":
       return `proposed cities for ${e.from === e.to ? "this day" : `${shortDate(e.from!)}–${shortDate(e.to!)}`}`;
     case "mbos.journey.period":

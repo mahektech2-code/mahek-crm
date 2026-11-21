@@ -88,3 +88,29 @@ export function splitBook<T extends Placeable>(
   }
   return { here, elsewhere, unplaceable };
 }
+
+/**
+ * THE SAME SPLIT FOR A DAY THAT NAMES SEVERAL CITIES: a shop is "here" when it
+ * is in ANY of them.
+ *
+ * `matchesCity` is not touched — a shop is in a city exactly as it always was —
+ * and this only takes the union of it. With one city the answer is identical to
+ * `splitBook`, row for row, which `city-match.test.ts` pins; with none, the whole
+ * book is "here", the same as an empty city has always meant.
+ */
+export function splitBookMany<T extends Placeable>(
+  book: T[],
+  cities: ReadonlyArray<string>,
+): { here: T[]; elsewhere: T[]; unplaceable: T[] } {
+  const named = cities.filter((c) => cityKey(c));
+  if (!named.length) return { here: book, elsewhere: [], unplaceable: [] };
+  const here: T[] = [];
+  const elsewhere: T[] = [];
+  const unplaceable: T[] = [];
+  for (const row of book) {
+    if (named.some((city) => matchesCity(row, city))) here.push(row);
+    else if (hasNoPlace(row)) unplaceable.push(row);
+    else elsewhere.push(row);
+  }
+  return { here, elsewhere, unplaceable };
+}

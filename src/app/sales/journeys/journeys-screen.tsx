@@ -3,8 +3,9 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/toast";
-import { ComboBox } from "@/components/ui/combo-box";
-import { splitBook } from "@/lib/city-match";
+import { splitBookMany } from "@/lib/city-match";
+import { citiesInWords, sameCityList } from "@/lib/journey-cities";
+import { CityListInput } from "./city-list-input";
 import { addDays } from "@/lib/business-date";
 import { dayWhere } from "@/lib/journey-days";
 import { answerRefusal, proposeJourneyDays, saveJourneyPeriod } from "@/lib/actions/sales";
@@ -53,8 +54,10 @@ const HORIZONS = [7, 15, 30] as const;
 type DayRow = {
   date: string;
   plan: JourneyPlan | null;
-  /** What the manager is proposing for this day, before saving. */
+  /** The PRIMARY city of what the manager is proposing — the first of `cities`. */
   city: string;
+  /** Every city the manager is proposing for this day, in order, before saving. */
+  cities: string[];
 };
 
 export function JourneysScreen({
@@ -98,7 +101,7 @@ export function JourneysScreen({
    * somebody has typed are held. A draft is dropped once it has been saved,
    * and what is left is whatever the server just said.
    */
-  const [drafts, setDrafts] = React.useState<Record<string, string>>({});
+  const [drafts, setDrafts] = React.useState<Record<string, string[]>>({});
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -106,7 +109,8 @@ export function JourneysScreen({
     () =>
       dates.map((date) => {
         const plan = plans.find((p) => p.planDate === date) ?? null;
-        return { date, plan, city: drafts[date] ?? plan?.city ?? "" };
+        const cities = drafts[date] ?? plan?.cities ?? [];
+        return { date, plan, city: cities[0] ?? "", cities };
       }),
     [dates, plans, drafts],
   );
@@ -117,11 +121,11 @@ export function JourneysScreen({
   const planned = days.filter((d) => d.plan?.dayState === "planned");
 
   const dirty = days.filter(
-    (d) => d.city.trim() && d.city.trim() !== (d.plan?.city ?? ""),
+    (d) => d.cities.length > 0 && !sameCityList(d.cities, d.plan?.cities ?? []),
   );
 
-  function setCity(date: string, city: string) {
-    setDrafts((d) => ({ ...d, [date]: city }));
+  function setCities(date: string, cities: string[]) {
+    setDrafts((d) => ({ ...d, [date]: cities }));
   }
 
   /** The first seven days' cities, copied across the rest. */
@@ -133,7 +137,7 @@ export function JourneysScreen({
       days.forEach((d, i) => {
         if (i < 7) return;
         if (d.plan?.dayState === "planned" || d.plan?.dayState === "agreed") return;
-        next[d.date] = week[i % 7].city;
+        next[d.date] = week[i % 7].cities;
       });
       return next;
     });
@@ -143,7 +147,8 @@ export function JourneysScreen({
     if (!selected) return;
     const sending = dirty.map((d) => ({
       planDate: d.date,
-      city: d.city.trim(),
+      city: d.cities[0],
+      cities: d.cities,
     }));
     setBusy(true);
     setError(null);
@@ -172,12 +177,12 @@ export function JourneysScreen({
     date: string,
     planId: string,
     take: "counter" | "other",
-    city?: string,
+    cities?: string[],
   ) {
     setBusy(true);
     setError(null);
     try {
-      const result = await answerRefusal({ planId, take, city });
+      const result = await answerRefusal({ planId, take, city: cities?.[0], cities });
       if (!result.ok) return setError(result.error);
       /* Taking HIS city writes a different one than the box is showing, and a
        * draft left behind would shadow the answer that was just agreed. */
@@ -195,14 +200,14 @@ export function JourneysScreen({
   }
 
   /** The exception: arranging a day from the office, shops and all. */
-  async function pickFromOffice(date: string, city: string, customerIds: string[]) {
+  async function pickFromOffice(date: string, cities: string[], customerIds: string[]) {
     if (!selected) return;
     setBusy(true);
     setError(null);
     try {
       const result = await saveJourneyPeriod({
         salesmanId: selected.id,
-        days: [{ planDate: date, city, customerIds }],
+        days: [{ planDate: date, city: cities[0], cities, customerIds }],
       });
       if (!result.ok) return setError(result.error);
       toast.push(result.message ?? "Saved.");
@@ -356,11 +361,11 @@ export function JourneysScreen({
                   cities={cities}
                   book={book}
                   busy={busy}
-                  onCity={(c) => setCity(d.date, c)}
-                  onAnswer={(take, city) =>
-                    d.plan && void answer(d.date, d.plan.id, take, city)
+                  onCities={(c) => setCities(d.date, c)}
+                  onAnswer={(take, cities) =>
+                    d.plan && void answer(d.date, d.plan.id, take, cities)
                   }
-                  onPickFromOffice={(ids) => void pickFromOffice(d.date, d.city.trim(), ids)}
+                  onPickFromOffice={(ids) => void pickFromOffice(d.date, d.cities, ids)}
                 />
               ))}
             </div>
@@ -453,7 +458,7 @@ function DayLine({
   cities,
   book,
   busy,
-  onCity,
+  onCities,
   onAnswer,
   onPickFromOffice,
 }: {
@@ -461,8 +466,8 @@ function DayLine({
   cities: string[];
   book: BookCustomer[];
   busy: boolean;
-  onCity: (city: string) => void;
-  onAnswer: (take: "counter" | "other", city?: string) => void;
+  onCities: (cities: string[]) => void;
+  onAnswer: (take: "counter" | "other", cities?: string[]) => void;
   onPickFromOffice: (customerIds: string[]) => void;
 }) {
   const [open, setOpen] = React.useState(false);
@@ -479,8 +484,11 @@ function DayLine({
   /* The three buckets, and the toggle they all share. Derived here rather than
      inside the panel so the counts on the closed panel's own button are the
      same numbers the open one lists. */
+  /* `proposed` is the PRIMARY city — whether there is one at all; `where` says every
+     city; the shops listed are those in ANY of them. */
   const proposed = row.city.trim();
-  const { here, elsewhere, unplaceable } = splitBook(book, proposed);
+  const where = citiesInWords(row.cities);
+  const { here, elsewhere, unplaceable } = splitBookMany(book, row.cities);
   const othersShown = term.trim()
     ? elsewhere.filter((c) => c.name.toLowerCase().includes(term.trim().toLowerCase()))
     : elsewhere;
@@ -523,10 +531,10 @@ function DayLine({
                 somebody is meant to choose from. Free text is kept, because
                 `customers.city` holds whatever the sheet typed and proposing a
                 town nobody has sold in yet is an ordinary Tuesday. */}
-            <ComboBox
-              value={row.city}
+            <CityListInput
+              value={row.cities}
               options={cities}
-              onChange={onCity}
+              onChange={onCities}
               disabled={busy || state === "agreed"}
               label={`City for ${shortDay(row.date)}`}
               placeholder="Propose a city"
@@ -536,7 +544,7 @@ function DayLine({
                   ? "He has agreed this day. He picks the shops next."
                   : "The unit you propose. He divides it into a beat himself."
               }
-              className="w-[220px] flex-none"
+              className="w-[330px] flex-none"
             />
             <span className="min-w-0 flex-1 truncate text-[13px] text-muted">
               {state === "refused" && row.plan?.refusalReason ? (
@@ -573,13 +581,13 @@ function DayLine({
             ) : null}
             <Button
               size="sm"
-              disabled={busy || !row.city.trim() || row.city.trim() === row.plan?.city}
+              disabled={busy || !row.cities.length || sameCityList(row.cities, row.plan?.cities ?? [])}
               title={
-                !row.city.trim()
+                !row.cities.length
                   ? "Type a different city above to put it back to him."
                   : undefined
               }
-              onClick={() => onAnswer("other", row.city.trim())}
+              onClick={() => onAnswer("other", row.cities)}
             >
               Propose instead
             </Button>
@@ -599,7 +607,7 @@ function DayLine({
             title={!proposed ? "Choose the city first — the shops listed are that city's." : undefined}
             onClick={() => setOpen((o) => !o)}
           >
-            {open ? "Close" : proposed ? `Pick shops in ${proposed}` : "Choose a city to pick shops"}
+            {open ? "Close" : proposed ? `Pick shops in ${where}` : "Choose a city to pick shops"}
           </Button>
         ) : null}
       </div>
@@ -618,7 +626,13 @@ function DayLine({
           {here.length ? (
             <div className="flex max-h-[240px] flex-wrap gap-1.5 overflow-y-auto">
               {here.map((c) => (
-                <ShopChip key={c.id} c={c} on={picked.includes(c.id)} onToggle={toggle} />
+                <ShopChip
+                  key={c.id}
+                  c={c}
+                  on={picked.includes(c.id)}
+                  onToggle={toggle}
+                  showCity={row.cities.length > 1}
+                />
               ))}
             </div>
           ) : (
@@ -626,7 +640,7 @@ function DayLine({
               {book.length === 0
                 ? "His book is empty."
                 : proposed
-                  ? `No shop in his book is recorded in ${proposed}.`
+                  ? `No shop in his book is recorded in ${where}.`
                   : "His book is empty."}
             </p>
           )}
@@ -714,7 +728,7 @@ function DayLine({
                 disabled={busy}
                 onClick={() => onPickFromOffice(picked)}
               >
-                Arrange {plural(picked.length, "stop")} in {proposed} from the office
+                Arrange {plural(picked.length, "stop")} in {where} from the office
               </Button>
             </div>
           ) : null}
