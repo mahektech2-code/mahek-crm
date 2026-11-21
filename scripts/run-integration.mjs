@@ -224,6 +224,8 @@ const files = [
   "src/lib/access/tab-grants.integration.test.ts",
   // 0372: Purchases' three tabs become three pages and nobody's access moves.
   "src/lib/access/erp-purchases-split.integration.test.ts",
+  // Purchase actions need the page's Edit or Delete tick, on the list and at the server.
+  "src/lib/erp/erp-purchase-ticks.integration.test.ts",
   "src/lib/storage-fallback.test.ts",
   "src/lib/relationship-handover.test.ts",
   "src/lib/seat-mirrors.test.ts",

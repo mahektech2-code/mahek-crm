@@ -832,6 +832,26 @@ Manage access and the sidebar read the registry, so neither needed a change.
 `next.config.ts` redirects /erp/register (and its `?view=`), /erp/inward and
 /erp/barcode. Checks asking `screens.has("register")` still mean the register.
 
+**A PURCHASE ACT NEEDS ITS PAGE'S TICK, AT THE SERVER AND ON THE SCREEN
+(Nov 2026).** Manage access stored Access · Edit · Delete per page, but the
+ERP read only "may they open the page" and a few powers, so Edit, Cancel,
+Void and Delete row were open to anyone with the page. `lib/erp/action-ticks.ts`
+is now ONE table — per Purchase page, which row action, form and bulk act
+needs Edit (change what is there) or Delete (cancel, void, undo, reopen);
+everything else is Access. `erpContext` loads `ticks` for a CONVERTED grant
+(`app_access.position` set); an unconverted grant, an administrator and a
+preview hold every tick, so nothing moves until a grant is saved in Manage
+access. The server refuses in `erpRunAction` / `erpRunBulk` / `erpSubmitForm`
+/ `erpLoadForm` and per op in `erpQuoteApply` (`quoteOpTick`: deleting a
+row, removing a column, undoing a bought rate are Delete). `screenModule()`
+wraps each Purchase page's `load` with `applyTicks`, so every list, export,
+combined view and record reads marked rows: an act without its tick is
+`tickHidden` — left out of the row menu, drawn locked with "Needs Edit on
+Requirements — given in Manage access." in the record. The requirement's
+Purchase-flow panel offers Link / Create / Unlink PO only with Edit on
+Requirements. Adding a Purchase action: name its tick in the table, or it is
+Access. `erp-purchase-ticks.integration.test.ts`.
+
 **A LIST OPENS ON THE WORK WAITING: SUB-TABS (`ListSpec.subtabs`).** A
 sub-tab is a named set of one column's values (`k`, else the chips column),
 or a flag; the first is what the list opens on, `?st=` names another, and one

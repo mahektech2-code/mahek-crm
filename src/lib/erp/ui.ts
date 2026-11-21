@@ -291,6 +291,12 @@ export type ActionSpec = {
   ai?: boolean;
   /** Why it is not available yet; drawn disabled with this reason. */
   why?: string;
+  /**
+   * Held back because the person lacks the page's Edit or Delete tick
+   * (`action-ticks.ts`): left out of a row's menu altogether, and drawn locked
+   * with `why` in the opened record.
+   */
+  tickHidden?: boolean;
   /** "Are you sure" text, when the act needs one. */
   confirm?: string;
   /**

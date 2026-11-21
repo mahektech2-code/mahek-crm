@@ -1249,7 +1249,7 @@ export function isEditAction(a: { id: string; l: string; ai?: boolean }): boolea
 
 /** The record's first edit action, the one its row draws as a button. */
 function rowEdit(row: ListRow) {
-  return row.actions?.find(isEditAction);
+  return row.actions?.find((a) => isEditAction(a) && !a.tickHidden);
 }
 
 /**
@@ -1261,7 +1261,8 @@ function rowEdit(row: ListRow) {
 function MenuCell({ row, ids, screen, onRowAct }: { row: ListRow; ids: string[] | null; screen: string; onRowAct?: (actionId: string, rowId: string) => void }) {
   const ui = useErpUi();
   const run = (a: NonNullable<ListRow["actions"]>[number]) => (onRowAct ? onRowAct(a.id, row.id) : ui.act(screen, a, row.id));
-  const picked = ids ? ids.map((id) => row.actions?.find((a) => a.id === id)).filter((a): a is NonNullable<typeof a> => !!a) : (row.actions ?? []);
+  /* An act held back for a missing Edit or Delete tick is not offered in a list at all; the opened record shows it locked. */
+  const picked = (ids ? ids.map((id) => row.actions?.find((a) => a.id === id)).filter((a): a is NonNullable<typeof a> => !!a) : (row.actions ?? [])).filter((a) => !a.tickHidden);
   const items = picked.map((a) => ({ label: a.l, disabled: !!a.why, title: a.why || undefined, onSelect: () => run(a) }));
   const edit = ids ? undefined : rowEdit(row);
   return (

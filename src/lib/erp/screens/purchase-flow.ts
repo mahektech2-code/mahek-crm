@@ -57,6 +57,7 @@ import { notifyStockFlag, openCount } from "../stock-check";
 import { writeCounted } from "./stock-check";
 import { confirmImpact } from "@/lib/impact/registry";
 import { readConfirmation } from "@/lib/impact/types";
+import { holdsTick } from "../action-ticks";
 
 /* ---------------------------------------------------------------------------
  * THE PURCHASE FLOW (docs: AGENTS.md, "The purchase flow"):
@@ -556,6 +557,8 @@ export type CreatePoChoices = {
   terms: string[];
   gstPercent: number;
   canCreate: boolean;
+  /** Edit on Requirements: linking, creating or unlinking its PO. */
+  canEdit: boolean;
 };
 
 /**
@@ -599,11 +602,11 @@ function flowPanel(v: ReqView, st: Stage, money: boolean, choices: CreatePoChoic
             drums: v.po.drums,
             received: `${nf(v.po.received)} of ${nf(v.po.ordered)} ${v.r.unit}`,
             href: erpLink("purchaseOrders", { open: v.po.id }),
-            canUnlink: v.po.source === "quotation_manager" && v.po.received === 0,
+            canUnlink: choices.canEdit && v.po.source === "quotation_manager" && v.po.received === 0,
           }
         : null,
       entry:
-        open && v.r.status !== "Cancelled"
+        open && v.r.status !== "Cancelled" && choices.canEdit
           ? {
               link: route !== "create",
               create:
@@ -685,6 +688,8 @@ const requisitions: ScreenModule = {
       terms,
       gstPercent: config["erp.purchase.poGstPercent"],
       canCreate: ctx.screens.has("purchaseOrders"),
+      /* Linking, creating and unlinking a PO change the requirement: Edit on Requirements (`action-ticks.ts`). */
+      canEdit: holdsTick(ctx, "requisitions", "edit"),
     };
     const prices = new Map(priceRows.map((x) => [x.id, x.p == null ? null : Number(x.p)]));
     const money = ctx.powers.has("viewPurchaseMoney");
