@@ -32,6 +32,14 @@ Whatever arrived is received. The line's difference from what its PO line still 
 For a chemical bought in kg the quantity is the **net weight off the scale**: weight with drums, less drums × the empty drum weight. A scale reading where the drums weigh as much as the load is refused as a misread scale, not recorded as a delivery of nothing.
 </Rule>
 
+<Rule title="The gate is read from the open POs">
+**Expected at the gate** lists every line of an Approved, Sent or Partly received PO that still has goods to come — what the line now expects (corrections included) less what the gate has received — grouped by supplier and deliver-to godown, because one truck is one supplier's delivery to one godown. The group with the most overdue line comes first; inside it, late lines, then by due date. **Receive from** a supplier puts every open line of that group on one GRN, **one line per item** (the one due first): a lot is the supplier, the item and the PR, so the same item twice on one GRN would be the same lot twice.
+</Rule>
+
+<Rule title="After the save, each line says what is left">
+The receipt's fifth step, **What's next**, is the save's own answer: a chemical in the register prints its drum labels now (one a drum); one sent to testing has no lot in the register yet, so its labels wait; nothing else needs one. Testing says the team the line went to (Mixing & Blending tests chemicals) or that none was required. The bill is recorded on the lot's row on Bills, which a line in testing does not have yet. More items from the same truck go on the same PR, and the save refuses another supplier's goods on it.
+</Rule>
+
 ## Every line goes where it is going, as it is saved
 
 <Rule title="The item's testing list decides, not a person">
@@ -108,7 +116,7 @@ With our own vehicle and no approved rate per kilometre, the receipt is refused 
 
 ## Drum labels
 
-Drum labels (Purchase › Tools) is the register's chemical lots **at your working godown only**, with the short label name from the "Short label name (Item=Label)" reference list. Each row's **Print drum label** draws the lot's label from the register — 80 × 80 mm, one per drum — so the printer is never sent typed text; the list can also be downloaded. The label page opens for anybody holding the Purchases screen or Stock on hand.
+Drum labels (Purchase › Tools) is the register's chemical lots **at your working godown only**, with the short label name from the "Short label name (Item=Label)" reference list. Each row's **Print drum label** draws the lot's label from the register — 80 × 80 mm, one per drum — so the printer is never sent typed text; the list can also be downloaded. The label page opens for anybody holding Drum labels, Bills, Goods in or Stock on hand.
 
 ## Who can do what
 

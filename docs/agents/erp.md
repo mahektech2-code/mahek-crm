@@ -916,3 +916,65 @@ the audit log, every PO line it was ever on with that PO's audit and
 `erp_po_shares`, and the gate's inward lines, with what it still waits for as
 the last, open entry. `audit_log`'s time column is `at`, and raw SQL hands a
 timestamp back as a string — wrap it in `new Date()` before `calendarDate`.
+
+**PURCHASE ORDERS: TO SEND · WAITING FOR GOODS · PART RECEIVED · DONE · CANCELLED
+(Nov 2026).** Each PO row carries `bucket` = `poBucket(status, anyReceived)`
+(pure, `engines/purchase-flow.ts`): Approved and an old Pending approval are To
+send (the first share moves a PO to Sent); Sent with nothing READ at the gate is
+Waiting for goods; anything received and more owed is Part received (a Sent PO
+the status has not caught up with included); Received / Closed are Done;
+Cancelled and an old Rejected are Cancelled. The list opens on To send. The
+status is not a column — the sub-tab says it. Delivery is `deliveryWords(due,
+today(), open)` — "today", "in n days", or "n days late" in red — so dates are
+compared as calendar days, never instants. Received is `ColSpec.bar` (a bar
+off `progress`) with "x of y" read from `receivedByLine` against each line's
+`expected` (mixed units count lines in full). The row's next step is Share…
+(Approved), Receive (Sent / Partly received, needs Goods in) or the old Approve;
+done POs have none. Cards are per sub-tab (`view.stats`): the tab's name, Value
+on order, Delivery late, Due in 3 days (`dueSoon`: today to three days on).
+
+**A SUB-TAB MAY READ ITS OWN ROWS (`ListSubtab.view`, Nov 2026).** Goods in
+lists two things: PO lines still to come and receipt lines. Rather than a
+second module, the `inward` load returns both (`v.kind`: `expected`,
+`receipt`, `receiptToday`) and a sub-tab names its own columns, groups,
+`groupAction`, cards, filters and bulk in `view`. `specForSubtab` (list-query)
+merges it, and `queryRows`, `pageOf` and `listCsv` call it themselves, so the
+page, the export, select-all and the browser cannot read a sub-tab
+differently; facets and the Filters pop-up count only that sub-tab's rows.
+`unwindowed` hides the period picker on a sub-tab that is work waiting now
+(Expected at the gate) or today's (Received today) — the `inward` read always
+includes today's lines and unrouted ones, whatever the period. An empty
+sub-tab with nothing narrowing it says its `view.noDataLine`, not "Nothing
+matches". `groups: []` in a view means flat. `visibleCols` now keeps every
+column property (`late`, `after`, `bar`, `uk`…) and drops only `pw`; it used
+to strip them, so a `late` on a powered screen never reached the browser.
+
+**GOODS IN: EXPECTED AT THE GATE · RECEIVED TODAY · ALL RECEIPTS.** Expected at
+the gate is `gateRows` → `expectedAtGate` (pure, `engines/goods-in.ts`): every
+line of a RECEIVABLE_PO with something still to come, grouped `Supplier →
+godown`, the group with the earliest due line first, then late / due date / PO.
+The group heading is `groupLine` ("4 open lines · 2 late · ₹… to come", money
+only with `viewPurchaseMoney`) and its button is `ListSpec.groupAction`: the
+group's first row's `receiveAll` act. Row Receive and group Receive from
+<supplier> are `loadsForm` acts with `formLoaders.receive` / `receiveAll` →
+`gateReceiptForm`: the ordinary item-first GRN (`flow: "grn"`) with
+`data.grnStart` naming the PO lines, which the dialog lays out and opens on
+Receipt details. `supplierDelivery` takes ONE LINE PER ITEM (the one due
+first) — the lot number is party + item + PR, so the same item twice on one PR
+is a lot clash and the second line would stop unrouted. Both acts are Access.
+Received today is `kind = receiptToday`; receipt rows' menu reads Add another
+item from this truck, Trace this lot (`erpTraceHref(lotNumber(...))`), Edit
+receipt line, Void this line….
+
+**THE GRN HAS A FIFTH STEP, WHAT'S NEXT, READ FROM THE SAVE.** `inward.new`
+answers `ok({ next: GrnNext })`: the PR, supplier, godown, POs, and per line
+`whatsNext(saved, …)` — Drum labels (Print n labels → `erpLabelsHref({ purchase
+})` for a chemical the save put in the register; After testing for one routed
+to Testing, which has no register row yet; Not needed), Testing (Sent to
+`testingTeamFor(type)` — Mixing & Blending for chemicals — or Not required),
+Bill (Record bill → `erpLink("register", { open })` only with Bills, its Edit
+tick and purchase money; else To come). Purchase labels never record a print,
+so "Printed" is never said. The label print now also answers to `inward`.
+"Add another item from this truck" restarts the dialog with `prFixed` and the
+vendor locked; the transport fields are hidden (recorded once per PR) and the
+server refuses another supplier's goods on an existing PR.

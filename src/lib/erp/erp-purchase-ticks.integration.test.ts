@@ -20,6 +20,7 @@ import { setAccess, type ScreenGrantInput } from "@/lib/actions/access";
 import { erpRunAction, erpRunBulk, erpSubmitForm } from "@/lib/actions/erp";
 import { erpQuoteApply } from "@/lib/actions/erp-quotes";
 import { erpContext } from "@/lib/erp/access";
+import type { ListRow } from "@/lib/erp/ui";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 let boss: typeof users.$inferSelect;
@@ -130,7 +131,7 @@ test("Create one PO is Create PO for several: offered with Edit on Requirements,
   const ctx = await asPerson(p);
   const { applyTicks } = await import("@/lib/erp/action-ticks");
   const spec = { screen: "requisitions", cols: [], hidden: [], bulk: [{ id: "createOnePo", l: "Create one PO", client: "startInRecord" as const, fits: "createPo" }] };
-  const rows = [{ id: "r1", v: {}, flags: [], actions: [{ id: "createPo", l: "Create PO", primary: true, opens: true }] }];
+  const rows: ListRow[] = [{ id: "r1", v: {}, flags: [], actions: [{ id: "createPo", l: "Create PO", primary: true, opens: true }] }];
   const read = applyTicks(ctx, "requisitions", { spec, rows });
   assert.deepEqual(read.spec.bulk, [], "the bulk act is not offered without Edit on Requirements");
   assert.equal(read.rows[0].actions![0].tickHidden, true, "nor the row's Create PO");
@@ -138,4 +139,20 @@ test("Create one PO is Create PO for several: offered with Edit on Requirements,
   assert.ok(refusedFor(await erpRunAction("requisitions", "createPo", "no-such-id", { vendor: "x" })));
   /* There is no server bulk to slip past: the selection only ever runs Create PO. */
   assert.equal((await erpRunBulk("requisitions", "createOnePo", ["no-such-id"])).ok, false);
+});
+
+test("Goods in's Receive and Receive from <supplier> are Access: a gate clerk with no Edit opens them", async () => {
+  const p = await account("Gate Clerk");
+  assert.ok((await setAccess({ userId: p.id, grants: [], screenGrants: [purchase({ inward: [false, false], purchaseOrders: [false, false] })] })).ok);
+  await asPerson(p);
+  const { erpLoadForm } = await import("@/lib/actions/erp");
+  for (const f of ["receive", "receiveAll"]) {
+    const r = await erpLoadForm("inward", f, "no-such-line");
+    assert.equal(refusedFor(r), false, `${f} reaches its loader (which finds no such line)`);
+    assert.ok(!r.ok && r.code === "not_found");
+  }
+  /* …while a PO change is still Edit, and cancelling one Delete. */
+  assert.ok(refusedFor(await erpRunAction("purchaseOrders", "close", "no-such-id", { reason: "x" })));
+  assert.ok(refusedFor(await erpRunAction("purchaseOrders", "cancelCorrection", "no-such-id", { reason: "x" })));
+  assert.equal(refusedFor(await erpSubmitForm("inward", "new", {}, [])), false, "receiving goods is Access");
 });

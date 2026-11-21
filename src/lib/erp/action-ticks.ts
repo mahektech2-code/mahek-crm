@@ -38,10 +38,12 @@ export const PURCHASE_TICKS: Readonly<Record<string, Rules>> = {
     /* Create one PO over ticked requirements of one supplier: Create PO, for several at once. */
     bulk: { createOnePo: "edit" },
   },
+  /* Print PO and Receive goods are Access; Receive also needs Goods in on the account (the row says so). */
   purchaseOrders: {
     actions: { edit: "edit", share: "edit", approve: "edit", sendBack: "edit", close: "edit", correctionRate: "edit", cancel: "delete", cancelCorrection: "delete" },
     forms: { edit: "edit" },
   },
+  /* Goods in's Receive and Receive from <supplier> (Expected at the gate) and Trace this lot are ordinary work: Access. */
   inward: {
     actions: { edit: "edit", void: "delete" },
     forms: { edit: "edit" },

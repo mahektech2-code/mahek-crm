@@ -32,6 +32,13 @@ export type ColSpec = {
   late?: string;
   /** A figure read beside the others, not first: drawn in the muted ink. */
   quiet?: boolean;
+  /** The row value drawn after it in the ordinary ink when `late` is not set ("in 2 days", "today"). */
+  after?: string;
+  /**
+   * The row value, 0–1, drawn as a progress bar before the text — how much of
+   * a PO has arrived ("450 of 900"). The figure is the text; the bar only shows it.
+   */
+  bar?: string;
   /**
    * Money shown to the RUPEE, as Tally rounds a bill's final amount. Only how
    * it is SHOWN: the value stays exact, so a group's total is the exact sum
@@ -547,7 +554,32 @@ export type SelectSum = { k: string; l: string; one?: string; kind?: "sum" | "di
  * `k`, the chips column where it names none — and `flag` a flag every row it
  * shows carries. A sub-tab with none of them is All.
  */
-export type ListSubtab = { id: string; l: string; k?: string; in?: string[]; notIn?: string[]; flag?: string; hint?: string };
+export type ListSubtab = {
+  id: string;
+  l: string;
+  k?: string;
+  in?: string[];
+  notIn?: string[];
+  flag?: string;
+  hint?: string;
+  /** One line said under the sub-tabs while this one is open — how to work it. */
+  line?: string;
+  /** Read whole rather than through the list's period (work waiting now, or today's): the period picker is not drawn on it. */
+  unwindowed?: boolean;
+  /**
+   * How the list reads while this sub-tab is open, where its rows are a
+   * different thing from the others' — Goods in's Expected at the gate lists
+   * PO lines still to come beside the receipts. Merged over the spec
+   * (`specForSubtab`, list-query.ts) by the page, the export and the browser
+   * alike, so a sub-tab's columns, groups and cards cannot drift apart.
+   */
+  view?: SubtabView;
+};
+
+/** What a sub-tab may read differently (`ListSubtab.view`). */
+export type SubtabView = Partial<
+  Pick<ListSpec, "cols" | "groups" | "groupHead" | "groupHeadStrong" | "groupSel" | "groupAction" | "groupNoCount" | "stats" | "filters" | "bulk" | "combined" | "selectSum" | "sortDefault" | "noDataLine" | "agg">
+>;
 
 export type ListSpec = {
   screen: string;
@@ -567,6 +599,15 @@ export type ListSpec = {
   groupPrint?: { k: string; l: string; href: string };
   /** Action ids drawn in a ⋯ menu at the end of every row (each row's own `actions` of those ids). */
   rowMenu?: string[];
+  /** Leave the row count out of each group's heading — where the heading already says it ("4 open lines"). */
+  groupNoCount?: boolean;
+  /**
+   * A button on each group's heading: the group's first row's action of this
+   * id, run on that row — "Receive from Asian Solvents" on Goods in's
+   * Expected at the gate opens one GRN with every open line of the group.
+   * Its words are the action's own, its lock and reason too.
+   */
+  groupAction?: string;
   /**
    * Draw the rows as image cards instead of table rows: the same rows,
    * search, chips and paging, and a card opens the same record. `img` names
@@ -797,6 +838,9 @@ export const FLAG: Record<string, [string, Tone]> = {
   rateOffPo: ["Rate differs from PO", "warn"],
   awaitingApproval: ["Awaiting approval", "warn"],
   deliveryLate: ["Delivery overdue", "danger"],
+  dueSoon: ["Due in 3 days", "neutral"],
+  lateLine: ["Late", "danger"],
+  gateToday: ["Due today", "neutral"],
   qtyDiffers: ["Quantity differs from PO", "warn"],
   qcPending: ["Waiting for SFG QC", "warn"],
   qcRejected: ["Failed SFG QC", "danger"],

@@ -5,6 +5,7 @@ import { and, asc, desc, eq, inArray, isNull, or, sql, type SQL } from "drizzle-
 import { adjustStockRow, stockRowActions } from "../stock-adjust";
 import { erpStockInquiryHref } from "../stock-links";
 import { erpTraceHref } from "../trace-links";
+import { erpLink } from "../registry";
 import { inWindow, STOCK_ROW_CAP, STOCK_WINDOW, tooWide, unscoped, windowWhere } from "../window";
 import { db } from "@/db";
 import {
@@ -21,7 +22,9 @@ import {
   erpTests,
   users,
 } from "@/db/schema";
-import { err, fieldErr, okVoid, type Result } from "@/lib/result";
+import { err, fieldErr, ok, okVoid, type Result } from "@/lib/result";
+import { holdsTick } from "../action-ticks";
+import { testingTeamFor } from "../departments";
 import { powerRefusal, type ErpContext } from "../access";
 import { refValues } from "../refs";
 import { erpLabelsHref } from "../trace-links";
@@ -39,7 +42,7 @@ import {
   withoutHidden,
   type ScreenModule,
 } from "../server";
-import type { ActionSpec, ColSpec, FieldSpec, FormSpec, PromptSpec } from "../ui";
+import type { ActionSpec, ColSpec, FieldSpec, FormSpec, ListRow, PromptSpec } from "../ui";
 import { fd, inr, inrRate, nf } from "../ui";
 import {
   TRANSPORT_MODES,
@@ -67,6 +70,8 @@ import { OWNERSHIP_LABEL, ownershipByLabel } from "../engines/drums";
 const DRUM_OWNER_OPTS = ["As the supplier's master says", OWNERSHIP_LABEL.mahek, OWNERSHIP_LABEL.returnable];
 import { sortPoLines, type GrnItem, type GrnPoLine } from "../engines/grn-pick";
 import { poOption, purchaseOrderViews, refreshPurchaseOrder, type PoView } from "./purchase-flow";
+import { deliveryWords } from "../engines/purchase-flow";
+import { expectedAtGate, gateGroupLine, supplierDelivery, whatsNext, type GateLine, type GateRow, type GrnNext, type SavedGrnLine } from "../engines/goods-in";
 import { REGISTER_DEFAULT } from "../period";
 import { roundedTotal } from "@/lib/bill-round";
 
@@ -340,12 +345,15 @@ async function receivable(money = false, include: string[] = []) {
   /* The same open lines, by the item they bring: the receipt is searched by what arrived. */
   const openByItem = new Map<string, GrnPoLine[]>();
   const doneByItem = new Map<string, GrnPoLine[]>();
+  /* A PO line by its id, as the form names it — what Goods in's Receive starts a GRN on. */
+  const keyOfLine = new Map<string, { po: string; poLine: string; item: string }>();
   for (const [label, p] of byLabel) {
     godownOf[label] = p.godown;
     supplierOf[label] = `${p.supplier} · deliver to ${p.godown} by ${fd(p.po.deliveryDate)}`;
     linesBy[label] = p.lines.map((l) => l.label);
     for (const l of p.lines) {
       const key = `${label}|${l.label}`;
+      keyOfLine.set(l.id, { po: label, poLine: l.label, item: l.item });
       typeOf[key] = l.itemType;
       itemOf[key] = l.item;
       const left = Math.max(0, Math.round((l.expected - l.received) * 1000) / 1000);
@@ -373,10 +381,52 @@ async function receivable(money = false, include: string[] = []) {
   for (const [k, v] of openByItem) openByItem.set(k, sortPoLines(v));
   /* A line received in full is offered after every open one, for a late truck, and never ahead of them. */
   for (const [k, v] of doneByItem) openByItem.set(k, [...(openByItem.get(k) ?? []), ...sortPoLines(v)]);
-  return { pos, byLabel, find, linesBy, typeOf, itemOf, pendingOf, pendingQtyOf, rateOf, qtyOf, supplierOf, godownOf, openByItem };
+  return { pos, byLabel, find, linesBy, typeOf, itemOf, pendingOf, pendingQtyOf, rateOf, qtyOf, supplierOf, godownOf, openByItem, keyOfLine };
 }
 
-async function inwardForm(ctx: ErpContext, init?: Record<string, string>, opts: { poId?: string; fixed?: boolean } = {}): Promise<FormSpec> {
+/**
+ * EXPECTED AT THE GATE: every line of an approved, sent or part-received PO
+ * that still has goods to come, in the gate's order (`expectedAtGate`). What
+ * has arrived is READ (`receivedByLine`), against what the line now expects.
+ */
+async function gateRows(day: string): Promise<GateRow[]> {
+  const pos = await purchaseOrderViews({ status: RECEIVABLE_PO });
+  const lines: GateLine[] = pos.flatMap((p) =>
+    p.lines.map((l) => ({
+      lineId: l.id,
+      poId: p.po.id,
+      po: poName(p.po),
+      supplier: p.supplier,
+      supplierId: p.po.supplierId,
+      godown: p.godown,
+      item: l.item,
+      type: l.itemType,
+      unit: l.unit,
+      expected: l.expected,
+      received: l.received,
+      due: p.po.deliveryDate ?? null,
+      ratePaise: l.ratePaise,
+      gstBp: l.gstBp,
+    })),
+  );
+  return expectedAtGate(lines, day);
+}
+
+/**
+ * The GRN started from Goods in's Expected at the gate: the item-first receipt
+ * with these PO lines already on it — one line (Receive), or every open line of
+ * that line's supplier at its godown (Receive from <supplier>): one GRN is one
+ * supplier's delivery. Null where the line has nothing left to come.
+ */
+async function gateReceiptForm(ctx: ErpContext, lineId: string, whole: boolean): Promise<FormSpec | null> {
+  const rows = await gateRows(today());
+  const at = rows.find((r) => r.lineId === lineId);
+  if (!at) return null;
+  const picked = whole ? supplierDelivery(rows, at) : [at];
+  return inwardForm(ctx, { godown: at.godown }, { start: picked.map((r) => r.lineId) });
+}
+
+async function inwardForm(ctx: ErpContext, init?: Record<string, string>, opts: { poId?: string; fixed?: boolean; start?: string[] } = {}): Promise<FormSpec> {
   const [gds, config, types] = await Promise.all([godownOptions(ctx, { lost: false }), getConfig(), refValues("materialType")]);
   const all = await db.select().from(erpRawMaterials);
   const rx = await receivable(ctx.powers.has("viewPurchaseMoney"));
@@ -434,6 +484,8 @@ async function inwardForm(ctx: ErpContext, init?: Record<string, string>, opts: 
       pendingQtyOf: rx.pendingQtyOf,
       rateOf: rx.rateOf,
       ...(itemFirst ? { grn } : {}),
+      /* Started on PO lines from Expected at the gate: the receipt opens on Receipt details with them on it. */
+      ...(itemFirst && opts.start?.length ? { grnStart: opts.start.map((id) => rx.keyOfLine.get(id)).filter((x): x is { po: string; poLine: string; item: string } => !!x) } : {}),
     },
     header: [
       { k: "pr", l: "PR number", t: "derived", calc: "inward.pr" },
@@ -897,11 +949,26 @@ const inward: ScreenModule = {
   window: INWARD_WINDOW,
   async load(ctx, s) {
     const sc = s ?? unscoped();
-    const where = sc.ids?.length ? windowWhere(sql`${erpInward.receivedDate}`, sql`${erpInward.id}`, sc) : sql`(${windowWhere(sql`${erpInward.receivedDate}`, sql`${erpInward.id}`, sc)} or ${erpInward.routed} is null)`;
+    const day = today();
+    /* A line not yet routed is work, and today's lines are Received today: both show whatever the period. */
+    const where = sc.ids?.length
+      ? windowWhere(sql`${erpInward.receivedDate}`, sql`${erpInward.id}`, sc)
+      : sql`(${windowWhere(sql`${erpInward.receivedDate}`, sql`${erpInward.id}`, sc)} or ${erpInward.routed} is null or ${erpInward.receivedDate} = ${day}::date)`;
     const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(erpInward).where(where);
     const wide = tooWide(Number(n), sc);
     const rows = await db
-      .select({ r: erpInward, supplier: erpSuppliers.name, item: erpRawMaterials.name, godown: erpGodowns.name, by: users.name, poNumber: erpPurchaseOrders.poNumber, poStatus: erpPurchaseOrders.status })
+      .select({
+        r: erpInward,
+        supplier: erpSuppliers.name,
+        partyCode: erpSuppliers.partyCode,
+        item: erpRawMaterials.name,
+        itemCode: erpRawMaterials.code,
+        godown: erpGodowns.name,
+        by: users.name,
+        poNumber: erpPurchaseOrders.poNumber,
+        qmPoNo: erpPurchaseOrders.qmPoNo,
+        poStatus: erpPurchaseOrders.status,
+      })
       .from(erpInward)
       .innerJoin(erpSuppliers, eq(erpSuppliers.id, erpInward.supplierId))
       .leftJoin(erpPurchaseOrders, eq(erpPurchaseOrders.id, erpInward.poId))
@@ -911,7 +978,13 @@ const inward: ScreenModule = {
       .where(wide ? sql`false` : where)
       .orderBy(desc(erpInward.prNumber), asc(erpInward.createdAt));
     const prs = [...new Set(rows.map((x) => x.r.prNumber))];
-    const [form, costRows] = await Promise.all([inwardForm(ctx), prs.length ? db.select().from(erpPrCosts).where(inArray(erpPrCosts.prNumber, prs)) : Promise.resolve([] as (typeof erpPrCosts.$inferSelect)[])]);
+    const [form, costRows, gate] = await Promise.all([
+      inwardForm(ctx),
+      prs.length ? db.select().from(erpPrCosts).where(inArray(erpPrCosts.prNumber, prs)) : Promise.resolve([] as (typeof erpPrCosts.$inferSelect)[]),
+      /* Expected at the gate is work waiting now: read whole, never through the period (a dashboard's ids name receipts only). */
+      sc.ids?.length ? Promise.resolve([] as GateRow[]) : gateRows(day),
+    ]);
+    const money = ctx.powers.has("viewPurchaseMoney");
     const costs = new Map(costRows.map((c) => [c.prNumber, c]));
     const cols: ColSpec[] = [
       { k: "pr", l: "PR no", t: "mono" },
@@ -932,16 +1005,118 @@ const inward: ScreenModule = {
       { k: "routed", l: "Sent to", t: "s" },
       { k: "f", l: "Flags", t: "f" },
     ];
+    /* EXPECTED AT THE GATE reads PO lines, not receipts: its own columns, grouped by one supplier's delivery to one godown. */
+    const gateCols: ColSpec[] = [
+      { k: "po", l: "PO", t: "mono", w: 80 },
+      { k: "item", l: "Item", t: "b", w: 150 },
+      { k: "type", l: "Category", t: "s", w: 100 },
+      { k: "ordered", l: "Ordered", t: "n", uk: "unit", w: 110 },
+      { k: "receivedQty", l: "Received", t: "n", w: 90 },
+      { k: "toCome", l: "Still to come", t: "n", uk: "unit", w: 120 },
+      { k: "due", l: "Due", t: "d", late: "late", after: "dueWords", w: 160 },
+      { k: "deliverTo", l: "Deliver to", t: "t", w: 100 },
+      { k: "supplier", l: "Supplier", t: "t" },
+      { k: "group", l: "From", t: "t" },
+      { k: "groupLine", l: "", t: "t" },
+    ];
+    const canReceive = ctx.screens.has("purchaseOrders") || ctx.screens.has("inward");
+    const groupLines = new Map<string, string>();
+    for (const g of new Set(gate.map((r) => r.group))) groupLines.set(g, gateGroupLine(gate.filter((r) => r.group === g), day, money ? (p) => inr(Math.round(p / 100) * 100) : undefined));
+    const expectedRows: ListRow[] = gate.map((r) => {
+      const due = deliveryWords(r.due, day, true);
+      return {
+        id: r.lineId,
+        v: {
+          kind: "expected",
+          po: r.po,
+          item: r.item,
+          type: r.type,
+          ordered: r.expected,
+          unit: r.unit,
+          receivedQty: r.received,
+          toCome: r.toCome,
+          due: r.due,
+          late: due?.late ? due.words : null,
+          dueWords: due && !due.late ? due.words : null,
+          deliverTo: r.godown,
+          supplier: r.supplier,
+          group: r.group,
+          groupLine: groupLines.get(r.group) ?? "",
+        },
+        flags: [...(r.late ? ["lateLine"] : []), ...(r.due === day ? ["gateToday"] : [])],
+        title: `${r.item} · ${r.po}`,
+        ref: r.po,
+        header: `${r.supplier} · deliver to ${r.godown}${r.due ? ` by ${fd(r.due)}${due ? ` (${due.words})` : ""}` : ""} · ${nf(r.toCome)} ${r.unit} still to come`,
+        fields: [
+          { l: "Ordered", v: `${nf(r.expected)} ${r.unit}`, der: true },
+          { l: "Received so far", v: `${nf(r.received)} ${r.unit}`, der: true },
+        ],
+        actions: [
+          /* THE NEXT STEP: the GRN, with this PO line already on it. */
+          { id: "receive", l: "Receive", primary: true, loadsForm: true, why: canReceive ? "" : "Goods in is not on your account" },
+          /* One GRN for the whole truck: every open line of this supplier at this godown. */
+          { id: "receiveAll", l: `Receive from ${r.supplier}`, loadsForm: true, why: canReceive ? "" : "Goods in is not on your account" },
+          { id: "openPo", l: `Open ${r.po}`, href: erpLink("purchaseOrders", { open: r.poId }) },
+        ],
+      };
+    });
+    /* RECEIVED TODAY: the design's few columns — what came, from whom, where it went. */
+    const todayCols: ColSpec[] = [
+      { k: "pr", l: "PR", t: "mono", w: 88 },
+      { k: "supplierPo", l: "Supplier · PO", t: "t" },
+      { k: "item", l: "Item", t: "b" },
+      { k: "receivedText", l: "Received", t: "t", w: 160 },
+      { k: "routed", l: "Sent to", t: "s" },
+      { k: "transport", l: "Transport", t: "s" },
+      { k: "f", l: "Flags", t: "f" },
+    ];
     return {
       spec: {
         screen: "inward",
         cols,
         hidden: [],
         groups: ["pr"],
+        /* Three sub-tabs, opening on the work waiting at the gate. Expected at the gate lists PO lines; the other two, receipt lines. */
         subtabs: [
-          { id: "all", l: "All receipts" },
-          { id: "notSent", l: "Not sent on", flag: "awaitingRoute", hint: "Received, not yet sent to Testing or to Purchase" },
-          { id: "testing", l: "Going to testing", k: "routed", in: ["Testing"] },
+          {
+            id: "expected",
+            l: "Expected at the gate",
+            k: "kind",
+            in: ["expected"],
+            unwindowed: true,
+            hint: "Every PO line still to come, late first",
+            line: "A truck arrived? Press Receive from its supplier — every open line of that supplier comes into one GRN. Not listed? Use Receive goods and search the item.",
+            view: {
+              cols: gateCols,
+              groups: ["group"],
+              groupHead: ["groupLine"],
+              groupHeadStrong: [],
+              groupSel: false,
+              groupAction: "receiveAll",
+              groupNoCount: true,
+              bulk: [],
+              selectSum: [],
+              /* The gate reads the list itself: no figure cards (the design's). */
+              stats: [],
+              filters: ["supplier", "item", "type", "deliverTo"],
+              noDataLine: "Nothing is expected at the gate — every PO with a supplier has arrived",
+            },
+          },
+          {
+            id: "today",
+            l: "Received today",
+            k: "kind",
+            in: ["receiptToday"],
+            unwindowed: true,
+            hint: "What was saved today — still correctable here",
+            view: {
+              cols: todayCols,
+              groups: [],
+              stats: [],
+              noDataLine: "Nothing received today yet",
+            },
+          },
+          { id: "all", l: "All receipts", k: "kind", in: ["receipt", "receiptToday"] },
         ],
         groupHead: ["po", "date", "supplier", "godown", "transport"],
         groupSel: true,
@@ -986,7 +1161,7 @@ const inward: ScreenModule = {
         noDataLine: "No goods received yet. Goods are received against a PO.",
       },
       tooWide: wide,
-      rows: rows.map((x) => {
+      rows: [...expectedRows, ...rows.map((x): ListRow => {
         const actions: ActionSpec[] = [];
         if (!x.r.routed && x.r.testingRequired)
           actions.push({ id: "toTesting", l: "Send to Testing", primary: true });
@@ -996,7 +1171,7 @@ const inward: ScreenModule = {
         const receivableHere = !!poText && RECEIVABLE_PO.includes(x.poStatus ?? "");
         actions.push({
           id: "addMore",
-          l: "Add another",
+          l: "Add another item from this truck",
           why: !x.r.poId ? "Received before POs — receive new goods against a PO" : receivableHere ? "" : `${poLabel(x.poNumber!)} is ${x.poStatus} — nothing more is received against it`,
           form: receivableHere
             ? {
@@ -1011,10 +1186,13 @@ const inward: ScreenModule = {
               }
             : undefined,
         });
-        actions.push({ id: "edit", l: "Edit", loadsForm: true });
+        /* The lot this line is (or, once tested, will be) registered under — traced from here. */
+        const lot = lotNumber(x.partyCode, x.itemCode, x.r.prNumber);
+        actions.push({ id: "trace", l: "Trace this lot", href: erpTraceHref(lot) });
+        actions.push({ id: "edit", l: "Edit receipt line", loadsForm: true });
         actions.push({
           id: "void",
-          l: "Void line",
+          l: "Void this line…",
           why: mayVoidInward(ctx) ? "" : VOID_WHY,
           prompt: {
             title: `Void ${x.item} on PR ${x.r.prNumber}?`,
@@ -1043,11 +1221,16 @@ const inward: ScreenModule = {
         const transport = !c
           ? "Not recorded"
           : [transportModeLabel(c.transportMode), c.transportMode === "none" ? "" : inr(c.transportCostPaise), c.tempoNumber ?? ""].filter(Boolean).join(" · ");
+        const poShown = x.poNumber == null ? null : poName({ poNumber: x.poNumber, qmPoNo: x.qmPoNo });
         return {
           id: x.r.id,
           v: {
+            /* Today's receipts are Received today and All receipts alike. */
+            kind: x.r.receivedDate === day ? "receiptToday" : "receipt",
             pr: String(x.r.prNumber),
-            po: x.poNumber == null ? null : poLabel(x.poNumber),
+            po: poShown,
+            supplierPo: [x.supplier, poShown].filter(Boolean).join(" · "),
+            receivedText: [`${nf(x.r.quantity)} ${x.r.unit}`, x.r.drums ? `${nf(x.r.drums)} drum${x.r.drums === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · "),
             date: x.r.receivedDate,
             supplier: x.supplier,
             type: x.r.materialType,
@@ -1065,6 +1248,7 @@ const inward: ScreenModule = {
           },
           flags: [...(x.r.routed ? [] : ["awaitingRoute"]), ...(x.r.poId ? [] : ["noPo"])],
           title: x.item,
+          ref: `PR ${x.r.prNumber}`,
           header: [x.r.drums ? `${x.r.drums} drums` : "", x.item, `${nf(x.r.quantity)} ${x.r.unit}`].filter(Boolean).join(" · "),
           fields: [
             { l: "Transport", v: transport },
@@ -1077,7 +1261,7 @@ const inward: ScreenModule = {
           actions,
           by: stampLine(x.by, x.r.createdAt),
         };
-      }),
+      })],
     };
   },
   forms: {
@@ -1153,6 +1337,11 @@ const inward: ScreenModule = {
       }
       /* "Add more" on a PR keeps its number; a new inward draws the next one. */
       const fixed = int(h.prFixed);
+      /* One PR is one supplier's delivery: more items on it come from the same supplier. */
+      if (fixed != null) {
+        const [onPr] = await db.select({ supplierId: erpInward.supplierId }).from(erpInward).where(eq(erpInward.prNumber, fixed)).limit(1);
+        if (onPr && onPr.supplierId !== parsed[0].po.po.supplierId) return err(`PR ${fixed} is another supplier's delivery — receive ${parsed[0].po.supplier}'s goods on their own GRN.`, "rule_violation");
+      }
       /* A new PR records how it came in; "Add more" leaves the PR's costs alone. */
       const costRow = fixed == null ? readPrCosts(h, config["erp.purchase.ownVehicleRatePerKmPaise"]) : null;
       if (costRow && !costRow.ok) return costRow;
@@ -1171,8 +1360,10 @@ const inward: ScreenModule = {
       const po = parsed[0].po;
       const poIds = [...new Set(parsed.map((x) => x.po.po.id))];
       const poNames = [...new Set(parsed.map((x) => poName(x.po.po)))];
-      const [sup] = await db.select({ own: erpSuppliers.drumOwnership }).from(erpSuppliers).where(eq(erpSuppliers.id, po.po.supplierId));
+      const [sup] = await db.select({ own: erpSuppliers.drumOwnership, partyCode: erpSuppliers.partyCode }).from(erpSuppliers).where(eq(erpSuppliers.id, po.po.supplierId));
       const supplierDrumOwnership = sup?.own ?? null;
+      /* What each line became, for the receipt's What's next. */
+      const saved: SavedGrnLine[] = [];
       await db.transaction(async (tx) => {
         if (fixed != null) pr = fixed;
         else {
@@ -1231,8 +1422,10 @@ const inward: ScreenModule = {
               .where(eq(erpPurchaseOrders.id, po.po.id));
             corrected.push(`${poName(po.po)} ${correction.quantity > 0 ? "+" : "−"}${nf(Math.abs(correction.quantity))} ${line.unit} ${m.name}`);
           }
+          const line0 = { item: m.name, type: m.materialType, quantity: qty, unit: unit === "Unit" ? "Pcs" : unit, drums: m.materialType === "Chemical" ? int(l.drums) : null, lot: lotNumber(sup?.partyCode ?? "", m.code, pr), po: poName(po.po) };
           if (testing) {
             sent.testing++;
+            saved.push({ ...line0, routed: "Testing", purchaseId: null });
             continue;
           }
           const made = await createPurchase(tx, ctx, {
@@ -1253,13 +1446,37 @@ const inward: ScreenModule = {
           if (made.ok) {
             await tx.update(erpInward).set({ routed: "Purchase", routedAt: new Date(), routedById: ctx.user.id }).where(eq(erpInward.id, inwardId));
             sent.register++;
-          } else sent.stuck.push(m.name);
+            saved.push({ ...line0, lot: made.data.lotNo, routed: "Purchase", purchaseId: made.data.id });
+          } else {
+            sent.stuck.push(m.name);
+            saved.push({ ...line0, routed: null, purchaseId: null });
+          }
         }
         for (const id of poIds) await refreshPurchaseOrder(tx, id);
       });
       await erpAudit(ctx, "erp.inward.create", "erp_inward", String(pr), null, { lines: parsed.length, po: poNames.join(", "), supplier: po.supplier, ...sent, corrected });
       const where = [sent.testing ? `${sent.testing} to testing` : "", sent.register ? `${sent.register} in the register` : ""].filter(Boolean).join(", ");
-      return okVoid(
+      const godownName = (await db.select({ name: erpGodowns.name }).from(erpGodowns).where(eq(erpGodowns.id, godownId)))[0]?.name ?? "";
+      return ok(
+        {
+          /* WHAT'S NEXT (the GRN's step 5): every line's labels, testing and bill, from what this save did. */
+          next: {
+            pr,
+            supplier: po.supplier,
+            godown: godownName,
+            pos: poNames,
+            lines: whatsNext(saved, {
+              /* The label print answers to these screens (`app/erp/print-labels`). */
+              canLabels: ["barcode", "register", "stock", "inward"].some((k) => ctx.screens.has(k)),
+              /* Recording the bill is Bills' act: the page, its Edit tick and purchase money. */
+              canBill: ctx.screens.has("register") && holdsTick(ctx, "register", "edit") && ctx.powers.has("viewPurchaseMoney"),
+              testedBy: testingTeamFor,
+              labelsHref: (id) => erpLabelsHref({ purchase: id }),
+              billHref: (id) => erpLink("register", { open: id }),
+              nf,
+            }),
+          } satisfies GrnNext,
+        },
         `PR ${pr} · ${parsed.length} line${parsed.length > 1 ? "s" : ""} received against ${poNames.join(", ")}${where ? ` · ${where}` : ""}` +
           (corrected.length ? ` · PO corrected: ${corrected.join("; ")}` : "") +
           (sent.stuck.length ? ` · ${sent.stuck.join(", ")} not in the register: that lot number is taken — change the PR number and send it` : ""),
@@ -1347,6 +1564,9 @@ const inward: ScreenModule = {
   },
   formLoaders: {
     edit: (ctx, id) => inwardEditForm(ctx, id),
+    /* Goods in's Expected at the gate: the GRN on one PO line, or on every open line of its supplier at its godown. */
+    receive: (ctx, id) => gateReceiptForm(ctx, id, false),
+    receiveAll: (ctx, id) => gateReceiptForm(ctx, id, true),
   },
   bulk: {
     /* The row act on each ticked line in turn: each line is its own decision,

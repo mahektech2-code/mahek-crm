@@ -137,6 +137,45 @@ export function requirementBucket(stage: string): RequirementBucket {
   return "onOrder";
 }
 
+/**
+ * WHICH SUB-TAB OF PURCHASE ORDERS A PO IS READ UNDER (Nov 2026). To send: raised
+ * and not yet with the supplier — Approved (the first share moves it to Sent)
+ * and an old PO still waiting on its approver. Waiting for goods: with the
+ * supplier, nothing received. Part received: something has arrived and more is
+ * expected. Done: received in full, or closed short. Cancelled: cancelled, or
+ * sent back by an approver the old way. `anyReceived` is READ from the gate
+ * (`receivedByLine`), never stored, so a Sent PO the status has not caught up
+ * with yet still reads as part received.
+ */
+export type PoBucket = "toSend" | "waiting" | "part" | "done" | "cancelled";
+
+export function poBucket(status: string, anyReceived: boolean): PoBucket {
+  if (status === "Cancelled" || status === "Rejected") return "cancelled";
+  if (status === "Received" || status === "Closed") return "done";
+  if (status === "Partly received") return "part";
+  if (status === "Sent") return anyReceived ? "part" : "waiting";
+  return anyReceived ? "part" : "toSend";
+}
+
+/**
+ * When the goods are due, in words, against the BUSINESS date (`today()`):
+ * "today", "in 1 day", "in 3 days", or — red on the screen — "1 day late",
+ * "2 days late". Null where nothing is waited for any more or no date is set.
+ * Both dates are ISO calendar days, compared as days, never as instants.
+ */
+export function deliveryWords(due: string | null | undefined, day: string, open: boolean): { words: string; late: boolean } | null {
+  if (!open || !due) return null;
+  const n = Math.round((Date.parse(`${due}T00:00:00Z`) - Date.parse(`${day}T00:00:00Z`)) / 86_400_000);
+  if (n === 0) return { words: "today", late: false };
+  if (n > 0) return { words: n === 1 ? "in 1 day" : `in ${n} days`, late: false };
+  return { words: n === -1 ? "1 day late" : `${-n} days late`, late: true };
+}
+
+/** Whole days from the business date to `due`: negative is late. */
+export function daysUntil(due: string, day: string): number {
+  return Math.round((Date.parse(`${due}T00:00:00Z`) - Date.parse(`${day}T00:00:00Z`)) / 86_400_000);
+}
+
 /* ------------------------------------------------- the Quotation manager's PO */
 
 /** A PO number as it is compared: spaces squeezed, case ignored. The number is stored as it was typed on the Quotation manager. */

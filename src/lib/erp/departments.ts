@@ -244,3 +244,8 @@ export function requirementStep(departmentLabel: string | null | undefined, mate
     for (const step of d.steps) if (step.materialTypes?.includes(materialType)) return { department: d, step };
   return null;
 }
+
+/** The team that tests an inward item of this category (a department with a testing step that buys it), or null. */
+export function testingTeamFor(materialType: string): string | null {
+  return ERP_DEPARTMENTS.find((d) => d.materialTypes.includes(materialType) && d.steps.some((s) => s.screen === "testing"))?.label ?? null;
+}

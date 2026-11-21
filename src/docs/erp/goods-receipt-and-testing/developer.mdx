@@ -6,7 +6,10 @@ The receipt side of the purchase flow is `lib/erp/screens/purchase.ts`: the `inw
 |---|---|---|
 | Engine (pure) | `src/lib/erp/engines/purchase.ts` | `purchaseFigures`, `lotNumber`, `shortLabel`, `prBillLabel`, `postsToStock`, `settableStatuses`, `netWeight`, `TRANSPORT_MODES`, `transportCostPaise`, `shareInwardCost`, `landingFigures` |
 | Inward | `src/lib/erp/screens/purchase.ts` | `receivable`, `inwardForm`, `inwardFormForPo`, `inward` module (`forms.new`, `costs`, `toTesting`, `toPurchase`), `readPrCosts` |
-| Item-first pick | `src/lib/erp/engines/grn-pick.ts`, `src/app/erp/_ui/grn-dialog.tsx` | `searchGrnItems`, `linesFor`, `sortPoLines`; the dialog a form with `flow: "grn"` opens |
+| Item-first pick | `src/lib/erp/engines/grn-pick.ts`, `src/app/erp/_ui/grn-dialog.tsx` | `searchGrnItems`, `linesFor`, `sortPoLines`; the dialog a form with `flow: "grn"` opens — Item received → Purchase order → Receipt details → Review → **What's next** |
+| The gate | `src/lib/erp/engines/goods-in.ts` (pure), `screens/purchase.ts` | `expectedAtGate` (open PO lines, grouped supplier → godown, late first), `gateGroupLine`, `supplierDelivery` (one line per item); `gateRows` reads them, `gateReceiptForm` is the `receive` / `receiveAll` form loaders — the item-first GRN with `data.grnStart` naming the PO lines it opens on |
+| What's next | same | `whatsNext` turns what `inward.new` did — each line's routing, register row and lot — into labels / testing / bill; the save answers `{ next: GrnNext }` and the dialog draws it as step 5 |
+| Sub-tabs | `screens/purchase.ts`, `lib/erp/list-query.ts` | Goods in's rows are two kinds (`v.kind`: `expected`, `receipt`, `receiptToday`); **Expected at the gate** and **Received today** carry a `view` (`specForSubtab` merges it over the spec — columns, groups, `groupAction`, cards) and are `unwindowed` |
 | Register row | same | `createPurchase`, `syncPurchaseEntry`, `refreshCache`, `savePurchase`, `register` module, `purchaseStage` |
 | Testing | same | `TEST_FIELDS`, `missingEvidence`, `testForm`, `saveTest`, `testing` module (`verify`, `unverify`, AI read) |
 | Drum labels | same | `barcode` module — working godown's chemical lots; each row (and each register row) links to `erpLabelsHref({ purchase })`, the `?purchase=` view of `app/erp/print-labels` |
@@ -127,7 +130,8 @@ Shares are computed every time stock is read, so a rate entered later moves the 
 - **Modules:** <ModuleRef k="erp.inward" /> (Goods in), <ModuleRef k="erp.testing" />, <ModuleRef k="erp.register" /> (Bills), <ModuleRef k="erp.barcode" /> (Drum labels) — one Purchases page with three tabs until Nov 2026 (`0372` split its grant).
 - **Powers:** `viewPurchaseMoney` (also the register's bulk `rate`, `billReceived`, `status` and `billNotReceived`), `verifyTest`, `verifyPurchase` (with `viewPurchaseMoney`, the register's bulk `verifyMany`), `reopenPurchase` (also the bulk `reopen`).
 - **A selection's shape:** a `BulkSpec` with `same` is offered only while every ticked row shares those values (`["pr"]`, `["party"]`, `["item", "unit"]`), and `asRow` runs that one record's own row action once (`bulk-fit.ts`). The act refuses a mixed selection itself, because the bar cannot judge rows past its page. **Combined view** (`client: "combinedView"`, `ListSpec.combined`) reads exactly the ticked rows through the screen's own loader (`erpCombinedView`), so its values and actions are the list's.
-- **Labels:** a purchase label opens for anybody holding `barcode`, `register` or `stock` (`SCREENS` in `app/erp/print-labels/page.tsx`).
+- **Labels:** a purchase label opens for anybody holding `barcode`, `register`, `stock` or `inward` (`SCREENS` in `app/erp/print-labels/page.tsx`) — Goods in since the GRN's What's next prints them.
+- **Expected at the gate:** Receive and Receive from <supplier> are Access on Goods in (`action-ticks.ts` names neither). What's next offers **Record bill** only with Bills, its Edit tick and `viewPurchaseMoney`.
 
 ## Tests that pin this
 
@@ -139,6 +143,8 @@ Shares are computed every time stock is read, so a rate entered later moves the 
 | | "register and stock" | Lot number clash message; an edit moves the stock entry; money hidden from a clerk; bill and status cannot disagree; only the verifier sets Purchase Verified; the log flags an orphaned entry |
 | | "transport and landing cost" / "net quantity off the scale" | Weight rules; own vehicle refused without a rate; shares by value; the stock rate is the landed rate; costs corrected once per PR |
 | | "the goods receipt starts from the item" | A receipt started from the item carries a line per PO across one vendor's POs, and refuses a second vendor |
+| | "Purchase orders and Goods in" | Expected at the gate: only lines still to come, the group with the most overdue line first, late then by due date, done and cancelled POs left out; Receive opens the GRN on one line and Receive from <supplier> on that delivery's lines; the save's What's next (labels after testing or Print n labels, Sent to Mixing & Blending, Record bill only with money); a PR keeps to its supplier |
+| `npm run test` | `src/lib/erp/engines/purchase-flow.test.ts` | `expectedAtGate`, `gateGroupLine`, `supplierDelivery` (one line per item), `whatsNext` |
 | | "a selection, by its shape" | One rate only for one item, one bill only for one party; bulk status, bill not received and back to pending keep the row's rules; Transport & costs only for one PR's lines; sending on goes line by line |
 | `npm run test` | `src/lib/erp/bulk-fit.test.ts` | Which bulk actions a selection is offered by its rows' own actions and by its shape, and what a narrower selection would add |
 

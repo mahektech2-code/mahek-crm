@@ -70,3 +70,19 @@ test("a Purchase row's menu is ordered by the tick each act needs: ordinary, cha
   assert.equal(menuBlock("barcode", { id: "label" }), 0);
   assert.equal(tickFor("requisitions", "bulk", "createOnePo"), "edit", "Create one PO is Create PO for several");
 });
+
+test("Purchase orders and Goods in (Phase 4): receiving is Access, changing a PO is Edit, taking one back Delete", () => {
+  for (const f of ["receive", "receiveAll", "new"]) assert.equal(tickFor("inward", "forms", f), undefined, `Goods in's ${f} is Access`);
+  assert.equal(tickFor("inward", "actions", "trace"), undefined, "Trace this lot is Access");
+  assert.equal(tickFor("purchaseOrders", "actions", "receive"), undefined, "Receive goods on a PO is Access");
+  assert.equal(tickFor("purchaseOrders", "actions", "print"), undefined);
+  assert.equal(tickFor("purchaseOrders", "actions", "close"), "edit");
+  assert.equal(tickFor("purchaseOrders", "actions", "correctionRate"), "edit");
+  assert.equal(tickFor("purchaseOrders", "actions", "cancelCorrection"), "delete");
+  /* The row's menu: Receive in the first block, Edit / Share / Close short in the middle, Cancel last. */
+  assert.equal(menuBlock("purchaseOrders", { id: "receive", loadsForm: true }), 0);
+  assert.equal(menuBlock("purchaseOrders", { id: "edit", loadsForm: true }), 1);
+  assert.equal(menuBlock("purchaseOrders", { id: "cancel" }), 2);
+  assert.equal(menuBlock("inward", { id: "receiveAll", loadsForm: true }), 0);
+  assert.equal(menuBlock("inward", { id: "void" }), 2);
+});

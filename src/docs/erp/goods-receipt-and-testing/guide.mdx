@@ -2,26 +2,32 @@ When a lorry arrives at the gate, three things happen in the ERP: the goods are 
 
 ## Receiving goods at the gate
 
-<Wireframe url="/erp/goods-in" nav={["Dashboard", "#Purchase", "Requirements", "Purchase orders", "Goods in", "Lot testing", "Bills", "#Tools", "Quotation manager", "Drum labels"]} active="Goods in" caption="Purchases → Goods receipt (GRN)">
+<Wireframe url="/erp/goods-in" nav={["Dashboard", "#Purchase", "Requirements", "Purchase orders", "Goods in", "Lot testing", "Bills", "#Tools", "Quotation manager", "Drum labels"]} active="Goods in" caption="Goods in, opening on Expected at the gate">
   <WfBar>
-    <WfTitle sub="Goods received against a PO at the gate, line by line.">Goods in</WfTitle>
+    <WfTitle>Goods in</WfTitle>
     <WfSpacer /><WfButton primary>Receive goods</WfButton><Hotspot n={1} />
   </WfBar>
+  <WfBar><WfPill tone="brand">Expected at the gate 5</WfPill><WfPill>Received today 2</WfPill><WfPill>All receipts</WfPill><Hotspot n={2} /></WfBar>
+  <WfText muted>A truck arrived? Press Receive from its supplier — every open line of that supplier comes into one GRN.</WfText>
   <WfTable
-    columns={["PR no", "PO", "Date", "Supplier", "Item", "Drums", "Weight with drum", "Empty drum weight", "Quantity", "Testing required", "Sent to"]}
+    highlight={1}
+    columns={["PO", "Item", "Category", "Ordered", "Received", "Still to come", "Due", "Deliver to", ""]}
     rows={[
-      ["1230", "PO-90", "6 Oct", "Supplier D", <b key="a">Solvent A</b>, "4", "820", "18", "748 Kg", "Yes", <span key="b">Testing <Hotspot n={2} /></span>],
-      ["1230", "PO-90", "6 Oct", "Supplier D", <b key="c">Tin can 5 L</b>, "—", "—", "—", "600 Pcs", "No", "Purchase"],
+      [<b key="g">Supplier A → Godown A</b>, "4 open lines · 2 late", "", "", "", "", "", "", <span key="h"><WfButton primary>Receive from Supplier A</WfButton> <Hotspot n={3} /></span>],
+      ["PO-18", <b key="a">Empty 5 L can</b>, "Can", "260 Pcs", "0", "260 Pcs", <WfPill key="b" tone="danger">17 Nov · 2 days late</WfPill>, "Godown A", <span key="c"><WfButton primary>Receive</WfButton> <Hotspot n={4} /></span>],
+      ["PO-16", <b key="d">Solvent A</b>, "Chemical", "900 Litre", "0", "900 Litre", "Today", "Godown A", <WfButton key="e" primary>Receive</WfButton>],
     ]}
   />
 </Wireframe>
 
 <Hotspots items={[
-  <span key="1"><b>Receive goods.</b> Or press <b>Receive goods</b> on the purchase order itself — the PO and its pending items are then already filled in.</span>,
-  <span key="2"><b>Sent to.</b> Where each line went the moment it was saved: <b>Testing</b> for an item with a testing list, <b>Purchase</b> (the register) for everything else.</span>,
+  <span key="1"><b>Receive goods.</b> For goods not listed: search the item that came in. Or press <b>Receive goods</b> on the purchase order itself — the PO and its pending items are then already filled in.</span>,
+  <span key="2"><b>Expected at the gate · Received today · All receipts.</b> The page opens on what the gate is waiting for. <b>Received today</b> is today's receipt lines, still correctable from their ⋯ menu; <b>All receipts</b> is every receipt line, through the period picker.</span>,
+  <span key="3"><b>Receive from Supplier A.</b> One GRN with every open line of that supplier at that godown already on it — one line per item, the one due first — opening on the receipt details. One GRN is one supplier's delivery.</span>,
+  <span key="4"><b>Receive.</b> The GRN with just this PO line on it. Late lines come first, then by due date; what is still to come is read against what has arrived, corrections included.</span>,
 ]} />
 
-Each line of a receipt is grouped under its PR number, with its POs, date, supplier, godown and transport in the group's heading. The tabs open on **the last 7 days** — the period picker in the toolbar shows more — and a line not yet sent anywhere always shows.
+Receipt lines are grouped under their PR number on **All receipts**, with its POs, date, supplier, godown and transport in the group's heading; the period picker opens on **the last 7 days**, and a line not yet sent anywhere always shows.
 
 <Steps>
 <Step title="Search the item that arrived">
@@ -39,8 +45,11 @@ For a chemical bought in kilograms, enter the **Weight with drum** off the scale
 <Step title="Transport and landing cost">
 How the goods came: **Supplier Transport**, **Mahek Own Vehicle**, **Third-Party Transport** or **No Transport Charges**. For supplier or third-party transport enter the cost from their bill; for our own vehicle enter the **kilometres** and the **tempo number** — the cost is worked out from the approved rate per kilometre. Add any **other direct inward cost** (loading, unloading, octroi) and what it was.
 </Step>
-<Step title="Save">
-"PR 1230 · 2 lines received against PO-90, PO-92 · 1 to testing, 1 in the register". Every line is saved under one PR number, each against its own PO.
+<Step title="Review and save">
+**Review** reads the receipt back; **Save receipt** saves every line under one PR number, each against its own PO.
+</Step>
+<Step title="What's next">
+The receipt stays open on a fifth step that says, for each line, what is left to do. **Drum labels**: **Print n labels** for a chemical already in the register (one a drum, opening the real label print), **After testing** for a chemical sent to testing — it has no lot in the register yet — or **Not needed**. **Testing**: **Sent to** the team that tests it (Mixing & Blending for chemicals), or **Not required**. **Bill**: **Record bill** opens the lot on Bills, where the bill is recorded — offered only with Bills, its Edit tick and purchase money — otherwise **To come**. **Add another item from this truck** adds more lines to the same PR from the same supplier; **Done** closes it.
 </Step>
 </Steps>
 
@@ -57,8 +66,9 @@ The original PO line always stays as it was ordered. The PO's revision goes up b
 
 | On a receipt line | What it does |
 |---|---|
-| **Edit** | Corrects everything typed on the line, including the PO and PO item it came on. A different PO item changes the supplier and item on the line, its test and its lot, and the lot number is worked out again. It is refused only when something already uses the lot — a transfer, a batch, a return, empty drums or an adjustment |
-| **Add more** | Adds another line to the same PR and PO |
+| **Edit receipt line** | Corrects everything typed on the line, including the PO and PO item it came on. A different PO item changes the supplier and item on the line, its test and its lot, and the lot number is worked out again. It is refused only when something already uses the lot — a transfer, a batch, a return, empty drums or an adjustment |
+| **Add another item from this truck** | Adds another line to the same PR and PO |
+| **Trace this lot** | Opens Traceability on the lot the line is (or, once tested, will be) registered under |
 | **Transport & costs** | Records or corrects the PR's transport and other cost — once per PR |
 | **Send to Testing / Send to Purchase** | Only on a line that did not go anywhere — usually because the register refused its lot number. Change the PR number and send it again |
 

@@ -42,7 +42,8 @@ export const dynamic = "force-dynamic";
 const SCREENS: Record<LabelKind, string[]> = {
   box: ["units", "dispatch", "packBatches", "stock", "orders"],
   sfg: ["sfgBatches", "stock"],
-  purchase: ["barcode", "register", "stock"],
+  /* Goods in too: the GRN's What's next prints a lot's drum labels the moment it is in the register. */
+  purchase: ["barcode", "register", "stock", "inward"],
   dispatch: ["orders", "dispatch"],
 };
 

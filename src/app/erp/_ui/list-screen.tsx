@@ -10,7 +10,7 @@ import { menuBlock } from "@/lib/erp/action-ticks";
 import { isPurchaseScreen } from "@/lib/erp/registry";
 import type { Result } from "@/lib/result";
 import { aggsOf, cellText, moneyText, nf, NEW_FORM_ACTION } from "@/lib/erp/ui";
-import { colOf as colIn, listCsv, listQueryParams, LIST_QUERY_KEYS, pageOf, queryRows, SEARCH_PAUSE_MS, searchWorthAsking, selectionTotals, subtabOf, selectionTotalText, subMatches, type ColFilter, type ListPage, type ListQuery, type SelectionTotal, type StatPick } from "@/lib/erp/list-query";
+import { colOf as colIn, listCsv, listQueryParams, LIST_QUERY_KEYS, pageOf, queryRows, SEARCH_PAUSE_MS, searchWorthAsking, selectionTotals, specForSubtab, subtabOf, selectionTotalText, subMatches, type ColFilter, type ListPage, type ListQuery, type SelectionTotal, type StatPick } from "@/lib/erp/list-query";
 import { Icon as ShellIcon } from "@/components/shell/icons";
 import { Button, Card, checkboxClass, cx, EmptyState, Input, Select, SortableTh, Td, Th, Tr } from "@/components/ui/primitives";
 import { eyebrowClass, IconButton, LinkButton, linkClass } from "./look";
@@ -345,7 +345,7 @@ const EDGE: Partial<Record<Tone, string>> = {
 };
 
 export function ListScreen({
-  spec,
+  spec: specIn,
   rows,
   label,
   sub,
@@ -417,8 +417,6 @@ export function ListScreen({
   const { flags: FLAG, place, exportList, listIds, listCount, listTotals, loadForm, tones, look } = useKit();
   const v4 = look === "v4";
   const [asTable, setAsTable] = useState(false);
-  const showCards = !!spec.cards && !(spec.cards.toggle && asTable);
-  const showChat = v4 && !!spec.chat && !asTable;
   const router = useRouter();
   const path = usePathname();
   const params = useSearchParams();
@@ -428,6 +426,11 @@ export function ListScreen({
   /* The search box answers as it is typed; the server is asked once the typing pauses, and never for one character (`searchWorthAsking`). */
   const [qInput, setQInput] = useState(server?.query.q ?? "");
   const query: ListQuery = server ? { ...server.query, q: qInput } : local;
+  /* The spec as the open sub-tab reads it (`ListSubtab.view`): the same merge the server paged by. */
+  const st = query.st;
+  const spec = useMemo(() => specForSubtab(specIn, { st }), [specIn, st]);
+  const showCards = !!spec.cards && !(spec.cards.toggle && asTable);
+  const showChat = v4 && !!spec.chat && !asTable;
   const go = (next: ListQuery, extra?: (p: URLSearchParams) => void) => {
     const p = new URLSearchParams(params.toString());
     for (const k of LIST_QUERY_KEYS) p.delete(k);
@@ -539,7 +542,7 @@ export function ListScreen({
   const lp: ListPage = useMemo(() => server ?? pageOf(spec, rows, local, FLAG), [server, spec, rows, local, FLAG]);
   const chips = lp.chips;
   const view = { srt: lp.sort };
-  const gk = spec.groups && query.grp ? spec.groups : null;
+  const gk = spec.groups?.length && query.grp ? spec.groups : null;
   const total = lp.total;
   const pg = lp.page;
   const pageRows = lp.rows;
@@ -777,7 +780,7 @@ export function ListScreen({
               </button>
             ) : null}
           </div>
-          {win ? <PeriodPicker key={win.pd} pd={win.pd} label={win.label} dateLabel={win.dateLabel} onPick={(pd) => setQuery({ pd, page: 1 })} /> : null}
+          {win && !subtabOf(spec, query)?.unwindowed ? <PeriodPicker key={win.pd} pd={win.pd} label={win.label} dateLabel={win.dateLabel} onPick={(pd) => setQuery({ pd, page: 1 })} /> : null}
           {chips.length > MAX_TABS ? (
             <Select value={chip} onChange={(e) => pickChip(e.target.value)} aria-label={colOf(spec.chips!).l} className="cursor-pointer">
               <option value="">All {colOf(spec.chips!).l.toLowerCase()} · {nf(lp.beforeChip)}</option>
@@ -848,7 +851,7 @@ export function ListScreen({
               ))}
             </span>
           ) : null}
-          {spec.groups ? (
+          {spec.groups?.length ? (
             <button
               type="button"
               onClick={() => setQuery({ grp: !query.grp, page: 1 })}
@@ -929,6 +932,16 @@ export function ListScreen({
         />
       ) : null}
       {(() => {
+        /* The open sub-tab's one line on how to work it (Goods in: "A truck arrived? …"). */
+        const line = spec.subtabs?.length && lp.all > 0 ? subtabOf(spec, query)?.line : undefined;
+        return line ? (
+          <div className="mb-3 flex items-center gap-2.5 rounded-card border border-line bg-surface px-3.5 py-2.5 text-meta text-body">
+            <Icon n="truck" s={16} />
+            <span>{line}</span>
+          </div>
+        ) : null;
+      })()}
+      {(() => {
         const stats = lp.stats ?? [];
         const breakdown = v4 && chips.length >= 2 && chips.length <= MAX_TABS ? { total: lp.beforeChip, chips, value: chip, tones, onPick: pickChip } : null;
         /* A lone Total is the pager's number again, not a figure worth a card. */
@@ -980,6 +993,9 @@ export function ListScreen({
               ) : undefined
             }
           />
+        ) : total === 0 && spec.subtabs?.length && !lp.filtered && !q.trim() ? (
+          /* An empty sub-tab with nothing narrowing it is not a search that failed: it says what would be here. */
+          <EmptyState icon={v4 ? <EmptyTile tone="muted" icon="file" /> : undefined} title={subtabOf(spec, query)?.view?.noDataLine ?? `Nothing in ${lowerFirst(subtabOf(spec, query)?.l ?? "this view")}`} />
         ) : total === 0 ? (
           <EmptyState
             icon={v4 ? <EmptyTile tone="muted" icon="search" /> : undefined}
@@ -1109,8 +1125,9 @@ export function ListScreen({
                                     if (same && grp.head[c.k] != null && String(grp.head[c.k]) === String(grp.head[same] ?? "")) return null;
                                     return <GroupFact key={c.k} c={c} v={grp.head[c.k]} strong={spec.groupHeadStrong?.includes(c.k)} />;
                                   })}
-                                  <span className={cx("text-xs text-muted", headShown.length > 0 && "ml-auto")}>{aggText}</span>
+                                  {spec.groupNoCount ? (headShown.length > 0 ? <span className="ml-auto" /> : null) : <span className={cx("text-xs text-muted", headShown.length > 0 && "ml-auto")}>{aggText}</span>}
                                   {spec.groupInvoice ? <InvoiceButtons v={grp.head[spec.groupInvoice]} row={r} screen={spec.screen} /> : null}
+                                  {spec.groupAction ? <GroupAct row={r} id={spec.groupAction} screen={spec.screen} /> : null}
                                   {spec.groupPrint && grp.print ? (
                                     <NavLink
                                       href={grp.print}
@@ -1427,6 +1444,8 @@ function GroupFact({ c, v, strong }: { c: ColSpec; v: ListRow["v"][string] | und
   if (v == null || text === "" || text === "—") return null;
   if (c.t === "s") return <StatusBadge value={String(v)} />;
   if (c.t === "b") return <span className="text-meta font-semibold text-ink">{text}</span>;
+  /* A fact with no name is a sentence about the group ("4 open lines · 2 late"). */
+  if (!c.l) return <span className="text-xs text-muted">{text}</span>;
   return (
     <span className="text-xs text-muted">
       {c.l} <span className={cx(strong ? "text-meta font-semibold text-ink" : "text-body", c.t === "mono" && "font-mono")}>{text}</span>
@@ -1491,7 +1510,22 @@ function Cell({ c, r, edge, cols, lead, small }: { c: ColSpec; r: ListRow; edge?
   const base = cellText(c, r.v[c.k]);
   const unit = c.uk && typeof r.v[c.k] === "number" ? r.v[c.uk] : null;
   const late = c.late && base !== "—" ? r.v[c.late] : null;
-  const txt = `${base}${unit ? ` ${unit}` : ""}${late ? ` · ${late}` : ""}`;
+  const after = !late && c.after && base !== "—" ? r.v[c.after] : null;
+  const txt = `${base}${unit ? ` ${unit}` : ""}${late ? ` · ${late}` : ""}${after ? ` · ${after}` : ""}`;
+  if (c.bar) {
+    /* How much has arrived: a bar, then the figure it shows. */
+    const v = Math.max(0, Math.min(1, Number(r.v[c.bar]) || 0));
+    return (
+      <Td className={cx(edge, "truncate tabular-nums")} title={txt}>
+        <span className="flex items-center gap-2.5">
+          <span aria-hidden className="h-1.5 w-14 flex-none overflow-hidden rounded-full bg-line">
+            <span className="block h-full rounded-full bg-brand" style={{ width: `${Math.round(v * 100)}%` }} />
+          </span>
+          <span className={cx("truncate whitespace-nowrap", small ? "text-meta" : "text-meta text-body")}>{txt}</span>
+        </span>
+      </Td>
+    );
+  }
   const num = c.t === "n" || c.t === "m";
   const empty = base === "—";
   return (
@@ -1510,6 +1544,28 @@ function Cell({ c, r, edge, cols, lead, small }: { c: ColSpec; r: ListRow; edge?
       {lead}
       {txt}
     </Td>
+  );
+}
+
+/** A group heading's button (`ListSpec.groupAction`): the group's first row's act, run on that row. */
+function GroupAct({ row, id, screen }: { row: ListRow; id: string; screen: string }) {
+  const ui = useErpUi();
+  const a = row.actions?.find((x) => x.id === id && !x.tickHidden);
+  if (!a) return null;
+  return (
+    <span onClick={(e) => e.stopPropagation()}>
+      <Button
+        size="sm"
+        variant="primary"
+        aria-disabled={!!a.why}
+        title={a.why || a.l}
+        className={cx("whitespace-nowrap", a.why && "cursor-help opacity-50")}
+        onClick={() => (a.why ? ui.toast(`${a.l} · ${a.why}`, "error") : ui.act(screen, a, row.id))}
+      >
+        {a.why ? <Icon n="lock" s={13} /> : null}
+        {a.l}
+      </Button>
+    </span>
   );
 }
 

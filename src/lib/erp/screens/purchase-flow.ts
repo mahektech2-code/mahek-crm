@@ -26,7 +26,8 @@ import { categoriesFor, categoriesForDepartment, requirementDepartmentsFor, requ
 import { erpLink } from "../registry";
 import { erpPoHref } from "../trace-links";
 import { erpAudit, erpId, nextNumber, num, paise, rupeesField, stampLine, text, visibleCols, withoutHidden, type ScreenModule } from "../server";
-import type { ActionSpec, ColSpec, FormSpec, ListRow } from "../ui";
+import type { ActionSpec, ColSpec, FormSpec, ListRow, StatSpec } from "../ui";
+import { dueWithin } from "../engines/goods-in";
 import { fd, inr, inrRate, nf } from "../ui";
 import {
   FLOW_STEPS,
@@ -48,6 +49,8 @@ import {
   purchaseUnit,
   requirementBucket,
   requirementLabel,
+  poBucket,
+  deliveryWords,
   requirementStage,
   type PurchaseMethod,
   type Stage,
@@ -1622,30 +1625,46 @@ const purchaseOrders: ScreenModule = {
     const approver = ctx.powers.has("approvePurchaseOrder");
     const canReceive = ctx.screens.has("inward");
     const day = today();
+    /* The design's columns, in its order (`fit-columns.ts` keeps them in this priority). The status is the sub-tab, so it is not a column. */
     const all: Col[] = [
-      { k: "po", l: "PO no", t: "mono" },
-      { k: "date", l: "PO date", t: "d" },
-      { k: "vendor", l: "Supplier", t: "b" },
-      { k: "items", l: "Items", t: "t" },
-      { k: "deliverTo", l: "Deliver to", t: "t" },
-      { k: "deliveryDate", l: "Delivery date", t: "d" },
-      { k: "value", l: "PO value", t: "m", pw: "viewPurchaseMoney" },
-      { k: "terms", l: "Payment terms", t: "t" },
-      { k: "received", l: "Received", t: "t" },
-      { k: "status", l: "Status", t: "s" },
-      { k: "shared", l: "Last shared", t: "t" },
-      { k: "f", l: "Flags", t: "f" },
+      { k: "po", l: "PO no", t: "mono", w: 84 },
+      { k: "vendor", l: "Supplier", t: "b", w: 150 },
+      { k: "items", l: "Items", t: "t", w: 120 },
+      { k: "deliverTo", l: "Deliver to", t: "t", w: 100 },
+      { k: "deliveryDate", l: "Delivery", t: "d", late: "late", after: "dueWords", w: 164 },
+      { k: "received", l: "Received", t: "t", bar: "progress", w: 168 },
+      { k: "value", l: "PO value", t: "m", pw: "viewPurchaseMoney", w: 100 },
+      { k: "shared", l: "Last shared", t: "t", w: 106 },
     ];
     const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
     const rows: ListRow[] = pos.map((p) => {
       const s = p.po.status;
       const t = poTotals(pricedLines(p), p.po.freightPaise);
       const anyReceived = p.lines.some((l) => l.received > 0);
+      const bucket = poBucket(s, anyReceived);
+      const open = bucket === "toSend" || bucket === "waiting" || bucket === "part";
       const doneLines = p.lines.filter((l) => lineDone({ ordered: l.expected, received: l.received })).length;
       const differs = p.lines.map((l) => quantityDifferenceNote(l.quantity, l.expected, l.received, flagPercent)).filter((x): x is string => !!x);
       const liveCorrections = p.lines.flatMap((l, li) => l.corrections.map((c, ci) => ({ c, l, label: correctionLabel(li, ci) }))).filter((x) => !x.c.cancelledAt);
       const self = p.po.createdById === ctx.user.id && !ctx.administrator;
+      /* The menu reads in blocks (`menuBlock`): print and receive, then the changes, then the take-backs — so the actions are pushed in that order. */
       const actions: ActionSpec[] = [];
+      if (p.po.approvedAt && s !== "Rejected") actions.push({ id: "print", l: "Print PO", href: erpPoHref(p.po.id) });
+      /* THE NEXT STEP, by where the PO is: Share… while nobody has it, Receive while goods are owed, nothing once done. */
+      if (RECEIVABLE_PO.includes(s)) {
+        actions.push({ id: "receive", l: "Receive goods", short: "Receive", primary: s !== "Approved", loadsForm: true, why: canReceive ? "" : "Goods in is not on your account" });
+      }
+      /* Full edit at every stage but Cancelled (Nov 2026): what was typed can always be corrected; the number and status are the system's. */
+      if (s !== "Cancelled") actions.push({ id: "edit", l: "Edit PO", loadsForm: true, why: money ? "" : MONEY_WHY });
+      if (s === "Approved" || s === "Sent" || s === "Partly received" || s === "Received") {
+        actions.push({
+          id: "share",
+          l: "Share…",
+          primary: s === "Approved",
+          why: money ? "" : "Sharing sends the PO with its rates to the supplier, so it needs purchase money on your account. Print PO gives you a copy without rates.",
+          share: shareSpecs.get(p.po.id),
+        });
+      }
       const approveWhy = approver ? "" : "Only the PO approver approves";
       if (s === "Pending approval") {
         actions.push({
@@ -1662,52 +1681,16 @@ const purchaseOrders: ScreenModule = {
           prompt: { title: `Send back ${poName(p.po)}`, sub: "Its requirements go back to waiting for a PO, to be raised again corrected.", submit: "Send back", fields: [{ k: "reason", l: "What needs changing", t: "area", req: true }] },
         });
       }
-      /* Full edit at every stage but Cancelled (Nov 2026): what was typed can always be corrected; the number and status are the system's. */
-      if (s !== "Cancelled") actions.push({ id: "edit", l: "Edit", loadsForm: true, why: money ? "" : MONEY_WHY });
-      if (s === "Approved" || s === "Sent" || s === "Partly received" || s === "Received") {
-        actions.push({
-          id: "share",
-          l: "Share…",
-          primary: s === "Approved",
-          why: money ? "" : "Sharing sends the PO with its rates to the supplier, so it needs purchase money on your account. Print PO gives you a copy without rates.",
-          share: shareSpecs.get(p.po.id),
-        });
-      }
-      if (s === "Approved" || s === "Sent" || s === "Partly received") {
-        actions.push({ id: "receive", l: "Receive goods", primary: s !== "Approved", loadsForm: true, why: canReceive ? "" : "Goods receipt is not on your account" });
-      }
       if (s === "Partly received")
         actions.push({
           id: "close",
-          l: "Close short",
+          l: "Close short…",
           prompt: { title: `Close ${poName(p.po)} short`, sub: "Nothing more is expected against it; its requirements count as received.", submit: "Close PO", fields: [{ k: "reason", l: "Why", t: "area", req: true }] },
           impact: { kind: "erp-po-close", id: p.po.id },
         });
-      if (["Pending approval", "Approved", "Sent"].includes(s))
-        actions.push({
-          id: "cancel",
-          l: "Cancel PO",
-          why: anyReceived ? "Goods were received against it — close it short instead" : "",
-          prompt: { title: `Cancel ${poName(p.po)}`, sub: "Its requirements go back to waiting for a PO, keeping their supplier.", submit: "Cancel PO", fields: [{ k: "reason", l: "Reason", t: "area", req: true }] },
-          impact: { kind: "erp-po-cancel", id: p.po.id },
-        });
-      if (p.po.approvedAt && s !== "Rejected") actions.push({ id: "print", l: "Print PO", href: erpPoHref(p.po.id) });
-      /* A correction line made at the gate is undone by cancelling it, with a reason; only an ERP administrator re-rates one. */
-      if (liveCorrections.length) {
-        const opts = liveCorrections.map((x) => `${x.label} · ${x.l.item} ${x.c.quantity > 0 ? "+" : "−"}${nf(Math.abs(x.c.quantity))} ${x.l.unit}`);
-        actions.push({
-          id: "cancelCorrection",
-          l: "Cancel a correction",
-          prompt: {
-            title: `Cancel a correction on ${poName(p.po)}`,
-            sub: "The line goes back to what it expected before. Goods already received stay received. The correction stays on the PO, struck through, with your reason.",
-            submit: "Cancel correction",
-            fields: [
-              { k: "correction", l: "Correction", t: "select", req: true, opts, def: opts.length === 1 ? opts[0] : undefined },
-              { k: "reason", l: "Why", t: "area", req: true },
-            ],
-          },
-        });
+      const opts = liveCorrections.map((x) => `${x.label} · ${x.l.item} ${x.c.quantity > 0 ? "+" : "−"}${nf(Math.abs(x.c.quantity))} ${x.l.unit}`);
+      /* Only an ERP administrator re-rates a correction made at the gate. */
+      if (liveCorrections.length)
         actions.push({
           id: "correctionRate",
           l: "Change a correction's rate",
@@ -1723,38 +1706,77 @@ const purchaseOrders: ScreenModule = {
             ],
           },
         });
-      }
+      if (["Pending approval", "Approved", "Sent"].includes(s))
+        actions.push({
+          id: "cancel",
+          l: "Cancel PO…",
+          why: anyReceived ? "Goods were received against it — close it short instead" : "",
+          prompt: { title: `Cancel ${poName(p.po)}`, sub: "Its requirements go back to waiting for a PO, keeping their supplier.", submit: "Cancel PO", fields: [{ k: "reason", l: "Reason", t: "area", req: true }] },
+          impact: { kind: "erp-po-cancel", id: p.po.id },
+        });
+      /* A correction line made at the gate is undone by cancelling it, with a reason: struck through, never deleted. */
+      if (liveCorrections.length)
+        actions.push({
+          id: "cancelCorrection",
+          l: "Cancel a correction…",
+          prompt: {
+            title: `Cancel a correction on ${poName(p.po)}`,
+            sub: "The line goes back to what it expected before. Goods already received stay received. The correction stays on the PO, struck through, with your reason.",
+            submit: "Cancel correction",
+            fields: [
+              { k: "correction", l: "Correction", t: "select", req: true, opts, def: opts.length === 1 ? opts[0] : undefined },
+              { k: "reason", l: "Why", t: "area", req: true },
+            ],
+          },
+        });
+      const delivery = deliveryWords(p.po.deliveryDate, day, open);
       const flags: string[] = [];
       if (s === "Pending approval") flags.push("awaitingApproval");
       if (differs.length) flags.push("qtyDiffers");
-      if (RECEIVABLE_PO.includes(s) && p.po.deliveryDate < day) flags.push("deliveryLate");
+      if (delivery?.late) flags.push("deliveryLate");
+      if (open && dueWithin(p.po.deliveryDate, day, 3)) flags.push("dueSoon");
+      /* Received, READ from the gate against what each line now expects: one unit adds up, mixed units count lines in full. */
+      const units = new Set(p.lines.map((l) => l.unit));
+      const expected = p.lines.reduce((a, l) => a + l.expected, 0);
+      const got = p.lines.reduce((a, l) => a + Math.min(l.received, l.expected), 0);
+      const sameUnit = units.size === 1 && expected > 0;
+      const progress = sameUnit ? got / expected : p.lines.length ? doneLines / p.lines.length : 0;
+      const receivedText = !p.lines.length
+        ? "—"
+        : sameUnit
+          ? `${nf(p.lines.reduce((a, l) => a + l.received, 0))} of ${nf(expected)}${p.lines.some((l) => l.expected !== l.quantity) ? ` (ordered ${nf(p.lines.reduce((a, l) => a + l.quantity, 0))})` : ""}`
+          : `${doneLines} of ${p.lines.length} items in full`;
       return {
         id: p.po.id,
         v: withoutHidden(
           {
             po: poName(p.po),
-            date: p.po.poDate,
             vendor: p.supplier,
             items: p.lines.map((l) => l.item).join(", "),
             deliverTo: p.godown,
             deliveryDate: p.po.deliveryDate,
+            late: delivery?.late ? delivery.words : null,
+            dueWords: delivery && !delivery.late ? delivery.words : null,
+            received: receivedText,
+            progress: Math.round(progress * 1000) / 1000,
             value: t.totalPaise,
-            terms: p.po.paymentTerms,
-            received:
-              p.lines.length === 1
-                ? `${nf(p.lines[0].received)} of ${nf(p.lines[0].expected)} ${p.lines[0].unit}${p.lines[0].expected !== p.lines[0].quantity ? ` (ordered ${nf(p.lines[0].quantity)})` : ""}`
-                : p.lines.length
-                  ? `${doneLines} of ${p.lines.length} items in full`
-                  : "—",
-            status: s,
             shared: shareSpecs.get(p.po.id)?.last ?? (p.po.sentVia ? `${p.po.sentVia}${p.po.sentAt ? ` · ${fd(calendarDate(p.po.sentAt))}` : ""}` : null),
+            status: s,
+            bucket,
           },
           hiddenKeys,
         ),
         flags,
         title: `${poName(p.po)}${p.po.revision ? ` · Rev ${p.po.revision}` : ""} · ${p.supplier}`,
-        header: `${differs.length ? `Quantity differs from PO: ${differs.join(", ")} · ` : ""}${fd(p.po.poDate)} · deliver to ${p.godown} by ${fd(p.po.deliveryDate)} · ${p.po.paymentTerms}`,
-        fields: [{ l: "Remarks", v: p.po.remarks || "—" }],
+        /* Where it is, in the sub-tab's words, and what it is worth to somebody who may see it. */
+        ref: [{ toSend: "To send", waiting: "Waiting for goods", part: "Part received", done: "Done", cancelled: "Cancelled" }[bucket], money ? inr(t.totalPaise) : ""].filter(Boolean).join(" · "),
+        header: `${differs.length ? `Quantity differs from PO: ${differs.join(", ")} · ` : ""}${fd(p.po.poDate)} · deliver to ${p.godown} by ${fd(p.po.deliveryDate)}${delivery ? ` (${delivery.words})` : ""} · ${p.po.paymentTerms}`,
+        fields: [
+          { l: "Status", v: s },
+          { l: "PO date", v: fd(p.po.poDate) },
+          { l: "Payment terms", v: p.po.paymentTerms || "—" },
+          { l: "Remarks", v: p.po.remarks || "—" },
+        ],
         contacts: [
           ...(p.supplierPhone ? [{ l: `Call ${p.supplierPhone}`, href: `tel:${p.supplierPhone.replace(/\D/g, "")}` }] : []),
           ...(p.supplierEmail ? [{ l: "Email", href: `mailto:${p.supplierEmail}` }] : []),
@@ -1764,30 +1786,36 @@ const purchaseOrders: ScreenModule = {
         by: stampLine(p.by, p.po.createdAt),
       };
     });
+    /* Each sub-tab's cards name it, and are worked out over its own rows. */
+    const openCards = (first: string): StatSpec[] => [
+      { l: first, kind: "count" },
+      { l: "Value on order", kind: "sum", k: "value" },
+      { l: "Delivery late", where: { flag: "deliveryLate" }, tone: "danger" },
+      { l: "Due in 3 days", where: { flag: "dueSoon" }, tone: "warn" },
+    ];
+    const closedCards = (first: string): StatSpec[] => [
+      { l: first, kind: "count" },
+      { l: "Suppliers", kind: "distinct", k: "vendor" },
+      { l: "PO value", kind: "sum", k: "value" },
+      { l: "Quantity differs", where: { flag: "qtyDiffers" }, tone: "warn" },
+    ];
     return {
       spec: {
         screen: "purchaseOrders",
-        rowMenu: ["share", "print", "receive", "edit", "close", "cancel", "cancelCorrection", "correctionRate"],
         cols,
         hidden,
-        groups: ["status"],
-        chips: "status",
+        /* Five sub-tabs over where each PO is (`poBucket`), opening on the work waiting: To send. */
         subtabs: [
-          { id: "toSend", l: "To send", in: ["Pending approval", "Approved"], hint: "Raised, not yet shared with the supplier" },
-          { id: "awaiting", l: "Awaiting goods", in: ["Sent", "Partly received"], hint: "With the supplier, goods still to come" },
-          { id: "done", l: "Done", in: ["Received", "Closed"] },
-          { id: "all", l: "All" },
+          { id: "toSend", l: "To send", k: "bucket", in: ["toSend"], hint: "Raised, not yet shared with the supplier", view: { stats: openCards("To send") } },
+          { id: "waiting", l: "Waiting for goods", k: "bucket", in: ["waiting"], hint: "With the supplier, nothing received yet", view: { stats: openCards("Waiting for goods") } },
+          { id: "part", l: "Part received", k: "bucket", in: ["part"], hint: "Some goods in, more expected", view: { stats: openCards("Part received") } },
+          { id: "done", l: "Done", k: "bucket", in: ["done"], hint: "Received in full, or closed short", view: { stats: closedCards("Done"), sortDefault: ["deliveryDate", -1] } },
+          { id: "cancelled", l: "Cancelled", k: "bucket", in: ["cancelled"], view: { stats: closedCards("Cancelled"), sortDefault: ["deliveryDate", -1] } },
         ],
-        stats: [
-          { l: "POs" },
-          { l: "Suppliers", kind: "distinct", k: "vendor" },
-          { l: "PO value", kind: "sum", k: "value" },
-          /* Only POs raised the old way wait on an approver; the card goes once none is left. */
-          ...(rows.some((r) => r.flags?.includes("awaitingApproval")) ? [{ l: "Awaiting approval", where: { flag: "awaitingApproval" }, tone: "warn" as const }] : []),
-          { l: "Delivery late", where: { flag: "deliveryLate" }, tone: "danger" },
-          { l: "Quantity differs", where: { flag: "qtyDiffers" }, tone: "warn" },
-        ],
-        filters: ["vendor", "deliverTo", "terms", "value"],
+        /* Late first, then by delivery date — the order the gate needs them. */
+        sortDefault: ["deliveryDate", 1],
+        stats: openCards("To send"),
+        filters: ["vendor", "deliverTo", "value"],
         newForm: money ? (form ?? undefined) : undefined,
         newLabel: "New PO",
         noDataLine: "No purchase orders yet. Create one from a direct-purchase requirement, or link one from the Quotation manager.",

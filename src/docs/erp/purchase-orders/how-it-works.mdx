@@ -18,6 +18,10 @@ flowchart TD
   L -- "Send back with a reason" --> X["Rejected"]
 `} />
 
+## The list follows the PO, not its status word
+
+The screen opens on **To send** — POs nobody outside has yet: Approved (the first share moves a PO to Sent) and any old PO still waiting for its approver. **Waiting for goods** is with the supplier and nothing has arrived; **Part received** has had something and expects more; **Done** is received in full or closed short; **Cancelled** includes an old PO sent back by its approver. Which one a PO is under is worked out from its status and from what has been **read** at the gate, so a PO the status has not caught up with still lands where it really is. A PO is late when its delivery date is before today's business date and goods are still owed; "Due in 3 days" counts today and the three days after it.
+
 ## Making a PO
 
 <Rule title="The item's purchase rule decides how the PO is made">
