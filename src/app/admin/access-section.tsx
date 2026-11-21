@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/primitives";
 import { Modal, RowMenu } from "@/components/ui/overlays";
 import { ImpactDialog } from "@/components/ui/impact-dialog";
+import { ScreenAccessDialog } from "./access/screen-access-dialog";
 import { ACCESS_REVOKE_KIND, accessRevokeKey } from "@/lib/impact/kinds/access-revoke-key";
 import type { ImpactConfirmation } from "@/lib/impact/types";
 import type { Result } from "@/lib/result";
@@ -922,17 +923,16 @@ export function AccessSection({
           the person, so the draft is initial state on a fresh mount rather than
           something an effect has to reset. */}
       {managing ? (
-        <AccessDialog
+        /* POSITION AND SCREENS — the screen model's dialog. Saving converts the grant. */
+        <ScreenAccessDialog
           key={managing.userId}
-          rows={allRows}
-          designations={designations}
           person={managing}
           onClose={() => setManaging(null)}
           onDone={(r) => {
             say(r);
             setManaging(null);
+            router.refresh();
           }}
-          onSaved={say}
         />
       ) : null}
 

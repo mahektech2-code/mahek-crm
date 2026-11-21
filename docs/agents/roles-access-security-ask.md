@@ -497,3 +497,42 @@ there with no seat, and a department with no one in charge or operator), each
 ERP godown's staff, and each Sales Dashboard oversight region. Active accounts
 only. `seatsOverview()` in `access-overview-service.ts`; each kind is changed
 where it is set, named under its heading.
+
+**THE SCREEN MODEL: POSITION AND SCREEN TICKS.** A level used to decide both
+whose records somebody saw and what they could do. It is being split in two:
+POSITION per app (associate own, manager own + HRMS team, everyone the whole
+company) decides only what is seen, and per SCREEN — the app's sidebar items,
+grouped by its sidebar sections as modules — Access opens it with every
+ordinary action, Edit is any row/modal/detail edit, Delete is special and
+needs Edit. The rules are `lib/access/permission-rules.ts`, run by the dialog
+and by the save alike. Which screen and tick owns every capability is
+`lib/access/action-owners.ts`, and every ERP, HRMS and Tasks power
+`lib/access/power-owners.ts` — both `Record`s, so a new one fails the build
+until placed. Seeing money or a sensitive field comes with Edit on the screen
+that shows it; "everybody's" powers need the Everyone position. The Salesman
+App's screens are the handset's own menu (`lib/access/handset-screens.ts`),
+because one screen would have handed a field manager's decisions to anybody
+with Edit on it. `permissions.test.ts` pins, level by level, exactly what the
+model gives that levels did not; `convert-grant.ts` converts one grant and
+`compareConversion` proves what it moves; `access-screens-backfill` writes
+`app_access.position` and `app_screen_access` and REFUSES any grant that would
+lose something on a screen still held. Unlike `app_module_access`, no
+`app_screen_access` rows means no screens.
+
+**HOW IT IS SWITCHED ON, grant by grant.** A grant is converted once
+`app_access.position` is set — by `access-screens-backfill`, or by saving it in
+the Manage access dialog (`app/admin/access/screen-access-dialog.tsx`, which
+`setAccess` takes as `screenGrants`). For a converted grant `hatsFor` puts the
+ticks on the hat (`Hat.holds`) and `can()` answers from them, and
+`scopeForUser` reads the position: associate own, manager team, everyone all.
+An unconverted grant goes on meaning what its level meant, so the switch can
+roll out a person at a time. EVERYTHING ELSE READS WHAT IT ALWAYS READ:
+`setAccess` derives `app_module_access`, the level and the ERP/HRMS/Tasks
+power rows from the ticks (`legacyFromScreens`), on the server and in the same
+transaction, ignoring whatever the request sent for them — so every sidebar,
+route gate and app access file stays right without being rewritten. A save
+that moves only ticks (Edit to Delete) moves nothing in those tables, which is
+why `screensDiffer` is part of "No change.". `requestHat` returns the hat from
+`hatsFor` for the same reason: a second read of the grant would carry no ticks,
+and the app in force would answer from the level while the union answered from
+the screens.
