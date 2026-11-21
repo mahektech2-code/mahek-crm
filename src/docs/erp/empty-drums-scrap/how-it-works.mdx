@@ -22,6 +22,10 @@ Between <Setting k="erp.drums.minEmptyKg" /> and <Setting k="erp.drums.maxEmptyK
 Actual empty weight − declared tare. Beyond <Setting k="erp.drums.varianceAlertKg" /> kg or <Setting k="erp.drums.varianceAlertPercent" />% either way, the drum is flagged and an alert is raised for review.
 </Rule>
 
+<Rule title="Drums are counted from the GRN">
+A Chemical lot lists each of its drums as in use from the day its GRN is saved, until it is recorded empty: Mahek's on Mahek stock, a supplier's on Supplier returnable, and ones whose owner nobody recorded on Needs review. Nothing is stored for them: the count is the GRN's drums less the drums already recorded, so a full drum is never sold or returned. Lots received before <Setting k="erp.drums.inUseFrom" /> came in before drums were tracked and are listed only once recorded empty or added as opening stock.
+</Rule>
+
 <Rule title="Mahek's drums and a supplier's drums never mix">
 They are separate stocks. A scrap sale draws only from Mahek's; a returnable outward only from that supplier's. The server refuses a returnable drum in a sale whatever button was pressed.
 </Rule>

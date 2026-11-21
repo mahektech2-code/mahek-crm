@@ -1447,3 +1447,146 @@ describe("voiding a mistaken goods inward line", () => {
     assert.equal((await db.select().from(erpPurchases).where(eq(erpPurchases.id, lot.id))).length, 0);
   });
 });
+
+/* FULL EDIT (Nov 2026): everything typed is editable at every stage; what the system makes — numbers,
+   statuses, the lot number — is worked out again, never typed. */
+describe("full edit across purchase", () => {
+  const grn = (ctx: Awaited<ReturnType<typeof as>>, po: string, line: Record<string, string>) =>
+    mod("inward").forms!.new(ctx, { date: TODAY, po, godown: "Bhiwandi", transportMode: NONE }, [line]);
+  const lineOf = async (poId: string) => (await db.select().from(erpInward).where(eq(erpInward.poId, poId)))[0];
+  const poRow = async (poId: string) => (await db.select().from(erpPurchaseOrders).where(eq(erpPurchaseOrders.id, poId)))[0];
+
+  test("a goods receipt line moves to another PO, supplier and item; its lot is renumbered and stock follows", async () => {
+    const ctx = await as(admin);
+    const a = await approvedPo("Asian Solvents", [{ item: "1 L Tin Can", quantity: 100, ratePaise: 8950 }]);
+    const b = await approvedPo("Bharat Chemicals", [{ item: "Plain Carton", quantity: 100, ratePaise: 1200 }]);
+    assert.ok((await grn(ctx, a.po, { poLine: a.lines["1 L Tin Can"], qty: "40" })).ok);
+    const line = await lineOf(a.poId);
+    const [lotBefore] = await db.select().from(erpPurchases).where(eq(erpPurchases.inwardId, line.id));
+    assert.match(lotBefore.lotNo, /^ASCAN1/);
+
+    const form = (await mod("inward").formLoaders!.edit(ctx, line.id))!;
+    assert.equal(form.init?.po, a.po, "the form opens on the PO the line is on");
+    assert.equal(form.init?.poLine, a.lines["1 L Tin Can"]);
+    const saved = await mod("inward").forms!.edit(ctx, { ...form.init, po: b.po, poLine: b.lines["Plain Carton"], qty: "40" }, [], line.id);
+    assert.ok(saved.ok, JSON.stringify(saved));
+
+    const moved = (await db.select().from(erpInward).where(eq(erpInward.id, line.id)))[0];
+    assert.equal(moved.poId, b.poId);
+    assert.equal(moved.supplierId, "sup_b");
+    assert.equal(moved.rawMaterialId, "rm_plain");
+    const [lot] = await db.select().from(erpPurchases).where(eq(erpPurchases.id, lotBefore.id));
+    assert.equal(lot.supplierId, "sup_b");
+    assert.equal(lot.rawMaterialId, "rm_plain");
+    assert.match(lot.lotNo, /^BCBOXP/, "the lot number is the new party and item's");
+    const [entry] = await db.select().from(erpRmEntries).where(and(eq(erpRmEntries.sourceType, "purchase"), eq(erpRmEntries.sourceId, lot.id)));
+    assert.equal(entry.lotNo, lot.lotNo, "the stock entry follows");
+    assert.equal(entry.rawMaterialId, "rm_plain");
+    assert.notEqual((await poRow(a.poId)).status, "Partly received", "the old PO waits for goods again");
+    assert.equal((await poRow(b.poId)).status, "Partly received");
+  });
+
+  test("a lot something already names is not renumbered under it", async () => {
+    const ctx = await as(admin);
+    const a = await approvedPo("Asian Solvents", [{ item: "1 L Tin Can", quantity: 100, ratePaise: 8950 }]);
+    const b = await approvedPo("Bharat Chemicals", [{ item: "Plain Carton", quantity: 100, ratePaise: 1200 }]);
+    assert.ok((await grn(ctx, a.po, { poLine: a.lines["1 L Tin Can"], qty: "30" })).ok);
+    const line = await lineOf(a.poId);
+    const [lot] = await db.select().from(erpPurchases).where(eq(erpPurchases.inwardId, line.id));
+    const t = await mod("transfers").forms!.new(ctx, { date: TODAY, type: "Purchase", from: "Bhiwandi", item: "1 L Tin Can", lot: lot.lotNo, qty: "5", to: "Ambernath" }, []);
+    assert.ok(t.ok, JSON.stringify(t));
+    const r = await mod("inward").forms!.edit(ctx, { po: b.po, poLine: b.lines["Plain Carton"], date: TODAY, godown: "Bhiwandi", qty: "30" }, [], line.id);
+    assert.equal(r.ok, false);
+    assert.match(r.ok ? "" : r.error, /moved to another godown/);
+    assert.equal((await db.select().from(erpPurchases).where(eq(erpPurchases.id, lot.id)))[0].lotNo, lot.lotNo, "nothing changed");
+  });
+
+  test("a PO is edited after it was sent and received against — figures, and a new supplier carried onto the goods", async () => {
+    const ctx = await as(admin);
+    const a = await approvedPo("Asian Solvents", [
+      { item: "1 L Tin Can", quantity: 100, ratePaise: 8950 },
+      { item: "Carton 12", quantity: 50, ratePaise: 1450 },
+    ]);
+    await db.update(erpPurchaseOrders).set({ status: "Sent" }).where(eq(erpPurchaseOrders.id, a.poId));
+    assert.ok((await grn(ctx, a.po, { poLine: a.lines["1 L Tin Can"], qty: "20" })).ok);
+    const row = (await mod("purchaseOrders").load(ctx)).rows.find((x) => x.id === a.poId);
+    assert.ok(row?.actions?.some((x) => x.id === "edit" && !x.why), "Edit is offered on a received PO");
+
+    const form = (await mod("purchaseOrders").formLoaders!.edit(ctx, a.poId))!;
+    assert.ok(!form.header.find((f) => f.k === "vendor")?.readOnly, "the supplier can change");
+    const lines = form.initLines!.map((l) => ({ ...l, qty: l.requirement.includes("Tin") ? "120" : l.qty, rate: l.requirement.includes("Tin") ? "91" : l.rate }));
+    const before = await poRow(a.poId);
+    const saved = await mod("purchaseOrders").forms!.edit(ctx, { ...form.init, vendor: "Bharat Chemicals" }, lines, a.poId);
+    assert.ok(saved.ok, JSON.stringify(saved));
+
+    const after = await poRow(a.poId);
+    assert.equal(after.supplierId, "sup_b");
+    assert.equal(after.poNumber, before.poNumber, "the number is the system's");
+    assert.equal(after.revision, before.revision + 1, "a PO already with the supplier is revised");
+    const pl = await db.select().from(erpPoLines).where(eq(erpPoLines.poId, a.poId));
+    const tin = pl.find((l) => l.rawMaterialId === "rm_can")!;
+    assert.equal(tin.quantity, 120);
+    assert.equal(tin.ratePaise, 9100);
+    const line = await lineOf(a.poId);
+    assert.equal(line.poLineId, tin.id, "the received line keeps its PO line");
+    assert.equal(line.supplierId, "sup_b");
+    const [lot] = await db.select().from(erpPurchases).where(eq(erpPurchases.inwardId, line.id));
+    assert.match(lot.lotNo, /^BCCAN1/);
+  });
+
+  test("a PO item goods arrived on is not taken off", async () => {
+    const ctx = await as(admin);
+    const a = await approvedPo("Asian Solvents", [
+      { item: "1 L Tin Can", quantity: 100, ratePaise: 8950 },
+      { item: "Carton 12", quantity: 50, ratePaise: 1450 },
+    ]);
+    assert.ok((await grn(ctx, a.po, { poLine: a.lines["1 L Tin Can"], qty: "10" })).ok);
+    const form = (await mod("purchaseOrders").formLoaders!.edit(ctx, a.poId))!;
+    const r = await mod("purchaseOrders").forms!.edit(ctx, form.init!, form.initLines!.filter((l) => !l.requirement.includes("Tin")), a.poId);
+    assert.equal(r.ok, false);
+    assert.match(r.ok ? "" : r.error, /Void those goods receipt lines first/);
+    const ok2 = await mod("purchaseOrders").forms!.edit(ctx, form.init!, form.initLines!.filter((l) => !l.requirement.includes("Carton")), a.poId);
+    assert.ok(ok2.ok, JSON.stringify(ok2));
+    assert.equal((await db.select().from(erpPoLines).where(eq(erpPoLines.poId, a.poId))).length, 1, "the item with nothing received comes off");
+  });
+
+  test("a register lot moves to another PO line, and the GRN line it came from moves with it", async () => {
+    const ctx = await as(admin);
+    const a = await approvedPo("Asian Solvents", [{ item: "1 L Tin Can", quantity: 100, ratePaise: 8950 }]);
+    const b = await approvedPo("Asian Solvents", [{ item: "Carton 12", quantity: 100, ratePaise: 1450 }]);
+    assert.ok((await grn(ctx, a.po, { poLine: a.lines["1 L Tin Can"], qty: "25" })).ok);
+    const line = await lineOf(a.poId);
+    const [lot] = await db.select().from(erpPurchases).where(eq(erpPurchases.inwardId, line.id));
+    const form = (await mod("register").formLoaders!.edit(ctx, lot.id))!;
+    assert.equal(form.init?.po, a.po);
+    assert.ok(!form.header.find((f) => f.k === "po")?.readOnly, "the PO is a pick on an edit");
+    const saved = await mod("register").forms!.edit(ctx, { ...form.init, po: b.po, poLine: b.lines["Carton 12"] }, [], lot.id);
+    assert.ok(saved.ok, JSON.stringify(saved));
+    const [after] = await db.select().from(erpPurchases).where(eq(erpPurchases.id, lot.id));
+    assert.equal(after.rawMaterialId, "rm_box");
+    assert.equal(after.poId, b.poId);
+    assert.match(after.lotNo, /^ASBOX12/);
+    assert.equal((await db.select().from(erpInward).where(eq(erpInward.id, line.id)))[0].poLineId, after.poLineId);
+  });
+
+  test("a requirement on a PO is edited, item included: the PO line and what arrived on it follow", async () => {
+    const ctx = await as(admin);
+    const a = await approvedPo("Asian Solvents", [{ item: "1 L Tin Can", quantity: 100, ratePaise: 8950 }]);
+    assert.ok((await grn(ctx, a.po, { poLine: a.lines["1 L Tin Can"], qty: "15" })).ok);
+    const [pl] = await db.select().from(erpPoLines).where(eq(erpPoLines.poId, a.poId));
+    const row = (await mod("requisitions").load(ctx)).rows.find((x) => x.id === pl.requisitionId);
+    assert.ok(row?.actions?.some((x) => x.id === "edit"), "Edit is offered on a requirement already on a PO");
+    const form = (await mod("requisitions").formLoaders!.edit(ctx, pl.requisitionId))!;
+    assert.ok(!form.header.find((f) => f.k === "item")?.readOnly, "the item can change");
+    const saved = await mod("requisitions").forms!.edit(ctx, { ...form.init, item: "Carton 12", required: "90" }, [], pl.requisitionId);
+    assert.ok(saved.ok, JSON.stringify(saved));
+    const [req] = await db.select().from(erpRequisitions).where(eq(erpRequisitions.id, pl.requisitionId));
+    assert.equal(req.rawMaterialId, "rm_box");
+    assert.equal(req.requiredQty, 90);
+    assert.equal((await db.select().from(erpPoLines).where(eq(erpPoLines.id, pl.id)))[0].rawMaterialId, "rm_box");
+    const line = await lineOf(a.poId);
+    assert.equal(line.rawMaterialId, "rm_box");
+    const [lot] = await db.select().from(erpPurchases).where(eq(erpPurchases.inwardId, line.id));
+    assert.match(lot.lotNo, /^ASBOX12/);
+  });
+});

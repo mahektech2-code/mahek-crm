@@ -318,12 +318,15 @@ const LATE_TRUCK_DAYS = 30;
  * that stopped being receivable while the form was open is refused rather
  * than guessed at.
  */
-async function receivable(money = false) {
-  const [open, late] = await Promise.all([
+async function receivable(money = false, include: string[] = []) {
+  const [open, late, kept] = await Promise.all([
     purchaseOrderViews({ status: RECEIVABLE_PO }),
     purchaseOrderViews({ status: ["Received"], updatedSince: new Date(Date.now() - LATE_TRUCK_DAYS * 86_400_000) }),
+    /* An edit offers the PO a line already sits on, whatever has happened to that PO since. */
+    include.length ? purchaseOrderViews({ ids: include }) : Promise.resolve([] as PoView[]),
   ]);
-  const pos = [...open, ...late];
+  const listed = new Set([...open, ...late].map((p) => p.po.id));
+  const pos = [...open, ...late, ...kept.filter((p) => !listed.has(p.po.id))];
   const byLabel = new Map<string, PoView>(pos.map((p) => [poOption(p), p]));
   const linesBy: Record<string, string[]> = {};
   const typeOf: Record<string, string> = {};
@@ -488,8 +491,9 @@ export async function inwardFormForPo(ctx: ErpContext, poId: string): Promise<Fo
  * line has usually gone on already, to Lot testing or to Purchases and from
  * there into stock, so only what THIS edit changed is written onward: a remark
  * or a quantity somebody corrected in Purchases is left alone unless this line's
- * own figure moved. The item, the PO and the PR stay as they are, because the
- * lot number is built from them and is already on the drum labels.
+ * own figure moved. The PR stays as it is (the system's number). The PO line —
+ * and with it the supplier and the item — moves only through `retargetReceipt`,
+ * which works the lot number out again.
  *
  * Nothing refuses a line whose lot has been used. That was asked for: a late
  * correction can leave a lot's stock short, and the audit row says who did it.
@@ -532,6 +536,113 @@ async function writeInwardChange(tx: Tx, ctx: ErpContext, r: InwardRow, next: In
   if (moved("quantity")) await refreshPurchaseOrder(tx, r.poId);
 }
 
+/* ---------------------------------------------------------------------------
+ * MOVING RECEIVED GOODS TO ANOTHER PO LINE, SUPPLIER OR ITEM (Nov 2026: the
+ * owner asked for full edit everywhere in purchase, except what the system
+ * generates). The goods stay received; what they were received AGAINST
+ * changes, and every record that copied it follows in one transaction: the
+ * inward line, its tests, its register lots and the stock entries those
+ * posted. The lot number is built from the supplier, the item and the PR, so
+ * it is worked out again here, never typed.
+ *
+ * One thing holds it: a lot something else already names — moved, used in a
+ * batch, returned, its drums recorded, adjusted. Those records carry the old
+ * lot number, and renumbering under them would leave stock that adds up
+ * nowhere. Counts and stock checks do not hold it: they read the item, not
+ * the lot, and the audit row says who moved it.
+ * ------------------------------------------------------------------------- */
+
+/** Where a receipt should now sit: a PO line, and the supplier (the PO's, unless a PO edit is changing it). */
+export type ReceiptTarget = { poLineId: string; supplierId?: string };
+
+/**
+ * Moves one receipt — an inward line, or a register lot entered by hand — to
+ * `to`. Inside the caller's transaction; refuses (throws) when a lot it would
+ * renumber is already in use. Returns the PO ids touched, so the caller
+ * refreshes each once.
+ */
+export async function retargetReceipt(tx: Tx, ctx: ErpContext, from: { inwardId?: string | null; purchaseId?: string | null }, to: ReceiptTarget): Promise<string[]> {
+  const [line] = await tx
+    .select({ l: erpPoLines, poNumber: erpPurchaseOrders.poNumber, poSupplier: erpPurchaseOrders.supplierId })
+    .from(erpPoLines)
+    .innerJoin(erpPurchaseOrders, eq(erpPurchaseOrders.id, erpPoLines.poId))
+    .where(eq(erpPoLines.id, to.poLineId));
+  if (!line) return refuse(err("That PO item no longer exists.", "not_found"));
+  const supplierId = to.supplierId ?? line.poSupplier;
+  const [sup] = await tx.select().from(erpSuppliers).where(eq(erpSuppliers.id, supplierId));
+  const [mat] = await tx.select().from(erpRawMaterials).where(eq(erpRawMaterials.id, line.l.rawMaterialId));
+  if (!sup || !mat) return refuse(err("The supplier or the item no longer exists.", "not_found"));
+  const stamp = { updatedAt: new Date(), updatedById: ctx.user.id };
+  const touched = new Set<string>([line.l.poId]);
+
+  let inward: InwardRow | undefined;
+  if (from.inwardId) [inward] = await tx.select().from(erpInward).where(eq(erpInward.id, from.inwardId)).for("update");
+  else if (from.purchaseId) {
+    const [p] = await tx.select({ inwardId: erpPurchases.inwardId, testId: erpPurchases.testId }).from(erpPurchases).where(eq(erpPurchases.id, from.purchaseId));
+    const viaTest = !p?.inwardId && p?.testId ? (await tx.select({ id: erpTests.inwardId }).from(erpTests).where(eq(erpTests.id, p.testId)))[0]?.id : null;
+    const inwardId = p?.inwardId ?? viaTest;
+    if (inwardId) [inward] = await tx.select().from(erpInward).where(eq(erpInward.id, inwardId)).for("update");
+  }
+
+  const tests = inward ? await tx.select({ id: erpTests.id }).from(erpTests).where(eq(erpTests.inwardId, inward.id)) : [];
+  const lots = inward
+    ? await tx.select().from(erpPurchases).where(tests.length ? or(eq(erpPurchases.inwardId, inward.id), inArray(erpPurchases.testId, tests.map((t) => t.id))) : eq(erpPurchases.inwardId, inward.id))
+    : from.purchaseId
+      ? await tx.select().from(erpPurchases).where(eq(erpPurchases.id, from.purchaseId))
+      : [];
+
+  if (inward) {
+    if (inward.poId) touched.add(inward.poId);
+    const moved = inward.poLineId !== line.l.id;
+    await tx
+      .update(erpInward)
+      .set({ poId: line.l.poId, poLineId: line.l.id, supplierId: sup.id, rawMaterialId: mat.id, materialType: mat.materialType, unit: mat.materialType === "Box" ? "Pcs" : mat.unit, ...stamp })
+      .where(eq(erpInward.id, inward.id));
+    if (tests.length) await tx.update(erpTests).set({ rawMaterialId: mat.id, supplierId: sup.id, ...stamp }).where(inArray(erpTests.id, tests.map((t) => t.id)));
+    /* What this line corrected on its old PO line no longer stands there: struck through with the reason, as a void does. */
+    if (moved) {
+      const live = await tx.select({ id: erpPoCorrections.id }).from(erpPoCorrections).where(and(eq(erpPoCorrections.inwardId, inward.id), isNull(erpPoCorrections.cancelledAt)));
+      if (live.length) {
+        await tx
+          .update(erpPoCorrections)
+          .set({ cancelledAt: new Date(), cancelledById: ctx.user.id, cancelReason: `GRN line moved to ${poLabel(line.poNumber)}` })
+          .where(inArray(erpPoCorrections.id, live.map((c) => c.id)));
+        if (inward.poId) await tx.update(erpPurchaseOrders).set({ revision: sql`${erpPurchaseOrders.revision} + 1`, ...stamp }).where(eq(erpPurchaseOrders.id, inward.poId));
+      }
+    }
+  }
+
+  for (const lot of lots) {
+    if (lot.poId) touched.add(lot.poId);
+    const lotNo = lotNumber(sup.partyCode, mat.code, lot.prNumber);
+    if (lotNo !== lot.lotNo || lot.rawMaterialId !== mat.id) {
+      await lockLot(tx, "rm", lot.lotNo, lot.godownId);
+      const [g] = await tx.select({ name: erpGodowns.name }).from(erpGodowns).where(eq(erpGodowns.id, lot.godownId));
+      const [was] = await tx.select({ name: erpRawMaterials.name }).from(erpRawMaterials).where(eq(erpRawMaterials.id, lot.rawMaterialId));
+      const use = await lotUseBlocker(tx, lot, was?.name ?? "The item", g?.name ?? "its godown", false);
+      if (use) return refuse(err(`${use} Its lot number is on that record, so the supplier or item cannot change under it — undo that first, or correct the stock with an adjustment.`, "rule_violation"));
+      if (lotNo !== lot.lotNo) {
+        const [clash] = await tx.select({ id: erpPurchases.id }).from(erpPurchases).where(and(eq(erpPurchases.lotNo, lotNo), sql`${erpPurchases.id} <> ${lot.id}`));
+        if (clash) return refuse(err(`Lot ${lotNo} already exists — PR ${lot.prNumber} already has ${mat.name} from ${sup.name}.`, "conflict"));
+      }
+    }
+    await tx
+      .update(erpPurchases)
+      .set({ supplierId: sup.id, rawMaterialId: mat.id, lotNo, poId: line.l.poId, poLineId: line.l.id, poNumber: poLabel(line.poNumber), ...stamp })
+      .where(eq(erpPurchases.id, lot.id));
+    await refreshCache(tx, lot.id);
+    await syncPurchaseEntry(tx, lot.id);
+  }
+  return [...touched];
+}
+
+/** A PO line's label as the receipt forms pick it — "Toluene · 200 Kg" — from the receivable list, for an edit form's init. */
+function poLineLabelOf(rx: Awaited<ReturnType<typeof receivable>>, poId: string | null, poLineId: string | null): { po: string; poLine: string } {
+  const p = poId ? rx.pos.find((x) => x.po.id === poId) : undefined;
+  const l = p?.lines.find((x) => x.id === poLineId);
+  return { po: p ? poOption(p) : "", poLine: l?.label ?? "" };
+}
+
 /* ------------------------------------------------------- voiding a line */
 
 /** Voiding takes stock out of the book, so it is a stock-control decision: an ERP manager, or the stock-control power. */
@@ -562,6 +673,43 @@ export type InwardVoidPicture = {
   siblings: number;
   blocker: string | null;
 };
+
+/**
+ * WHAT HAS ALREADY READ A LOT AS STOCK: a transfer, an SFG batch, a vendor
+ * return, an empty drum, an adjustment, or a count or stock check made after it
+ * arrived. Null when nothing has. Voiding a line and moving a line to another
+ * item or supplier (which renumbers its lot) both stop on it, because those
+ * records name the lot as it was.
+ */
+export async function lotUseBlocker(
+  ex: Tx | typeof db,
+  l: { id: string; lotNo: string; rawMaterialId: string; godownId: string; createdAt: Date },
+  item: string,
+  godown: string,
+  /** A count since the lot arrived holds a void; a move keeps the stock, so only what names the lot holds it. */
+  withCounts = true,
+): Promise<string | null> {
+  const [use] = (await ex.execute(sql`
+      select why from (
+        select 1 as o, 'Lot ' || ${l.lotNo} || ' has been moved to another godown since it arrived.' as why
+          from erp_transfers where item_type = 'Purchase' and lot_no = ${l.lotNo}
+        union all
+        select 2, 'Lot ' || ${l.lotNo} || ' has been used in an SFG batch.' from erp_sfg_lines where rm_lot_no = ${l.lotNo}
+        union all
+        select 3, 'Lot ' || ${l.lotNo} || ' has a return to the supplier against it.' from erp_purchase_returns where purchase_id = ${l.id}
+        union all
+        select 4, 'Empty drums of lot ' || ${l.lotNo} || ' have been recorded.' from erp_empty_drums where purchase_id = ${l.id} and status <> 'cancelled'
+        union all
+        select 5, 'Lot ' || ${l.lotNo} || ' was adjusted on Stock on hand.' from erp_manual_adjustments where stage = 'rm' and lot = ${l.lotNo}
+        union all
+        select 6, ${item} || ' was counted at ' || ${godown} || ' after this delivery, against a book that includes it.'
+          from erp_stock_counts c where c.raw_material_id = ${l.rawMaterialId} and c.godown_id = ${l.godownId} and c.counted_at > ${l.createdAt.toISOString()}::timestamptz and c.status <> 'cancelled' and ${withCounts}
+        union all
+        select 7, ${item} || ' was stock-checked at ' || ${godown} || ' after this delivery, against a book that includes it.'
+          from erp_floor_checks f where f.stage = 'rm' and f.item_id = ${l.rawMaterialId} and f.godown_id = ${l.godownId} and f.counted_at > ${l.createdAt.toISOString()}::timestamptz and ${withCounts}
+      ) u order by o limit 1`)) as unknown as { why: string }[];
+  return use?.why ?? null;
+}
 
 export async function inwardVoidPicture(ex: Tx | typeof db, id: string): Promise<InwardVoidPicture | null> {
   const [x] = await ex
@@ -603,26 +751,8 @@ export async function inwardVoidPicture(ex: Tx | typeof db, id: string): Promise
   for (const l of lotRows) {
     if (l.status !== "Pending" || l.billReceived === "Received")
       return { ...out, blocker: `The supplier's bill is recorded against lot ${l.lotNo} (${l.status}). Undo the bill on the purchase register first.` };
-    const [use] = (await ex.execute(sql`
-      select why from (
-        select 1 as o, 'Lot ' || ${l.lotNo} || ' has been moved to another godown since it arrived.' as why
-          from erp_transfers where item_type = 'Purchase' and lot_no = ${l.lotNo}
-        union all
-        select 2, 'Lot ' || ${l.lotNo} || ' has been used in an SFG batch.' from erp_sfg_lines where rm_lot_no = ${l.lotNo}
-        union all
-        select 3, 'Lot ' || ${l.lotNo} || ' has a return to the supplier against it.' from erp_purchase_returns where purchase_id = ${l.id}
-        union all
-        select 4, 'Empty drums of lot ' || ${l.lotNo} || ' have been recorded.' from erp_empty_drums where purchase_id = ${l.id} and status <> 'cancelled'
-        union all
-        select 5, 'Lot ' || ${l.lotNo} || ' was adjusted on Stock on hand.' from erp_manual_adjustments where stage = 'rm' and lot = ${l.lotNo}
-        union all
-        select 6, ${x.item} || ' was counted at ' || ${x.godown} || ' after this delivery, against a book that includes it.'
-          from erp_stock_counts c where c.raw_material_id = ${l.rawMaterialId} and c.godown_id = ${l.godownId} and c.counted_at > ${l.createdAt.toISOString()}::timestamptz and c.status <> 'cancelled'
-        union all
-        select 7, ${x.item} || ' was stock-checked at ' || ${x.godown} || ' after this delivery, against a book that includes it.'
-          from erp_floor_checks f where f.stage = 'rm' and f.item_id = ${l.rawMaterialId} and f.godown_id = ${l.godownId} and f.counted_at > ${l.createdAt.toISOString()}::timestamptz
-      ) u order by o limit 1`)) as unknown as { why: string }[];
-    if (use) return { ...out, blocker: `${use.why} Correct it with a stock adjustment instead of voiding the delivery.` };
+    const use = await lotUseBlocker(ex, l, x.item, x.godown);
+    if (use) return { ...out, blocker: `${use} Correct it with a stock adjustment instead of voiding the delivery.` };
   }
   return out;
 }
@@ -680,7 +810,8 @@ async function inwardEditForm(ctx: ErpContext, id: string): Promise<FormSpec | n
     .innerJoin(erpGodowns, eq(erpGodowns.id, erpInward.godownId))
     .where(eq(erpInward.id, id));
   if (!x) return null;
-  const gds = await godownOptions(ctx, { lost: false });
+  const [gds, rx] = await Promise.all([godownOptions(ctx, { lost: false }), receivable(ctx.powers.has("viewPurchaseMoney"), x.r.poId ? [x.r.poId] : [])]);
+  const at = poLineLabelOf(rx, x.r.poId, x.r.poLineId);
   const chemical = x.r.materialType === "Chemical";
   const scale = chemical && x.unit === "Kg";
   const own = x.r.drumOwnership as "mahek" | "returnable" | null;
@@ -691,7 +822,10 @@ async function inwardEditForm(ctx: ErpContext, id: string): Promise<FormSpec | n
     title: `Edit PR ${x.r.prNumber} · ${x.item}`,
     sub: x.r.routed ? `Already sent to ${x.r.routed}: a change here carries over to it and to stock.` : undefined,
     submit: "Save line",
+    data: { supplierOf: rx.supplierOf, pendingOf: rx.pendingOf },
     init: {
+      ...at,
+      item: x.item,
       date: x.r.receivedDate,
       godown: x.godown,
       drums: x.r.drums == null ? "" : String(x.r.drums),
@@ -702,6 +836,19 @@ async function inwardEditForm(ctx: ErpContext, id: string): Promise<FormSpec | n
       remark: x.r.remark ?? "",
     },
     header: [
+      /* The PO and its item can be corrected: the supplier and the item follow the PO line, and the lot is renumbered (`retargetReceipt`). */
+      {
+        k: "po",
+        l: "Purchase order",
+        t: "select",
+        req: !!x.r.poId,
+        opts: [...rx.byLabel.keys()],
+        hint: x.r.poId ? "A different PO or item changes the supplier and the item on this line, its test and its lot." : "Received before POs. Pick one to put it on a PO.",
+      },
+      { k: "poLine", l: "PO item", t: "select", req: !!x.r.poId, optsBy: { by: "po", map: rx.linesBy } },
+      { k: "item", l: "Item", t: "select", readOnly: true, opts: [...new Set([x.item, ...Object.values(rx.itemOf)])], fillBy: { by: ["po", "poLine"], map: rx.itemOf } },
+      { k: "supplier", l: "Supplier", t: "derived", calc: "inward.supplier" },
+      { k: "pending", l: "Against the PO", t: "derived", calc: "register.pending", when: { k: "poLine", notEmpty: true } },
       { k: "date", l: "Date received", t: "date", req: true },
       godownField(gds),
       ...(chemical
@@ -1115,8 +1262,23 @@ const inward: ScreenModule = {
     },
     async edit(ctx, h, _lines, id) {
       if (!id) return err("No line named.", "not_found");
-      const [r] = await db.select().from(erpInward).where(eq(erpInward.id, id));
-      if (!r) return err("That line no longer exists.", "not_found");
+      const [was] = await db.select().from(erpInward).where(eq(erpInward.id, id));
+      if (!was) return err("That line no longer exists.", "not_found");
+      /* A different PO line moves the receipt first; the figures below are then read for the item it is now. */
+      let target: { poLineId: string } | null = null;
+      /* Blank keeps the PO line it is on (and is what an older page sends). */
+      if (text(h.po)) {
+        const rx = await receivable(false, was.poId ? [was.poId] : []);
+        const po = rx.find(text(h.po));
+        if (!po) return fieldErr("po", "Pick the purchase order these goods came on");
+        const line = po.lines.find((l) => l.label === text(h.poLine));
+        if (!line) return fieldErr("poLine", "Pick an item on this PO");
+        if (line.id !== was.poLineId) target = { poLineId: line.id };
+      }
+      const [lineMat] = target
+        ? await db.select({ m: erpRawMaterials }).from(erpPoLines).innerJoin(erpRawMaterials, eq(erpRawMaterials.id, erpPoLines.rawMaterialId)).where(eq(erpPoLines.id, target.poLineId))
+        : [];
+      const r: InwardRow = lineMat ? { ...was, rawMaterialId: lineMat.m.id, materialType: lineMat.m.materialType } : was;
       const [m] = await db.select({ unit: erpRawMaterials.unit }).from(erpRawMaterials).where(eq(erpRawMaterials.id, r.rawMaterialId));
       const godownId = await godownIdByName(text(h.godown));
       if (!godownId) return fieldErr("godown", "Godown is required");
@@ -1149,9 +1311,17 @@ const inward: ScreenModule = {
         drumOwnership: chemical ? await drumOwnerNamed(h.drumOwner, r.supplierId) : null,
         remark: text(h.remark),
       };
-      await db.transaction((tx) => writeInwardChange(tx, ctx, r, next));
-      await erpAudit(ctx, "erp.inward.edit", "erp_inward", id, r, next);
-      return okVoid(`PR ${r.prNumber} line saved`);
+      const res = await inTx(async (tx) => {
+        const touched = target ? await retargetReceipt(tx, ctx, { inwardId: id }, target) : [];
+        /* Read back after the move, so the change below is measured against what the line now says. */
+        const [now] = await tx.select().from(erpInward).where(eq(erpInward.id, id));
+        if (target && now.materialType === "Chemical" && next.drumOwnership == null) next.drumOwnership = await drumOwnerNamed(h.drumOwner, now.supplierId, tx);
+        await writeInwardChange(tx, ctx, now, next);
+        for (const poId of touched) await refreshPurchaseOrder(tx, poId);
+        return okVoid(`PR ${was.prNumber} line saved${target ? " · moved to the PO item picked" : ""}`);
+      });
+      if (res.ok) await erpAudit(ctx, "erp.inward.edit", "erp_inward", id, was, { ...next, ...(target ? { moved: target } : {}) });
+      return res;
     },
     /* A PR's transport and other cost, recorded or corrected after the inward. */
     async costs(ctx, h, _lines, recordId) {
@@ -1763,7 +1933,12 @@ async function registerRows(where: SQL): Promise<RegRow[]> {
 async function purchaseForm(ctx: ErpContext, id?: string): Promise<FormSpec | null> {
   const [gds, sups] = await Promise.all([godownOptions(ctx, { lost: false }), db.select().from(erpSuppliers).orderBy(asc(erpSuppliers.name))]);
   const mats = await db.select().from(erpRawMaterials).orderBy(asc(erpRawMaterials.name));
-  const rx = await receivable(ctx.powers.has("viewPurchaseMoney"));
+  let editing: RegRow | undefined;
+  if (id) {
+    [editing] = await registerRows(eq(erpPurchases.id, id));
+    if (!editing) return null;
+  }
+  const rx = await receivable(ctx.powers.has("viewPurchaseMoney"), editing?.p.poId ? [editing.p.poId] : []);
   const money = ctx.powers.has("viewPurchaseMoney");
   const partyCode: Record<string, string> = {};
   sups.forEach((s) => (partyCode[s.name] = s.partyCode ?? ""));
@@ -1792,15 +1967,12 @@ async function purchaseForm(ctx: ErpContext, id?: string): Promise<FormSpec | nu
     gst: "18",
     company: "Mahek Marketing India",
   };
-  let editing: RegRow | undefined;
-  if (id) {
-    [editing] = await registerRows(eq(erpPurchases.id, id));
-    if (!editing) return null;
+  if (editing) {
     const p = editing.p;
     init = {
       pr: String(p.prNumber),
       date: p.purchaseDate,
-      po: p.poNumber ? `${p.poNumber} · ${editing.supplier}` : "Bought before POs were kept in the ERP",
+      ...poLineLabelOf(rx, p.poId, p.poLineId),
       supplier: editing.supplier,
       item: editing.item,
       qty: String(p.quantity),
@@ -1822,26 +1994,26 @@ async function purchaseForm(ctx: ErpContext, id?: string): Promise<FormSpec | nu
   const header: FieldSpec[] = [
     { k: "pr", l: "PR number", t: id ? "text" : "num", readOnly: !!id, sec: "Purchase", hint: id ? undefined : "Blank draws the next PR number." },
     { k: "date", l: "Purchase date", t: "date", req: true },
-    ...(id
-      ? ([
-          { k: "po", l: "Purchase order", t: "text", readOnly: true },
-          { k: "supplier", l: "Party", t: "select", req: true, opts: sups.map((s) => s.name), readOnly: true },
-          { k: "item", l: "Raw item", t: "select", req: true, opts: mats.map((m) => m.name), readOnly: true },
-        ] as FieldSpec[])
-      : ([
-          {
-            k: "po",
-            l: "Purchase order",
-            t: "select",
-            req: true,
-            opts: [...rx.byLabel.keys()],
-            hint: rx.byLabel.size ? "No purchase without a PO: a lot entered by hand is bought on a PO's item." : "No PO is waiting for goods — link or create it on the requirement first.",
-          },
-          { k: "poLine", l: "PO item", t: "select", req: true, optsBy: { by: "po", map: rx.linesBy } },
-          { k: "pending", l: "Against the PO", t: "derived", calc: "register.pending", when: { k: "poLine", notEmpty: true } },
-          { k: "supplier", l: "Party", t: "derived", calc: "inward.supplier" },
-          { k: "item", l: "Raw item", t: "select", req: true, readOnly: true, opts: mats.map((m) => m.name), fillBy: { by: ["po", "poLine"], map: rx.itemOf } },
-        ] as FieldSpec[])),
+    /* On an edit the PO and its item can be changed too: the party and the item follow the PO line, and the
+       lot number is worked out again from them (`retargetReceipt`). A lot from before POs may stay without one. */
+    {
+      k: "po",
+      l: "Purchase order",
+      t: "select",
+      req: !editing || !!editing.p.poId,
+      opts: [...rx.byLabel.keys()],
+      hint: editing
+        ? editing.p.poId
+          ? "Changing the PO or its item changes the party and the item, and the lot number with them."
+          : "Bought before POs were kept in the ERP. Pick one to put it on a PO."
+        : rx.byLabel.size
+          ? "No purchase without a PO: a lot entered by hand is bought on a PO's item."
+          : "No PO is waiting for goods — link or create it on the requirement first.",
+    },
+    { k: "poLine", l: "PO item", t: "select", req: !editing || !!editing.p.poId, optsBy: { by: "po", map: rx.linesBy } },
+    { k: "pending", l: "Against the PO", t: "derived", calc: "register.pending", when: { k: "poLine", notEmpty: true } },
+    { k: "supplier", l: "Party", t: "derived", calc: "inward.supplier" },
+    { k: "item", l: "Raw item", t: "select", req: true, readOnly: true, opts: mats.map((m) => m.name), fillBy: { by: ["po", "poLine"], map: rx.itemOf } },
     { k: "lot", l: "Raw-material lot no", t: "derived", calc: "register.lot" },
     { k: "qty", l: "Quantity", t: "num", req: true, min: 0.001, sec: "Quantity", qtyUnit: { of: "unit" }, ...(id ? {} : { fillBy: { by: ["po", "poLine"], map: rx.qtyOf } }) },
     { k: "unit", l: "Unit", t: "select", req: true, opts: ["Kg", "Litre", "Pcs"], hint: "What the lot is kept in. The quantity can be typed in any unit of this kind — drums, grams, tonnes.", ...(id ? {} : { fillBy: { by: ["po", "poLine"], map: unitOfLine } }) },
@@ -2481,15 +2653,29 @@ async function savePurchase(ctx: ErpContext, h: Record<string, string>, id?: str
   if (id) {
     const [before] = await db.select().from(erpPurchases).where(eq(erpPurchases.id, id));
     if (!before) return err("That purchase no longer exists.", "not_found");
+    /* The PO line picked on the form; a lot from before POs may leave it blank. */
+    let target: { poLineId: string; poId: string } | null = null;
+    /* Blank keeps the PO line it is on (and is what an older page sends). */
+    if (text(h.po)) {
+      const rx = await receivable(money, before.poId ? [before.poId] : []);
+      const po = rx.find(text(h.po));
+      if (!po) return fieldErr("po", "Pick the purchase order this lot was bought on");
+      const line = po.lines.find((l) => l.label === text(h.poLine));
+      if (!line) return fieldErr("poLine", "Pick an item on this PO");
+      if (line.id !== before.poLineId) target = { poLineId: line.id, poId: po.po.id };
+    }
     /* A lot entered by hand IS the receipt against its PO line; like the GRN, it is never refused for its quantity (0357). */
-    await db.transaction(async (tx) => {
+    const res = await inTx(async (tx) => {
+      const touched = target ? await retargetReceipt(tx, ctx, { purchaseId: id }, { poLineId: target.poLineId }) : [];
       await tx.update(erpPurchases).set({ ...common, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpPurchases.id, id));
       await refreshCache(tx, id);
       await syncPurchaseEntry(tx, id);
-      if (before.source === "manual") await refreshPurchaseOrder(tx, before.poId);
+      for (const poId of new Set([...touched, ...(before.source === "manual" && before.poId ? [before.poId] : [])])) await refreshPurchaseOrder(tx, poId);
+      const [after] = await tx.select({ lotNo: erpPurchases.lotNo }).from(erpPurchases).where(eq(erpPurchases.id, id));
+      return okVoid(after && after.lotNo !== before.lotNo ? `Purchase saved · lot is now ${after.lotNo}` : "Purchase saved");
     });
-    await erpAudit(ctx, "erp.purchase.edit", "erp_purchase", id, before, common);
-    return okVoid("Purchase saved");
+    if (res.ok) await erpAudit(ctx, "erp.purchase.edit", "erp_purchase", id, before, { ...common, ...(target ? { moved: target } : {}) });
+    return res;
   }
   /* A typed PR number is used as typed, so 0 or a negative would be a lot nobody can find by its PR. */
   const typedPr = int(h.pr);

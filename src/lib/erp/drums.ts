@@ -1033,6 +1033,60 @@ export async function drumRows(): Promise<DrumRow[]> {
   }));
 }
 
+/**
+ * Drums still FULL, read off the GRN rather than recorded.
+ *
+ * A drum used to appear nowhere until production scanned it empty, so the
+ * drums sitting full in the factory — Mahek's, a supplier's, or ones nobody
+ * recorded the owner of — showed on no tab and the module read as broken.
+ * Each Chemical lot lists its drum count less the drums already recorded (not
+ * cancelled), with its owner resolved by the rule a scan uses: the lot's
+ * decision before the GRN line before the supplier's master, and unknown left
+ * unknown. Nothing is stored: scanning one empty moves it from here to the
+ * recorded drums by itself, so sales, returns and FIFO never see these. Lots
+ * received before `erp.drums.inUseFrom` predate drum tracking and are left
+ * out, or every old GRN would read as drums still in the building.
+ */
+export type InUseLot = {
+  purchaseId: string; lotNo: string; prNumber: number; supplierId: string; supplier: string; material: string;
+  godownId: string; godown: string; receivedOn: string; drums: number; recorded: number; inUse: number;
+  ownership: DrumOwnership | null;
+};
+
+export async function drumsInUse(): Promise<InUseLot[]> {
+  const from = (await getConfig())["erp.drums.inUseFrom"];
+  const rows = await q<{
+    id: string; lotNo: string; pr: number; supplierId: string; supplier: string; material: string; godownId: string; godown: string;
+    on: string; drums: number; recorded: number; sOwn: string | null; iOwn: string | null; pOwn: string | null;
+  }>(db, sql`
+    select p.id, p.lot_no as "lotNo", p.pr_number as pr, p.supplier_id as "supplierId", s.name as supplier, m.name as material,
+           p.godown_id as "godownId", g.name as godown, coalesce(i.received_date, p.purchase_date)::text as on,
+           coalesce(p.drums, i.drums)::int as drums, s.drum_ownership as "sOwn", i.drum_ownership as "iOwn", p.drum_ownership as "pOwn",
+           (select count(*) from erp_empty_drums d where d.purchase_id = p.id and d.status <> 'cancelled')::int as recorded
+      from erp_purchases p
+      join erp_suppliers s on s.id = p.supplier_id
+      join erp_raw_materials m on m.id = p.raw_material_id
+      join erp_godowns g on g.id = p.godown_id
+      left join erp_inward i on i.id = p.inward_id
+     where m.material_type = 'Chemical'
+       and coalesce(p.drums, i.drums, 0) > 0
+       and coalesce(i.received_date, p.purchase_date) >= ${from}::date
+     order by coalesce(i.received_date, p.purchase_date), p.pr_number`);
+  return rows
+    .map((r) => ({
+      purchaseId: r.id, lotNo: r.lotNo, prNumber: Number(r.pr), supplierId: r.supplierId, supplier: r.supplier, material: r.material,
+      godownId: r.godownId, godown: r.godown, receivedOn: r.on, drums: Number(r.drums), recorded: Number(r.recorded),
+      inUse: Math.max(Number(r.drums) - Number(r.recorded), 0),
+      ownership: ownershipOf(r.pOwn ?? r.iOwn, r.sOwn),
+    }))
+    .filter((l) => l.inUse > 0);
+}
+
+/** The supplier's drums of `drumsInUse` — owed back once emptied. */
+export async function returnableInUse(): Promise<InUseLot[]> {
+  return (await drumsInUse()).filter((l) => l.ownership === "returnable");
+}
+
 export type DrumHistoryLine = { at: string; text: string; by: string | null; note: string | null };
 
 /** Every drum's history, read in one query and grouped — a list of hundreds of drums must not ask once per row. */

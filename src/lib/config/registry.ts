@@ -5178,6 +5178,15 @@ export const SETTINGS = [
     max: 10080,
   },
   {
+    key: "erp.drums.inUseFrom",
+    type: "text",
+    category: "erp",
+    label: "Drums · counted as in use from GRNs received on or after",
+    description:
+      "A date, YYYY-MM-DD. A Chemical lot received on or after it lists each of its drums as \"In use, not yet emptied\" from the day the GRN is saved, until production records it empty: Mahek's on Mahek stock, a supplier's on Supplier returnable and Pending by supplier, and ones whose owner nobody recorded on Needs review. Lots received earlier came in before drums were tracked, so their drums are only listed once somebody records them empty or adds them as opening stock. Move it earlier to bring older lots in.",
+    default: "2026-10-11",
+  },
+  {
     key: "erp.drums.factoryDepartments",
     type: "text",
     category: "erp",
@@ -6403,6 +6412,12 @@ export function checkConsistency(config: Config): string[] {
     problems.push("The lightest empty drum weight must be below the heaviest.");
   }
 
+  /* An unreadable date would list every supplier lot ever received as in use, or none. */
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(config["erp.drums.inUseFrom"]) ||
+      Number.isNaN(Date.parse(`${config["erp.drums.inUseFrom"]}T00:00:00Z`))) {
+    problems.push(`The date drums are counted in use from must be written YYYY-MM-DD, not "${config["erp.drums.inUseFrom"]}".`);
+  }
+
   /* A cutover nobody can read is a cutover that hides everything or nothing,
      and which of the two depends on how Postgres happens to parse it. */
   if (!/^\d{4}-\d{2}-\d{2}$/.test(config["fieldActivity.cutoverDate"]) ||
@@ -7230,6 +7245,7 @@ export type Config = {
   "erp.drums.varianceAlertPercent": number;
   "erp.drums.sameLotMinutes": number;
   "erp.drums.factoryDepartments": string;
+  "erp.drums.inUseFrom": string;
   "erp.factory.shift": string;
   "erp.factory.dispatchDue": string;
   "erp.dispatch.requireScan": boolean;

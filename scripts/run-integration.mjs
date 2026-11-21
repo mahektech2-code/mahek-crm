@@ -326,6 +326,8 @@ const files = [
   // manager refused, never re-routed), duplicates, who may decide, rejection
   // leaving the lead alone, and the database + server + handset locks.
   "src/lib/lead-dead.test.ts",
+  // Several selected Lost leads: every one goes for approval, one bell message.
+  "src/lib/bulk-dead-requests.test.ts",
   // …and the imports that could meet one: skipped, said so, and the rest carries on.
   "src/lib/lead-dead-imports.test.ts",
   // The Telecaller-owned Qualification workflow, Prospect to Sample/Trial.
