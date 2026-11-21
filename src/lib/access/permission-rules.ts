@@ -4,8 +4,9 @@
  * Access is now three things per screen and one thing per app:
  *
  *   - POSITION, per app: Associate sees only their own records; Manager sees
- *     their own and their team's (the HRMS reporting line). Position decides
- *     what somebody SEES and nothing else — it never adds a permission.
+ *     their own and their team's (the HRMS reporting line); Everyone sees the
+ *     whole company's. Position decides what somebody SEES and nothing else —
+ *     it never adds a permission.
  *   - ACCESS on a screen opens it with every ordinary action on it.
  *   - EDIT on a screen is any row, modal or detail edit there.
  *   - DELETE on a screen is the special one, and it needs Edit.
@@ -21,7 +22,14 @@
  * rather than trusted.
  * ------------------------------------------------------------------------- */
 
-export type Position = "associate" | "manager";
+/**
+ * Whose records somebody sees in an app: their own, their own and their HRMS
+ * team's, or everybody's. The one thing position decides.
+ */
+export type Position = "associate" | "manager" | "everyone";
+
+/** Wider positions see everything narrower ones do. */
+export const POSITION_RANK: Record<Position, number> = { associate: 0, manager: 1, everyone: 2 };
 
 /** One screen's ticks. `autoEdit` marks an Edit that Delete brought along. */
 export type ScreenTicks = { edit: boolean; delete: boolean; autoEdit: boolean };

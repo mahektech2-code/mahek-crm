@@ -4,7 +4,7 @@ import { moduleGroupsForApp, writeLevelsForApp } from "../modules";
 import type { Role } from "../role-levels";
 import { ACTION_OWNERS, EVERYONE, type Owner } from "./action-owners";
 import { HANDSET_SHAPE } from "./handset-screens";
-import type { AppGrantDraft, ModuleShape, Position, ScreenTicks } from "./permission-rules";
+import { POSITION_RANK, type AppGrantDraft, type ModuleShape, type Position, type ScreenTicks } from "./permission-rules";
 
 /* ---------------------------------------------------------------------------
  * READING A SCREEN GRANT AS CAPABILITIES, AND WRITING TODAY'S LEVELS AS ONE.
@@ -36,15 +36,20 @@ export function ownersIn(app: AppId, capability: Capability): readonly Owner[] {
 
 function meets(t: ScreenTicks | undefined, o: Owner, position: Position): boolean {
   if (!t) return false;
-  if (o.position === "manager" && position !== "manager") return false;
+  if (o.position && POSITION_RANK[position] < POSITION_RANK[o.position]) return false;
   if (o.tick === "access") return true;
   if (o.tick === "edit") return t.edit;
   return t.delete;
 }
 
+/** Whether a grant holds any of these owners — a capability's, or an ERP, HRMS or Tasks power's. */
+export function holdsAny(grant: AppGrantDraft, owners: readonly Owner[]): boolean {
+  return owners.some((o) => meets(grant.screens.get(o.screen), o, grant.position));
+}
+
 export function holdsWithScreens(app: AppId, grant: AppGrantDraft, capability: Capability): boolean {
   if (EVERYONE.has(capability)) return true;
-  return ownersIn(app, capability).some((o) => meets(grant.screens.get(o.screen), o, grant.position));
+  return holdsAny(grant, ownersIn(app, capability));
 }
 
 /**

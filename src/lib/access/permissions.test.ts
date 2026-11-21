@@ -23,7 +23,8 @@ import {
   type AppGrantDraft,
   type ModuleShape,
 } from "./permission-rules";
-import { differenceForLevel, draftFromLevel, holdsWithScreens, moduleShape } from "./screen-permissions";
+import { ERP_POWER_OWNERS, HRMS_POWER_OWNERS, TASK_POWER_OWNERS } from "./power-owners";
+import { differenceForLevel, draftFromLevel, holdsAny, holdsWithScreens, moduleShape } from "./screen-permissions";
 
 const SHAPE: ModuleShape[] = [
   { module: "Daily calling", screens: ["crm.tasks", "crm.call-log", "crm.reminders"] },
@@ -180,6 +181,61 @@ describe("who owns which action", () => {
     assert.deepEqual(gained, {
       "crm associate": ["customer.export"],
       "sales associate": ["customer.export"],
+    });
+  });
+});
+
+describe("the ERP's, HRMS's and Tasks' own powers", () => {
+  const TABLES = [
+    ["erp", ERP_POWER_OWNERS],
+    ["hrms", HRMS_POWER_OWNERS],
+    ["tasks", TASK_POWER_OWNERS],
+  ] as const;
+
+  test("every power sits on a real screen of its app", () => {
+    for (const [app, table] of TABLES) {
+      const screens = new Set(moduleShape(app).flatMap((m) => m.screens));
+      for (const [power, owners] of Object.entries(table)) {
+        assert.ok(owners.length > 0, `${app} ${power} sits on no screen`);
+        for (const o of owners) assert.ok(screens.has(o.screen), `${app} ${power} sits on ${o.screen}, which ${app} does not have`);
+      }
+    }
+  });
+
+  test("seeing everybody's records needs the Everyone position", () => {
+    const g: AppGrantDraft = { position: "manager", modules: new Set(["Tasks"]), screens: new Map([["tasks.team", { edit: true, delete: true, autoEdit: false }]]) };
+    assert.equal(holdsAny(g, TASK_POWER_OWNERS.manageAnyone), false);
+    assert.equal(holdsAny({ ...g, position: "everyone" }, TASK_POWER_OWNERS.manageAnyone), true);
+    assert.equal(holdsAny({ ...g, position: "everyone" }, TASK_POWER_OWNERS.automations), false);
+  });
+
+  /*
+   * POWERS THAT NOW TRAVEL TOGETHER, because they sit on the same screen at
+   * the same tick. Signed off with the rule that money comes with Edit.
+   */
+  test("the powers that share a tick are exactly these", () => {
+    const shared: Record<string, string[]> = {};
+    for (const [app, table] of TABLES) {
+      const byTick = new Map<string, string[]>();
+      for (const [power, owners] of Object.entries(table)) {
+        for (const o of owners) {
+          const k = `${o.screen} ${o.tick}${o.position ? ` ${o.position}` : ""}`;
+          byTick.set(k, [...(byTick.get(k) ?? []), power]);
+        }
+      }
+      for (const [k, ps] of byTick) if (ps.length > 1) shared[`${app}: ${k}`] = ps;
+    }
+    assert.deepEqual(shared, {
+      "erp: erp.register edit": ["viewPurchaseMoney", "verifyPurchase"],
+      "erp: erp.purchaseOrders edit": ["viewPurchaseMoney", "approvePurchaseOrder"],
+      "erp: erp.sfgBatches edit": ["viewCost", "approveSfgQc"],
+      "erp: erp.orders edit": ["viewSalesRate", "viewSalesAmounts", "editOrders"],
+      "hrms: hrms.attendance edit": ["markStaff", "checkoutStaff"],
+      "hrms: hrms.leave edit": ["onBehalf", "approveLeave", "split"],
+      "hrms: hrms.offices edit": ["import", "timings"],
+      "hrms: hrms.payroll edit": ["payroll", "verifyExp"],
+      "hrms: hrms.payroll delete": ["pay", "advance"],
+      "hrms: hrms.kpi access everyone": ["perfAdmin", "salesAll"],
     });
   });
 });

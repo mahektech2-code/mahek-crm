@@ -31,7 +31,12 @@ import type { Capability } from "../capability-matrix";
 export const EVERYONE: ReadonlySet<Capability> = new Set<Capability>(["payment.record"]);
 
 export type Tick = "access" | "edit" | "delete";
-export type Owner = { screen: string; tick: Tick; position?: "manager" };
+/**
+ * `position` marks an owner that is about whose records one sees as well as
+ * what one does — the whole team's reports, everybody's tasks. The screen at
+ * its tick is not enough without at least that position.
+ */
+export type Owner = { screen: string; tick: Tick; position?: "manager" | "everyone" };
 
 const a = (screen: string): Owner => ({ screen, tick: "access" });
 const e = (screen: string): Owner => ({ screen, tick: "edit" });
