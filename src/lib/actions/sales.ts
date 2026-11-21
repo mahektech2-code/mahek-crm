@@ -78,6 +78,7 @@ import {
   type TerritoryKind,
 } from "@/lib/services/territory-service";
 import { territoryLeaves, territoryName } from "@/lib/territory-rules";
+import { acknowledgementProblem, leavesByState } from "@/lib/geography/territory-options";
 import { bookIdsIgnoringTerritory } from "@/lib/services/mbos-service";
 import {
   assignableOwner,
@@ -2202,12 +2203,62 @@ async function shopsElsewhere(salesmanId: string, wanted: Territory[]) {
        and coalesce(${ASSIGNED_TO_SQL}, '') <> ${salesmanId}`)) as unknown as { id: string; kind: string; holder: string }[];
 }
 
+/**
+ * THE SHOPS A NARROWED TERRITORY LEAVES OUTSIDE, per state.
+ *
+ * In a state that has a district or a town picked under it, a shop the tree
+ * placed only as far as the state — or not at all — is reached by a whole-state
+ * pick and by nothing finer. They are counted here, on the server, for exactly
+ * the areas asked, and `mine` is how many of them are on his handset now (and
+ * would leave it). Nothing moves them and no district is guessed for them.
+ *
+ * ACTIVE SHOPS ONLY — customers and leads that are not deleted and not
+ * deactivated — which is the same population `shopsElsewhere` counts for the
+ * hand-over, so the two figures in the dialog describe the same kind of shop.
+ */
+async function shopsOutsideDistricts(salesmanId: string, wanted: Territory[]) {
+  const out: { state: string; shops: number; mine: number }[] = [];
+  for (const [state, leaves] of leavesByState(wanted)) {
+    /* A shop is left outside when it is in the state, no district holds it, and
+       NONE of the narrowing leaves picked in that state reaches it. A typed city
+       can reach an unplaced shop whose city text matches; a district never can.
+       `coalesce(…, false)` because a district test on a shop with no district is
+       NULL, and NOT NULL would silently drop exactly the shops being counted. */
+    const [row] = (await db.execute(sql`
+      select count(*)::int as shops,
+             (count(*) filter (where coalesce(${ASSIGNED_TO_SQL}, '') = ${salesmanId}))::int as mine
+        from customers
+       where ${territoryClause([{ kind: "state", value: state }])}
+         and customers.resolved_district_id is null
+         and customers.deleted_at is null
+         and customers.status <> 'deactivated'
+         and not coalesce(${territoryClause(leaves as Territory[])}, false)`)) as unknown as {
+      shops: number;
+      mine: number;
+    }[];
+    if (row && row.shops > 0) out.push({ state, shops: row.shops, mine: row.mine });
+  }
+  return out;
+}
+
+/** Whether these areas differ from what he is allocated now — one reading for the preview and the save. */
+async function areasDiffer(salesmanId: string, wanted: Territory[]): Promise<boolean> {
+  const key = (t: { kind: string; value: string; parent?: string }) =>
+    `${t.kind}:${(t.parent ?? "").toLowerCase()}:${t.value.toLowerCase()}`;
+  const had = (await territoriesFor(salesmanId)).filter((t) => t.kind !== "region").map(key).sort();
+  return JSON.stringify(had) !== JSON.stringify(wanted.map(key).sort());
+}
+
 export type AreaHandover = {
   total: number;
   /** Whose books they are in now, biggest first. */
   from: { name: string; customers: number; leads: number }[];
   /** Moving a shop moves its revenue and targets, so it is `customer.reassign` — Accounts' and admin's. */
   canMove: boolean;
+  /** Per narrowed state, the shops no district can reach — what Save must be told it is leaving outside. */
+  outside: { state: string; shops: number; mine: number }[];
+  /** Whether saving these areas changes anything. An unchanged save needs no acknowledgement. */
+  changed: boolean;
 };
 
 /** What the dialog shows before Save: the shops in these areas held by somebody else, and from whom. */
@@ -2232,6 +2283,8 @@ export async function previewAreaHandover(input: {
       total: shops.length,
       from: [...by.values()].sort((a, b) => b.customers + b.leads - (a.customers + a.leads)),
       canMove: await canFor(user, "customer.reassign"),
+      outside: await shopsOutsideDistricts(input.salesmanId, areas.data),
+      changed: await areasDiffer(input.salesmanId, areas.data),
     });
   } catch (e) {
     return fromThrown(e);
@@ -2314,6 +2367,13 @@ export async function setSalesmanTerritories(input: {
    * looking and saving is refused rather than moved unseen.
    */
   handOver?: number;
+  /**
+   * The shops, per state, the dialog said this narrowing leaves outside, ticked
+   * as understood. Required when the areas change and any shop would be left
+   * outside; recomputed here and compared state by state, and a missing or
+   * stale one — in any state — is refused. Never trusted from the screen.
+   */
+  acknowledgedOutside?: { state: string; shops: number }[];
 }): Promise<Result<void>> {
   try {
     const user = await requireSalesAccess(SALES_MANAGER("sales.people", "sales.territory"));
@@ -2338,6 +2398,18 @@ export async function setSalesmanTerritories(input: {
     const had = before.filter((t) => t.kind !== "region").map(key).sort();
     const now = wanted.map(key).sort();
     const areasChanged = JSON.stringify(had) !== JSON.stringify(now);
+
+    /* NARROWING LEAVES SHOPS OUTSIDE, and saving says so first. Recomputed
+       here for exactly these areas; an unchanged save never needs it. */
+    if (areasChanged) {
+      const outside = await shopsOutsideDistricts(input.salesmanId, wanted);
+      const problem = acknowledgementProblem({
+        changed: true,
+        outside,
+        acknowledged: Array.isArray(input.acknowledgedOutside) ? input.acknowledgedOutside : undefined,
+      });
+      if (problem) return err(problem, "conflict");
+    }
 
     /* THE HAND-OVER moves revenue and targets between people, so it is
        `customer.reassign` (Accounts' and admin's) on top of the screen's own

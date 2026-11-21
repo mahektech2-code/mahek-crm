@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Button, Callout, Progress, SectionLabel, controlClass, cx } from "@/components/ui/primitives";
 import { DialogBody, DialogTitle, DialogFooter, DialogHeader, ErpDialog, StepBar } from "./dialog";
 import { Badge } from "./badge";
@@ -9,7 +9,9 @@ import { runCalc } from "@/lib/erp/calc";
 import "@/lib/erp/calcs";
 import { fd, nf, resolveField, whenHolds, type FieldSpec, type FormSpec } from "@/lib/erp/ui";
 import { hitSummary, linesFor, searchGrnItems, type GrnItem, type GrnPoLine } from "@/lib/erp/engines/grn-pick";
+import { grnReview } from "@/lib/erp/engines/grn-review";
 import { Field } from "./field";
+import { GrnReview } from "./grn-review";
 import { checkField, optsFor } from "./form-check";
 import { useKit } from "./kit";
 import { formSub } from "./quiet-copy";
@@ -24,7 +26,7 @@ import { formSub } from "./quiet-copy";
  * which reads every line's PO back and refuses what it no longer allows.
  * ------------------------------------------------------------------------- */
 
-type Step = "item" | "po" | "lines";
+type Step = "item" | "po" | "lines" | "review";
 type Line = Record<string, string>;
 
 /** Line fields the pick already answered: drawn in the card's heading, not as boxes. */
@@ -53,6 +55,8 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
   const [errs, setErrs] = useState<Record<string, string>>({});
   const [topError, setTopError] = useState("");
   const [busy, setBusy] = useState(false);
+  /* Set the instant Save is pressed: `busy` is state and a second click can land before it renders. */
+  const inFlight = useRef(false);
 
   /* Which open line each line of this receipt is, so it is not offered twice. */
   const onReceipt = new Set(lines.map((l) => `${l.po}|${l.poLine}`));
@@ -112,7 +116,8 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
   const headerFields = spec.header.filter((f) => !HEADER_SKIP.has(f.k) && visible(f)).map((f) => resolved(f));
   const lineFields = (l: Line) => (spec.line ?? []).filter((f) => !PICKED.has(f.k) && visible(f, l)).map((f) => resolved(f, l));
 
-  const submit = async () => {
+  /** The same browser checks the save always ran; true when every box passes. */
+  const validate = (): boolean => {
     const e: Record<string, string> = {};
     headerFields.forEach((f) => {
       const m = checkField(f, h[f.k] ?? "");
@@ -125,7 +130,22 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
       }),
     );
     setErrs(e);
-    if (Object.keys(e).length) return;
+    return Object.keys(e).length === 0;
+  };
+
+  /** Receipt details → Review: nothing is sent, the boxes are only checked. */
+  const toReview = () => {
+    setTopError("");
+    if (validate()) setStep("review");
+  };
+
+  const submit = async () => {
+    if (inFlight.current) return;
+    if (!validate()) {
+      setStep("lines");
+      return;
+    }
+    inFlight.current = true;
     setBusy(true);
     setTopError("");
     let res: Awaited<ReturnType<typeof kit.submitForm>>;
@@ -135,6 +155,7 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
       setTopError("That could not be saved. Check the connection and try again.");
       return;
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
     if (res.ok) return onSaved(res.message ?? "Saved");
@@ -143,13 +164,21 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
       const key = /^l\d+\./.test(x.field) || x.field.startsWith("h.") ? x.field : `h.${x.field}`;
       fe[key] = x.message;
     });
-    if (Object.keys(fe).length) setErrs(fe);
-    else setTopError(res.error);
+    /* A refusal that names a box is shown beside it, so go back to the step with the boxes. */
+    if (Object.keys(fe).length) {
+      setErrs(fe);
+      setStep("lines");
+    } else setTopError(res.error);
   };
 
-  const stepNo = step === "item" ? 1 : step === "po" ? 2 : 3;
+  /* No closing while the receipt is on its way. */
+  const close = () => {
+    if (!inFlight.current) onClose();
+  };
+
+  const stepNo = step === "item" ? 1 : step === "po" ? 2 : step === "lines" ? 3 : 4;
   const sub =
-    step === "lines"
+    step === "lines" || step === "review"
       ? `${vendor ?? ""} · ${spec.init?.prFixed ? `PR ${spec.init.prFixed}` : "PR number on save"}`
       : step === "po"
         ? null
@@ -160,15 +189,16 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
   const poLines = picked ? offered(picked) : [];
 
   return (
-    <ErpDialog onClose={onClose} label={spec.title} width={step === "lines" ? 920 : 760}>
-      <DialogHeader onClose={onClose}>
+    <ErpDialog onClose={close} label={spec.title} width={step === "lines" || step === "review" ? 920 : 760}>
+      <DialogHeader onClose={close}>
         <DialogTitle>{spec.title}</DialogTitle>
         {sub ? <div className="mt-0.5 text-meta text-muted">{sub}</div> : null}
       </DialogHeader>
       {/* The steps follow the truck, not a page order: adding a second item goes back to the first. */}
-      <StepBar steps={["Item received", "Purchase order", "Receipt details"]} active={stepNo - 1} reached={stepNo - 1} onChange={() => {}} />
+      <StepBar steps={["Item received", "Purchase order", "Receipt details", "Review"]} active={stepNo - 1} reached={stepNo - 1} onChange={() => {}} />
 
-      <DialogBody>
+      {/* Keyed on the step: a step starts at the top, whatever the last one was scrolled to. */}
+      <DialogBody key={step}>
         {step === "item" ? (
           <section className="grid gap-2">
             <label htmlFor="grn-item" className={fieldLabelClass}>
@@ -364,16 +394,36 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
                 ))}
               </div>
             </div>
-            {topError ? (
-              <Callout tone="danger">
-                <span className="text-sm font-medium text-danger">{topError}</span>
-              </Callout>
-            ) : null}
+          </>
+        ) : null}
+
+        {step === "review" ? (
+          <>
+            {/* Read-only: it says back what was entered. A mistake is put right on its own step, which each Change goes back to. */}
+            <GrnReview
+              model={grnReview({ header: spec.header, line: spec.line ?? [], h, lines, data })}
+              go={{
+                items: () => setStep("item"),
+                /* The PO belongs to the item's line: to pick another, remove the line on Receipt details and search the item again. */
+                orders: () => setStep("lines"),
+                lines: () => setStep("lines"),
+                delivery: () => setStep("lines"),
+              }}
+            />
           </>
         ) : null}
       </DialogBody>
 
-      <DialogFooter>
+      {/* A refusal that names no box is said here, beside Save, where it cannot be scrolled out of sight. */}
+      {topError ? (
+        <div className="flex-none px-6 pt-3">
+          <Callout tone="danger" className="mb-0">
+            <span className="text-sm font-medium text-danger">{topError}</span>
+          </Callout>
+        </div>
+      ) : null}
+
+      <DialogFooter left={`Step ${stepNo} of 4`}>
         {step === "item" ? (
           lines.length ? (
             <Button variant="secondary" onClick={() => setStep("lines")}>
@@ -406,6 +456,23 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
           <>
             <Button variant="secondary" onClick={onClose}>
               Cancel
+            </Button>
+            <Button variant="primary" onClick={toReview}>
+              Review
+            </Button>
+          </>
+        ) : null}
+        {step === "review" ? (
+          <>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setTopError("");
+                setStep("lines");
+              }}
+              disabled={busy}
+            >
+              Back
             </Button>
             <Button variant="primary" onClick={() => void submit()} disabled={busy}>
               {busy ? "Saving…" : spec.submit}
