@@ -15,6 +15,8 @@ import { confirmedCommitmentSql } from "../lead-commitment";
 import type { LeadFilters } from "../lead-filters";
 import { LEAD_TILES, type LeadTileId, type LeadView } from "../lead-views";
 import type { VantageSeats } from "../lead-vantage";
+import { rawStagesOf } from "../lead-display";
+import type { DisplayStage } from "../engines/lead-ladder";
 import { leadFilterClause, leadsVisible, managerScope, scopeNarrowing } from "./sales-service";
 
 /* ---------------------------------------------------------------------------
@@ -334,3 +336,55 @@ export async function leadTileCounts(
     ids.map((id) => [id, Number(row?.[id] ?? 0)]),
   ) as Record<LeadTileId, number>;
 }
+
+/**
+ * THE LEAD STAGE SUMMARY — how many open leads sit at each pipeline stage.
+ *
+ * Counted over the whole of what this person may see (`leadsVisible`), never
+ * over the filters or the view of the list beneath it: the card is the shape
+ * of the book, and a card that changed with every search box would stop being
+ * one. Open leads only — not archived, not converted, not Lost or Dead — so
+ * a stage's figure agrees with the `stage=` filter the list would apply.
+ * One statement, one count per stage, so the figures describe one instant.
+ */
+export async function leadStageSummary(): Promise<
+  { stage: DisplayStage; count: number; min: number; max: number }[]
+> {
+  const scope = await managerScope();
+  const stages = SUMMARY_STAGES;
+  /* MIN is created within the last 24 hours, MAX is older: two filters over the
+     same rows, so MIN + MAX is the total by construction. */
+  const inStage = (s: DisplayStage) =>
+    sql`c.lead_stage::text in (${sql.join(rawStagesOf(s).map((r) => sql`${r}`), sql`, `)})`;
+  const [row] = await db.execute<Record<string, number>>(sql`
+    select ${sql.join(
+      stages.flatMap((s) => [
+        sql`count(*) filter (where ${inStage(s)})::int as ${sql.raw(`"${s}"`)}`,
+        sql`count(*) filter (where ${inStage(s)} and c.created_at >= now() - interval '24 hours')::int as ${sql.raw(`"${s}_min"`)}`,
+      ]),
+      sql`, `,
+    )}
+      from customers c
+     where c.lead_stage is not null
+       and c.lead_archived = false
+       and c.deleted_at is null
+       and ${notConverted()}
+       ${leadsVisible(scope)}
+  `);
+  return stages.map((stage) => {
+    const count = Number(row?.[stage] ?? 0);
+    const min = Number(row?.[`${stage}_min`] ?? 0);
+    return { stage, count, min, max: count - min };
+  });
+}
+
+/** The pipeline stages the summary draws, in ladder order. Customer is not
+ *  one: a converted lead has left the funnel. */
+const SUMMARY_STAGES: readonly DisplayStage[] = [
+  "suspect",
+  "prospect",
+  "qualification",
+  "sample_trial",
+  "negotiation",
+  "first_order",
+];
