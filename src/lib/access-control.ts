@@ -4,7 +4,8 @@ import { randomUUID } from "node:crypto";
 import { headers } from "next/headers";
 import { and, eq, inArray, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
-import { appAccess, appIdEnum, auditLog, users, type User } from "@/db/schema";
+import { appAccess, appIdEnum, appScreenAccess, auditLog, users, type User } from "@/db/schema";
+import { grantFromRows, holdsWithScreens } from "@/lib/access/screen-permissions";
 import { APP_HEADER, UNNAMED_API_HEADER } from "@/proxy";
 import { inCrmSalesManagerWorkspace, leadInSalesManagersBook, teamOwnerIdsFor } from "@/lib/services/crm-sales-manager-scope";
 import { type AppId } from "@/lib/apps";
@@ -204,16 +205,9 @@ export async function requestHat(user: {
   const app = await requestAppId();
   if (!app) return null;
 
-  const [grant] = await db
-    .select({ role: appAccess.role })
-    .from(appAccess)
-    .where(
-      and(
-        eq(appAccess.userId, user.id),
-        eq(appAccess.app, app as (typeof appIdEnum.enumValues)[number]),
-      ),
-    )
-    .limit(1);
+  /* The same hat `hatsFor` built — carrying the screen model where the grant
+     was converted — so the app in force and the union cannot answer differently. */
+  const grant = (await hatsFor(user)).find((h) => h.app === app);
 
   /*
    * The APP is returned even where the grant names no role, because the app is
@@ -222,7 +216,7 @@ export async function requestHat(user: {
    * approval queue down for anybody granted Accounts from a terminal.
    */
   if (!grant) return null;
-  return { app: app as AppId, role: (grant.role as Role | null) ?? "associate" };
+  return grant;
 }
 
 /**
@@ -291,7 +285,19 @@ export async function scopeForUser(
     return { user, role, scope: { kind: "all", userIds: null } };
   }
 
-  if (role === "associate") {
+  /*
+   * THE SCREEN MODEL'S POSITION, where the grant was converted: it decides
+   * whose records are seen and nothing else. Everyone is the whole company;
+   * Associate their own book; Manager falls through to the team below.
+   */
+  if (hat?.position === "everyone") {
+    return { user, role, scope: { kind: "all", userIds: null } };
+  }
+  if (hat?.position === "associate") {
+    return { user, role: "associate", scope: { kind: "own", userIds: [user.id] } };
+  }
+
+  if (role === "associate" && hat?.position !== "manager") {
     return {
       user,
       role: "associate",
@@ -470,13 +476,29 @@ const hatsForIds = cache(async function hatsForIds(
   role: string,
 ): Promise<Hat[]> {
   const rows = await db
-    .select({ app: appAccess.app, role: appAccess.role })
+    .select({ app: appAccess.app, role: appAccess.role, position: appAccess.position })
     .from(appAccess)
     .where(eq(appAccess.userId, userId));
 
+  /* THE SCREEN MODEL, for every grant converted to it (a position is set):
+     the capability is answered from the ticks on that app's screens. */
+  const converted = rows.some((r) => r.position);
+  const screenRows = converted
+    ? await db
+        .select({ app: appScreenAccess.app, screen: appScreenAccess.screen, edit: appScreenAccess.canEdit, del: appScreenAccess.canDelete, auto: appScreenAccess.editByDelete })
+        .from(appScreenAccess)
+        .where(eq(appScreenAccess.userId, userId))
+    : [];
+
   const hats: Hat[] = [{ app: null, role: role as Role }];
   for (const r of rows) {
-    hats.push({ app: r.app as AppId, role: (r.role ?? "associate") as Role });
+    const hat: Hat = { app: r.app as AppId, role: (r.role ?? "associate") as Role };
+    if (r.position) {
+      const grant = grantFromRows(r.position, screenRows.filter((x) => x.app === r.app));
+      hat.position = r.position;
+      hat.holds = (c) => holdsWithScreens(r.app as AppId, grant, c);
+    }
+    hats.push(hat);
   }
   return hats;
 });

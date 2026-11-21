@@ -19,7 +19,7 @@ import {
 } from "@/lib/services/sales-service";
 import { splitFilter, type LeadFilters } from "@/lib/lead-filters";
 import { viewFromParam } from "@/lib/lead-views";
-import { leadTileCounts, leadWorklistCounts } from "@/lib/services/lead-views-service";
+import { leadStageSummary, leadTileCounts, leadWorklistCounts } from "@/lib/services/lead-views-service";
 import {
   appointmentQueue,
   canLead,
@@ -164,6 +164,7 @@ export async function Body({
     viewer,
     tiles,
     places,
+    stageSummary,
   ] = await Promise.all([
       leadsPage(day, {
         archived: showArchived,
@@ -218,6 +219,7 @@ export async function Body({
         city: filters.city,
         area: filters.area,
       }),
+      showArchived ? null : leadStageSummary(),
     ]);
 
   return (
@@ -256,6 +258,7 @@ export async function Body({
       places={places}
       view={view}
       tiles={tiles}
+      stageSummary={stageSummary}
       showArchived={showArchived}
       archivedCount={archivedCount}
       staleDays={config["mbos.leads.staleDays"]}

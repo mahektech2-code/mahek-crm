@@ -64,10 +64,12 @@ describe("grnReview: the three sections", () => {
     assert.equal(m.items.length, 1);
     assert.equal(at(m.items[0].rows, "Item"), "Acetone");
     assert.equal(at(m.items[0].rows, "Material type"), "Chemical");
+    assert.equal(at(m.items[0].rows, "Quantity"), "920 kg");
+    assert.equal(at(m.orders[0].rows, "Pending on the PO"), undefined);
     assert.equal(at(m.orders[0].rows, "PO number"), "PO-33");
     assert.equal(at(m.orders[0].rows, "Supplier"), "Jyotirling Enterprises");
     assert.equal(at(m.orders[0].rows, "PO item"), "1. Acetone");
-    assert.equal(at(m.orders[0].rows, "Pending on the PO"), "1,800 Kg");
+    assert.equal(at(m.items[0].rows, "Pending on the PO"), "1,800 Kg");
     const r = m.lines[0].rows;
     assert.equal(at(r, "Drums"), "4 drums");
     assert.equal(at(r, "Weight with drum (kg)"), "1000");
@@ -114,14 +116,14 @@ describe("grnReview: several items, one truck", () => {
     assert.deepEqual(m.items.map((b) => b.title), ["1. Acetone", "2. 1 L Tin Can"]);
     assert.deepEqual(m.orders.map((b) => b.title), ["1. Acetone", "2. 1 L Tin Can"]);
     assert.equal(m.lines.length, 2);
-    assert.equal(at(m.orders[1].rows, "Pending on the PO"), "500 Pcs");
+    assert.equal(at(m.items[1].rows, "Pending on the PO"), "500 Pcs");
   });
 
   test("a receipt started from the item names its PO on each line, and the line's PO wins over the header's", () => {
     const m = grnReview({ header, line, h: { ...head, po: "" }, lines: [{ ...acetone, po: "PO-9 · Dharam Chem" }, { ...tin, po: PO }], data });
     assert.equal(at(m.orders[0].rows, "PO number"), "PO-9");
     assert.equal(at(m.orders[0].rows, "Supplier"), "Dharam Chem");
-    assert.equal(at(m.orders[0].rows, "Pending on the PO"), "600 Kg");
+    assert.equal(at(m.items[0].rows, "Pending on the PO"), "600 Kg");
     assert.equal(at(m.orders[1].rows, "PO number"), "PO-33");
   });
 

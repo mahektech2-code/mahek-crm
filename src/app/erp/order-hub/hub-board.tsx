@@ -2,8 +2,7 @@
 
 import * as React from "react";
 import { Button, Th, Td, Tr, cx } from "@/components/ui/primitives";
-import { erpLoadForm } from "@/lib/actions/erp";
-import { inr, nf, NEW_FORM_ACTION } from "@/lib/erp/ui";
+import { inr, nf } from "@/lib/erp/ui";
 import type { HubBoardRow } from "@/lib/erp/screens/order-hub";
 import { clock, stamp } from "@/lib/format";
 import { ActionMenu, BoardFoot, BoardHeader, BoardTable, BoardTabs, FigureCards, Pill, waitLate, waitWords } from "../_ui/board";
@@ -40,7 +39,6 @@ export function HubBoard({
   initialOpen: string | null;
   readOnly: boolean;
 }) {
-  const ui = useErpUi();
   const waiting = rows.filter((r) => r.status === "open");
   const correction = rows.filter((r) => r.status === "correction");
   const held = rows.filter((r) => r.status === "hold");
@@ -50,21 +48,9 @@ export function HubBoard({
   const shown = tab === "waiting" ? waiting : tab === "correction" ? correction : verifiedToday;
   const open = rows.find((r) => r.id === openId) ?? null;
 
-  const newOrder = () => ui.askForm("New order", () => erpLoadForm(SCREEN, NEW_FORM_ACTION, ""));
-
   return (
     <div className="px-6 pt-6 pb-10">
-      <BoardHeader
-        title="Order Hub"
-        sub="Every new order, before it has an order number"
-        actions={
-          readOnly ? null : (
-            <Button variant="primary" onClick={newOrder}>
-              + New order
-            </Button>
-          )
-        }
-      />
+      <BoardHeader title="Order Hub" sub="Every new order, before it has an order number" />
       <FigureCards
         figures={[
           { label: "Waiting for Accounts", value: waiting.length, onClick: () => setTab("waiting"), on: tab === "waiting" },

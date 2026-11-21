@@ -71,6 +71,22 @@ function valueOf(f: FieldSpec, h: Record<string, string>, l: Record<string, stri
   return f.ub && !/\(/.test(f.l) ? `${v} ${f.ub}` : v;
 }
 
+/**
+ * The quantity of Step 3: the typed "Quantity received" where the item is counted
+ * or measured, and the scale's own answer (weight without drum) where a kg item
+ * is weighed — that item has no quantity box, and its net weight is what arrives.
+ */
+function receivedQuantity(line: FieldSpec[], h: Record<string, string>, l: Record<string, string>, lines: Record<string, string>[], i: number, data: Record<string, unknown>): string {
+  const values = { ...h, ...l };
+  for (const k of ["qty", "net"]) {
+    const f = line.find((x) => x.k === k);
+    if (!f || !whenHolds(f.when, values, data)) continue;
+    const v = valueOf(resolveField(f, values, data), h, l, lines, i, data);
+    if (v !== NONE) return v;
+  }
+  return NONE;
+}
+
 export function grnReview(x: GrnReviewInput): GrnReviewModel {
   const { header, line, h, lines, data } = x;
   const supplierOf = (data.supplierOf ?? {}) as Record<string, string>;
@@ -89,6 +105,8 @@ export function grnReview(x: GrnReviewInput): GrnReviewModel {
       rows: [
         { label: "Item", value: label },
         { label: "Material type", value: l.type || NONE },
+        { label: "Quantity", value: receivedQuantity(line, h, l, lines, i, data) },
+        { label: "Pending on the PO", value: run("inward.pending") || NONE },
       ],
     });
 
@@ -101,7 +119,6 @@ export function grnReview(x: GrnReviewInput): GrnReviewModel {
         { label: "PO number", value: po ? poNumberOf(po) : NONE },
         { label: "Supplier", value: supplier || NONE },
         { label: "PO item", value: l.poLine || NONE },
-        { label: "Pending on the PO", value: run("inward.pending") || NONE },
       ],
     });
 

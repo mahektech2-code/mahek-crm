@@ -6,6 +6,7 @@ import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appAccess,
+  appScreenAccess,
   appModuleAccess,
   auditLog,
   employees,
@@ -48,6 +49,11 @@ import { notifyUsers } from "@/lib/notify";
 import { writeErpPowers as writeErpPowersIn, writeModules, type Tx } from "@/lib/services/access-writes";
 import { accessSnapshot, type AccessSnapshot } from "@/lib/services/access-snapshot";
 import { ConsoleNotConfirmedError } from "@/lib/console-confirm";
+import { normaliseGrant, type AppGrantDraft } from "@/lib/access/permission-rules";
+import { moduleShape } from "@/lib/access/screen-permissions";
+import { legacyFromScreens } from "@/lib/access/legacy-from-screens";
+
+const APP_IDS_SET: ReadonlySet<AppId> = new Set(APP_IDS);
 
 /* ---------------------------------------------------------------------------
  * Granting and narrowing access.
@@ -163,7 +169,24 @@ export type AccessGrantInput = {
   role?: "associate" | "manager" | "admin" | null;
 };
 
+/** One app as the screen-model dialog sends it: position, modules given, and each screen's ticks. */
+export type ScreenGrantInput = {
+  app: string;
+  position: "associate" | "manager" | "everyone";
+  modules: string[];
+  screens: { screen: string; edit: boolean; delete: boolean; autoEdit: boolean }[];
+  /** Admin on the Admin Console — the platform administrator. Read only on the `admin` app. */
+  platformAdmin?: boolean;
+};
+
 export type SetAccessInput = {
+  /**
+   * THE SCREEN MODEL. When present it is the whole picture: `grants` and the
+   * ERP, HRMS and Tasks powers are DERIVED from it on the server
+   * (`legacyFromScreens`) and whatever the request sent for them is ignored,
+   * and the ticks and positions are written beside them in one transaction.
+   */
+  screenGrants?: ScreenGrantInput[];
   /** An existing account. One of these two is required. */
   userId?: string | null;
   /** An HRMS employee with no account yet — one is created for them. */
@@ -503,6 +526,83 @@ async function writeDesignation(tx: Tx, userId: string, next: string | null, by:
   if (next) await tx.insert(erpUserDesignations).values({ userId, designationId: next, assignedById: by });
 }
 
+/**
+ * The screen model's whole picture, normalised, with the tables everything
+ * else reads derived from it. An app with no screen left is an app not granted.
+ */
+async function deriveFromScreens(
+  userId: string | null,
+  sent: ScreenGrantInput[],
+): Promise<{ error: string } | { drafts: Map<AppId, AppGrantDraft>; legacy: Pick<SetAccessInput, "grants" | "erpPowers" | "hrmsPowers" | "taskPowers"> }> {
+  const previous = new Map<string, Role | null>();
+  if (userId) {
+    for (const r of await db.select({ app: appAccess.app, role: appAccess.role }).from(appAccess).where(eq(appAccess.userId, userId))) {
+      previous.set(r.app, (r.role as Role | null) ?? null);
+    }
+  }
+  const drafts = new Map<AppId, AppGrantDraft>();
+  const grants: AccessGrantInput[] = [];
+  const powers: Partial<Record<"erp" | "hrms" | "tasks", string[]>> = {};
+  for (const g of sent) {
+    if (!(APP_IDS_SET as ReadonlySet<string>).has(g.app)) return { error: `Not an app: ${g.app}` };
+    if (!["associate", "manager", "everyone"].includes(g.position)) return { error: `Not a position: ${g.position}` };
+    const app = g.app as AppId;
+    const shape = moduleShape(app);
+    const draft = normaliseGrant(
+      {
+        position: g.position,
+        modules: new Set(g.modules),
+        screens: new Map(g.screens.map((x) => [x.screen, { edit: !!x.edit, delete: !!x.delete, autoEdit: !!x.autoEdit }])),
+      },
+      shape,
+    );
+    if (!draft.screens.size) continue;
+    const legacy = legacyFromScreens(app, draft, { platformAdmin: !!g.platformAdmin, previousRole: previous.get(app) ?? null });
+    drafts.set(app, draft);
+    grants.push({ app, modules: legacy.modules, role: legacy.role });
+    if (app === "erp" || app === "hrms" || app === "tasks") powers[app] = legacy.powers ?? [];
+  }
+  return {
+    drafts,
+    legacy: { grants, erpPowers: powers.erp ?? [], hrmsPowers: powers.hrms ?? [], taskPowers: powers.tasks ?? [] },
+  };
+}
+
+/** Whether the ticks or positions sent differ from what is stored — a change the other tables cannot see. */
+async function screensDiffer(userId: string, drafts: Map<AppId, AppGrantDraft>): Promise<boolean> {
+  const stored = await db
+    .select({ app: appScreenAccess.app, screen: appScreenAccess.screen, edit: appScreenAccess.canEdit, del: appScreenAccess.canDelete, auto: appScreenAccess.editByDelete })
+    .from(appScreenAccess)
+    .where(eq(appScreenAccess.userId, userId));
+  const positions = await db.select({ app: appAccess.app, position: appAccess.position }).from(appAccess).where(eq(appAccess.userId, userId));
+  const key = (app: string, screen: string, e: boolean, d: boolean, a: boolean) => `${app}|${screen}|${e}|${d}|${a}`;
+  const before = new Set(stored.map((r) => key(r.app, r.screen, r.edit, r.del, r.auto)));
+  const after = new Set([...drafts].flatMap(([app, d]) => [...d.screens].map(([s, t]) => key(app, s, t.edit, t.delete, t.autoEdit))));
+  if (before.size !== after.size || [...after].some((k) => !before.has(k))) return true;
+  return [...drafts].some(([app, d]) => positions.find((p) => p.app === app)?.position !== d.position);
+}
+
+/** The ticks and positions, rewritten whole for the person — an app taken away takes its rows. */
+async function writeScreenGrants(tx: Tx, userId: string, drafts: Map<AppId, AppGrantDraft>, by: string) {
+  await tx.delete(appScreenAccess).where(eq(appScreenAccess.userId, userId));
+  const rows = [...drafts].flatMap(([app, d]) =>
+    [...d.screens].map(([screen, t]) => ({
+      id: newId("scr"),
+      userId,
+      app,
+      screen,
+      canEdit: t.edit,
+      canDelete: t.delete,
+      editByDelete: t.autoEdit,
+      grantedById: by,
+    })),
+  );
+  if (rows.length) await tx.insert(appScreenAccess).values(rows);
+  for (const [app, d] of drafts) {
+    await tx.update(appAccess).set({ position: d.position }).where(and(eq(appAccess.userId, userId), eq(appAccess.app, app)));
+  }
+}
+
 export async function setAccess(
   input: SetAccessInput,
 ): Promise<Result<SetAccessResult>> {
@@ -511,6 +611,15 @@ export async function setAccess(
     me = await actor();
   } catch (e) {
     return fail(e instanceof Error ? e.message : "Not allowed.", "not_permitted");
+  }
+
+  /* The screen model, when sent, decides everything below it. */
+  let screenDrafts: Map<AppId, AppGrantDraft> | null = null;
+  if (input.screenGrants) {
+    const derived = await deriveFromScreens(input.userId ?? null, input.screenGrants);
+    if ("error" in derived) return fail(derived.error);
+    screenDrafts = derived.drafts;
+    input = { ...input, ...derived.legacy };
   }
 
   const { state: wanted, roles: wantedRoles, error } = desiredState(input.grants);
@@ -736,6 +845,7 @@ export async function setAccess(
         if (newDesignation.next) await writeDesignation(tx, userId!, newDesignation.next, me.id);
         if (newHireRole.next) await writeHireRole(tx, userId!, newHireRole.next, me.id);
         if (newPlace.next) createDisplaced = await writeFactoryPlace(tx, userId!, newPlace.next);
+        if (screenDrafts) await writeScreenGrants(tx, userId!, screenDrafts, me.id);
       });
     } catch (e) {
       if (e instanceof SetUpMeanwhile) {
@@ -958,7 +1068,8 @@ export async function setAccess(
     !taskPowers &&
     designation.next === undefined &&
     hireRole.next === undefined &&
-    place.next === undefined
+    place.next === undefined &&
+    !(screenDrafts && (await screensDiffer(userId, screenDrafts)))
   ) {
     return ok(
       { userId, created: false, resetLinkSent: false, granted: [], revoked: [], changed: [] },
@@ -1040,6 +1151,7 @@ export async function setAccess(
     if (designation.next !== undefined) await writeDesignation(tx, userId!, designation.next, me.id);
     if (hireRole.next !== undefined) await writeHireRole(tx, userId!, hireRole.next, me.id);
     if (place.next !== undefined) editDisplaced = await writeFactoryPlace(tx, userId!, place.next);
+    if (screenDrafts) await writeScreenGrants(tx, userId!, screenDrafts, me.id);
     accessAfter = await accessSnapshot(userId!, tx);
   });
 

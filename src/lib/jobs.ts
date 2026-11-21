@@ -211,6 +211,8 @@ export type JobName =
   | "person-ids-backfill"
   /** Every active, linked account that lacks HRMS gets it as an associate, with an audit row each. `--dry-run` first; idempotent. */
   | "hrms-for-everyone"
+  /** Every grant as position and screen ticks (the screen model). Refuses any grant that would lose a power. `--dry-run` first; idempotent. */
+  | "access-screens-backfill"
   | "provision-team"
   | "backfill-timeline"
   /** Find the photographs and PDFs customers sent before the webhook kept them. */
@@ -1626,6 +1628,30 @@ export async function runJob(
             for (const n of r.skipped.unlinked) console.log(`not linked to an HRMS record: ${n}`);
             for (const n of r.skipped.inactiveRecord) console.log(`HRMS record not active: ${n}`);
             return { recordsAffected: options.dryRun ? 0 : r.granted.length, detail: hrmsForEveryoneReport(r, !!options.dryRun) };
+          },
+          triggeredById,
+        ),
+      ];
+    case "access-screens-backfill":
+      /* THE SCREEN MODEL OF ACCESS, written beside today's grants; a written grant is answered from its
+         ticks. A grant that would lose anything on a screen still held is refused and listed, never written. */
+      return [
+        await run(
+          "access-screens-backfill",
+          async () => {
+            const { accessScreensBackfill, accessScreensBackfillReport } = await import("./services/access-screens-backfill");
+            const r = await accessScreensBackfill({ dryRun: options.dryRun });
+            for (const x of r.refused) console.log(`REFUSED ${x.name} · ${x.app}: would lose ${x.diff.lost.join(", ")}`);
+            for (const x of r.noted) {
+              const d = x.diff;
+              const parts = [
+                d.gained.length ? `gains ${d.gained.join(", ")}` : "",
+                d.screensAdded.length ? `opens ${d.screensAdded.join(", ")}` : "",
+                d.lostWithScreen.length ? `goes with a screen left out: ${d.lostWithScreen.join(", ")}` : "",
+              ].filter(Boolean);
+              console.log(`${x.name} · ${x.app}: ${parts.join(" · ")}`);
+            }
+            return { recordsAffected: options.dryRun ? 0 : r.converted, detail: accessScreensBackfillReport(r, !!options.dryRun) };
           },
           triggeredById,
         ),

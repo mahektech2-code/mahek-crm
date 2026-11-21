@@ -450,7 +450,19 @@ const SHARED: ReadonlySet<Capability> = new Set<Capability>([
  * that belongs to an app, which is the point: holding "manager" on the account
  * is not holding the Accounts desk.
  */
-export type Hat = { app: AppId | null; role: Role };
+export type Hat = {
+  app: AppId | null;
+  role: Role;
+  /**
+   * THE SCREEN MODEL, once this grant has been converted to it
+   * (`lib/access`): what the ticks on this app's screens hold, read instead of
+   * the level's column of the matrix. Absent on an unconverted grant, which
+   * goes on meaning exactly what its level meant.
+   */
+  holds?: (capability: Capability) => boolean;
+  /** Whose records this grant sees under the screen model; absent before conversion. */
+  position?: "associate" | "manager" | "everyone";
+};
 
 /**
  * WHICH HAT ALLOWS IT — the narrowest one, not the most powerful.
@@ -860,6 +872,8 @@ export function can(hat: Hat, capability: Capability): boolean {
      account (which `widestRole` derives as `admin` for exactly that person). */
   if (hat.role === "admin" && (hat.app === null || hat.app === "admin")) return true;
   if (!hat.app) return false;
+  /* A converted grant answers from its screen ticks — what the Access dialog shows. */
+  if (hat.holds) return hat.holds(capability);
 
   const app = MATRIX[hat.app];
   if (!app) return false;
