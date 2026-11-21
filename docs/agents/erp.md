@@ -832,6 +832,26 @@ Manage access and the sidebar read the registry, so neither needed a change.
 `next.config.ts` redirects /erp/register (and its `?view=`), /erp/inward and
 /erp/barcode. Checks asking `screens.has("register")` still mean the register.
 
+**EVERY PURCHASE POP-UP IS ONE LAYOUT (Nov 2026).** The requirement's record
+shipped first in the redesign — facts down a left rail, the flow's steps, a
+Next step card with the one button the record waits on, its history, the
+actions in the foot — and Purchase orders, Goods in, Lot testing, Bills and
+Drum labels still opened the old tabbed dialog (Details + a panel tab), so
+the same click looked like two different apps. Now `record-dialog.tsx` lays
+out every Purchase screen's record that way (`isPurchaseScreen`), one view,
+no tabs: the left rail is the row's columns and fields (an empty one left
+out), a screen's own panel (the PO's lines, the test evidence) sits under the
+Next step card, and the steps, card and history come from `ListRow.record`
+(`RecordFlow`), filled by `poRecord`, `receiptRecord`, `testRecord`,
+`billRecord` and `labelRecord` from each row's own facts — never typed.
+The card's button is the row's primary action, so its tick and its reason
+are the list's. A record with no `record.next` still gets the card for its
+primary action; a finished or stopped flow gets none. The parts (`SumFact`,
+`NextStep`, `History`, `Stepper`) live once in `panels/parts.tsx` and the
+requirement's own whole panel draws the same ones, so the pop-ups cannot
+drift apart again. Bills' steps need purchase money, as its Stage column
+does; Drum labels' history is the print log, reprints included.
+
 **A PURCHASE ACT NEEDS ITS PAGE'S TICK, AT THE SERVER AND ON THE SCREEN
 (Nov 2026).** Manage access stored Access · Edit · Delete per page, but the
 ERP read only "may they open the page" and a few powers, so Edit, Cancel,

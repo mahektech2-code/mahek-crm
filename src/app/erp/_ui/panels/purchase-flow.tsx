@@ -11,10 +11,9 @@ import type { LinkPreview } from "@/lib/erp/screens/requirement-po";
 import { registerPanel, type PanelProps } from "../panels";
 import { resultError, useAct } from "../use-act";
 import { DialogBody, DialogTitle, DialogFooter, DialogHeader, ErpDialog, StepBar } from "../dialog";
-import { gridHeadClass, eyebrowClass, insetClass, labelClass, linkClass } from "../look";
-import { Stepper } from "./parts";
+import { gridHeadClass, eyebrowClass, labelClass, linkClass } from "../look";
+import { History, NextStep, Stepper, SumFact } from "./parts";
 import { StatusBadge } from "../badge";
-import { Icon } from "../icons";
 import { useErpUi } from "../erp-ui";
 import { ErpImpactDialog } from "../impact-confirm";
 import { IMPACT_FIELD } from "@/lib/impact/types";
@@ -475,15 +474,6 @@ function CreatePoModal({ id, d, preselect, onClose }: { id: string; d: CreateDat
 }
 
 /** One fact down the record's left side: a small label over the value. */
-function SumFact({ l, children }: { l: string; children: React.ReactNode }) {
-  return (
-    <div className="min-w-0">
-      <dt className={eyebrowClass}>{l}</dt>
-      <dd className="mt-0.5 text-sm break-words text-ink">{children}</dd>
-    </div>
-  );
-}
-
 /**
  * A REQUIREMENT'S RECORD, whole (Nov 2026 design): every fact down the left,
  * so there is no Details tab; on the right the four steps, a Next step card
@@ -528,20 +518,7 @@ function PurchaseFlow({ data, row, screen, start }: PanelProps) {
       <div className="grid min-w-0 content-start gap-4 px-6 py-5">
         <Stepper steps={f.steps} step={f.step} label="Purchase flow" />
         {f.step >= 0 && f.step < f.steps.length ? (
-          <div className="flex items-center gap-4 rounded-card border border-brand bg-brand-soft px-4 py-3.5">
-            <div className="min-w-0 flex-1">
-              <div className={cx(eyebrowClass, "text-brand-hover")}>Next step</div>
-              <div className="mt-0.5 text-md font-semibold text-ink">{f.next}</div>
-              {f.nextSub ? <div className="mt-0.5 text-meta text-body">{f.nextSub}</div> : null}
-              {next?.why ? <div className="mt-1 flex items-center gap-1.5 text-meta text-muted"><Icon n="lock" s={13} />{next.why}</div> : null}
-            </div>
-            {next ? (
-              <Button variant={next.why ? "secondary" : "primary"} className={cx("shrink-0", next.why && "cursor-help opacity-50")} aria-disabled={!!next.why} title={next.why || next.l} onClick={press}>
-                {next.why ? <Icon n="lock" s={14} /> : null}
-                {next.l}
-              </Button>
-            ) : null}
-          </div>
+          <NextStep title={f.next} sub={f.nextSub} act={next ? { l: next.l, why: next.why || undefined, onPress: press } : null} />
         ) : null}
         {f.facts.length ? (
           <dl className="grid grid-cols-2 gap-x-6 gap-y-2">
@@ -596,23 +573,7 @@ function PurchaseFlow({ data, row, screen, start }: PanelProps) {
         ) : null}
         {f.entry?.link ? <LinkPo key={f.id} id={f.id} inputRef={poBox} focus={start?.act === "linkPo"} /> : null}
         {creating && f.entry?.create ? <CreatePoModal key={f.id} id={f.id} d={f.entry.create} preselect={start?.with} onClose={() => setCreating(false)} /> : null}
-        {f.history.length ? (
-          <div className="grid gap-1">
-            <div className={eyebrowClass}>History</div>
-            <ol className="grid">
-              {f.history.map((h, i) => (
-                <li key={i} className="flex gap-3 py-1.5 text-sm">
-                  <span
-                    aria-hidden
-                    className={cx("mt-1.5 size-2.5 flex-none rounded-full", h.open ? "border-2 border-brand bg-surface" : "bg-success")}
-                  />
-                  <span className="w-32 flex-none text-muted tabular-nums">{h.at}</span>
-                  <span className="min-w-0 break-words text-ink">{h.text}</span>
-                </li>
-              ))}
-            </ol>
-          </div>
-        ) : null}
+        <History items={f.history} />
       </div>
     </div>
   );
@@ -646,16 +607,16 @@ type PoData = {
 function PurchaseOrder({ data }: PanelProps) {
   const p = data as PoData;
   return (
-    <section className={cx("grid gap-3", insetClass)}>
+    /* The record's flow, Next step and history are the record dialog's Purchase layout; this is the PO's lines. */
+    <section className="grid min-w-0 gap-2">
       <div className="flex items-baseline justify-between gap-3">
-        <SectionLabel>Purchase flow{p.revision ? ` · Rev ${p.revision}` : ""}</SectionLabel>
+        <SectionLabel>Lines{p.revision ? ` · Rev ${p.revision}` : ""}</SectionLabel>
         {p.print ? (
           <a href={p.print} className={linkClass("brand", "text-xs")}>
             Print PO
           </a>
         ) : null}
       </div>
-      <Stepper steps={p.steps} step={p.step} label="Purchase flow" />
       {/* A row per line rather than a seven-column table: the item and what it
           costs on top, the quantities beneath — readable at a panel's width. */}
       <div className="overflow-hidden rounded-control border border-divider text-meta">
@@ -710,14 +671,6 @@ function PurchaseOrder({ data }: PanelProps) {
           </div>
         ) : null}
       </div>
-      <dl className="grid gap-1.5">
-        {p.history.map((h) => (
-          <div key={h.l} className="flex gap-2 text-meta">
-            <dt className="w-28 flex-none text-muted">{h.l}</dt>
-            <dd className="min-w-0 text-ink">{h.v}</dd>
-          </div>
-        ))}
-      </dl>
     </section>
   );
 }

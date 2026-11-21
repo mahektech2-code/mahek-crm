@@ -29,6 +29,7 @@ import { erpAudit, erpId, nextNumber, num, paise, rupeesField, stampLine, text, 
 import type { ActionSpec, ColSpec, FormSpec, ListRow, StatSpec } from "../ui";
 import { dueWithin } from "../engines/goods-in";
 import { fd, inr, inrRate, nf } from "../ui";
+import { poRecord } from "../engines/record-flow";
 import {
   FLOW_STEPS,
   LIVE_PO,
@@ -1783,6 +1784,7 @@ const purchaseOrders: ScreenModule = {
         ],
         actions,
         panel: poPanel(p, money, flagPercent),
+        record: poRecord(p, receivedText, shareSpecs.get(p.po.id)?.last ?? null),
         by: stampLine(p.by, p.po.createdAt),
       };
     });

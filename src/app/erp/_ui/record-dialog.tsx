@@ -5,12 +5,14 @@ import { menuBlock } from "@/lib/erp/action-ticks";
 import type { ListRow, ListSpec, Tone } from "@/lib/erp/ui";
 import { cellText } from "@/lib/erp/ui";
 import { Button, cx, SectionLabel } from "@/components/ui/primitives";
-import { eyebrowClass, insetClass } from "./look";
+import { Eyebrow, eyebrowClass, insetClass } from "./look";
 import { FlagBadge, flagsBesideStatus, StatusBadge } from "./badge";
 import { useKit } from "./kit";
 import { Icon } from "./icons";
 import { useErpUi } from "./erp-ui";
 import { renderPanel } from "./panels";
+import { History, NextStep, Stepper, SumFact } from "./panels/parts";
+import { isPurchaseScreen } from "@/lib/erp/registry";
 import { DialogBody, DialogTitle, DialogFooter, DialogHeader, ErpDialog, MoreMenu, TabBar, type DialogTab } from "./dialog";
 import "./panels/index";
 
@@ -98,11 +100,16 @@ export function RecordDialog({
   /* An act the panel takes from here: started from the row (`start`), or from a button in this foot. Each start remounts the panel fresh. */
   const [started, setStarted] = useState<{ act: string; with?: string[]; n: number } | null>(start ? { ...start, n: 1 } : null);
   const whole = !!row.panel?.whole;
+  /* Every Purchase page's record is laid out as the requirement's is (Nov 2026
+     design): the facts down a left rail, the flow, the Next step card, what the
+     screen draws and the history on the right, the actions in the foot — one
+     view, no tabs. A screen whose panel IS the record (`whole`) draws it itself. */
+  const laid = !whole && isPurchaseScreen(screen.screen);
   const panel = row.panel ? (
     <Fragment key={started?.n ?? 0}>{renderPanel(row.panel.kind, { data: row.panel.data, row, screen: screen.screen, start: started ?? undefined })}</Fragment>
   ) : null;
   const more = (row.panels ?? []).map((p, i) => ({ key: `panel${i + 1}`, label: PANEL_TAB[p.kind] ?? "More", node: renderPanel(p.kind, { data: p.data, row, screen: screen.screen }) }));
-  const tabs: DialogTab[] = [
+  const tabs: DialogTab[] = laid ? [{ key: "record", label: "Record" }] : [
     ...(panel ? [{ key: "panel", label: PANEL_TAB[row.panel!.kind] ?? "Overview" }] : []),
     /* A whole panel draws every fact itself: a Details tab would only say them again. */
     ...(whole ? [] : [{ key: "details", label: "Details", count: shown.length }]),
@@ -121,6 +128,11 @@ export function RecordDialog({
     ui.act(screen.screen, a, row.id);
   };
   const active = tabs.some((t) => t.key === tab) ? tab : tabs[0].key;
+  const flow = row.record;
+  /* The card names what the record waits on and runs the action that does it (`record.act`, else the primary); where the screen says nothing, its primary action is that. A finished flow has no card. */
+  const primaryAct = (flow?.act ? acts.find((a) => a.id === flow.act) : undefined) ?? acts.find((a) => a.primary);
+  const finished = !!flow?.steps?.length && ((flow.step ?? 0) >= flow.steps.length || (flow.step ?? 0) < 0);
+  const nextTitle = finished ? null : (flow?.next ?? primaryAct?.l ?? null);
 
   const whyNote = why ? (
     <div role="status" className={cx(insetClass, "flex items-start gap-2 text-sm text-body")}>
@@ -138,12 +150,12 @@ export function RecordDialog({
      the action removes from the list (deleted, filtered out) closes on its
      own, because the list no longer holds a row to draw. */
   return (
-    <ErpDialog onClose={onClose} label={title} size={panel || more.length ? "lg" : "md"} tall={tabs.length > 1 || whole}>
-      <DialogHeader onClose={onClose} aside={status && !whole ? <StatusBadge value={status.v} /> : null}>
+    <ErpDialog onClose={onClose} label={title} size={panel || more.length || laid ? "lg" : "md"} tall={tabs.length > 1 || whole || laid}>
+      <DialogHeader onClose={onClose} aside={status && !whole && !laid ? <StatusBadge value={status.v} /> : null}>
         <SectionLabel>{row.ref ? `${kind} · ${row.ref}` : kind}</SectionLabel>
-        <DialogTitle className={cx("mt-0.5", whole && "flex flex-wrap items-center gap-2.5")}>
+        <DialogTitle className={cx("mt-0.5", (whole || laid) && "flex flex-wrap items-center gap-2.5")}>
           {title}
-          {whole && status ? <StatusBadge value={status.v} /> : null}
+          {(whole || laid) && status ? <StatusBadge value={status.v} /> : null}
         </DialogTitle>
         {row.header ? <div className="mt-0.5 text-meta text-body">{row.header}</div> : null}
         {flags.length ? (
@@ -170,7 +182,57 @@ export function RecordDialog({
         ) : null}
       </DialogHeader>
       {tabs.length > 1 ? <TabBar tabs={tabs} active={active} onChange={setTab} /> : null}
-      {whole && active === "panel" ? (
+      {laid ? (
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          <div className="grid min-h-full flex-1 grid-cols-[280px_minmax(0,1fr)] max-md:grid-cols-1">
+            <dl className="grid content-start gap-3.5 border-r border-divider bg-canvas px-5 py-5 max-md:border-r-0 max-md:border-b" aria-label="Summary">
+              {shown
+                .filter((f) => f.v !== "—" && f.v !== "")
+                .map((f, i) => (
+                  <SumFact
+                    key={`${f.l}:${i}`}
+                    l={f.l}
+                    aside={
+                      f.der ? (
+                        <span title="Worked out for you" className="flex">
+                          <Icon n="calc" s={12} />
+                          <span className="sr-only">Worked out for you</span>
+                        </span>
+                      ) : null
+                    }
+                  >
+                    {f.status ? <StatusBadge value={f.v} /> : <span className="tabular-nums">{f.v}</span>}
+                  </SumFact>
+                ))}
+              {hiddenCount ? (
+                <div className="flex items-center gap-1.5 text-meta text-muted" title="Not shown on your account">
+                  <Icon n="lock" s={14} />
+                  {hiddenCount} hidden
+                </div>
+              ) : null}
+            </dl>
+            <div className="grid min-w-0 content-start gap-4 px-6 py-5">
+              {flow?.steps?.length ? <Stepper steps={flow.steps} step={flow.step ?? 0} label={`${kind} flow`} /> : null}
+              {nextTitle ? (
+                <NextStep
+                  title={nextTitle}
+                  sub={flow?.nextSub}
+                  act={primaryAct ? { l: primaryAct.l, why: primaryAct.why || undefined, onPress: () => run(primaryAct) } : null}
+                />
+              ) : null}
+              {panel ? <div className="min-w-0">{panel}</div> : null}
+              {more.map((m) => (
+                <section key={m.key} className="grid min-w-0 gap-2">
+                  <Eyebrow>{m.label}</Eyebrow>
+                  {m.node}
+                </section>
+              ))}
+              <History items={flow?.history ?? []} />
+              {whyNote}
+            </div>
+          </div>
+        </div>
+      ) : whole && active === "panel" ? (
         /* A whole panel lays out its own columns edge to edge. */
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
           {panel}
