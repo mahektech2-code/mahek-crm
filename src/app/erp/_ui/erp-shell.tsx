@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { AppFrame } from "@/components/shell/app-frame";
 import { AccountMenu } from "@/components/shell/account-menu";
 import { HeaderLead } from "@/components/shell/header-lead";
@@ -43,6 +43,9 @@ import { IconButton } from "./look";
  * same way, because it answers the same kind of question — whose figures am
  * I looking at.
  * ------------------------------------------------------------------------- */
+
+/** Screens whose table wants the room: the sidebar starts shut there (the toggle opens it). */
+const WIDE_SCREENS = new Set([erpLink("quoteManager")]);
 
 export type NavScreen = { key: string; label: string; href: string; step?: number; heading?: string };
 export type NavGroup = { id: string; label: string; icon: string; single: boolean; screens: NavScreen[] };
@@ -155,7 +158,18 @@ export function ErpShell({
   preview?: { targets: PreviewTargets; current: ErpViewingAs | null; self: { id: string; name: string } } | null;
   children: React.ReactNode;
 }) {
-  const [collapsed, setCollapsed] = useState(false);
+  /* The sidebar is shut by default on the screens that need the width — the
+     Quotation manager's table — and opened there with the same toggle. What
+     somebody chose elsewhere is kept for the rest of the ERP. */
+  const pathname = usePathname();
+  const wide = WIDE_SCREENS.has(pathname);
+  const [userCollapsed, setUserCollapsed] = useState(false);
+  const [openedOn, setOpenedOn] = useState<string | null>(null);
+  const collapsed = wide ? openedOn !== pathname : userCollapsed;
+  const setCollapsed = (f: (c: boolean) => boolean) => {
+    if (wide) setOpenedOn(f(collapsed) ? null : pathname);
+    else setUserCollapsed(f);
+  };
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   /* The last counts that landed: a refresh after a save keeps showing them until the new ones arrive, rather than blanking every badge. */
   const [counts, setCounts] = useState<Record<string, number>>({});

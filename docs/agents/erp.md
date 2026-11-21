@@ -861,3 +861,34 @@ client list answer alike. A sub-tab over a column a power withholds always
 reads 0 — leave it out for that person (Bills' "Bill to come" needs purchase
 money). `scripts/seed-purchase-demo.ts` seeds a purchase desk locally through
 the real handlers, to look at all of this.
+
+**THE QUOTATION MANAGER IS A TABLE YOU TYPE INTO, WITH A PANEL BESIDE IT
+(owner, Nov 2026).** It stays a table that works like a spreadsheet — never
+call it a "sheet" or "Google Sheet" on the screen — and it has no group tabs:
+the columns are exactly the desk's. The ERP sidebar starts SHUT on this one
+screen (`WIDE_SCREENS` in `_ui/erp-shell.tsx`, the toggle opens it) to give
+the table room. A toolbar carries Undo, Redo (Ctrl+Y), Mark, Filter (party
+and dates), Sort, Freeze, + Row and + Material; Sort and Freeze are views,
+the stored order is still latest first. Above the table the EDITING BAR says
+what the selected cell is in words — material · party · date · per unit ·
+rate — never a cell code like "C2" or a column letter. A mark is a coloured
+LEFT EDGE of the cell (green Ready to buy, orange bought, red cancelled, blue
+picked up), so the rate stays readable; the cheapest rate of each column over
+the rows shown is green (a lone rate is not). A heading carries "REQ-n
+waiting" when a requirement Purchase it could take (`purchaseChoices`,
+`openRequirements`) is waiting for its linked raw material. The side panel
+reads the selected rate: "cheapest this month", every party's LATEST rate for
+the material, this party's last quotes as bars, and each waiting requirement
+with "Purchase it at ₹x", which opens the real dialog with that requirement
+picked. The footer sums the selection (count, Min, Avg). All of it is the pure
+`engines/quote-panel.ts`, over the rows the screen holds — never rows the
+period hides. The Purchase it dialog's total is `poTotals`/`poLineFigures` at
+the cell's rate with `PurchaseChoices.gstPercent` (the same
+`erp.purchase.poGstPercent` `orderFromQuote` writes), rounded like any PO. A
+rate's unit is the linked raw material's purchase unit; there is no per-column
+"per kg / litre / drum" because nothing stores one. The right-click menu is
+grouped look → change → take back (Undo purchase, Delete row: red, last), and
+leaves out what the person's Edit / Delete ticks do not allow; every write is
+still `erpQuoteApply`, checked per op by `quoteOpTick`. The old "Latest rate /
+Lowest rate" foot rows are gone: the panel and the green say both.
+

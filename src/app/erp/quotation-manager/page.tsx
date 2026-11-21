@@ -5,6 +5,7 @@ import { quoteManagerOf, quotePurchaseChoices, quoteSheet } from "@/lib/erp/quot
 import { parseQuoteDate } from "@/lib/erp/engines/quotes";
 import { calendarDate } from "@/lib/business-date";
 import { nowMs } from "@/lib/format";
+import { holdsTick } from "@/lib/erp/action-ticks";
 import { QuoteGrid } from "./grid";
 
 /**
@@ -36,7 +37,7 @@ export default async function ErpQuotationManager({ searchParams }: { searchPara
   const [sheet, choices] = await Promise.all([quoteSheet({ from, to, q }), quotePurchaseChoices(ctx)]);
 
   return (
-    <div className="px-6 pt-6 pb-10">
+    <div className="flex h-[calc(100dvh-3.5rem)] min-h-[600px] flex-col px-5 pt-4">
       <QuoteGrid
         title={SCREEN.label}
         key={`${from}|${to}|${q}`}
@@ -48,6 +49,10 @@ export default async function ErpQuotationManager({ searchParams }: { searchPara
         threeMonths={monthsBack(today, 3)}
         readOnly={!!ctx.viewingAs}
         canReady={quoteManagerOf(ctx)}
+        ticks={{
+          edit: holdsTick(ctx, "quoteManager", "edit"),
+          delete: holdsTick(ctx, "quoteManager", "delete"),
+        }}
         me={ctx.actor.name}
       />
     </div>

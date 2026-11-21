@@ -1,4 +1,4 @@
-The Quotation manager replaces the desk's own rate sheet, so it keeps the sheet's shape and its colours rather than imposing a form on it.
+The Quotation manager replaces the desk's own rate spreadsheet, so it stays a table you type into, with the desk's columns and marks, rather than a form.
 
 ## Rows and columns are both data
 
@@ -16,20 +16,30 @@ Every edit — one cell, a paste of hundreds, a colour across a block — is sen
 
 A rate column holds a number, or nothing. Commas, spaces and a rupee sign are taken out of what is pasted; anything else is refused rather than stored as a rate nobody can compare. A text column holds up to 200 characters.
 
-## Buying: grey, then yellow
+## Buying: Ready to buy, then bought
 
 A rate is chosen by a manager and bought by the team, in that order:
 
-- **Ready to buy (grey)** is put on, or taken off, only by an ERP manager or administrator. Only a rate with a figure in it can be Ready to buy.
-- **Purchase it** turns a grey rate yellow and records the **number of drums**, which may not be left out. The **PO number is made by the server** at that moment, the next number of the ERP's own PO series, so nobody can mistype one — unless the dialog adds the purchase to an open PO of the same supplier's made here (Approved, Sent or Partly received, not yet carrying that material), which it offers and defaults to when one was made today: then the purchase takes that number and the PO gains a line. Editing a purchase keeps its number; undoing it gives the number up, and buying the rate again makes a new one. A rate that isn't grey can't be bought, except by a manager.
+- **Ready to buy (green edge)** is put on, or taken off, only by an ERP manager or administrator. Only a rate with a figure in it can be Ready to buy.
+- **Purchase it** turns a Ready to buy rate bought (orange edge) and records the **number of drums**, which may not be left out. The **PO number is made by the server** at that moment, the next number of the ERP's own PO series, so nobody can mistype one — unless the dialog adds the purchase to an open PO of the same supplier's made here (Approved, Sent or Partly received, not yet carrying that material), which it offers and defaults to when one was made today: then the purchase takes that number and the PO gains a line. Editing a purchase keeps its number; undoing it gives the number up, and buying the rate again makes a new one. A rate that isn't Ready to buy can't be bought, except by a manager.
 - **The purchase writes its purchase order.** In the same save the server writes an ERP purchase order for that PO number: the row's supplier, the column's raw material, the quoted rate, the quantity, godown and delivery date from the dialog, and the drums. It is `Sent` with no approval step, like a linked one. Its line answers the requirement picked in the dialog, or, with none waiting, a requirement raised with the purchase (marked as raised by the Quotation manager). A second material bought under the same number of the same supplier joins the same PO. Changing the drums changes the line; undoing the purchase takes the line off (cancelling the PO when it is empty) and is refused once goods have been received. A requirement the purchase raised is cancelled with it; one somebody raised goes back to waiting. A row whose party is not a supplier, or a column with no raw material, can't be bought this way.
-- **Undo purchase** puts a yellow rate back to grey, and anybody may do it, because it corrects a purchase entered by mistake. Any other change to a bought rate is a manager's.
+- **Undo purchase** puts a bought rate back to Ready to buy, and anybody holding Delete on the Quotation manager may do it, because it corrects a purchase entered by mistake. Any other change to a bought rate is a manager's.
 
 The screen offers only what is allowed, and the server refuses the rest whatever the screen sent. The PO number, the drums, and who bought it and when are kept on the cell and shown in its note.
 
 ## The other marks
 
-**PO / order cancelled** (red) and **Material picked up by transporter** (blue) are put on by anybody — except over a Ready to buy or bought rate, which only a manager changes. A bought rate marked cancelled gives up its PO line exactly as Undo purchase does; one marked picked up keeps it, and a picked-up rate still counts as bought when a requirement links its PO number. A cancelled rate is left out of the latest and lowest rates.
+**PO / order cancelled** (red) and **Material picked up by transporter** (blue) are put on by anybody — except over a Ready to buy or bought rate, which only a manager changes. A bought rate marked cancelled gives up its PO line exactly as Undo purchase does; one marked picked up keeps it, and a picked-up rate still counts as bought when a requirement links its PO number. A cancelled rate is left out of the cheapest rate, the side panel's comparisons and the footer's figures.
+
+A mark is drawn as a coloured left edge of the cell, so the rate inside stays as readable as any other.
+
+## What the side panel and the green read
+
+The cheapest rate in each column (green), "cheapest this month", each party's latest rate for a material, a party's recent quotes and the footer's Min and Avg are all worked out from the rows the screen holds — the period and party search it was opened with — by one pure engine, `quote-panel`. So "cheapest" never means cheaper than a rate the period hides. A column with a single rate has no cheapest. A heading's "REQ-n waiting" is the requirements Purchase it could take for the column's raw material — the same list the dialog offers — so it disappears the moment one is bought.
+
+## What a rate is per
+
+A rate is per the linked raw material's purchase unit (kg, litre or piece), which is what the PO line is priced in. A column does not store a unit of its own; the pack line ("185/180 KGS NET") is read only to say about how many drums a quantity is, and only when its unit matches.
 
 ## The period
 
@@ -37,8 +47,8 @@ The screen opens on the last six months. Choose three months, every date, or you
 
 ## Who can use it
 
-Anybody given the **Quotation manager** screen on the ERP. It needs no power; marking or unmarking Ready to buy, and changing a bought rate other than undoing it, need the manager or admin level on the ERP grant. A preview of the ERP as somebody else is read only.
+Anybody given the **Quotation manager** screen on the ERP. Changing anything needs its **Edit** tick in Manage access, and taking something back (deleting a row, removing a column, undoing a purchase or cancelling a bought rate) needs **Delete**; the right-click menu leaves out what the ticks do not allow, and the server checks every change again. Marking or unmarking Ready to buy, and changing a bought rate other than undoing it, need the manager or admin level on the ERP grant. A preview of the ERP as somebody else is read only.
 
 ## Where the code and the intent disagree today
 
-The grid scrolls sideways when there are more columns than fit — it is a sheet, and folding its columns away would hide rates. The ERP's lists fold the columns that do not fit until somebody ticks their own in the Columns menu.
+The table scrolls sideways when there are more columns than fit — it works like a spreadsheet, and folding its columns away would hide rates. The sidebar starts shut on this screen to give it room. The ERP's lists fold the columns that do not fit until somebody ticks their own in the Columns menu.
