@@ -5,7 +5,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyTicks, holdsTick, menuBlock, PURCHASE_TICKS, quoteOpTick, tickFor, tickWhy } from "./action-ticks";
+import { applyTicks, holdsTick, isNextStep, menuBlock, PURCHASE_TICKS, quoteOpTick, tickFor, tickWhy } from "./action-ticks";
 import type { ListRow, ListSpec } from "./ui";
 
 const ticks = (m: Record<string, [boolean, boolean]>) => ({ administrator: false, ticks: new Map(Object.entries(m).map(([k, [edit, del]]) => [k, { edit, delete: del }])) });
@@ -106,4 +106,24 @@ test("Lot testing, Bills and Drum labels: what each new act needs", () => {
   assert.equal(PURCHASE_TICKS.barcode, undefined);
   assert.equal(tickFor("barcode", "bulk", "print"), undefined);
   assert.equal(menuBlock("barcode", { id: "trace" }), 0);
+});
+
+test("every other ERP screen orders its ⋯ menu by the action's own words", () => {
+  assert.equal(menuBlock("orders", { id: "undoBilling", l: "Undo billing" }), 2, "a take-back goes last, in red");
+  assert.equal(menuBlock("sfgBatches", { id: "void", l: "Void batch…" }), 2);
+  assert.equal(menuBlock("expenses", { id: "x", l: "Reverse this receipt" }), 2);
+  assert.equal(menuBlock("customers", { id: "edit", l: "Edit", loadsForm: true }), 1, "a change sits in the middle");
+  assert.equal(menuBlock("orderHub", { id: "approve", l: "Approve" }), 1);
+  assert.equal(menuBlock("sfgBatches", { id: "whole", l: "Show the whole batch" }), 0, "ordinary work comes first");
+  assert.equal(menuBlock("dispatch", { id: "scan", l: "Scan its boxes" }), 0);
+});
+
+test("a screen's commonest button is not the record's next step", () => {
+  assert.ok(isNextStep({ l: "Post to inventory", primary: true }));
+  assert.ok(isNextStep({ l: "Confirm dispatch", primary: true }));
+  assert.equal(isNextStep({ l: "Add another", primary: true }), false);
+  assert.equal(isNextStep({ l: "Edit", primary: true }), false);
+  assert.equal(isNextStep({ l: "Open the order", primary: true }), false);
+  assert.equal(isNextStep({ l: "Edit packing", primary: true }), true, "a named edit is the step");
+  assert.equal(isNextStep({ l: "Approve" }), false, "not marked primary");
 });

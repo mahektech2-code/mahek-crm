@@ -99,9 +99,28 @@ export function actionTick(screen: string, a: Pick<ActionSpec, "id" | "loadsForm
  * Delete), drawn last and in red. Read off the same table the server refuses
  * by, so the menu's order cannot drift from who may do what.
  */
-export function menuBlock(screen: string, a: Pick<ActionSpec, "id" | "loadsForm">): 0 | 1 | 2 {
+export function menuBlock(screen: string, a: Pick<ActionSpec, "id" | "loadsForm"> & { l?: string }): 0 | 1 | 2 {
+  if (!PURCHASE_TICKS[screen]) return wordBlock(a);
   const t = actionTick(screen, a);
   return t === "delete" ? 2 : t === "edit" ? 1 : 0;
+}
+
+/** What a take-back is called: it removes, stops or undoes something. */
+const TAKE_BACK = /^(delete|cancel|void|remove|retire|deactivate|withdraw|reject|undo|reverse|write off|mark inactive|discard|close short|reopen|back to)/i;
+/** What a change is called: it alters what is already there. */
+const CHANGE = /^(edit|change|correct|rename|update|set |move |reassign|merge|approve|verify|mark |hold|release|record bill|enter rate)/i;
+
+/**
+ * The block of a screen that has no tick table yet (every group but Purchase):
+ * read off the action's own words, the way the record dialog has always
+ * coloured a take-back red — so its ⋯ menu is ordered the same way Purchase's
+ * is: open and ordinary work, then changes, then take-backs last and in red.
+ */
+export function wordBlock(a: Pick<ActionSpec, "id" | "loadsForm"> & { l?: string }): 0 | 1 | 2 {
+  const l = (a.l ?? "").trim();
+  if (TAKE_BACK.test(l) || /^(delete|cancel|void|remove|reverse)/i.test(a.id)) return 2;
+  if (CHANGE.test(l) || a.id === "edit") return 1;
+  return 0;
 }
 
 /**
@@ -132,4 +151,15 @@ export function quoteOpTick(o: { op: string; impact?: unknown }): Tick {
   if (o.op === "deleteRow" || o.op === "archiveColumn") return "delete";
   if (o.op === "cell" && o.impact) return "delete";
   return "edit";
+}
+
+/**
+ * Whether a screen's primary action is the record's NEXT STEP — the row's
+ * button and the pop-up's Next step card. Some screens mark as primary what is
+ * only their commonest button ("Add another" on a batch, a plain "Edit" on a
+ * master, "Open …"); those stay in the ⋯ menu and the pop-up's foot, so a list
+ * of finished batches is not a column of "Add another" buttons.
+ */
+export function isNextStep(a: { l: string; primary?: boolean }): boolean {
+  return !!a.primary && !/^(add another|edit$|open\b)/i.test(a.l.trim());
 }

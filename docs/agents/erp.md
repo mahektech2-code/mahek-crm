@@ -813,6 +813,27 @@ Purchase group folded into one row, was built and taken out the same day: the
 owner wants the sidebar and its sub-navigation as they are, and no tab-like
 bars drawn as navigation. Narrowing a list belongs to its sub-tabs (below).
 
+**THE WHOLE ERP USES PURCHASE'S LAYOUT (Nov 2026).** What Purchase got in
+the redesign is no longer Purchase's: `isFlowLayout` (registry.ts) is true for
+every ERP screen, and the shared list and record dialog read it, never a
+group. So every screen's tabs (`views`) and sub-tabs draw as the segmented
+switch, a row's actions are its next-step button (the action marked
+`primary`) and a ⋯ menu in three blocks with no pencil column, and the
+record opens as one view — facts down a left rail, the flow, the Next step
+card, the screen's panels, the history. A screen with no `record` of its own
+still gets a flow bar from its list's status `stages`. The menu's blocks come
+from `action-ticks.ts`: Purchase's tick table where there is one, else
+`wordBlock`, the action's own words (Cancel, Void, Delete, Reverse… last and
+red; Edit, Approve, Verify, Mark… in the middle). The sidebar follows the
+same rule as Purchase: a group whose work is a sequence is numbered —
+Production 1 SFG batches · 2 FG filling · 3 Packing batches, Sales 1 Order
+Hub · 2 MRP check · 3 Orders · 4 Dispatch desk · 5 Dispatch register — with
+its side pages under Tools (Under Process moved from Sales to Production's
+Tools: it is the day's production plan; To Hold is Sales' Tool); a group of
+lists gets headings (Masters: Buying, Selling, Setup; Stock: On hand,
+Control, Levels). Moving a page between groups is the sidebar and Manage
+access's grouping only — its module key, URL and grants do not change.
+
 **PURCHASE IS A NUMBERED FLOW, AND GOODS IN, BILLS AND DRUM LABELS ARE PAGES
 (owner, Nov 2026 — a reversal of "a filter is a tab").** The sidebar's
 Purchase group draws 1 Requirements · 2 Purchase orders · 3 Goods in · 4 Lot

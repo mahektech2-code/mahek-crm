@@ -130,7 +130,7 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
         kit ? <UploadLrsButton key={one("upload") ?? ""} today={today} transporters={kit.transporters} recent={kit.recent} canRead={kit.canRead} initialOpen={one("upload") === "1"} /> : null
       }
     >
-      <ListTabs label={screen.label} tabs={tabs} />
+      <ListTabs label={screen.label} tabs={tabs} segmented />
       {ids ? (
         <div className="mb-3 flex items-center gap-2 text-meta text-muted">
           Showing {ids.length} bill{ids.length === 1 ? "" : "s"}: {one("fl") ?? "filtered"} · <NavLink href={at(view)} className={linkClass()}>

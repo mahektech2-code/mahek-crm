@@ -6,8 +6,8 @@ import { bulkOffers } from "@/lib/erp/bulk-fit";
 import { NavLink } from "@/components/shell/nav-link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { ActionSpec, ColSpec, FormSpec, ListRow, ListSpec, Tone } from "@/lib/erp/ui";
-import { menuBlock } from "@/lib/erp/action-ticks";
-import { isPurchaseScreen } from "@/lib/erp/registry";
+import { isNextStep, menuBlock } from "@/lib/erp/action-ticks";
+import { isFlowLayout } from "@/lib/erp/registry";
 import type { Result } from "@/lib/result";
 import { aggsOf, cellText, moneyText, nf, NEW_FORM_ACTION } from "@/lib/erp/ui";
 import { colOf as colIn, listCsv, listQueryParams, LIST_QUERY_KEYS, pageOf, queryRows, SEARCH_PAUSE_MS, searchWorthAsking, selectionTotals, specForSubtab, subtabOf, selectionTotalText, subMatches, type ColFilter, type ListPage, type ListQuery, type SelectionTotal, type StatPick } from "@/lib/erp/list-query";
@@ -75,7 +75,7 @@ function SubtabRow({ tabs, counts, value, onPick, segmented }: { tabs: { id: str
   const n = new Map(counts.map((c) => [c.id, c.n]));
   /* PURCHASE draws them as the design's segmented control: a grey track, the
      open one a raised white pill with its count in brand purple. Keyed off the
-     screen's group (`isPurchaseScreen`), never per screen. */
+     screen's layout (`isFlowLayout`), never per screen. */
   if (segmented)
     return (
       <div role="tablist" aria-label="Views" className="mb-3 flex max-w-full flex-wrap gap-1 self-start rounded-card bg-line/70 p-1" style={{ width: "fit-content" }}>
@@ -132,7 +132,37 @@ function SubtabRow({ tabs, counts, value, onPick, segmented }: { tabs: { id: str
  * list (HRMS Settings' rules), and that page draws the same strip so moving
  * between the two does not change the furniture under somebody's thumb.
  */
-export function ListTabs({ label, tabs, toggle }: { label: string; tabs: ListTab[]; toggle?: { label: string; href: string } | null }) {
+export function ListTabs({ label, tabs, toggle, segmented }: { label: string; tabs: ListTab[]; toggle?: { label: string; href: string } | null; segmented?: boolean }) {
+  /* The ERP's layout (`isFlowLayout`) draws a screen's tabs as the segmented
+     control Purchase's sub-tabs are: a grey track, the open tab a raised white
+     pill. Still links — each tab is its own server read — and still wrapping. */
+  if (segmented)
+    return (
+      <nav aria-label={`${label} lists`} className="mb-4 flex flex-wrap items-center gap-3">
+        <div className="flex max-w-full flex-wrap gap-1 rounded-card bg-line/70 p-1" style={{ width: "fit-content" }}>
+          {tabs.map((t) => (
+            <NavLink
+              key={t.key}
+              href={t.href}
+              aria-current={t.active ? "page" : undefined}
+              className={cx(
+                "flex h-[34px] items-center gap-2 rounded-control px-3.5 text-sm whitespace-nowrap no-underline",
+                t.active ? "bg-surface font-semibold text-ink shadow-sm" : "font-medium text-muted hover:text-body",
+              )}
+            >
+              {t.label}
+              {t.count ? <span className={cx("font-semibold tabular-nums", t.active ? "text-brand-hover" : "text-warn-ink")}>{t.count}</span> : null}
+            </NavLink>
+          ))}
+        </div>
+        <span className="flex-1" />
+        {toggle ? (
+          <NavLink href={toggle.href} className={linkClass("brand", "px-2 py-2 text-meta")}>
+            {toggle.label}
+          </NavLink>
+        ) : null}
+      </nav>
+    );
   return (
     /* Tabs WRAP rather than scroll: on a tablet Orders and Logistics have more
        tabs than fit, and a tab scrolled out of sight is one nobody finds.
@@ -467,7 +497,7 @@ export function ListScreen({
     setOpenId(id);
   };
   /* Purchase draws its rows' actions as one next-step button and a ⋯ menu in blocks, and its sub-tabs segmented. */
-  const purchase = isPurchaseScreen(spec.screen);
+  const flow = isFlowLayout(spec.screen);
   /* Totals opened onto their folded rows, by hand. Unset follows the search: a lot number typed opens the total it is under. */
   const [unfolded, setUnfolded] = useState<Record<string, boolean>>({});
   /* A New form too heavy to send with the list is asked for when it is wanted
@@ -576,11 +606,11 @@ export function ListScreen({
      that names its ⋯ menu (`rowMenu`) gets exactly that; every other list
      offers the record's own actions there, with its Edit drawn as a button,
      so an edit is never only inside the record. */
-  const menuIds: string[] | null = purchase ? null : (spec.rowMenu ?? null);
+  const menuIds: string[] | null = flow ? null : (spec.rowMenu ?? null);
   const menuOn = menuIds ? menuIds.length > 0 : pageRows.some((r) => !!r.actions?.length || !!r.sub?.some((x) => !!x.actions?.length));
   /* Purchase rows carry no pencil Edit: their next step is the button, and Edit is in the menu's middle block. */
-  const editOn = !purchase && !menuIds && pageRows.some((r) => rowEdit(r) || !!r.sub?.some((x) => rowEdit(x)));
-  const primaryOn = purchase && pageRows.some((r) => !!rowPrimary(r) || !!r.sub?.some((x) => !!rowPrimary(x)));
+  const editOn = !flow && !menuIds && pageRows.some((r) => rowEdit(r) || !!r.sub?.some((x) => rowEdit(x)));
+  const primaryOn = flow && pageRows.some((r) => !!rowPrimary(r) || !!r.sub?.some((x) => !!rowPrimary(x)));
   const menuCol = MENU_COL + (editOn ? EDIT_COL : 0) + (primaryOn ? PRIMARY_COL : 0);
   const fit = fitColumns({ cols: lineCols, avail: menuOn ? Math.max(0, avail - menuCol) : avail, check: selectOn, chosen: chosenCols, badgeChars, headExtra: 0 });
   const shownCols = fit.shown;
@@ -917,7 +947,7 @@ export function ListScreen({
     >
 
       {sections?.length ? <SectionTabs label={label} sections={sections} /> : null}
-      {tabs && (tabs.length > 1 || (sections?.length && tabs.length)) ? <ListTabs label={label} tabs={tabs} toggle={toggle} /> : null}
+      {tabs && (tabs.length > 1 || (sections?.length && tabs.length)) ? <ListTabs label={label} tabs={tabs} toggle={toggle} segmented={flow} /> : null}
 
       {above}
 
@@ -929,7 +959,7 @@ export function ListScreen({
           the status values — where there are a handful — as one Breakdown card. */}
       {spec.subtabs?.length && lp.all > 0 ? (
         <SubtabRow
-          segmented={purchase}
+          segmented={flow}
           tabs={spec.subtabs}
           counts={lp.subtabs ?? []}
           value={subtabOf(spec, query)?.id ?? ""}
@@ -1214,7 +1244,7 @@ export function ListScreen({
                               }
                             />
                           ))}
-                          {menuOn ? <MenuCell row={r} ids={menuIds} screen={spec.screen} onRowAct={onRowAct} purchase={purchase} onOpenRow={setOpenId} onStart={startIn} /> : null}
+                          {menuOn ? <MenuCell row={r} ids={menuIds} screen={spec.screen} onRowAct={onRowAct} purchase={flow} onOpenRow={setOpenId} onStart={startIn} /> : null}
                         </Tr>,
                       );
                       /* Its folded rows, under it: indented, and blank where they only repeat their total. */
@@ -1234,7 +1264,7 @@ export function ListScreen({
                                   <Cell key={c.k} c={c} r={x} cols={cols} small />
                                 ),
                               )}
-                              {menuOn ? <MenuCell row={x} ids={menuIds} screen={spec.screen} onRowAct={onRowAct} purchase={purchase} onOpenRow={setOpenId} onStart={startIn} /> : null}
+                              {menuOn ? <MenuCell row={x} ids={menuIds} screen={spec.screen} onRowAct={onRowAct} purchase={flow} onOpenRow={setOpenId} onStart={startIn} /> : null}
                             </Tr>,
                           );
                         }
@@ -1348,7 +1378,7 @@ function rowEdit(row: ListRow) {
 
 /** A Purchase row's one next step, drawn as a button beside its ⋯ menu. */
 function rowPrimary(row: ListRow) {
-  return row.actions?.find((a) => a.primary && !a.tickHidden);
+  return row.actions?.find((a) => isNextStep(a) && !a.tickHidden);
 }
 
 /** What a Purchase row's menu calls opening the record. */
