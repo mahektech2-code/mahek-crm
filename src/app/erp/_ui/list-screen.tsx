@@ -976,7 +976,9 @@ export function ListScreen({
           </div>
         ) : null;
       })()}
-      {(() => {
+      {/* The ERP draws no figure cards (Nov 2026): the sub-tabs and their counts
+          say what waits, and the Filters dialog narrows. Other apps keep them. */}
+      {flow ? null : (() => {
         const stats = lp.stats ?? [];
         const breakdown = v4 && chips.length >= 2 && chips.length <= MAX_TABS ? { total: lp.beforeChip, chips, value: chip, tones, onPick: pickChip } : null;
         /* A lone Total is the pager's number again, not a figure worth a card. */

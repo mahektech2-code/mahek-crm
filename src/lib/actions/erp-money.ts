@@ -4,7 +4,8 @@ import { revalidatePath } from "next/cache";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
-import { ErpNotPermitted, requireErpWrite, erpContext, type ErpContext } from "@/lib/erp/access";
+import { ErpNotPermitted, requireErpTickWrite, requireErpWrite, erpContext, type ErpContext } from "@/lib/erp/access";
+import type { Tick } from "@/lib/erp/action-ticks";
 import * as M from "@/lib/erp/money";
 import { duplicateOf, invoiceKey } from "@/lib/erp/engines/money";
 import { confirmImpact } from "@/lib/impact/registry";
@@ -34,6 +35,16 @@ async function run<T>(fn: (actor: M.Actor, ctx: ErpContext) => Promise<Result<T>
   } catch (e) {
     return refused(e);
   }
+}
+
+/** `run`, refused first without the page's Edit or Delete tick (`requireErpTickWrite`). */
+async function runTick<T>(tick: Tick, fn: (actor: M.Actor, ctx: ErpContext) => Promise<Result<T>>): Promise<Result<T>> {
+  try {
+    await requireErpTickWrite("expenses", tick);
+  } catch (e) {
+    return refused(e);
+  }
+  return run(fn);
 }
 
 const s = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
@@ -126,12 +137,12 @@ export async function erpMoneyBills(advanceId: string, bills: M.BillInput[]) {
 
 export async function erpMoneyReview(ids: string[], decision: "approved" | "sent_back", note?: string | null) {
   if (decision !== "approved" && decision !== "sent_back") return err("Approve or send back.");
-  return run((a) => M.reviewTxns(a, list(ids), decision, s(note)));
+  return runTick("edit", (a) => M.reviewTxns(a, list(ids), decision, s(note)));
 }
 
 /** Cancels a transaction once the impact modal has been confirmed — the same check the screen's own Cancel makes. */
 export async function erpMoneyCancel(id: string, reason: string, confirmation?: ImpactConfirmation | null) {
-  return run(async (a) => {
+  return runTick("delete", async (a) => {
     const refusal = await confirmImpact("erp-money-txn", String(id), confirmation);
     if (refusal) return refusal;
     return M.cancelTxn(a, String(id), typeof reason === "string" ? reason : "");
@@ -139,11 +150,11 @@ export async function erpMoneyCancel(id: string, reason: string, confirmation?: 
 }
 
 export async function erpMoneySettle(advanceId: string, account: string) {
-  return run((a) => M.settleAdvance(a, String(advanceId), s(account), null));
+  return runTick("edit", (a) => M.settleAdvance(a, String(advanceId), s(account), null));
 }
 
 export async function erpMoneyMatch(lineId: string, txnIds: string[]) {
-  return run((a) => M.matchBankLine(a, String(lineId), list(txnIds)));
+  return runTick("edit", (a) => M.matchBankLine(a, String(lineId), list(txnIds)));
 }
 
 export async function erpMoneyCreateFromLine(lineId: string, v: { category: string | null; party: string | null; description: string | null; counter: string | null }) {

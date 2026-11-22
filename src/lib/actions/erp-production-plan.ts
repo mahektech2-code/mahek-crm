@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { err, fromThrown, type Result } from "@/lib/result";
-import { ErpNotPermitted, requireErpWrite } from "@/lib/erp/access";
+import { ErpNotPermitted, requireErpTickWrite, requireErpWrite } from "@/lib/erp/access";
 import { deletePlanLine, openPlanFor, printPicks, savePlanLine, type PlanPick } from "@/lib/erp/production-plan";
 import type { LineInput } from "@/lib/erp/engines/production-plan";
 
@@ -42,7 +42,7 @@ export async function erpPlanSaveLine(planId: string, input: LineInput, lineId?:
 
 export async function erpPlanDeleteLine(lineId: string): Promise<Result<undefined>> {
   try {
-    const ctx = await requireErpWrite("underProcess");
+    const ctx = await requireErpTickWrite("underProcess", "delete");
     const res = await deletePlanLine(ctx, lineId);
     touched();
     return res;

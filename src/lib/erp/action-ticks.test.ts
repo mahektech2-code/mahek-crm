@@ -5,7 +5,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyTicks, holdsTick, isNextStep, menuBlock, PURCHASE_TICKS, quoteOpTick, tickFor, tickWhy } from "./action-ticks";
+import { applyTicks, holdsTick, idTick, isNextStep, menuBlock, PURCHASE_TICKS, quoteOpTick, tickFor, tickWhy } from "./action-ticks";
 import type { ListRow, ListSpec } from "./ui";
 
 const ticks = (m: Record<string, [boolean, boolean]>) => ({ administrator: false, ticks: new Map(Object.entries(m).map(([k, [edit, del]]) => [k, { edit, delete: del }])) });
@@ -108,10 +108,10 @@ test("Lot testing, Bills and Drum labels: what each new act needs", () => {
   assert.equal(menuBlock("barcode", { id: "trace" }), 0);
 });
 
-test("every other ERP screen orders its ⋯ menu by the action's own words", () => {
+test("every other ERP screen orders its ⋯ menu by the tick its act needs, read off the id", () => {
   assert.equal(menuBlock("orders", { id: "undoBilling", l: "Undo billing" }), 2, "a take-back goes last, in red");
   assert.equal(menuBlock("sfgBatches", { id: "void", l: "Void batch…" }), 2);
-  assert.equal(menuBlock("expenses", { id: "x", l: "Reverse this receipt" }), 2);
+  assert.equal(menuBlock("dispatchRegister", { id: "reverseOutward", l: "Reverse the dispatch" }), 2);
   assert.equal(menuBlock("customers", { id: "edit", l: "Edit", loadsForm: true }), 1, "a change sits in the middle");
   assert.equal(menuBlock("orderHub", { id: "approve", l: "Approve" }), 1);
   assert.equal(menuBlock("sfgBatches", { id: "whole", l: "Show the whole batch" }), 0, "ordinary work comes first");
@@ -126,4 +126,24 @@ test("a screen's commonest button is not the record's next step", () => {
   assert.equal(isNextStep({ l: "Open the order", primary: true }), false);
   assert.equal(isNextStep({ l: "Edit packing", primary: true }), true, "a named edit is the step");
   assert.equal(isNextStep({ l: "Approve" }), false, "not marked primary");
+});
+
+test("every ERP page's acts: the server and the menu read one rule off the id", () => {
+  for (const id of ["cancel", "cancelOrder", "void", "delete", "remove", "retire", "toggle", "deactivate", "withdraw", "reject", "qcReject", "reverse", "reverseOutward", "unbill", "unmatch", "reopen", "notOrder"])
+    assert.equal(idTick(id), "delete", id);
+  for (const id of ["edit", "editOrder", "editTo", "adjust", "gst", "packing", "approve", "ownerApproveCredit", "qcApprove", "verifyOrder", "notVerify", "confirm", "confirmOutward", "post", "hold", "release", "resolveHold", "correctOrder", "sendBack", "pend", "accept", "activate", "review", "apply", "restore", "ack", "ignore", "bills", "aiComplaint", "aiLr"])
+    assert.equal(idTick(id), "edit", id);
+  for (const id of ["open", "openSfg", "trace", "labels", "print", "scan", "start", "empty", "raise", "count", "sell", "return", "copy", "more", "duplicate", "select", "run", "explain", "escalate", "aiLrRead", "aiComplaintReject", "billingView"])
+    assert.equal(idTick(id), undefined, id);
+  assert.equal(tickFor("sfgBatches", "forms", "new"), undefined, "starting a batch is Access");
+  assert.equal(tickFor("sfgBatches", "forms", "edit"), "edit");
+  assert.equal(tickFor("orders", "actions", "unbill"), "delete");
+  assert.equal(tickFor("requisitions", "actions", "trace"), undefined, "Purchase still reads its own table");
+});
+
+test("a tab's acts are judged by its page's ticks", () => {
+  const p = ticks({ orders: [true, false] });
+  assert.ok(holdsTick(p, "readyOrders", "edit"), "Orders › Production is Orders");
+  assert.equal(holdsTick(p, "readyOrders", "delete"), false);
+  assert.match(tickWhy("readyOrders", "delete"), /^Needs Delete on Orders/);
 });

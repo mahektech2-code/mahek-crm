@@ -1,4 +1,5 @@
 import type { ActionSpec, ListRow, ListSpec } from "./ui";
+import { erpScreen } from "./registry";
 
 /* ---------------------------------------------------------------------------
  * WHICH TICK EACH PURCHASE ACTION NEEDS — Access, Edit or Delete on its page
@@ -73,19 +74,50 @@ export const PAGE_LABEL: Readonly<Record<string, string>> = {
 /** Somebody's ticks as the ERP reads them: undefined holds every tick. */
 export type TickHolder = { administrator: boolean; ticks?: ReadonlyMap<string, { edit: boolean; delete: boolean }> };
 
+/** The page a list key's ticks are read from: a tab (`readyOrders`) is its page's (`orders`). */
+export function tickPage(screen: string): string {
+  return erpScreen(screen)?.key ?? screen;
+}
+
 export function holdsTick(ctx: TickHolder, screen: string, tick: Tick | undefined): boolean {
   if (!tick || ctx.administrator || !ctx.ticks) return true;
-  const t = ctx.ticks.get(screen);
+  const t = ctx.ticks.get(tickPage(screen));
   return tick === "edit" ? !!t?.edit : !!t?.delete;
 }
 
 export function tickFor(screen: string, kind: keyof Rules, id: string): Tick | undefined {
-  return PURCHASE_TICKS[screen]?.[kind]?.[id];
+  /* Purchase names every act in its table; every other screen is read off the act's id (`idTick`). */
+  if (PURCHASE_TICKS[screen]) return PURCHASE_TICKS[screen][kind]?.[id];
+  return kind === "forms" && id === "new" ? undefined : idTick(id);
+}
+
+/** Ids that take something back: Delete. `toggle` is Retire / Restore on the masters — retiring is the take-back. */
+const DELETE_ID = /^(cancel|delete|void|remove|retire|deactivate|withdraw|reject|reverse|unbill|unmatch|undo|reopen|toggle|qcReject|notOrder|discard|writeOff)/;
+/** Ids that change or decide what is there: Edit. */
+const EDIT_ID =
+  /^(edit|adjust|gst|packing|approve|ownerApprove|qcApprove|verify|notVerify|confirm|post|hold|unhold|release|resolve|correct|sendBack|pend|accept|activate|review|apply|restore|ready|ack|ignore|autoOn|change|rename|update|set[A-Z]|mark|bills|move|reassign|merge)/;
+
+/**
+ * THE TICK AN ACT NEEDS on every ERP screen but Purchase's, read off its id —
+ * the same verbs mean the same thing across screens (`cancel…`, `void`,
+ * `retire`, `reverse…` take something back; `edit…`, `approve`, `confirm…`,
+ * `post`, `hold`/`release` change it), so one rule serves the server's refusal
+ * and the menu's blocks and they cannot disagree. Everything else is a
+ * screen's ordinary work and needs Access: open, trace, print, scan, start a
+ * batch, record an empty, raise, count, sell as scrap, add another. An AI
+ * reading is Access to ask for (`ai…Read`) and to turn down (`ai…Reject`:
+ * nothing changes); accepting it (`ai…`) is Edit.
+ */
+export function idTick(id: string): Tick | undefined {
+  if (/^ai[A-Z]/.test(id)) return /(Read|Reject)$/.test(id) ? undefined : "edit";
+  if (DELETE_ID.test(id)) return "delete";
+  if (EDIT_ID.test(id)) return "edit";
+  return undefined;
 }
 
 /** The sentence a held-back action says — in the record dialog, and when the server refuses it. */
 export function tickWhy(screen: string, tick: Tick): string {
-  return `Needs ${tick === "edit" ? "Edit" : "Delete"} on ${PAGE_LABEL[screen] ?? "this page"} — given in Manage access.`;
+  return `Needs ${tick === "edit" ? "Edit" : "Delete"} on ${PAGE_LABEL[screen] ?? erpScreen(screen)?.label ?? "this page"} — given in Manage access.`;
 }
 
 /** The tick a row action needs: a form it loads is judged as that form. */
@@ -100,27 +132,8 @@ export function actionTick(screen: string, a: Pick<ActionSpec, "id" | "loadsForm
  * by, so the menu's order cannot drift from who may do what.
  */
 export function menuBlock(screen: string, a: Pick<ActionSpec, "id" | "loadsForm"> & { l?: string }): 0 | 1 | 2 {
-  if (!PURCHASE_TICKS[screen]) return wordBlock(a);
   const t = actionTick(screen, a);
   return t === "delete" ? 2 : t === "edit" ? 1 : 0;
-}
-
-/** What a take-back is called: it removes, stops or undoes something. */
-const TAKE_BACK = /^(delete|cancel|void|remove|retire|deactivate|withdraw|reject|undo|reverse|write off|mark inactive|discard|close short|reopen|back to)/i;
-/** What a change is called: it alters what is already there. */
-const CHANGE = /^(edit|change|correct|rename|update|set |move |reassign|merge|approve|verify|mark |hold|release|record bill|enter rate)/i;
-
-/**
- * The block of a screen that has no tick table yet (every group but Purchase):
- * read off the action's own words, the way the record dialog has always
- * coloured a take-back red — so its ⋯ menu is ordered the same way Purchase's
- * is: open and ordinary work, then changes, then take-backs last and in red.
- */
-export function wordBlock(a: Pick<ActionSpec, "id" | "loadsForm"> & { l?: string }): 0 | 1 | 2 {
-  const l = (a.l ?? "").trim();
-  if (TAKE_BACK.test(l) || /^(delete|cancel|void|remove|reverse)/i.test(a.id)) return 2;
-  if (CHANGE.test(l) || a.id === "edit") return 1;
-  return 0;
 }
 
 /**
@@ -129,7 +142,7 @@ export function wordBlock(a: Pick<ActionSpec, "id" | "loadsForm"> & { l?: string
  * hidden from the row's menu; a bulk action they lack is removed.
  */
 export function applyTicks<T extends { spec: ListSpec; rows: ListRow[] }>(ctx: TickHolder, screen: string, read: T): T {
-  if (!PURCHASE_TICKS[screen] || ctx.administrator || !ctx.ticks) return read;
+  if (ctx.administrator || !ctx.ticks || !Array.isArray(read?.rows)) return read;
   const rows = read.rows.map((r) => {
     if (!r.actions?.length) return r;
     const actions = r.actions.map((a) => {

@@ -186,8 +186,12 @@ const rawMaterials: ScreenModule = {
         screen: "rawMaterials",
         cols,
         hidden,
+        subtabs: [
+          { id: "active", l: "In use", k: "status", in: ["Active"] },
+          { id: "retired", l: "Retired", k: "status", in: ["Retired"] },
+          { id: "all", l: "All materials" },
+        ],
         groups: ["type"],
-        chips: "status",
         stats: [
           { l: "Items" },
           { l: "Types", kind: "distinct", k: "type" },
@@ -1010,16 +1014,19 @@ const customersScreen: ScreenModule = {
     const why = canStatus ? "" : "Only an admin or the office changes a customer's status.";
     return {
       spec: {
+        subtabs: [
+          { id: "active", l: "Active", k: "status", in: ["Active"] },
+          { id: "pending", l: "Pending activation", k: "status", in: ["Pending"], hint: "New parties — their orders wait until a party is activated" },
+          { id: "deactivated", l: "Deactivated", k: "status", in: ["Deactive"] },
+          { id: "all", l: "All parties" },
+        ],
         screen: "customers",
         cols,
         hidden: [],
-        groups: ["status"],
-        chips: "status",
         stats: [
           { l: "Customers" },
           { l: "Cities", kind: "distinct", k: "city" },
           { l: "Sales people", kind: "distinct", k: "sales" },
-          { l: "Pending", where: { flag: "pendingParty" }, tone: "warn" },
         ],
         filters: ["city", "area", "sales", "priceList", "grade", "credit"],
         noDataLine: "No customers yet. Customers are added in Accounts → Customers → Add customer.",
@@ -1295,6 +1302,11 @@ const godowns: ScreenModule = {
     return {
       spec: {
         screen: "godowns",
+        subtabs: [
+          { id: "active", l: "In use", k: "status", in: ["Active"] },
+          { id: "retired", l: "Retired", k: "status", in: ["Retired"] },
+          { id: "all", l: "All godowns" },
+        ],
         cols,
         hidden: [],
         groups: ["region"],
