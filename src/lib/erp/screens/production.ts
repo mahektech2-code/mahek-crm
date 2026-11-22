@@ -322,6 +322,13 @@ const sfgBatches: ScreenModule = {
         screen: "sfgBatches",
         cols,
         hidden,
+        /* Work first, as Purchase's sub-tabs are: what waits on QC, then what QC decided. */
+        subtabs: [
+          { id: "toApprove", l: "To approve", k: "qc", in: ["Pending"], hint: "Made, waiting for QC to approve the lot" },
+          { id: "approved", l: "Approved", k: "qc", in: ["Approved"], hint: "Approved — can be filled into cans and drums" },
+          { id: "rejected", l: "Rejected", k: "qc", in: ["Rejected"], hint: "Rejected by QC — cannot be filled" },
+          { id: "all", l: "All batches" },
+        ],
         /* A batch is one SFG number however many lots it drew, so the list
            reads as one batch per group: the batch's own facts in the header,
            a line per raw-material lot beneath. */
@@ -337,7 +344,6 @@ const sfgBatches: ScreenModule = {
           { l: "Batches", kind: "distinct", k: "sfgNo" },
           { l: "Litres used", kind: "sum", k: "total", u: "L" },
           { l: "Cost", kind: "sum", k: "costing", missing: "without a rate" },
-          { l: "QC pending", where: { flag: "qcPending" }, tone: "warn" },
           { l: "Over recipe", where: { flag: "overRecipe" }, tone: "warn" },
           { l: "Not posted", where: { flag: "notPosted" }, tone: "danger" },
         ],

@@ -1,5 +1,6 @@
 import "server-only";
 import { cache } from "react";
+import { holdsTick, tickWhy, type Tick } from "./action-ticks";
 import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import { db } from "@/db";
 import {
@@ -304,6 +305,18 @@ export class ErpNotPermitted extends Error {
  * screen the write belongs to (a storekeeper may not post an order because a
  * button is hidden) and, where the act needs one, the power.
  */
+/**
+ * A write on a desk of its own (Logistics, Petty Cash, the dispatch desk, the
+ * production plan) that changes or takes back something: refused without the
+ * page's Edit or Delete tick, as `erpRunAction` refuses the lists' acts — one
+ * rule (`action-ticks.ts`) for every ERP page.
+ */
+export async function requireErpTickWrite(screen: string, tick: Tick, power?: ErpPower): Promise<ErpContext> {
+  const ctx = await requireErpWrite(screen, power);
+  if (!holdsTick(ctx, screen, tick)) throw new ErpNotPermitted(tickWhy(screen, tick));
+  return ctx;
+}
+
 export async function requireErpWrite(screen: string, power?: ErpPower): Promise<ErpContext> {
   const ctx = await erpContext();
   if (ctx.viewingAs) throw new ErpNotPermitted(previewRefusal(ctx.viewingAs));

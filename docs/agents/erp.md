@@ -813,6 +813,68 @@ Purchase group folded into one row, was built and taken out the same day: the
 owner wants the sidebar and its sub-navigation as they are, and no tab-like
 bars drawn as navigation. Narrowing a list belongs to its sub-tabs (below).
 
+**EDIT AND DELETE COUNT ON EVERY ERP PAGE (Nov 2026).** Purchase's ticks
+were enforced first; now every page's are. Purchase keeps its own table
+(`PURCHASE_TICKS`); every other page reads the tick off the act's id
+(`idTick`): `cancel…`, `void`, `delete`, `remove`, `retire`, `toggle`,
+`deactivate`, `withdraw`, `reject`, `reverse…`, `unbill`, `unmatch`,
+`reopen` are Delete; `edit…`, `adjust`, `approve`, `verify…`, `confirm…`,
+`post`, `hold`/`release`, `resolve…`, `sendBack`, `accept`, `activate`,
+`review`, `apply`, `restore`, accepting an AI reading are Edit; everything
+else — open, trace, print, scan, start a batch, record an empty, raise,
+count, sell as scrap, add another, asking for or turning down an AI reading
+— is the page's ordinary work and needs Access. ONE rule, read by the
+server (`erpRunAction`/`erpRunBulk`/`erpSubmitForm`/`erpLoadForm`) and by the
+list (`applyTicks` on every module's load, `menuBlock` for the ⋯ blocks), so
+a menu cannot offer what the server refuses. Name a new act with its verb
+first and it is judged right; an act whose id starts with none of them is
+Access. A tab's acts are its page's ticks (`tickPage`: `readyOrders` is
+`orders`). The desks with their own server actions call
+`requireErpTickWrite(screen, tick)` for their changes and take-backs:
+Logistics (edit/void an LR, detach, update, set kind, replace a file,
+duplicates, reopen, merge transporters, re-split/pay/unpay/delete a freight
+bill), Petty Cash (review, settle, match, cancel), the production plan
+(delete a line), tracking (regenerate a link) and the dispatch desk (unscan,
+decide an override). `0374_erp_ticks_everywhere` gave every converted grant
+Edit and Delete on each non-Purchase page it held, so the release took
+nothing from anybody; narrowing is done in Manage access from then on.
+
+**NO FIGURE CARDS ON ERP PAGES (Nov 2026).** The row of stat cards over a
+list (and its status Breakdown card) is not drawn on any ERP screen
+(`isFlowLayout` in `list-screen.tsx`): the sub-tabs and their counts say
+what is waiting, the Filters dialog narrows, the pager counts. A screen's
+`stats` are still computed and still feed the CSV export and other apps'
+lists, which keep their cards. A statement's Opening + In − Out = Closing
+strip (`strip`) is a reconciliation, not a card, and stays.
+
+**SUB-TABS ON THE SINGLE-LIST PAGES, WORK FIRST.** SFG batches To approve ·
+Approved · Rejected · All batches (by QC); Alerts Open · Acknowledged ·
+Resolved · All; Sales parties Active · Pending activation · Deactivated ·
+All (its status breakdown card and status grouping went — the sub-tabs say
+it); Raw materials and Godowns In use · Retired · All. A page that already
+had tabs (`views`) keeps them, drawn as the segmented switch.
+
+**THE WHOLE ERP USES PURCHASE'S LAYOUT (Nov 2026).** What Purchase got in
+the redesign is no longer Purchase's: `isFlowLayout` (registry.ts) is true for
+every ERP screen, and the shared list and record dialog read it, never a
+group. So every screen's tabs (`views`) and sub-tabs draw as the segmented
+switch, a row's actions are its next-step button (the action marked
+`primary`) and a ⋯ menu in three blocks with no pencil column, and the
+record opens as one view — facts down a left rail, the flow, the Next step
+card, the screen's panels, the history. A screen with no `record` of its own
+still gets a flow bar from its list's status `stages`. The menu's blocks come
+from `action-ticks.ts`: Purchase's tick table where there is one, else
+`wordBlock`, the action's own words (Cancel, Void, Delete, Reverse… last and
+red; Edit, Approve, Verify, Mark… in the middle). The sidebar follows the
+same rule as Purchase: a group whose work is a sequence is numbered —
+Production 1 SFG batches · 2 FG filling · 3 Packing batches, Sales 1 Order
+Hub · 2 MRP check · 3 Orders · 4 Dispatch desk · 5 Dispatch register — with
+its side pages under Tools (Under Process moved from Sales to Production's
+Tools: it is the day's production plan; To Hold is Sales' Tool); a group of
+lists gets headings (Masters: Buying, Selling, Setup; Stock: On hand,
+Control, Levels). Moving a page between groups is the sidebar and Manage
+access's grouping only — its module key, URL and grants do not change.
+
 **PURCHASE IS A NUMBERED FLOW, AND GOODS IN, BILLS AND DRUM LABELS ARE PAGES
 (owner, Nov 2026 — a reversal of "a filter is a tab").** The sidebar's
 Purchase group draws 1 Requirements · 2 Purchase orders · 3 Goods in · 4 Lot

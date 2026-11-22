@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
-import { ErpNotPermitted, erpContext, requireErpWrite, type ErpContext } from "@/lib/erp/access";
+import { ErpNotPermitted, erpContext, requireErpTickWrite, requireErpWrite, type ErpContext } from "@/lib/erp/access";
 import { decideOverride, requestOverride, scanOntoOrder, unscanUnit, type ScanAnswer } from "@/lib/erp/dispatch";
 import { screenModule } from "@/lib/erp/screens";
 import { erpAudit } from "@/lib/erp/server";
@@ -40,7 +40,7 @@ export async function erpDispatchScan(orderNo: number, code: string): Promise<Re
 
 export async function erpDispatchUnscan(unitId: string): Promise<Result<unknown>> {
   try {
-    const ctx = await requireErpWrite("dispatch");
+    const ctx = await requireErpTickWrite("dispatch", "delete");
     const res = await unscanUnit(ctx, unitId);
     touched();
     return res;
@@ -62,7 +62,7 @@ export async function erpDispatchRequestOverride(orderNo: number, code: string, 
 
 export async function erpDispatchDecideOverride(id: string, approve: boolean, note: string): Promise<Result<unknown>> {
   try {
-    const ctx = await requireErpWrite("dispatch", "dispatchOverride");
+    const ctx = await requireErpTickWrite("dispatch", "edit", "dispatchOverride");
     const res = await decideOverride(ctx, id, approve, note.trim() || null);
     touched();
     return res;

@@ -224,6 +224,7 @@ const files = [
   "src/lib/access/tab-grants.integration.test.ts",
   // 0372: Purchases' three tabs become three pages and nobody's access moves.
   "src/lib/access/erp-purchases-split.integration.test.ts",
+  "src/lib/access/erp-ticks-everywhere.integration.test.ts",
   // Purchase actions need the page's Edit or Delete tick, on the list and at the server.
   "src/lib/erp/erp-purchase-ticks.integration.test.ts",
   // Lot testing, Bills and Drum labels as desks: buckets, waiting, the group bill, the label print log.
