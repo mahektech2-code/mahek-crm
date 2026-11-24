@@ -2584,6 +2584,13 @@
       "when": 1795572800000,
       "tag": "0376_studio_timeline_bulk",
       "breakpoints": true
+    },
+    {
+      "idx": 370,
+      "version": "7",
+      "when": 1795600000000,
+      "tag": "0377_geo_master",
+      "breakpoints": true
     }
   ]
 }

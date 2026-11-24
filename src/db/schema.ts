@@ -8845,6 +8845,199 @@ export const mbosUserTerritories = pgTable(
   ],
 );
 
+/* ---------------------------------------------------------------------------
+ * THE OFFICIAL GEOGRAPHY MASTER — state, district, taluka, and the urban local
+ * bodies inside them — and who is allocated which. ADDITIVE: nothing here is
+ * read by `territoryClause`, `places` or any shop match, and `mbos_user_territories`
+ * is untouched. These tables hold an EMPTY master until a reviewed snapshot is
+ * loaded, and the app says so rather than inventing one.
+ *
+ * `geo_sources` records where every row came from, whether that source is the
+ * official LGD or a copy of it, and whether its reuse licence has been verified.
+ * A snapshot whose `licence_status` is not `verified` may be loaded for review
+ * and is not to be treated as an official dataset.
+ *
+ * A ULB IS NOT A TALUKA'S CHILD. One urban local body can cover villages in
+ * several sub-districts, and one sub-district can hold several ULBs, so the link
+ * is `geo_ulb_subdistricts` (many-to-many) and never a parent column.
+ * `geo_ulb_districts` holds every district the source puts a ULB in; a ULB there with
+ * no row in `geo_ulb_subdistricts` is one the source ties to a district only, and one the source
+ * cannot place at all is in `geo_unresolved_records` — nothing is dropped.
+ * ------------------------------------------------------------------------- */
+
+export const geoSources = pgTable("geo_sources", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  /** `official` | `community_mirror` | `derived` — never inferred from the name. */
+  sourceClass: text("source_class").notNull(),
+  url: text("url"),
+  /** The date the source says its data is as of. */
+  observedOn: date("observed_on"),
+  retrievedOn: date("retrieved_on"),
+  checksum: text("checksum"),
+  /** `unverified` | `verified` | `blocked`. A reuse licence is a decision, not a default. */
+  licenceStatus: text("licence_status").notNull().default("unverified"),
+  licenceNote: text("licence_note"),
+  approvedById: text("approved_by_id"),
+  approvedAt: timestamp("approved_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const geoUnits = pgTable(
+  "geo_units",
+  {
+    id: text("id").primaryKey(),
+    /** `state` | `district` | `subdistrict`. Text and not an enum, for the reason `places.kind` is. */
+    level: text("level").notNull(),
+    /** The source's own code, as text — leading zeros and all. */
+    lgdCode: text("lgd_code").notNull(),
+    version: integer("version"),
+    name: text("name").notNull(),
+    nameKey: text("name_key").notNull(),
+    parentId: text("parent_id").references((): AnyPgColumn => geoUnits.id, { onDelete: "restrict" }),
+    census2011Code: text("census_2011_code"),
+    /** `State` | `UT`, on a state row only. */
+    stateOrUt: text("state_or_ut"),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => geoSources.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("geo_units_level_code_key").on(t.level, t.lgdCode),
+    index("geo_units_parent_idx").on(t.parentId),
+    check("geo_units_level_check", sql`${t.level} in ('state', 'district', 'subdistrict')`),
+    check("geo_units_parent_check", sql`(${t.level} = 'state') = (${t.parentId} is null)`),
+  ],
+);
+
+export const geoLocalBodies = pgTable(
+  "geo_local_bodies",
+  {
+    id: text("id").primaryKey(),
+    lgdCode: text("lgd_code").notNull(),
+    version: integer("version"),
+    /** As the source spells it, trailing dots and all. */
+    name: text("name").notNull(),
+    nameKey: text("name_key").notNull(),
+    nameLocal: text("name_local"),
+    /** The source's type code, kept as text and NOT decoded — no legend has been verified. */
+    typeCode: text("type_code"),
+    stateUnitId: text("state_unit_id")
+      .notNull()
+      .references(() => geoUnits.id, { onDelete: "restrict" }),
+    census2011Code: text("census_2011_code"),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => geoSources.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("geo_local_bodies_code_key").on(t.lgdCode),
+    index("geo_local_bodies_state_idx").on(t.stateUnitId),
+  ],
+);
+
+export const geoUlbSubdistricts = pgTable(
+  "geo_ulb_subdistricts",
+  {
+    ulbId: text("ulb_id")
+      .notNull()
+      .references(() => geoLocalBodies.id, { onDelete: "cascade" }),
+    subdistrictId: text("subdistrict_id")
+      .notNull()
+      .references(() => geoUnits.id, { onDelete: "restrict" }),
+    districtId: text("district_id")
+      .notNull()
+      .references(() => geoUnits.id, { onDelete: "restrict" }),
+    /** How many village rows the source ties this ULB to in this sub-district. */
+    villageRows: integer("village_rows").notNull().default(0),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => geoSources.id, { onDelete: "restrict" }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.ulbId, t.subdistrictId] }),
+    index("geo_ulb_subdistricts_sub_idx").on(t.subdistrictId),
+  ],
+);
+
+export const geoUlbDistricts = pgTable(
+  "geo_ulb_districts",
+  {
+    ulbId: text("ulb_id")
+      .notNull()
+      .references(() => geoLocalBodies.id, { onDelete: "cascade" }),
+    districtId: text("district_id")
+      .notNull()
+      .references(() => geoUnits.id, { onDelete: "restrict" }),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => geoSources.id, { onDelete: "restrict" }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.ulbId, t.districtId] }),
+    index("geo_ulb_districts_district_idx").on(t.districtId),
+  ],
+);
+
+/** What the source could not place — kept and shown, never dropped. */
+export const geoUnresolvedRecords = pgTable(
+  "geo_unresolved_records",
+  {
+    id: text("id").primaryKey(),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => geoSources.id, { onDelete: "restrict" }),
+    /** `no_coverage` (a ULB with no coverage row) | `orphan_coverage` (a coverage code with no ULB). */
+    kind: text("kind").notNull(),
+    lgdCode: text("lgd_code").notNull(),
+    name: text("name"),
+    stateName: text("state_name"),
+    note: text("note"),
+  },
+  (t) => [
+    index("geo_unresolved_source_idx").on(t.sourceId, t.kind),
+    check("geo_unresolved_kind_check", sql`${t.kind} in ('no_coverage', 'orphan_coverage')`),
+  ],
+);
+
+/**
+ * WHO WORKS WHERE, in the official geography. A SEPARATE table from
+ * `mbos_user_territories` on purpose: that one's `kind` is read by the holiday
+ * audience, the lead service, the place-tree service and the handset, and a new
+ * value in it would be a value each of them has never heard of.
+ *
+ * A row names exactly one thing: a unit (state, district or sub-district) or a
+ * ULB. The partial unique indexes are what make "the same ULB through two
+ * talukas" ONE allocation.
+ */
+export const mbosUserGeoTerritories = pgTable(
+  "mbos_user_geo_territories",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** `state` | `district` | `subdistrict` | `ulb` */
+    level: text("level").notNull(),
+    unitId: text("unit_id").references(() => geoUnits.id, { onDelete: "restrict" }),
+    ulbId: text("ulb_id").references(() => geoLocalBodies.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id"),
+  },
+  (t) => [
+    uniqueIndex("mbos_user_geo_territories_unit_key").on(t.userId, t.unitId).where(sql`${t.unitId} is not null`),
+    uniqueIndex("mbos_user_geo_territories_ulb_key").on(t.userId, t.ulbId).where(sql`${t.ulbId} is not null`),
+    index("mbos_user_geo_territories_user_idx").on(t.userId),
+    check("mbos_user_geo_territories_level_check", sql`${t.level} in ('state', 'district', 'subdistrict', 'ulb')`),
+    check(
+      "mbos_user_geo_territories_one_target_check",
+      sql`(${t.level} = 'ulb' and ${t.ulbId} is not null and ${t.unitId} is null) or (${t.level} <> 'ulb' and ${t.unitId} is not null and ${t.ulbId} is null)`,
+    ),
+  ],
+);
+
 export const mbosHolidays = pgTable(
   "mbos_holidays",
   {

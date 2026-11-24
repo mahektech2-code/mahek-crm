@@ -74,7 +74,7 @@ export function JourneysScreen({
   horizon: number;
   plans: JourneyPlan[];
   book: BookCustomer[];
-  /** The cities this salesman's own book actually names. */
+  /** Where he works, then the cities his own book names — a shortcut, not a limit. */
   cities: string[];
   /** Appended to the links back into this view — `&in=team` keeps it in its modal. */
   stay?: string;
@@ -347,8 +347,8 @@ export function JourneysScreen({
                 {longDay(dates[0])} to {longDay(dates[dates.length - 1])}
               </span>
               <span className="text-[12px] text-muted">
-                {book.length
-                  ? `${cities.length} cities in his book`
+                {book.length || cities.length
+                  ? `${cities.length} cities to pick from`
                   : "his book is empty"}
               </span>
             </header>
@@ -538,7 +538,7 @@ function DayLine({
               disabled={busy || state === "agreed"}
               label={`City for ${shortDay(row.date)}`}
               placeholder="Propose a city"
-              emptyHint="No city in his book matches — what you type is still proposed"
+              emptyHint="No allocated or book city matches — what you type is still proposed"
               title={
                 state === "agreed"
                   ? "He has agreed this day. He picks the shops next."
