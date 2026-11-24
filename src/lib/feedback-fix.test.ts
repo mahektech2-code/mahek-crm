@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {
   commitIsInBuild,
   fixActions,
+  shouldAutoFix,
+  confidencePct,
   fixStage,
   isCommitBuild,
   issueBody,
@@ -100,5 +102,33 @@ describe("feedback fix — what is offered", () => {
     assert.equal(commitIsInBuild("diverged"), false);
     assert.equal(isCommitBuild("dev"), false);
     assert.equal(isCommitBuild("97d96bf0a1"), true);
+  });
+});
+
+describe("feedback fix — asking Claude without a button", () => {
+  const on = { enabled: true, connected: true };
+  const code = { ...base, need: "code_change" as const };
+
+  test("a sure code change goes; anything else does not", () => {
+    assert.equal(shouldAutoFix(code, on), true);
+    for (const need of ["data_fix", "setting", "access", "how_to", "not_a_fault"] as const) {
+      assert.equal(shouldAutoFix({ ...code, need }, on), false, need);
+    }
+    assert.equal(shouldAutoFix(null, on), false);
+  });
+
+  test("off, unconnected, or already asked: nothing is sent", () => {
+    assert.equal(shouldAutoFix(code, { ...on, enabled: false }), false);
+    assert.equal(shouldAutoFix(code, { ...on, connected: false }), false);
+    assert.equal(shouldAutoFix({ ...code, aiFixRequestedAt: "x" }, on), false);
+    assert.equal(shouldAutoFix({ ...code, prState: "open" }, on), false);
+    assert.equal(shouldAutoFix({ ...code, deployedAt: "x" }, on), false);
+  });
+
+  test("a confidence given as a fraction is read as a percentage", () => {
+    assert.equal(confidencePct(0.9), 90);
+    assert.equal(confidencePct(1), 100);
+    assert.equal(confidencePct(85), 85);
+    assert.equal(confidencePct(0), 0);
   });
 });

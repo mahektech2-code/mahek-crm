@@ -231,7 +231,7 @@ async function feedbackFixesStep() {
   const r = await syncFeedbackFixes();
   return {
     recordsAffected: r.closed,
-    detail: `${r.checked} with GitHub checked, ${r.merged} merged, ${r.closed} closed as live${r.errors ? `, ${r.errors} GitHub errors` : ""}`,
+    detail: `${r.asked ? `${r.asked} sent to Claude, ` : ""}${r.checked} with GitHub checked, ${r.merged} merged, ${r.closed} closed as live${r.errors ? `, ${r.errors} GitHub errors` : ""}`,
   };
 }
 

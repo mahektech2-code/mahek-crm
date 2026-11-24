@@ -6187,6 +6187,15 @@ export const SETTINGS = [
       "The issue label \"Ask Claude to fix\" puts on an issue. The repository's Claude fix workflow starts on exactly this label, so the two must match.",
     default: "ai-fix",
   },
+  {
+    key: "feedbackFix.autoFix",
+    type: "boolean",
+    category: "voice",
+    label: "Fixing feedback · ask Claude automatically",
+    description:
+      "Every report that needs a code change — as the AI reads it, however sure, or as a person marks it — goes straight to GitHub with Claude asked to write the fix, without anybody pressing a button. Claude opens a pull request ready to merge; a person reviews and merges it. Off: a platform administrator presses \"Ask Claude to fix\".",
+    default: true,
+  },
   /* ------------------------------------------------------------------ hire */
   {
     key: "hire.ai.enabled",
@@ -7346,6 +7355,7 @@ export type Config = {
   "feedbackFix.model": string;
   "feedbackFix.githubRepo": string;
   "feedbackFix.aiFixLabel": string;
+  "feedbackFix.autoFix": boolean;
   "hire.ai.enabled": boolean;
   "hire.ai.reasoningModel": string;
   "hire.ai.fastModel": string;

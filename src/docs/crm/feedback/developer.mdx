@@ -30,7 +30,7 @@ Feedback is two tables, one pure vocabulary file, one service of reads, one file
 | Table | `drizzle/0326_feedback_fixes.sql` | `feedback_fixes`, one row per root report: need, diagnosis, issue, PR, deploy |
 | Rules | `src/lib/feedback-fix.ts` | needs, `redact`, `routeHint`, `issueBody`, `fixStage`, `fixActions`, `commitIsInBuild` |
 | Wiring | `src/lib/services/feedback-fix-service.ts` | `diagnoseFeedback`, `createIssue`, `requestAiFix`, `syncFeedbackFixes` |
-| Actions | `src/lib/actions/feedback-fix.ts` | triage reads, chooses and sends; `askClaudeToFix` checks `isPlatformAdmin` |
+| Actions | `src/lib/actions/feedback-fix.ts` | triage reads, chooses and sends; `askClaudeToFix` checks `isPlatformAdmin`; choosing code change calls `autoRequestAiFix` |
 | Card | `src/app/admin/feedback-fix-card.tsx` | Fix it, How the team can fix it, the Claude confirm |
 | Workflow | `.github/workflows/claude-fix.yml` | `anthropics/claude-code-action` on the `ai-fix` label or an `@claude` comment |
 | Job | `feedback-fixes` in `src/lib/jobs.ts` | hourly; `npm run jobs -- feedback-fixes` by hand |

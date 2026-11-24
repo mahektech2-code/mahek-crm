@@ -61,6 +61,16 @@ export type Diagnosis = z.infer<typeof diagnosisSchema>;
 
 export const UNSURE_BELOW = 60;
 
+/**
+ * A confidence as a percentage. The model is asked for 0–100 and sometimes
+ * answers 0–1 — FB-14 went to GitHub "1% sure" when it meant 100%. Anything
+ * from 0 to 1 is read as a fraction; a real 1% is not a reading anybody acts on.
+ */
+export function confidencePct(n: number): number {
+  const pct = n > 0 && n <= 1 ? n * 100 : n;
+  return Math.max(0, Math.min(100, pct));
+}
+
 /* -------------------------------------------------------------- redaction */
 
 /**
@@ -240,6 +250,22 @@ export function fixActions(
         ? "Only a platform administrator can ask Claude to write a fix."
         : null;
   return { sendToDeveloper, askClaude: canClaude && who.platformAdmin, askClaudeWhyNot: canClaude ? askClaudeWhyNot : null };
+}
+
+/**
+ * Whether Claude is asked WITHOUT anybody pressing the button: the setting is
+ * on, GitHub is connected, it needs a code change, and it has not been asked
+ * or fixed already. However unsure the AI was — fully autonomous, Mahek's
+ * call, Nov 2026: a fix Claude gets wrong costs a closed pull request, a
+ * report left waiting for a button costs the reporter. The person who merges
+ * is the check. A person who chose anything but a code change is never
+ * overruled, because then the need is not a code change.
+ */
+export function shouldAutoFix(f: FixState | null, opts: { enabled: boolean; connected: boolean }): boolean {
+  if (!opts.enabled || !opts.connected || !f) return false;
+  if (!needsCode(f.need)) return false;
+  if (f.aiFixRequestedAt || f.deployedAt) return false;
+  return f.prState !== "open" && f.prState !== "merged";
 }
 
 /**
