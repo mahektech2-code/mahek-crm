@@ -18917,3 +18917,49 @@ export const integrationUsage = pgTable(
   },
   (t) => [primaryKey({ columns: [t.provider, t.day] })],
 );
+
+/**
+ * THE STUDIO TIMELINE: one permanent row per recipient per act. Append-only — nothing updates or deletes one. Every
+ * name is a SNAPSHOT (content, sender, recipient) so the row reads the same after a poster is changed or removed, a
+ * lead is renamed or an employee leaves; the ids beside them are for linking while the record still exists.
+ *
+ * `action` says what a PERSON or the system did and is never a delivery claim: chat_opened / marked_sent / downloaded
+ * are user-marked; kapso_handed means Kapso accepted the message. What the PROVIDER confirmed — sent, delivered, read,
+ * failed — is not copied here: it is read from `studio_wa_messages` through `wa_message_id`, so it can only ever be
+ * what Kapso reported and cannot drift from it.
+ */
+export const studioActivities = pgTable(
+  "studio_activities",
+  {
+    id: text("id").primaryKey(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
+    kind: text("kind").notNull(),
+    contentName: text("content_name").notNull(),
+    contentRefType: text("content_ref_type"),
+    contentRefId: text("content_ref_id"),
+    caption: text("caption"),
+    senderId: text("sender_id").references(() => users.id, { onDelete: "set null" }),
+    senderName: text("sender_name").notNull(),
+    customerId: text("customer_id").references(() => customers.id, { onDelete: "set null" }),
+    recipientName: text("recipient_name").notNull(),
+    mode: text("mode").notNull(),
+    channel: text("channel").notNull(),
+    action: text("action").notNull(),
+    reason: text("reason"),
+    /** studio_wa_messages.id for a Kapso send. Deliberately not a foreign key: this row outlives the message. */
+    waMessageId: text("wa_message_id"),
+    /** What it was part of: the forward or bulk run, so one bulk send can be read together while every recipient keeps a row of their own. */
+    batchRef: text("batch_ref"),
+  },
+  (t) => [
+    index("studio_activities_customer_idx").on(t.customerId, t.occurredAt),
+    index("studio_activities_sender_idx").on(t.senderId, t.occurredAt),
+    index("studio_activities_at_idx").on(t.occurredAt),
+    index("studio_activities_wa_idx").on(t.waMessageId),
+    check("studio_activities_kind", sql`${t.kind} in ('poster','brochure','price_list','video','image','product_info','message')`),
+    check("studio_activities_mode", sql`${t.mode} in ('individual','bulk','inbox','forward_manual')`),
+    check("studio_activities_channel", sql`${t.channel} in ('kapso','whatsapp_chat','download','device','studio')`),
+    check("studio_activities_action", sql`${t.action} in ('kapso_handed','not_sent','chat_opened','marked_sent','marked_skipped','marked_undone','downloaded','shared_device','batch_generated','zip_downloaded','zip_downloaded_batch')`),
+  ],
+);
+export type StudioActivity = typeof studioActivities.$inferSelect;

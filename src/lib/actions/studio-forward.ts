@@ -7,6 +7,7 @@ import { auditLog, studioForwardRecipients, studioForwards } from "@/db/schema";
 import { canOpenModule } from "@/lib/access";
 import { resolveScope } from "@/lib/access-control";
 import { requireUser } from "@/lib/auth";
+import { recordActivity } from "@/lib/studio/timeline-service";
 import { waLink } from "@/lib/erp/engines/logistics";
 import { err, ok, type Result } from "@/lib/result";
 import { alreadyForwarded, canMove, captionProblem, checkRecipientIds, FORWARD_STATUSES, type ForwardStatus } from "@/lib/studio/domain/forward";
@@ -138,6 +139,12 @@ export async function cancelForward(forwardId: string): Promise<Result<{ left: n
   return ok({ left }, `Forward cancelled${left ? ` · ${left} not yet done will not be offered` : ""} · what was sent stays sent`);
 }
 
+/** One Timeline row for what the sender did by hand on a forward - a person's own act, never a delivery. */
+async function recordForwardAct(userId: string, forwardId: string, customerId: string | null, company: string, action: "chat_opened" | "marked_sent" | "marked_skipped" | "marked_undone", reason: string | null) {
+  const [f] = await db.select({ title: studioForwards.title, caption: studioForwards.caption }).from(studioForwards).where(eq(studioForwards.id, forwardId)).limit(1);
+  await recordActivity({ kind: "image", contentName: f?.title ?? "Uploaded picture", contentRefType: "forward", contentRefId: forwardId, caption: f?.caption ?? null, senderId: userId, customerId, recipientName: company, mode: "forward_manual", channel: "whatsapp_chat", action, reason, batchRef: forwardId });
+}
+
 async function ownedRecipient(userId: string, recipientId: string) {
   const [row] = await db
     .select({ r: studioForwardRecipients, caption: studioForwards.caption, forwardStatus: studioForwards.status })
@@ -173,6 +180,7 @@ export async function openRecipientChat(recipientId: string): Promise<Result<{ h
       .set({ status: "opened", openedAt: new Date() })
       .where(and(eq(studioForwardRecipients.id, recipientId), eq(studioForwardRecipients.status, "pending")));
   }
+  await recordForwardAct(user.id, row.r.forwardId, row.r.customerId, row.r.company, "chat_opened", null);
   return ok({ href });
 }
 
@@ -198,6 +206,8 @@ export async function markRecipient(recipientId: string, status: ForwardStatus, 
       afterState: { recipient: recipientId, from: row.r.status, to: status } as never,
     });
   });
+  const act = status === "sent" ? "marked_sent" : status === "skipped" ? "marked_skipped" : status === "pending" ? "marked_undone" : null;
+  if (act) await recordForwardAct(user.id, row.r.forwardId, row.r.customerId, row.r.company, act, note?.trim().slice(0, 200) || null);
   return ok(undefined);
 }
 
