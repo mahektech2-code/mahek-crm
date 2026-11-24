@@ -1,9 +1,11 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { and, eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { studioWaConversations, studioWaEvents, studioWaMessages } from "@/db/schema";
+import { auditLog, studioWaConversations, studioWaEvents, studioWaMessages } from "@/db/schema";
+import { scopedToUsers } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
+import { whatsappServiceState } from "@/lib/services/whatsapp-switch-service";
 import { readSecret } from "@/lib/secrets";
 import {
   CAPTION_MAX,
@@ -217,6 +219,39 @@ export async function applyWebhook(input: { event: string | null; key: string | 
 
 /* ------------------------------------------------------------------ refresh */
 
+/**
+ * THE MANUAL REFRESH'S MINIMUM INTERVAL. One press costs up to 23 calls to Kapso (three pages of conversations and
+ * twenty threads), and anybody holding the Inbox can press it, so repeated presses must not repeat the calls. Two layers,
+ * neither of which needs a table:
+ *   - this process: the slot is taken in ONE synchronous check-and-set, so presses that arrive together cannot both pass,
+ *     and a refresh that FAILED still holds it (a broken Kapso is not hammered);
+ *   - every process and restart: the newest `studio.inbox.synced` audit row, which a completed refresh already writes.
+ */
+export const REFRESH_MIN_SECONDS = 30;
+const refreshState = globalThis as unknown as { __studioInboxRefreshAt?: number };
+
+/** Seconds the caller must wait before Kapso may be asked again; 0 means go ahead, and the slot is now taken. */
+export async function claimRefresh(): Promise<number> {
+  const now = Date.now();
+  const before = refreshState.__studioInboxRefreshAt;
+  const wait = before === undefined ? 0 : Math.ceil((before + REFRESH_MIN_SECONDS * 1000 - now) / 1000);
+  if (wait > 0) return wait;
+  refreshState.__studioInboxRefreshAt = now;
+  const [last] = await db.select({ at: auditLog.at }).from(auditLog).where(eq(auditLog.action, "studio.inbox.synced")).orderBy(desc(auditLog.at)).limit(1);
+  const other = last ? Math.ceil((new Date(last.at).getTime() + REFRESH_MIN_SECONDS * 1000 - Date.now()) / 1000) : 0;
+  if (other > 0) {
+    /* Another process refreshed a moment ago: give the slot back and wait out the rest of its interval. */
+    refreshState.__studioInboxRefreshAt = before;
+    return other;
+  }
+  return 0;
+}
+
+/** Test seam only: forgets this process's slot. Does nothing outside NODE_ENV=test. */
+export function resetRefreshThrottle() {
+  if (process.env.NODE_ENV === "test") delete refreshState.__studioInboxRefreshAt;
+}
+
 const SYNC_PAGES = 3;
 const SYNC_THREADS = 20;
 
@@ -338,28 +373,37 @@ function toRow(r: RawConversation, now: Date): ConversationRow {
  * the name and two do-not-message flags leave the CRM: everybody holding the
  * inbox sees every conversation, and nothing else about the customer.
  */
-async function selectConversations(extra: ReturnType<typeof sql>, limit: number): Promise<ConversationRow[]> {
+async function selectConversations(extra: ReturnType<typeof sql>, limit: number, scopeIds: string[] | null): Promise<ConversationRow[]> {
   const rows = (await db.execute(sql`
     select conv.id, conv.phone, conv.contact_name, conv.last_message_text, conv.last_message_at, conv.last_inbound_at, conv.unread,
-           m.customer_id, m.customer_name, m.dnc, m.wdnd
+           m.customer_id, m.customer_name, d.dnc, d.wdnd
       from studio_wa_conversations conv
       left join lateral (
-        select c.id as customer_id, c.name as customer_name, c.do_not_contact as dnc, c.whatsapp_dnd as wdnd
-          from customers c
+        select customers.id as customer_id, customers.name as customer_name
+          from customers
          where conv.phone_key is not null
-           and (${MATCH(sql`c.phone`)} or ${MATCH(sql`c.whatsapp_phone`)} or ${MATCH(sql`c.alt_phone`)} or ${MATCH(sql`c.payment_whatsapp_phone`)}
-                or exists (select 1 from customer_contacts cc where cc.customer_id = c.id and ${MATCH(sql`cc.phone`)}))
-         order by (c.kind = 'customer') desc, c.id
+           and ${scopedToUsers(scopeIds) ?? sql`true`}
+           and (${MATCH(sql`customers.phone`)} or ${MATCH(sql`customers.whatsapp_phone`)} or ${MATCH(sql`customers.alt_phone`)} or ${MATCH(sql`customers.payment_whatsapp_phone`)}
+                or exists (select 1 from customer_contacts cc where cc.customer_id = customers.id and ${MATCH(sql`cc.phone`)}))
+         order by (customers.kind = 'customer') desc, customers.id
          limit 1
       ) m on true
-     where ${extra}
+      left join lateral (
+        /* A number is not messaged if ANY record that holds it says so - whether or not the viewer may see that record. */
+        select bool_or(customers.do_not_contact) as dnc, bool_or(customers.whatsapp_dnd) as wdnd
+          from customers
+         where conv.phone_key is not null
+           and (${MATCH(sql`customers.phone`)} or ${MATCH(sql`customers.whatsapp_phone`)} or ${MATCH(sql`customers.alt_phone`)} or ${MATCH(sql`customers.payment_whatsapp_phone`)}
+                or exists (select 1 from customer_contacts cc where cc.customer_id = customers.id and ${MATCH(sql`cc.phone`)}))
+      ) d on true
+     where ${extra}${scopeIds === null ? sql`` : sql` and m.customer_id is not null`}
      order by conv.last_message_at desc nulls last
      limit ${limit}`)) as unknown as RawConversation[];
   const now = new Date();
   return rows.map((r) => toRow(r, now));
 }
 
-export async function listConversationRows(opts: { q?: string } = {}): Promise<{ connection: Connection; rows: ConversationRow[] }> {
+export async function listConversationRows(opts: { q?: string; /** The viewer's reach (`scope.userIds`): null is the whole book. Required — there is no unscoped read. */ scopeIds: string[] | null }): Promise<{ connection: Connection; rows: ConversationRow[] }> {
   if (previewEnabled()) return { connection: { state: "preview" }, rows: await previewList(opts.q ?? "") };
   const conn = await connection();
   const own = connectedId(conn);
@@ -371,9 +415,9 @@ export async function listConversationRows(opts: { q?: string } = {}): Promise<{
   /* A phone clause only where the search has digits in it — "shree" must not match every number. */
   const byPhone = digits.length >= 3 ? sql` or conv.phone ilike ${"%" + digits + "%"}` : sql``;
   const filter = q
-    ? sql`conv.phone_number_id = ${numberId} and (conv.contact_name ilike ${"%" + q + "%"}${byPhone} or exists (select 1 from customers c where c.name ilike ${"%" + q + "%"} and conv.phone_key is not null and right(regexp_replace(coalesce(c.phone,''), '\\D', '', 'g'), 10) = conv.phone_key))`
+    ? sql`conv.phone_number_id = ${numberId} and (conv.contact_name ilike ${"%" + q + "%"}${byPhone} or m.customer_name ilike ${"%" + q + "%"})`
     : sql`conv.phone_number_id = ${numberId}`;
-  return { connection: conn, rows: await selectConversations(filter, 100) };
+  return { connection: conn, rows: await selectConversations(filter, 100, opts.scopeIds) };
 }
 
 async function storedNumberId(): Promise<string | null> {
@@ -397,14 +441,24 @@ export type MessageView = {
   posterId: string | null;
 };
 
-export async function getConversation(id: string): Promise<ConversationRow | null> {
+export async function getConversation(id: string, scopeIds: string[] | null): Promise<ConversationRow | null> {
   if (previewEnabled()) return previewConversation(id);
-  const [row] = await selectConversations(sql`conv.id = ${id}`, 1);
+  const [row] = await selectConversations(sql`conv.id = ${id}`, 1, scopeIds);
   return row ?? null;
 }
 
-export async function threadMessages(conversationId: string, limit = 300): Promise<MessageView[]> {
+/** The conversation on the company number with this phone, if the viewer may see it - which is to say, if it is a lead's or customer's they may see. */
+export async function conversationForNumber(phone: string | null | undefined, scopeIds: string[] | null): Promise<ConversationRow | null> {
+  const key = String(phone ?? "").replace(/\D/g, "").slice(-10);
+  if (key.length < 10) return null;
+  const [row] = await selectConversations(sql`conv.phone_key = ${key}`, 1, scopeIds);
+  return row ?? null;
+}
+
+export async function threadMessages(conversationId: string, scopeIds: string[] | null, limit = 300): Promise<MessageView[]> {
   if (previewEnabled()) return previewThread(conversationId);
+  /* A thread is read only through a conversation the viewer may see; one they may not answers like one that does not exist. */
+  if (!(await getConversation(conversationId, scopeIds))) return [];
   const rows = (await db.execute(sql`
     select * from (
       select m.id, m.direction, m.type, m.body, m.caption, m.has_media, m.media_type, m.status, m.error_text, m.origin, m.at, m.poster_id, u.name as sent_by_name
@@ -432,8 +486,9 @@ export async function threadMessages(conversationId: string, limit = 300): Promi
   }));
 }
 
-export async function markRead(conversationId: string) {
+export async function markRead(conversationId: string, scopeIds: string[] | null) {
   if (previewEnabled()) return previewMarkRead(conversationId);
+  if (!(await getConversation(conversationId, scopeIds))) return;
   await db.update(studioWaConversations).set({ unread: 0 }).where(and(eq(studioWaConversations.id, conversationId), sql`${studioWaConversations.unread} > 0`));
 }
 
@@ -447,27 +502,68 @@ type Draft = { kind: "text"; body: string } | { kind: "poster"; caption: string;
  * window must be open, and the customer (if the number is one) must not be
  * marked do-not-contact or WhatsApp-DND. A refusal is in words and sends nothing.
  */
-async function gate(conversationId: string): Promise<Result<{ own: string; to: string; conv: ConversationRow }>> {
+/**
+ * THE CRM'S CONTACT SAFEGUARDS, applied to every Inbox send. They are the same two rules the CRM's WhatsApp
+ * enforces (`whatsapp-service.sendAutomaticAs`), read from the same setting, not a looser copy:
+ *   - a number that belongs to somebody who WORKS at Mahek is never messaged as if it were a customer's;
+ *   - `whatsapp.contactsPerWeekLimit` messages to one customer in a rolling week (zero is no limit). The count is the
+ *     CRM's own (`wa_messages`: sent, delivered, read) PLUS what the Studio has already sent that customer's number
+ *     through the company WhatsApp, so the limit holds across both channels.
+ */
+async function contactSafeguards(conv: ConversationRow): Promise<string | null> {
+  const key = String(conv.phone ?? "").replace(/\D/g, "").slice(-10);
+  if (key.length === 10) {
+    const [staff] = (await db.execute(sql`
+      select u.name from users u
+       where right(regexp_replace(coalesce(u.phone, ''), '[^0-9]', '', 'g'), 10) = ${key}
+       limit 1`)) as unknown as { name: string }[];
+    if (staff) return `That number is ${staff.name}'s, who works at Mahek - not a customer's, so nothing can be sent to it from the Studio.`;
+  }
+  const limit = Number((await getConfig())["whatsapp.contactsPerWeekLimit"] ?? 0);
+  if (limit > 0 && key.length === 10) {
+    const [row] = (await db.execute(sql`
+      select (
+        (select count(*) from wa_messages w
+          where ${conv.customerId ? sql`w.customer_id = ${conv.customerId}` : sql`false`}
+            and w.status in ('sent_manually','sent','delivered','read')
+            and coalesce(w.confirmed_sent_at, w.sent_at) > now() - interval '7 days')
+        +
+        (select count(*) from studio_wa_messages sm join studio_wa_conversations sc on sc.id = sm.conversation_id
+          where sc.phone_key = ${key} and sm.direction = 'outbound'
+            and sm.status in ('sent','delivered','read')
+            and sm.at > now() - interval '7 days')
+      )::int as n`)) as unknown as { n: number }[];
+    const n = Number(row?.n ?? 0);
+    if (n >= limit) return `${conv.title} has already had ${n} WhatsApp message${n === 1 ? "" : "s"} this week - the limit is ${limit}.`;
+  }
+  return null;
+}
+
+async function gate(conversationId: string, scopeIds: string[] | null): Promise<Result<{ own: string; to: string; conv: ConversationRow }>> {
   const conn = await connection();
   const own = connectedId(conn);
   if (!own) return notReady(conn);
-  const conv = await getConversation(conversationId);
+  const conv = await getConversation(conversationId, scopeIds);
   if (!conv) return fail("not_found", "That conversation was not found.");
+  /* THE FOUNDER'S SWITCH, read on every send like the CRM's: off means nothing goes, from the Inbox or from a bulk send. */
+  if (!(await whatsappServiceState()).active) return fail("rule_violation", "The founder has WhatsApp sending switched off, so nothing was sent.");
   if (conv.blocked === "do_not_contact") return fail("rule_violation", "This customer is marked do not contact, so nothing can be sent to them from the Studio.");
   if (conv.blocked === "whatsapp_dnd") return fail("rule_violation", "This customer has asked not to be messaged on WhatsApp, so nothing can be sent to them from the Studio.");
-  if (!conv.windowOpen) return fail("rule_violation", WINDOW_CLOSED_MESSAGE);
   const to = sendableNumber(conv.phone);
   if (!to) return fail("rule_violation", "This conversation has no phone number to send to.");
+  const refused = await contactSafeguards(conv);
+  if (refused) return fail("rule_violation", refused);
+  if (!conv.windowOpen) return fail("rule_violation", WINDOW_CLOSED_MESSAGE);
   return ok({ own, to, conv });
 }
 
-async function dispatch(userId: string, conversationId: string, clientKey: string, draft: Draft): Promise<Result<{ messageId: string; wamid: string }>> {
+async function dispatch(userId: string, conversationId: string, clientKey: string, draft: Draft, scopeIds: string[] | null): Promise<Result<{ messageId: string; wamid: string }>> {
   /* LOCAL PREVIEW: the same checks, then a line in the in-memory sample chat. Nothing is sent and nothing is stored. */
   if (previewEnabled()) {
     const r = await previewSend(userId, conversationId, clientKey, draft.kind === "text" ? { kind: "text", body: draft.body } : { kind: "poster", caption: draft.caption, posterId: draft.posterId });
     return r.ok ? ok({ messageId: r.messageId, wamid: `preview:${r.messageId}` }) : fail("rule_violation", r.error);
   }
-  const g = await gate(conversationId);
+  const g = await gate(conversationId, scopeIds);
   if (!g.ok) return g;
   const { own, to } = g.data;
   const rowId = randomUUID();
@@ -536,17 +632,17 @@ async function dispatch(userId: string, conversationId: string, clientKey: strin
   return ok({ messageId: rowId, wamid });
 }
 
-export async function sendTextMessage(userId: string, input: { conversationId: string; body: string; clientKey: string }) {
+export async function sendTextMessage(userId: string, input: { conversationId: string; body: string; clientKey: string; scopeIds: string[] | null }) {
   const bad = checkText(input.body);
   if (bad) return fail("invalid_request", bad);
-  return dispatch(userId, input.conversationId, input.clientKey, { kind: "text", body: input.body.trim() });
+  return dispatch(userId, input.conversationId, input.clientKey, { kind: "text", body: input.body.trim() }, input.scopeIds);
 }
 
-export async function sendPosterMessage(userId: string, input: { conversationId: string; caption: string; clientKey: string; posterId: string | null; image: Uint8Array; mime: string; filename: string }) {
+export async function sendPosterMessage(userId: string, input: { conversationId: string; caption: string; clientKey: string; posterId: string | null; image: Uint8Array; mime: string; filename: string; scopeIds: string[] | null }) {
   const bad = checkCaption(input.caption);
   if (bad) return fail("invalid_request", bad);
   if (input.image.byteLength > IMAGE_MAX_BYTES) return fail("rule_violation", "That poster is larger than the 5 MB WhatsApp allows for a picture.");
-  return dispatch(userId, input.conversationId, input.clientKey, { kind: "poster", caption: input.caption, posterId: input.posterId, image: input.image, mime: input.mime, filename: input.filename });
+  return dispatch(userId, input.conversationId, input.clientKey, { kind: "poster", caption: input.caption, posterId: input.posterId, image: input.image, mime: input.mime, filename: input.filename }, input.scopeIds);
 }
 
 /** LOCAL PREVIEW only: a generic preview picture sent into the in-memory sample chat. Refused outright when the preview gate is closed. */
@@ -554,7 +650,7 @@ export async function sendPreviewPosterMessage(userId: string, input: { conversa
   if (!previewEnabled()) return fail("unavailable", "The local preview is not switched on.");
   const bad = checkCaption(input.caption);
   if (bad) return fail("invalid_request", bad);
-  return dispatch(userId, input.conversationId, input.clientKey, { kind: "poster", caption: input.caption, posterId: input.assetId, image: new Uint8Array(0), mime: "image/png", filename: "preview.png" });
+  return dispatch(userId, input.conversationId, input.clientKey, { kind: "poster", caption: input.caption, posterId: input.assetId, image: new Uint8Array(0), mime: "image/png", filename: "preview.png" }, null);
 }
 
 export { CAPTION_MAX };

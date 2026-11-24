@@ -1129,7 +1129,10 @@ export const APP_MODULES: AppModule[] = [
     label: "WhatsApp Inbox",
     group: "Studio",
     href: "/studio/inbox",
-    note: "Every WhatsApp conversation on the company number, read and answered inside the Studio — text replies, and posters sent from My posters. Everybody holding it sees every conversation.",
+    /* EXPLICIT ONLY: a conversation is a customer's own words, so nobody holds the Inbox by being a Studio manager or admin, or by holding the whole app. The Access screen ticks it for named people. */
+    offByDefault: true,
+    explicitOnly: true,
+    note: "WhatsApp conversations on the company number with the leads and customers they may see in the CRM, read and answered inside the Studio — text replies, and posters sent from My posters. Given to named people only.",
   },
   { key: "studio.dates", app: "studio", label: "Dates", group: "Studio", href: "/studio/dates", note: "The festival calendar, and the birthdays and anniversaries everybody shares." },
   { key: "studio.designs", app: "studio", label: "Designs", group: "Designs", href: "/studio/designs", note: "The approved designs, and uploading their own artwork as a private draft." },
