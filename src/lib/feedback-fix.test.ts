@@ -106,8 +106,8 @@ describe("feedback fix — what is offered", () => {
 });
 
 describe("feedback fix — asking Claude without a button", () => {
-  const on = { enabled: true, connected: true, minConfidence: 60 };
-  const code = { ...base, need: "code_change" as const, needByPerson: false, confidence: 80 };
+  const on = { enabled: true, connected: true };
+  const code = { ...base, need: "code_change" as const };
 
   test("a sure code change goes; anything else does not", () => {
     assert.equal(shouldAutoFix(code, on), true);
@@ -117,18 +117,12 @@ describe("feedback fix — asking Claude without a button", () => {
     assert.equal(shouldAutoFix(null, on), false);
   });
 
-  test("off, unconnected, unsure, or already asked: it waits for a person", () => {
+  test("off, unconnected, or already asked: nothing is sent", () => {
     assert.equal(shouldAutoFix(code, { ...on, enabled: false }), false);
     assert.equal(shouldAutoFix(code, { ...on, connected: false }), false);
-    assert.equal(shouldAutoFix({ ...code, confidence: 40 }, on), false);
-    assert.equal(shouldAutoFix({ ...code, confidence: null }, on), false);
     assert.equal(shouldAutoFix({ ...code, aiFixRequestedAt: "x" }, on), false);
     assert.equal(shouldAutoFix({ ...code, prState: "open" }, on), false);
     assert.equal(shouldAutoFix({ ...code, deployedAt: "x" }, on), false);
-  });
-
-  test("a person's \"code change\" goes however unsure the AI was", () => {
-    assert.equal(shouldAutoFix({ ...code, needByPerson: true, confidence: null }, on), true);
   });
 
   test("a confidence given as a fraction is read as a percentage", () => {
@@ -136,6 +130,5 @@ describe("feedback fix — asking Claude without a button", () => {
     assert.equal(confidencePct(1), 100);
     assert.equal(confidencePct(85), 85);
     assert.equal(confidencePct(0), 0);
-    assert.equal(shouldAutoFix({ ...code, confidence: 1 }, on), true);
   });
 });

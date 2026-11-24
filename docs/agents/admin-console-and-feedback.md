@@ -249,9 +249,9 @@ administrator to press "Ask Claude to fix" meant a code change sat as an issue
 nobody acted on. `feedbackFix.autoFix` (on) sends it with no button:
 `autoRequestAiFix` runs after every reading, after a person chooses "code
 change", and in the hourly `feedback-fixes` step for anything still waiting
-(`asked` in its result). `shouldAutoFix` (pure) is the rule — a person's "code
-change" always goes; the AI's only at `feedbackFix.autoFixMinConfidence` (60)
-or above. An automatic line of the thread has no presser, so it is written
+(`asked` in its result). `shouldAutoFix` (pure) is the rule, and it has NO
+confidence threshold — Mahek's call: fully autonomous up to the pull request,
+a person merges. Every code change goes, however unsure the AI was. An automatic line of the thread has no presser, so it is written
 under `automaticAuthor`: the assignee, else a platform admin, else a triager —
 and closing a live fix falls back to the same. The model sometimes answers
 confidence as 0–1 (FB-14 went to GitHub "1% sure"); `confidencePct` reads a

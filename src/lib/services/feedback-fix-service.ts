@@ -343,14 +343,10 @@ export async function autoRequestAiFix(rootId: string): Promise<boolean> {
   try {
     const config = await getConfig();
     const fix = await getFix(rootId);
-    const go = shouldAutoFix(
-      fix ? { ...fix, confidence: fix.diagnosis?.confidence ?? null } : null,
-      {
-        enabled: config["feedbackFix.autoFix"],
-        connected: await githubConnected(),
-        minConfidence: config["feedbackFix.autoFixMinConfidence"],
-      },
-    );
+    const go = shouldAutoFix(fix, {
+      enabled: config["feedbackFix.autoFix"],
+      connected: await githubConnected(),
+    });
     if (!go) return false;
     return (await requestAiFix(rootId, null)).ok;
   } catch (e) {

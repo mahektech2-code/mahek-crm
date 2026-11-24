@@ -6193,19 +6193,8 @@ export const SETTINGS = [
     category: "voice",
     label: "Fixing feedback · ask Claude automatically",
     description:
-      "A report the AI reads as needing a code change goes straight to GitHub with Claude asked to write the fix, without anybody pressing a button. Claude opens a pull request; a person still reviews and merges it. Off: a platform administrator presses \"Ask Claude to fix\".",
+      "Every report that needs a code change — as the AI reads it, however sure, or as a person marks it — goes straight to GitHub with Claude asked to write the fix, without anybody pressing a button. Claude opens a pull request ready to merge; a person reviews and merges it. Off: a platform administrator presses \"Ask Claude to fix\".",
     default: true,
-  },
-  {
-    key: "feedbackFix.autoFixMinConfidence",
-    type: "integer",
-    category: "voice",
-    label: "Fixing feedback · how sure before asking Claude",
-    description:
-      "How sure (0–100) the AI must be that a report needs a code change before Claude is asked automatically. Below it the report waits for a person to press the button. A need a PERSON chose as a code change is always sent.",
-    default: 60,
-    min: 0,
-    max: 100,
   },
   /* ------------------------------------------------------------------ hire */
   {
@@ -7367,7 +7356,6 @@ export type Config = {
   "feedbackFix.githubRepo": string;
   "feedbackFix.aiFixLabel": string;
   "feedbackFix.autoFix": boolean;
-  "feedbackFix.autoFixMinConfidence": number;
   "hire.ai.enabled": boolean;
   "hire.ai.reasoningModel": string;
   "hire.ai.fastModel": string;

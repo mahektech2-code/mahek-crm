@@ -254,20 +254,18 @@ export function fixActions(
 
 /**
  * Whether Claude is asked WITHOUT anybody pressing the button: the setting is
- * on, GitHub is connected, it needs a code change, it has not been asked or
- * fixed already, and either a person chose "code change" or the AI is at least
- * `minConfidence` sure. A person who chose anything else is never overruled.
+ * on, GitHub is connected, it needs a code change, and it has not been asked
+ * or fixed already. However unsure the AI was — fully autonomous, Mahek's
+ * call, Nov 2026: a fix Claude gets wrong costs a closed pull request, a
+ * report left waiting for a button costs the reporter. The person who merges
+ * is the check. A person who chose anything but a code change is never
+ * overruled, because then the need is not a code change.
  */
-export function shouldAutoFix(
-  f: (FixState & { needByPerson: boolean; confidence: number | null }) | null,
-  opts: { enabled: boolean; connected: boolean; minConfidence: number },
-): boolean {
+export function shouldAutoFix(f: FixState | null, opts: { enabled: boolean; connected: boolean }): boolean {
   if (!opts.enabled || !opts.connected || !f) return false;
   if (!needsCode(f.need)) return false;
   if (f.aiFixRequestedAt || f.deployedAt) return false;
-  if (f.prState === "open" || f.prState === "merged") return false;
-  if (f.needByPerson) return true;
-  return f.confidence !== null && confidencePct(f.confidence) >= opts.minConfidence;
+  return f.prState !== "open" && f.prState !== "merged";
 }
 
 /**

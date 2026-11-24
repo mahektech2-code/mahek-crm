@@ -54,7 +54,7 @@ flowchart LR
   L --> D["Report closed, everybody who reported it told"]
 `} />
 
-- **Claude is asked by itself.** A report the AI reads as a code change — at least <Setting k="feedbackFix.autoFixMinConfidence"/>% sure — or that a person marks as one becomes a GitHub issue labelled for Claude with nobody pressing anything, and Claude opens the pull request. Anything the first try missed is sent by the hourly check. Turn it off with <Setting k="feedbackFix.autoFix"/>; then, and for a report the AI was unsure of, **Ask Claude to fix** is a platform administrator's button. Claude's pull request is still reviewed and merged by a person like any other.
+- **Claude is asked by itself.** Every report that needs a code change — as the AI reads it, however sure, or as a person marks it — becomes a GitHub issue labelled for Claude with nobody pressing anything, and Claude opens a pull request ready to merge. Anything the first try missed is sent by the hourly check. Turn it off with <Setting k="feedbackFix.autoFix"/>; then **Ask Claude to fix** is a platform administrator's button. Claude's pull request is still reviewed and merged by a person like any other.
 - What goes to GitHub carries **no phone number, email, GSTIN, PAN or Aadhaar**. Customer and shop names stay, so the fix can be checked against the right account.
 - The report closes itself only when the merged commit is in the build **now serving** — not at the merge.
 
