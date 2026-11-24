@@ -1,62 +1,61 @@
-Petty Cash is one ERP module for every rupee that moves outside the order book: what we pay, what comes in, money moved between our own accounts, and lump sums handed to employees. It has four parts across the top — **Overview**, **Expenses**, **Receipts** and **Cash & Bank** — and each part keeps its lists as tabs underneath. Every real movement of money is entered **once**, gets one number (`TXN-26-00423`), and changes the balances once.
+Petty Cash is one ERP module for every rupee that moves outside the order book: what we pay, what comes in, money moved between our own accounts, and lump sums handed to employees. It has **one row of tabs** — **Home**, **Expenses**, **Petty cash**, **Advances**, **Money received**, **Transfers**, **Statements**, and **To approve** when something is waiting — with everything rarely needed under **More**. Every real movement of money is entered **once**, gets one number (`TXN-26-00423`), and changes the balances once.
 
-<Wireframe url="/erp/expenses" nav={["Dashboard", "#Petty Cash", "Petty Cash"]} active="Petty Cash" caption="Petty Cash, opening on Overview › Today">
+<Wireframe url="/erp/expenses" nav={["Dashboard", "#Petty Cash", "Petty Cash"]} active="Petty Cash" caption="Petty Cash, opening on Home">
   <WfBar>
     <WfTitle sub="Expenses, receipts, cash and bank — each transaction entered once">Petty Cash</WfTitle>
     <WfSpacer />
-    <WfButton primary>New ▾</WfButton>
+    <WfButton primary>Add ▾</WfButton>
     <Hotspot n={1} />
   </WfBar>
-  <WfTabs items={["Overview", "Expenses", "Receipts", "Cash & Bank"]} active="Overview" />
+  <WfTabs items={["Home", "Expenses", "Petty cash", "Advances", "Money received", "Transfers", "Statements", "More ▾"]} active="Home" />
   <Hotspot n={2} />
-  <WfTabs items={["Today", "Reports", "Audit trail"]} active="Today" />
   <WfTable
     columns={["Kotak Bank", "ICICI Bank", "Cash in Hand", "Petty Cash"]}
     rows={[["₹12,16,460", "₹8,41,220", "₹63,450", "₹5,470"]]}
   />
   <Hotspot n={3} />
   <WfTable
-    columns={["Needs somebody", "", ""]}
-    rows={[["Expenses waiting for approval", "3", "₹71,410"], ["Advances open", "2", "₹2,400"], ["Receipts not matched to bank", "4", "₹1,92,400"]]}
+    columns={["Waiting", "", ""]}
+    rows={[["Expenses to approve", "3", "₹71,410"], ["Advances not yet settled", "2", "₹2,400"], ["Money received, not yet seen in bank", "4", "₹1,92,400"]]}
   />
   <Hotspot n={4} />
 </Wireframe>
 
 <Hotspots items={[
-  <span key="1"><b>New.</b> One button for every kind of entry: Expense, Petty cash expense, Receipt, Transfer and Advance. Each opens its form over the screen.</span>,
-  <span key="2"><b>The four parts.</b> Each opens its own tabs underneath. Overview has Today, Reports and Audit trail; Expenses has Paid, Production petty cash, Advances, Needs approval, Cancelled and All; Receipts has All, Bank, Cash and Not matched to bank; Cash & Bank has Transfers, Petty Cash statements, Accounts and Old records.</span>,
-  <span key="3"><b>Balances.</b> Every account's balance is its opening plus every transaction on it. Nothing is typed in.</span>,
-  <span key="4"><b>Needs somebody.</b> Expenses and petty cash waiting for approval, anything sent back, advances open or late with their bills, receipts not yet on the bank's statement, possible duplicates — and, for the accountant, bank lines not matched. Each line opens the list behind it. Beside it, Today shows this month's cash received by customer and petty cash by category.</span>,
+  <span key="1"><b>Add.</b> On a list, the button adds what that list holds — <b>Add expense</b> on Expenses, <b>Give advance</b> on Advances — with <b>Other ▾</b> beside it for the rest. Home shows every kind as a big button under <b>What do you want to enter?</b></span>,
+  <span key="2"><b>One row of tabs.</b> The pages used every day. <b>More ▾</b> holds the rest: money received not yet in bank, in bank, in cash; all expenses; cancelled; reports; the audit trail; the accounts; old records.</span>,
+  <span key="3"><b>Balances — the accountant's only.</b> Every account's balance is its opening plus every transaction on it; nothing is typed in. Only the accountant and an ERP administrator see balances, statements, reports and the audit trail. Everybody else enters what was paid and received without ever seeing what the accounts hold.</span>,
+  <span key="4"><b>Waiting.</b> Only what is actually waiting is listed — expenses to approve, petty cash to check, anything sent back, advances open or late, money not yet seen in the bank, possible double entries and, for the accountant, bank lines to match. Each line opens the list behind it. With nothing waiting it says <b>All clear</b>.</span>,
 ]} />
 
 ## Recording money going out
 
 <Steps>
-  <Step title="An office expense">**New ▾ → Expense** (it opens over **Expenses › Paid**). An expense is entered when it is paid — there is no "not paid yet". Give the date it was paid, the category, the amount, who was paid, the invoice number, what it was for, and **Paid from**: the account the money left, how (NEFT, UPI, Cheque, Cash…) and the UTR or cheque number. Photograph the bill.</Step>
-  <Step title="Production petty cash">**New ▾ → Petty cash expense** (over **Expenses › Production petty cash**). The same form, for the Production Head's small spends. Paid from can also be **Cash a customer paid** or **Cash withdrawn from a bank** — then pick which receipt or withdrawal the cash came out of, and only cash with something left is offered.</Step>
-  <Step title="If it says it is a duplicate">The same invoice number from the same payee, or for the same amount, is refused with the earlier transaction named. Open that one. If this really is a different invoice, tick **This is a different invoice** and save again.</Step>
+  <Step title="An office expense">**Expenses → Add expense**. An expense is entered when it is paid — there is no "not paid yet". One page: the amount, who was paid, the category, what it was for, the bill number, the date, and **Paid from** — the account the money left. For a bank account it also asks how (NEFT, UPI, Cheque…) and, if you have it, the UTR or cheque number. Add a photo of the bill.</Step>
+  <Step title="Production petty cash">**Petty cash → Add petty cash spend**. The same form, for the Production Head's small spends, with a photo of the bill. Paid from can also be **Cash from a customer** or **Cash withdrawn from a bank** — then choose whose cash or which withdrawal, and only cash with something left is offered. The accountant checks it after you save.</Step>
+  <Step title="If it says it is a duplicate">The same bill number from the same payee, or for the same amount, is stopped with the earlier transaction named under the bill number. If this really is a different bill, tick **This is a different bill — save it anyway**.</Step>
 </Steps>
 
 ## Giving an employee a lump sum (advances)
 
 <Steps>
-  <Step title="Give the advance">**New ▾ → Advance** opens **Give an advance**: who it is given to, how much, the date, what for, the day their bills are due, how it was handed over and the account it is paid from. It is not an expense yet — the money has moved into their hands.</Step>
+  <Step title="Give the advance">**Advances → Give advance**: to whom, how much, the date, what for, the day their bills are due, and the account it is paid from. It is not an expense yet — the money has moved into their hands.</Step>
   <Step title="They submit their bills">Open the advance and press **Submit bills**. One line per bill: date, category, who was paid, bill number, amount and a photo. A spend with no bill needs a sentence saying why.</Step>
-  <Step title="The accountant reviews">Each bill appears on **Expenses › Needs approval**. **Approve**, or **Send back** with what needs fixing.</Step>
+  <Step title="The accountant reviews">Each bill appears on **To approve**. **Approve**, or **Send back** with what needs fixing.</Step>
   <Step title="Settle">When nothing is waiting, **Settle**. Anything unspent comes back into an account; anything spent beyond the advance is paid to the employee. Both are one transaction.</Step>
 </Steps>
 
 ## Money coming in
 
-**New ▾ → Receipt**: the date, who it was received from — a customer from the list, or a name — the amount, which account it came into, what it was for, how it came and its reference. For a customer, the receipt is applied to their open invoices, oldest first; with none open, the whole amount stays on account. **Receipts** lists them as **All**, **Bank**, **Cash** and **Not matched to bank**. A cash receipt shows, when opened, **how this cash was used**: deposited, spent as petty cash, or still in hand. Scrap buyers' payments are recorded on [Scrap sales → Receipts](/docs/erp/empty-drums-scrap) and appear here too.
+**Money received → Add money received**: the amount, who paid — a customer from the list, or a name — which account it came into, the date and what it was for; for a bank account, how it came and the UTR. For a customer, it is put against their unpaid bills, oldest first; with none unpaid, the whole amount is kept on their account. **More ▾** narrows the list to money received in bank, in cash, or not yet in bank. A cash receipt shows, when opened, **how this cash was used**: deposited, spent as petty cash, or still in hand. Scrap buyers' payments are recorded on [Scrap sales → Receipts](/docs/erp/empty-drums-scrap) and appear here too.
 
 ## Moving money between our own accounts
 
-**New ▾ → Transfer** (listed on **Cash & Bank › Transfers**): from, to, amount and how. A withdrawal is Bank → Cash in Hand; a deposit is Cash in Hand → Bank. A transfer changes both balances and is never income or expense. A deposit of a customer's cash can name the receipt it came from.
+**Transfers → Move money**: from which account, to which, the amount and the date — the form shows both balances before and after. A withdrawal is Bank → Cash in Hand; a deposit is Cash in Hand → Bank. A transfer changes both balances and is never income or expense. A deposit of a customer's cash can name the receipt it came from.
 
-## Petty Cash statements, and the bank's own statement
+## Statements, and the bank's own statement
 
-**Cash & Bank › Petty Cash statements** is our own record of each account — Kotak Bank, ICICI Bank, Cash in Hand, Petty Cash, one tab each inside it: the opening balance, what was entered going in and out, and the closing balance it leaves. **Cash & Bank › Accounts** lists the accounts themselves, which the accountant sets up with their opening balances. On a bank account each row says **✓ Bank** once the bank's own statement shows that money, or **Not in bank yet**.
+**Statements** is our own record of each account — Kotak Bank, ICICI Bank, Cash in Hand, Petty Cash, one switch each inside it: the opening balance, what was entered going in and out, and the closing balance it leaves. **More › Accounts** lists the accounts themselves, which the accountant sets up with their opening balances. On a bank account each row says **✓ Bank** once the bank's own statement shows that money, or **Not in bank yet**.
 
 The bank's own statement is not kept here. It is uploaded as a PDF on **Accounts › Bank statement management**, read by AI, and each line matched there — to a customer receipt, a vendor payout, or a Petty Cash expense or transfer. A line marked there as an expense, a charge or a transfer is entered on Petty Cash for you, and ticked here.
 
@@ -70,5 +69,5 @@ Open it and press **Cancel this transaction**, with a reason. It stays on record
 Only the accountant for Petty Cash approves, and nobody approves what they entered themselves.
 </Faq>
 <Faq q="Where did the old petty cash go?">
-The old expense sheet — credits (money given in) and debits (expenses paid out) from October 2022 — is on **Cash & Bank › Old records**, read-only. It opens on this financial year; pick a longer period to see more.
+The old expense sheet — credits (money given in) and debits (expenses paid out) from October 2022 — is on **More › Old records**, read-only. It opens on this financial year; pick a longer period to see more.
 </Faq>

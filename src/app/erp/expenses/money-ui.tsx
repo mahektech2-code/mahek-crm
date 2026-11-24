@@ -21,6 +21,8 @@ export type MoneyKit = {
   today: string;
   me: string;
   approver: boolean;
+  /** Whether this person sees what the accounts hold (`seesBalances`). Without it, every balance is 0 and none is drawn. */
+  seesBalances: boolean;
   nextTxn: string;
   nextAdv: string;
   approvalAbove: number;
@@ -173,7 +175,10 @@ export function PaidFromCards({ choices, value, onChange, error }: { choices: Ca
 }
 
 /** The cards an account list offers: what each holds now, and — for the chosen one — after this amount leaves. */
-export function accountChoices(accounts: KitAccount[], amount: number, dir: "out" | "in", only?: KitAccount["kind"][]): CardChoice[] {
+/** What an account is, in words — the card's line when its balance is not shown. */
+export const accountKindWord = (k: KitAccount["kind"]) => (k === "bank" ? "bank account" : k === "petty" ? "petty cash box" : "office cash");
+
+export function accountChoices(accounts: KitAccount[], amount: number, dir: "out" | "in", only?: KitAccount["kind"][], showBalance = true): CardChoice[] {
   return accounts
     .filter((a) => !only || only.includes(a.kind))
     .map((a) => {
@@ -183,8 +188,8 @@ export function accountChoices(accounts: KitAccount[], amount: number, dir: "out
         name: a.name,
         kind: a.kind,
         mark: bankIndex(accounts, a.id),
-        sub: inr(a.balance),
-        after: amount > 0 ? `${inr(a.balance)} → ${inr(after)}` : inr(a.balance),
+        sub: showBalance ? inr(a.balance) : accountKindWord(a.kind),
+        after: showBalance ? (amount > 0 ? `${inr(a.balance)} → ${inr(after)}` : inr(a.balance)) : undefined,
       };
     });
 }

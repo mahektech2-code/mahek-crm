@@ -5,8 +5,8 @@ import { erpContext } from "@/lib/erp/access";
 import { erpLink, erpScreenBySlug } from "@/lib/erp/registry";
 import { screenModule } from "@/lib/erp/screens";
 import { newMenu } from "@/lib/erp/screens/money";
-import { moneyOverview } from "@/lib/erp/money";
-import { advanceList, advanceView, filterOptions, moneyKitData, PERIODS, periodOf, statementView, tabCounts, TXN_VIEWS, txnDetail, txnView } from "@/lib/erp/money-views";
+import { moneyOverview, seesBalances } from "@/lib/erp/money";
+import { advanceList, advanceView, filterOptions, moneyKitData, PERIODS, periodOf, statementView, TXN_VIEWS, txnDetail, txnView } from "@/lib/erp/money-views";
 import { today } from "@/lib/erp/screens/common";
 import { FLAG, inr, nf } from "@/lib/erp/ui";
 import { LIST_QUERY_KEYS, pageOf, parseListQuery } from "@/lib/erp/list-query";
@@ -22,7 +22,9 @@ import { linkClass, SectionTitle } from "../_ui/look";
 import { MoneyDialogHost } from "./money-dialogs";
 import type { FilterDef } from "./money-client";
 import type { MoneyKit } from "./money-ui";
-import { AccountCards, AdvancePage, AdvancesTable, Panel, SectionNav, StatementView, SubTabs, TxnDrawerView, TxnTable, type ListKind, type Tab } from "./screens";
+import { AccountCards, AccountSwitch, AdvancePage, AdvancesTable, Panel, QuickAdd, StatementView, TopTabs, TxnDrawerView, TxnTable, type ListKind, type Tab } from "./screens";
+import { Icon } from "@/components/shell/icons";
+import { buttonClass } from "@/components/ui/primitives";
 
 /**
  * PETTY CASH — one ERP module: Overview, Expenses, Receipts and Cash & Bank
@@ -48,6 +50,46 @@ const LIST_KIND: Record<string, ListKind> = {
   moneyTransfers: "transfers",
 };
 const STATEMENTS: Record<string, string> = { stmtKotak: "macc_kotak", stmtIcici: "macc_icici", stmtCash: "macc_cash", stmtPetty: "macc_petty" };
+/* The one row of tabs, in the words the team uses. A tab is drawn when its first held view is. */
+const MAIN: { label: string; keys: string[] }[] = [
+  { label: "Home", keys: ["moneyOverview"] },
+  { label: "Expenses", keys: ["expenses"] },
+  { label: "Petty cash", keys: ["pettyExpenses"] },
+  { label: "Advances", keys: ["advances"] },
+  { label: "Money received", keys: ["moneyReceipts"] },
+  { label: "Transfers", keys: ["moneyTransfers"] },
+  { label: "Statements", keys: Object.keys(STATEMENTS) },
+  { label: "To approve", keys: ["moneyReview"] },
+];
+/* Rarely needed: behind "More ▾". */
+const MORE: { key: string; label: string }[] = [
+  { key: "receiptsUnmatched", label: "Received, not yet in bank" },
+  { key: "receiptsBank", label: "Received in bank" },
+  { key: "receiptsCash", label: "Received in cash" },
+  { key: "moneyTxns", label: "All expenses" },
+  { key: "expensesCancelled", label: "Cancelled" },
+  { key: "moneyReports", label: "Reports" },
+  { key: "moneyAudit", label: "Audit trail" },
+  { key: "moneyAccounts", label: "Accounts" },
+  { key: "legacyPetty", label: "Old records" },
+];
+/* Pages that show what the accounts hold, or the money's totals: the
+   accountant's and an administrator's only. Everybody else never sees them. */
+const BALANCE_VIEWS = new Set<string>([...Object.keys(STATEMENTS), "moneyAccounts", "moneyReports", "moneyAudit"]);
+const seesBalanceView = (key: string, sees: boolean) => sees || !BALANCE_VIEWS.has(key);
+
+/* The one obvious button on a tab: add the thing this tab lists. */
+const ADD: Record<string, { l: string; dlg: string }> = {
+  expenses: { l: "Add expense", dlg: "expense" },
+  moneyTxns: { l: "Add expense", dlg: "expense" },
+  pettyExpenses: { l: "Add petty cash spend", dlg: "petty" },
+  advances: { l: "Give advance", dlg: "advance" },
+  moneyReceipts: { l: "Add money received", dlg: "receipt" },
+  receiptsBank: { l: "Add money received", dlg: "receipt" },
+  receiptsCash: { l: "Add money received", dlg: "receipt" },
+  receiptsUnmatched: { l: "Add money received", dlg: "receipt" },
+  moneyTransfers: { l: "Move money", dlg: "transfer" },
+};
 const EMPTY: Record<string, string> = {
   expenses: "No expenses this period. An expense is entered when it is paid, with the account it left.",
   pettyExpenses: "No petty cash this period. The Production Head's small spends land here, and the accountant reviews them.",
@@ -71,11 +113,14 @@ export default async function PettyCashPage({ searchParams }: { searchParams: Pr
   const screen = erpScreenBySlug("expenses")!;
   const views = heldViews(ctx, screen);
   if (!views.length) redirect("/erp");
-  const known = new Set(views.map((v) => v.key));
-  const view = one("view") && known.has(one("view")!) ? one("view")! : views[0].key;
+  const known = new Set(views.map((v) => v.key).filter((k) => seesBalanceView(k, seesBalances({ approver: ctx.powers.has("approveMoney"), administrator: ctx.administrator }))));
+  if (!known.size) redirect("/erp");
+  const view = one("view") && known.has(one("view")!) ? one("view")! : (views.find((v) => known.has(v.key)) ?? views[0]).key;
   const day = today();
   const period = periodOf(one("p"));
   const approver = ctx.powers.has("approveMoney");
+  /* Balances are the accountant's and an administrator's — never the team's (`seesBalances`). */
+  const seesBal = seesBalances({ approver, administrator: ctx.administrator });
   const canWrite = !ctx.viewingAs;
 
   /* Where a link goes: this page, these parameters. */
@@ -90,37 +135,27 @@ export default async function PettyCashPage({ searchParams }: { searchParams: Pr
     return `${base.split("?")[0]}?${u.toString()}`;
   };
 
-  /* The sub-modules and the current one's tabs, with counts. */
+  /* ONE row of tabs: the pages the team uses every day, in plain words, and
+     everything else behind "More". The registry's views (and so every grant)
+     are unchanged; this only decides how they are drawn. */
   const current = views.find((v) => v.key === view)!;
-  const sectionNames = [...new Set(views.map((v) => v.section ?? ""))];
-  const mine = views.filter((v) => (v.section ?? "") === current.section);
-  const [counts, overview, kitBase] = await Promise.all([
-    tabCounts([...mine.map((v) => v.key)], period, day),
-    moneyOverview(day),
-    moneyKitData(day),
-  ]);
-  const sectionCount: Record<string, number> = {
-    Overview: 0,
-    Expenses: overview.review.n + overview.pettyReview.n + overview.sentBack.n,
-    Receipts: overview.receiptsNotInBank.n,
-    "Cash & Bank": 0,
-  };
-  const sections: Tab[] = sectionNames.map((n) => {
-    const first = views.find((v) => (v.section ?? "") === n)!;
-    return { key: n, label: n, href: erpLink(first.key), active: n === current.section, count: sectionCount[n] || undefined };
-  });
-  /* The four account statements are ONE tab, "Petty Cash statements", with the accounts inside it. */
-  const tabs: Tab[] = [];
-  for (const v of mine) {
-    if (STATEMENTS[v.key]) {
-      if (!tabs.some((t) => t.key === "stmt")) tabs.push({ key: "stmt", label: "Petty Cash statements", href: erpLink(v.key), active: !!STATEMENTS[view] });
-      continue;
-    }
-    tabs.push({ key: v.key, label: v.label, href: erpLink(v.key), active: v.key === view, count: counts[v.key] });
+  const [overview, kitBase] = await Promise.all([moneyOverview(day), moneyKitData(day)]);
+  const toApprove = overview.review.n + overview.pettyReview.n + overview.sentBack.n;
+  const firstHeld = (keys: string[]) => keys.find((k) => known.has(k));
+  const main: Tab[] = [];
+  for (const m of MAIN) {
+    const k = firstHeld(m.keys);
+    if (!k) continue;
+    if (m.keys.includes("moneyReview") && !toApprove && !approver) continue;
+    main.push({ key: m.label, label: m.label, href: erpLink(k), active: m.keys.includes(view), count: m.keys.includes("moneyReview") ? toApprove || undefined : undefined });
   }
-  const stmtTabs: Tab[] = mine.filter((v) => STATEMENTS[v.key]).map((v) => ({ key: v.key, label: v.label, href: erpLink(v.key), active: v.key === view }));
+  const more = MORE.filter((m) => known.has(m.key)).map((m) => ({ key: m.key, label: m.label, href: erpLink(m.key), active: m.key === view }));
+  /* The account statements: one tab, the accounts as a switch inside it. */
+  const stmtTabs: Tab[] = views.filter((v) => STATEMENTS[v.key]).map((v) => ({ key: v.key, label: v.label, href: erpLink(v.key), active: v.key === view }));
+  void current;
 
-  const kit: MoneyKit = { ...kitBase, today: day, me: ctx.actor.name, approver };
+  /* Without balances, the accounts reach the browser without them too. */
+  const kit: MoneyKit = { ...kitBase, accounts: seesBal ? kitBase.accounts : kitBase.accounts.map((a) => ({ ...a, balance: 0 })), today: day, me: ctx.actor.name, approver, seesBalances: seesBal };
   const dlg = canWrite ? (one("dlg") ?? null) : null;
   const advId = one("adv") ?? null;
   const billsTarget = dlg === "bills" && advId ? await advanceView(advId) : null;
@@ -132,15 +167,30 @@ export default async function PettyCashPage({ searchParams }: { searchParams: Pr
     />
   );
   const shell = (body: React.ReactNode) => (
-    <Page title="Petty Cash" actions={canWrite ? <NewMenu items={newMenu()} /> : null}>
-      <SectionNav sections={sections} />
+    <Page
+      title="Petty Cash"
+      actions={
+        canWrite ? (
+          <div className="flex items-center gap-2">
+            {ADD[view] ? (
+              <NavLink href={here({ dlg: ADD[view].dlg, open: null })} className={buttonClass({ variant: "primary" })}>
+                <Icon name="plus" size={16} />
+                {ADD[view].l}
+              </NavLink>
+            ) : null}
+            <NewMenu items={newMenu()} label={ADD[view] ? "Other" : "Add"} variant={ADD[view] ? "secondary" : "primary"} />
+          </div>
+        ) : null
+      }
+    >
+      <TopTabs tabs={main} more={more} />
       {body}
       {host}
     </Page>
   );
   const openId = one("open") ?? null;
   const drawer = openId && (LIST_KIND[view] || STATEMENTS[view]) ? await txnDetail(openId) : null;
-  const drawerView = drawer ? <TxnDrawerView d={drawer} accounts={kit.accounts} approver={approver} canWrite={canWrite} /> : null;
+  const drawerView = drawer ? <TxnDrawerView d={seesBal ? drawer : { ...drawer, balanceAfter: null }} accounts={kit.accounts} approver={approver} canWrite={canWrite} /> : null;
 
   /* ---------------------------------------------------------- the lists */
   if (LIST_KIND[view]) {
@@ -160,7 +210,6 @@ export default async function PettyCashPage({ searchParams }: { searchParams: Pr
     return shell(
       <>
         <Panel>
-          <SubTabs tabs={tabs} />
           <TxnTable kind={kind} rows={data.rows} accounts={kit.accounts} approver={approver && canWrite} openId={openId} filters={filters} total={data.total} sum={data.sum} capped={data.capped} empty={EMPTY[view] ?? "Nothing here."} />
         </Panel>
         {drawerView}
@@ -181,7 +230,6 @@ export default async function PettyCashPage({ searchParams }: { searchParams: Pr
     const depts = new Map(kit.employees.map((e) => [e.id, e.dept]));
     return shell(
       <Panel>
-        <SubTabs tabs={tabs} />
         <AdvancesTable rows={rows} depts={depts} today={day} me={ctx.actor.id} approver={approver} canWrite={canWrite} />
       </Panel>,
     );
@@ -192,21 +240,18 @@ export default async function PettyCashPage({ searchParams }: { searchParams: Pr
     const st = await statementView(STATEMENTS[view], period, day);
     return shell(
       <>
-        <Panel className="mb-3">
-          <SubTabs
-            tabs={tabs}
-            aside={
-              <NavLink href="/accounts/bank-statements" className="text-sm font-semibold whitespace-nowrap text-brand hover:underline">
-                Bank PDFs and reconciling → Accounts · Bank statement management ↗
-              </NavLink>
-            }
-          />
-        </Panel>
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <SubTabs tabs={stmtTabs} />
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <AccountSwitch tabs={stmtTabs} />
           <PeriodLinks period={period} href={(p) => here({ p, open: null })} />
         </div>
-        {st ? <StatementView st={st} openId={openId} /> : <Card className="p-6 text-sm text-muted">This account is not set up. Add it on Cash &amp; Bank › Accounts.</Card>}
+        {st ? <StatementView st={st} openId={openId} /> : <Card className="p-6 text-sm text-muted">This account is not set up. Add it under More › Accounts.</Card>}
+        <p className="mt-3 text-sm text-muted">
+          This is what we entered. The bank&apos;s own statement is read and matched in{" "}
+          <NavLink href="/accounts/bank-statements" className={linkClass("brand", "font-semibold")}>
+            Accounts › Bank statements
+          </NavLink>
+          .
+        </p>
         {drawerView}
       </>,
     );
@@ -215,48 +260,46 @@ export default async function PettyCashPage({ searchParams }: { searchParams: Pr
   /* ----------------------------------------------------------- overview */
   if (view === "moneyOverview") {
     const o = overview;
-    const work: { l: string; n: number; v: string; href: string; danger?: boolean; hide?: boolean }[] = [
-      { l: "Expenses waiting for approval", n: o.review.n, v: inr(o.review.paise), href: erpLink("moneyReview") },
-      { l: "Petty cash to review", n: o.pettyReview.n, v: inr(o.pettyReview.paise), href: erpLink("moneyReview") },
-      { l: "Sent back, waiting to be fixed", n: o.sentBack.n, v: inr(o.sentBack.paise), href: erpLink("moneyReview"), hide: !o.sentBack.n },
-      { l: "Advances open", n: o.advancesOpen.n, v: inr(o.advancesOpen.withThem), href: erpLink("advances"), hide: !o.advancesOpen.n },
-      { l: "Advances with bills late", n: o.advancesOpen.late, v: "", href: erpLink("advances"), danger: true, hide: !o.advancesOpen.late },
-      { l: "Receipts not matched to bank", n: o.receiptsNotInBank.n, v: inr(o.receiptsNotInBank.paise), href: erpLink("receiptsUnmatched") },
-      { l: "Bank lines not matched", n: o.unmatchedLines.n, v: inr(o.unmatchedLines.paise), href: "/accounts/bank-reconcile", hide: !approver || !o.unmatchedLines.n },
+    /* Only what is actually waiting: a line with nothing in it is not shown. */
+    const work: { l: string; n: number; v: string; href: string; danger?: boolean }[] = [
+      { l: "Expenses to approve", n: o.review.n, v: inr(o.review.paise), href: erpLink("moneyReview") },
+      { l: "Petty cash to check", n: o.pettyReview.n, v: inr(o.pettyReview.paise), href: erpLink("moneyReview") },
+      { l: "Sent back — to be fixed", n: o.sentBack.n, v: inr(o.sentBack.paise), href: erpLink("moneyReview") },
+      { l: "Advances not yet settled", n: o.advancesOpen.n, v: inr(o.advancesOpen.withThem), href: erpLink("advances") },
+      { l: "Advances with bills late", n: o.advancesOpen.late, v: "", href: erpLink("advances"), danger: true },
+      { l: "Money received, not yet seen in bank", n: o.receiptsNotInBank.n, v: inr(o.receiptsNotInBank.paise), href: erpLink("receiptsUnmatched") },
+      ...(approver ? [{ l: "Bank lines to match", n: o.unmatchedLines.n, v: inr(o.unmatchedLines.paise), href: "/accounts/bank-reconcile" }] : []),
       /* No list narrows to just these, so the line says where they are marked. */
-      { l: "Possible duplicates — marked Duplicate? on Expenses", n: o.duplicates.n, v: inr(o.duplicates.paise), href: erpLink("expenses"), danger: true, hide: !o.duplicates.n },
-    ];
+      { l: "Possible double entries — marked on Expenses", n: o.duplicates.n, v: inr(o.duplicates.paise), href: erpLink("expenses"), danger: true },
+    ].filter((w) => w.n > 0);
     const maxCat = Math.max(1, ...o.byCategory.map((c) => c.paise));
     const month = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"][Number(day.slice(5, 7)) - 1];
     return shell(
       <>
-        {/* v4: the overview's tabs stand on the page, underlined, with no card round them. */}
-        <div className="mb-5 [&>nav]:px-0">
-          <SubTabs tabs={tabs} />
-        </div>
-        <AccountCards accounts={o.accounts.map((a) => ({ id: a.id, name: a.name, kind: a.kind, last4: a.last4, balance: a.balance, unmatched: a.unmatched }))} day={day} />
+        {seesBal ? <AccountCards accounts={o.accounts.map((a) => ({ id: a.id, name: a.name, kind: a.kind, last4: a.last4, balance: a.balance, unmatched: a.unmatched }))} day={day} /> : null}
+        {canWrite ? <QuickAdd items={newMenu()} /> : null}
         <CardGrid min="panel">
           <Panel>
             <div className="border-b border-divider px-5 py-4">
-              <SectionTitle>Needs somebody</SectionTitle>
+              <SectionTitle>Waiting</SectionTitle>
             </div>
             <ul className="divide-y divide-divider">
-              {work
-                .filter((w) => !w.hide)
-                .map((w) => (
-                  <li key={w.l}>
-                    <NavLink href={w.href} className="flex items-center gap-3 px-5 py-3 hover:bg-canvas">
-                      <span className={cx("flex-1 text-sm", w.danger ? "text-danger" : "text-body")}>{w.l}</span>
-                      <span className="w-8 text-right text-sm font-semibold text-ink tabular-nums">{nf(w.n)}</span>
-                      <span className="w-28 text-right text-sm text-body tabular-nums">{w.v}</span>
-                    </NavLink>
-                  </li>
-                ))}
+              {work.map((w) => (
+                <li key={w.l}>
+                  <NavLink href={w.href} className="flex items-center gap-3 px-5 py-3 hover:bg-canvas">
+                    <span className={cx("flex-1 text-sm", w.danger ? "text-danger" : "text-body")}>{w.l}</span>
+                    <span className="w-8 text-right text-sm font-semibold text-ink tabular-nums">{nf(w.n)}</span>
+                    <span className="w-28 text-right text-sm text-body tabular-nums">{w.v}</span>
+                  </NavLink>
+                </li>
+              ))}
+              {!work.length ? <li className="px-5 py-4 text-sm text-muted">Nothing waiting. All clear.</li> : null}
             </ul>
           </Panel>
+          {seesBal ? (
           <Panel>
             <div className="border-b border-divider px-5 py-4">
-              <SectionTitle aside={<span className="text-sm text-muted">{month}</span>}>Cash received by customer</SectionTitle>
+              <SectionTitle aside={<span className="text-sm text-muted">{month}</span>}>Received this month</SectionTitle>
             </div>
             {o.byCustomer.length ? (
               <table className="w-full table-fixed">
@@ -292,6 +335,7 @@ export default async function PettyCashPage({ searchParams }: { searchParams: Pr
               </NavLink>
             </div>
           </Panel>
+          ) : null}
           <Panel>
             <div className="border-b border-divider px-5 py-4">
               <SectionTitle aside={<span className="text-sm text-muted">{month}</span>}>Petty cash by category</SectionTitle>
@@ -332,9 +376,6 @@ export default async function PettyCashPage({ searchParams }: { searchParams: Pr
   const fParam = one("f");
   return shell(
     <>
-      <Panel className="mb-5">
-        <SubTabs tabs={tabs} />
-      </Panel>
       <ListScreen
         key={`${view}|${fParam ?? ""}|${openId ?? ""}`}
         initialNew={initialNew}

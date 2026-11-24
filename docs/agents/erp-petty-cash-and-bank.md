@@ -24,6 +24,31 @@ drawing tabs, never a module. The old per-employee funds
 given and expenses (`erp_credits`, `erp_expenses`) are written by nothing and
 read by the Old records tab.
 
+**ONE ROW OF TABS, PLAIN WORDS, AND "MORE" (Nov 2026).** The team found the
+two levels of tabs (four sections × up to six tabs) and the busy forms
+frightening, so the page draws ONE row — Home, Expenses, Petty cash, Advances,
+Money received, Transfers, Statements, To approve (only when something waits or
+for the accountant) — and `MoreTabs` holds the rest. The registry's views and
+their `section`s are unchanged, so no grant moved: `MAIN`/`MORE` in
+`app/erp/expenses/page.tsx` only decide drawing. A list's header button adds
+what that list holds (`ADD`), with "Other ▾" for the rest; Home shows every
+kind as a big button. The forms are one page each, amount first: no Review
+step, one date (the date it was paid), no explanation boxes, and a bank
+account's mode and UTR appear only when a bank is chosen. Move money is From
+and To over every account; its mode follows the two kinds exactly as the old
+four "types" did (bank→bank NEFT, bank→cash Cheque, otherwise Cash).
+
+**BALANCES ARE THE ACCOUNTANT'S, NEVER THE TEAM'S.** `seesBalances` in
+`lib/erp/money.ts` (the `approveMoney` power or an ERP administrator) decides
+every place an account's balance could show: Home's account cards and
+"Received this month", the Statements, Accounts, Reports and Audit trail pages
+(`BALANCE_VIEWS` — not even reachable by URL without it), the Paid-from cards
+(which then say "bank account", "petty cash box", "office cash"), the
+Receive/Move money footers, the drawer's "balance after", the ERP dashboard's
+Petty Cash tiles, and a save's message (`runSave` cuts it at the first " · ").
+Without it the page sends the accounts with balance 0, so nothing reaches the
+browser either.
+
 **ONE MOVEMENT OF MONEY IS ONE ROW, POSTED ONCE.** `erp_money_txns`, numbered
 from the `moneyTxn` series (`TXN-26-00423`), takes its amount off
 `from_account_id` and puts it on `to_account_id`; every balance is the
