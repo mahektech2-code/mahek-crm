@@ -27,6 +27,8 @@ test("boxes must come out whole, and a loose SKU has none", () => {
   assert.deepEqual(boxQuantity(24, 6, false), { boxes: 4, valid: true });
   assert.equal(boxQuantity(25, 6, false).valid, false);
   assert.deepEqual(boxQuantity(25, 1, true), { boxes: 0, valid: true });
+  assert.deepEqual(boxQuantity(25, 1, false), { boxes: 25, valid: true }, "a boxed SKU of one can a box is one box a can, never 0");
+  assert.deepEqual(boxQuantity(25, 0, false), { boxes: 0, valid: true }, "no box size recorded is not guessed");
   assert.equal(labelCount("Box", 4, 24), 4);
   assert.equal(labelCount("Can", 0, 25), 25);
 });

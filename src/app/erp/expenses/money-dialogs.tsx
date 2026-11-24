@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { cx } from "@/components/ui/primitives";
+import { cx, PaiseInput } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
 import { addDays } from "@/lib/business-date";
 import type { Result } from "@/lib/result";
@@ -961,13 +961,9 @@ export function BillsDialog({ kit, target, onClose }: { kit: MoneyKit; target: B
                     <Td align="right">
                       <span className="flex h-9 items-center rounded-control border border-line bg-surface px-2 focus-within:border-brand">
                         <span className="mr-1 text-sm text-muted">₹</span>
-                        <input
-                          inputMode="decimal"
-                          value={l.amount == null ? "" : String(l.amount / 100)}
-                          onChange={(x) => {
-                            const v = Number(x.target.value.replace(/[^0-9.]/g, ""));
-                            set(i, { amount: x.target.value.trim() && Number.isFinite(v) ? Math.round(v * 100) : null });
-                          }}
+                        <PaiseInput
+                          paise={l.amount}
+                          onPaise={(amount) => set(i, { amount })}
                           className="min-w-0 flex-1 border-none bg-transparent text-right text-sm font-bold text-ink outline-none"
                         />
                       </span>

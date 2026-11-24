@@ -469,15 +469,30 @@ const sfgBatches: ScreenModule = {
         await lockLot(tx, "sfg", before.lotCode, before.godownId);
         const rmAvail = (await rmLotStock(before.rmLotNo, before.godownId, tx)) + before.totalUse;
         if (total > rmAvail + 1e-9) return refuse(fieldErr("qty", "There is not enough stock in this lot."));
-        const sfgNow = await sfgLotStock(before.lotCode, before.godownId, tx);
-        const newYield = sfgYield(total, adjusted);
-        if (sfgNow - sfgYield(before.totalUse, before.litresAdjusted) + newYield < -1e-9)
-          return refuse(err("This SFG has already been filled or moved; the line cannot shrink below what was used.", "rule_violation"));
-        /* The number of batches belongs to the whole batch. */
-        if (batches !== before.batches) {
-          const others = await tx.select().from(erpSfgLines).where(eq(erpSfgLines.sfgNo, before.sfgNo));
+        /* The number of batches belongs to the whole batch, so changing it re-sizes every other line too. */
+        const others = batches !== before.batches ? (await tx.select().from(erpSfgLines).where(eq(erpSfgLines.sfgNo, before.sfgNo))).filter((o) => o.id !== id) : [];
+        for (const o of others) {
+          if (o.litresAdjusted > sfgTotalUse(batches, o.qtyPerBatch) + 1e-9)
+            return refuse(fieldErr("batches", `The line from lot ${o.rmLotNo} has more litres adjusted than ${nf(batches)} batches use.`));
+        }
+        /* What the edit does to each SFG lot, every line of the batch counted: checking the edited line alone let a batch already
+           filled from shrink below what was filled, because its other lines shrank with it unchecked. */
+        const shift = new Map<string, { lot: string; godownId: string; delta: number }>();
+        const add = (lot: string, godownId: string, delta: number) => {
+          const k = `${lot}\u0000${godownId}`;
+          const e = shift.get(k) ?? { lot, godownId, delta: 0 };
+          e.delta += delta;
+          shift.set(k, e);
+        };
+        add(before.lotCode, before.godownId, sfgYield(total, adjusted) - sfgYield(before.totalUse, before.litresAdjusted));
+        for (const o of others) add(o.lotCode, o.godownId, sfgYield(sfgTotalUse(batches, o.qtyPerBatch), o.litresAdjusted) - sfgYield(o.totalUse, o.litresAdjusted));
+        for (const e of shift.values()) {
+          if (e.lot !== before.lotCode || e.godownId !== before.godownId) await lockLot(tx, "sfg", e.lot, e.godownId);
+          if ((await sfgLotStock(e.lot, e.godownId, tx)) + e.delta < -1e-9)
+            return refuse(err("This SFG has already been filled or moved; the batch cannot shrink below what was used.", "rule_violation"));
+        }
+        if (others.length) {
           for (const o of others) {
-            if (o.id === id) continue;
             const t = sfgTotalUse(batches, o.qtyPerBatch);
             await lockLot(tx, "rm", o.rmLotNo, o.godownId);
             if (t > (await rmLotStock(o.rmLotNo, o.godownId, tx)) + o.totalUse + 1e-9)

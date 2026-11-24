@@ -181,6 +181,8 @@ test("a bill is pending for one reason: the missing LR, the days at the transpor
   assert.deepEqual(pendingOf({ ...base, atTransportAt: "2026-10-31T09:00:00.000Z" }, today, 4), { kind: "atTransport", days: AT_TRANSPORT_STUCK_DAYS });
   assert.deepEqual(pendingOf({ ...base, atTransportAt: "2026-11-01T09:00:00.000Z" }, today, 4), { kind: "awaitingLr", days: 2 }, "one day at the transporter is not stuck yet");
   assert.deepEqual(pendingOf({ ...base, billDate: "2026-10-20", atTransportAt: "2026-10-31T09:00:00.000Z" }, today, 4), { kind: "noLr", days: 13 }, "the older reason wins");
+  // 00:30 IST on 1 Nov is 19:00 UTC on 31 Oct: the hand-over is dated 1 Nov, so it is not stuck yet.
+  assert.deepEqual(pendingOf({ ...base, atTransportAt: "2026-10-31T19:00:00.000Z" }, today, 4), { kind: "awaitingLr", days: 2 }, "a hand-over after midnight IST is dated in IST, not UTC");
   assert.equal(pendingOf({ ...base, billDate: "2026-10-20", lrId: "elr1" }, today, 4), null, "it has its LR");
   assert.equal(pendingOf({ ...base, billDate: "2026-10-20", phase: "delivered" }, today, 4), null, "delivered is never pending");
   const own = { ...base, ownVehicle: true, phase: "onRoad" as const, billDate: "2026-10-25" };

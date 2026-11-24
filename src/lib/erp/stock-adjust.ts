@@ -85,6 +85,11 @@ function adjustPrompt(r: { item: string; lot: string; godown: string; stock: num
   };
 }
 
+/** Filled cans and packed boxes, and raw materials kept in pieces (empty cans, boxes, caps), are whole numbers. */
+function countedInUnits(lot: LotRef): boolean {
+  return lot.stage === "fg" || lot.stage === "pack" || /^(pcs|nos|pieces|cans|boxes)$/i.test(lot.unit.trim());
+}
+
 /** The `adjust` action every stock screen answers with. */
 export async function adjustStockRow(ctx: ErpContext, stage: AdjustStage, rowId: string, values: Record<string, string | undefined>): Promise<Result<unknown>> {
   if (!mayAdjust(ctx)) return err("Adjusting stock needs the stock-control power.", "not_permitted");
@@ -95,7 +100,7 @@ export async function adjustStockRow(ctx: ErpContext, stage: AdjustStage, rowId:
     for (const k of LOCKS[stage]) await lockLot(tx, k, first.lot, first.godownId);
     /* Read again under the locks: the stock to adjust is what is there now. */
     const lot = (await lotForRow(stage, rowId, tx))!;
-    const read = readAdjust(values, lot.stock);
+    const read = readAdjust(values, lot.stock, countedInUnits(lot));
     if (!read.ok) return refuse(fieldErr(read.field, read.error));
     const a = read.value;
     const id = erpId("ADJ");

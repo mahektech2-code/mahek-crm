@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { cx } from "@/components/ui/primitives";
+import { cx, PaiseInput } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
 import { bankCustomerBills, bankEditLine, bankLineDetail, bankMark, bankMarkKit } from "@/lib/actions/bank-statements";
 import { MARK_IN, MARK_OUT, type MarkKind } from "@/lib/engines/bank-statements";
@@ -300,14 +300,10 @@ export function MarkDialog({ lineId, preset, onClose, onDone }: { lineId: string
                               <td className="border-b border-divider px-2.5 py-[7px] text-right text-[12px] tabular-nums">{inr(b.balance)}</td>
                               <td className="border-b border-divider px-2.5 py-[7px] text-right text-[12px] tabular-nums">
                                 {alloc === "custom" ? (
-                                  <input
-                                    inputMode="decimal"
+                                  <PaiseInput
                                     className="h-7 w-[100px] rounded-[6px] border border-line px-1.5 text-right text-[12px] outline-none focus:border-brand"
-                                    value={custom[b.id] ? String(custom[b.id] / 100) : ""}
-                                    onChange={(e) => {
-                                      const v = Math.round(Number(e.target.value.replace(/[^\d.]/g, "")) * 100) || 0;
-                                      setCustom({ ...custom, [b.id]: Math.min(v, b.balance) });
-                                    }}
+                                    paise={custom[b.id]}
+                                    onPaise={(v) => setCustom({ ...custom, [b.id]: Math.min(v ?? 0, b.balance) })}
                                   />
                                 ) : on ? (
                                   <b className="text-ink">{inr(spread[b.id])}</b>

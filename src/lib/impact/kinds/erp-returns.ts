@@ -1,7 +1,7 @@
 import "server-only";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
-import { scrapStock } from "@/lib/erp/drums";
+import { scrapLeft, scrapStock } from "@/lib/erp/drums";
 import {
   CHEMICAL_SCRAP,
   customerReturnLabel,
@@ -245,7 +245,7 @@ export const qcDecisionImpact: ImpactSource = {
         const [e] = await db.execute<{ godownId: string; kg: number; status: string }>(sql`
           select godown_id as "godownId", quantity::float8 as kg, status from erp_scrap_entries where id = ${x.scrapEntryId}`);
         if (e?.status === "active") {
-          const now = (await scrapStock(db)).find((s) => s.category === CHEMICAL_SCRAP && s.unit === "Kg" && s.godownId === e.godownId)?.available ?? 0;
+          const now = scrapLeft(await scrapStock(db), CHEMICAL_SCRAP, "Kg", e.godownId);
           if (now - Number(e.kg) < -1e-9) blockers.push("That chemical scrap has been sold since, so the decision cannot be reversed.");
           items.push({ app: "ERP", label: `kg of ${CHEMICAL_SCRAP} leave scrap stock — its scrap entry is cancelled`, effect: "changed", count: qty(Number(e.kg)) });
         }

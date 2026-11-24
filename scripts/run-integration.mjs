@@ -411,6 +411,16 @@ const files = [
   // WhatsApp's Read level is refused by the actions, from either app, and a
   // grant made before the level existed is still Write.
   "src/lib/whatsapp-read-write.test.ts",
+  // Suites that were written but never added to this list, so they had not run
+  // since they landed (found by the 2026-11-25 audit). All green when added.
+  "src/lib/associate-sales-manager-team.test.ts",
+  "src/lib/lead-followup.test.ts",
+  "src/lib/lead-intake-gst.test.ts",
+  "src/lib/lead-stage-selection.test.ts",
+  "src/lib/leads-activity-ownership.test.ts",
+  "src/lib/qualification-review-journey.test.ts",
+  "src/lib/salesman-lead-routing-priority.test.ts",
+  "src/lib/unlimited-calls-check-visits.test.ts",
 ];
 
 /*
