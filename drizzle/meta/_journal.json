@@ -2570,6 +2570,20 @@
       "when": 1795400000000,
       "tag": "0374_erp_ticks_everywhere",
       "breakpoints": true
+    },
+    {
+      "idx": 368,
+      "version": "7",
+      "when": 1795486400000,
+      "tag": "0375_studio_timeline",
+      "breakpoints": true
+    },
+    {
+      "idx": 369,
+      "version": "7",
+      "when": 1795572800000,
+      "tag": "0376_studio_timeline_bulk",
+      "breakpoints": true
     }
   ]
 }

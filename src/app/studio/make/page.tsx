@@ -2,6 +2,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Badge, Card, EmptyState, Input, PageHeader, Td, Th, buttonClass } from "@/components/ui/primitives";
 import { resolveScope } from "@/lib/access-control";
+import { resolveStudioScope } from "@/lib/studio/scope";
+import { cleanFilter } from "@/lib/studio/domain/timeline";
+import { timelineRows } from "@/lib/studio/timeline-service";
+import { TimelineView } from "../_ui/timeline-view";
 import { LIST_LABEL, RECIPIENT_LISTS, isRecipientList, listRecipients, recipientCounts } from "@/lib/studio/recipients";
 import { Tabs } from "../_ui/parts";
 
@@ -14,8 +18,21 @@ const HINT: Record<string, string> = {
   lost: "Leads marked lost — a festival greeting is a reason to get back in touch without asking for anything.",
 };
 
-export default async function MakePage({ searchParams }: { searchParams: Promise<{ list?: string; q?: string; page?: string }> }) {
+export default async function MakePage({ searchParams }: { searchParams: Promise<{ list?: string; q?: string; page?: string; sender?: string; kind?: string; from?: string; to?: string }> }) {
   const sp = await searchParams;
+  /* THE TIMELINE: the same page, one more tab. It reads through the Studio's own scope, server-side. */
+  if (sp.list === "timeline") {
+    const { scope } = await resolveStudioScope();
+    const result = await timelineRows(scope.userIds, cleanFilter(sp));
+    return (
+      <div className="mx-auto w-full min-w-0 px-6 py-6">
+        <PageHeader title="Make a poster" subtitle="Pick who it is for. Only your own book is listed — your team's too, if you manage one." />
+        <Tabs items={[...RECIPIENT_LISTS.map((l) => ({ href: `/studio/make?list=${l}`, label: LIST_LABEL[l], active: false })), { href: "/studio/make?list=timeline", label: "Timeline", active: true }]} />
+        <p className="mb-3 text-[13px] text-muted">Everything sent or shared from the Studio, one entry for every recipient — what the sender did, and what Kapso reported about the messages it was handed.</p>
+        <TimelineView result={result} />
+      </div>
+    );
+  }
   const list = isRecipientList(sp.list) ? sp.list : "lead";
   const q = (sp.q ?? "").slice(0, 80);
   const { scope } = await resolveScope();
@@ -29,7 +46,7 @@ export default async function MakePage({ searchParams }: { searchParams: Promise
   return (
     <div className="mx-auto w-full min-w-0 px-6 py-6">
       <PageHeader title="Make a poster" subtitle="Pick who it is for. Only your own book is listed — your team's too, if you manage one." />
-      <Tabs items={RECIPIENT_LISTS.map((l) => ({ href: href({ list: l, q: undefined }), label: LIST_LABEL[l], count: counts[l], active: l === list }))} />
+      <Tabs items={[...RECIPIENT_LISTS.map((l) => ({ href: href({ list: l, q: undefined }), label: LIST_LABEL[l], count: counts[l], active: l === list })), { href: "/studio/make?list=timeline", label: "Timeline", active: false }]} />
       <p className="mb-3 text-[13px] text-muted">{HINT[list]}</p>
       <form className="mb-3 flex gap-2" action="/studio/make">
         <input type="hidden" name="list" value={list} />

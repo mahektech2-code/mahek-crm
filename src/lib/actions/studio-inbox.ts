@@ -11,6 +11,7 @@ import { whatsappServiceState } from "@/lib/services/whatsapp-switch-service";
 import { auditLog } from "@/db/schema";
 import { canOpenModule } from "@/lib/access";
 import { requireUser } from "@/lib/auth";
+import { recordActivity } from "@/lib/studio/timeline-service";
 import { resolveStudioScope } from "@/lib/studio/scope";
 import { err, ok, type Result } from "@/lib/result";
 import { downloadFilename } from "@/lib/studio/domain/caption";
@@ -52,7 +53,7 @@ export async function sendText(input: { conversationId: string; body: string; cl
   if (!user) return err("You do not have the WhatsApp Inbox.", "not_permitted");
   if (!KEY_RE.test(input.clientKey ?? "")) return err("That message could not be sent. Reload the page and try again.");
   const { scope } = await resolveStudioScope();
-  const r = await sendTextMessage(user.id, { conversationId: String(input.conversationId ?? ""), body: String(input.body ?? ""), clientKey: input.clientKey, scopeIds: scope.userIds });
+  const r = await sendTextMessage(user.id, { conversationId: String(input.conversationId ?? ""), body: String(input.body ?? ""), clientKey: input.clientKey, scopeIds: scope.userIds, activity: { kind: "message", contentName: String(input.body ?? "").trim().slice(0, 60) || "Message", contentRefType: "message", mode: "inbox" } });
   if (!r.ok) return err(r.error);
   await audit(user.id, "studio.inbox.sent", input.conversationId, { kind: "text", messageId: r.data.messageId });
   return ok({ messageId: r.data.messageId });
@@ -73,6 +74,7 @@ export async function sendPoster(input: { conversationId: string; posterId: stri
   const { scope } = await resolveStudioScope();
   const r = await sendPosterMessage(user.id, {
     scopeIds: scope.userIds,
+    activity: { kind: "poster", contentName: `${poster.templateName} - ${poster.recipient.company}`.slice(0, 200), contentRefType: "poster", contentRefId: poster.id, mode: "inbox" },
     conversationId: String(input.conversationId ?? ""),
     caption: String(input.caption ?? ""),
     clientKey: input.clientKey,
@@ -117,7 +119,7 @@ export async function sendForward(input: { conversationId: string; forwardId: st
   const { bytes, mime, ext } = pic;
   const safe = forward.title.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "") || "poster";
   const { scope } = await resolveStudioScope();
-  const r = await sendPosterMessage(user.id, { scopeIds: scope.userIds, conversationId: String(input.conversationId ?? ""), caption: String(input.caption ?? ""), clientKey: input.clientKey, posterId: null, image: bytes, mime, filename: `${safe}.${ext}` });
+  const r = await sendPosterMessage(user.id, { scopeIds: scope.userIds, activity: { kind: "image", contentName: forward.title, contentRefType: "forward", contentRefId: forward.id, mode: "inbox" }, conversationId: String(input.conversationId ?? ""), caption: String(input.caption ?? ""), clientKey: input.clientKey, posterId: null, image: bytes, mime, filename: `${safe}.${ext}` });
   if (!r.ok) return err(r.error);
   await audit(user.id, "studio.inbox.sent", input.conversationId, { kind: "forward", forwardId: forward.id, messageId: r.data.messageId });
   return ok({ messageId: r.data.messageId });
@@ -181,17 +183,21 @@ export async function sendForwardToRecipients(forwardId: string): Promise<Result
       outcomes.push({ ...base, outcome: "skipped", reason: row.status === "sent" ? "You already marked this one as sent." : "You skipped this one." });
       continue;
     }
+    const notSent = async (reason: string, customerId: string | null) => {
+      outcomes.push({ ...base, outcome: "skipped", reason });
+      await recordActivity({ kind: "image", contentName: forward.title, contentRefType: "forward", contentRefId: forward.id, caption: forward.caption, senderId: user.id, customerId, recipientName: row.company, mode: "bulk", channel: "kapso", action: "not_sent", reason, batchRef: forward.id });
+    };
     const target = row.customerId ? await getRecipient(scope.userIds, row.customerId) : null;
     if (!target) {
-      outcomes.push({ ...base, outcome: "skipped", reason: "No longer in your book, so there is no number to send to." });
+      await notSent("No longer in your book, so there is no number to send to.", null);
       continue;
     }
     const conv = await conversationForNumber(target.whatsappPhone, scope.userIds);
     if (!conv) {
-      outcomes.push({ ...base, outcome: "skipped", reason: "They have not written to the company number, so there is no open WhatsApp window." + NO_TEMPLATE });
+      await notSent("They have not written to the company number, so there is no open WhatsApp window." + NO_TEMPLATE, target.id);
       continue;
     }
-    const r = await sendPosterMessage(user.id, { scopeIds: scope.userIds, conversationId: conv.id, caption: forward.caption, clientKey: `fwd-${row.id}`, posterId: null, image: pic.bytes, mime: pic.mime, filename: `${safe}.${pic.ext}` });
+    const r = await sendPosterMessage(user.id, { scopeIds: scope.userIds, activity: { kind: "image", contentName: forward.title, contentRefType: "forward", contentRefId: forward.id, mode: "bulk", batchRef: forward.id, recipient: { customerId: target.id, name: row.company } }, conversationId: conv.id, caption: forward.caption, clientKey: `fwd-${row.id}`, posterId: null, image: pic.bytes, mime: pic.mime, filename: `${safe}.${pic.ext}` });
     if (r.ok) outcomes.push({ ...base, outcome: "sent", reason: null });
     else outcomes.push({ ...base, outcome: r.code === "rule_violation" || r.code === "not_found" ? "skipped" : "failed", reason: r.code === "rule_violation" && /24 hours/.test(r.error) ? r.error + NO_TEMPLATE : r.error });
   }

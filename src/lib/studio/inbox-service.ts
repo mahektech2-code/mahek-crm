@@ -6,6 +6,8 @@ import { auditLog, studioWaConversations, studioWaEvents, studioWaMessages } fro
 import { scopedToUsers } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
 import { whatsappServiceState } from "@/lib/services/whatsapp-switch-service";
+import type { ActivityKind, ActivityMode } from "./domain/timeline";
+import { recordActivity } from "./timeline-service";
 import { readSecret } from "@/lib/secrets";
 import {
   CAPTION_MAX,
@@ -494,7 +496,19 @@ export async function markRead(conversationId: string, scopeIds: string[] | null
 
 /* ------------------------------------------------------------------ sending */
 
-type Draft = { kind: "text"; body: string } | { kind: "poster"; caption: string; posterId: string | null; image: Uint8Array; mime: string; filename: string };
+/** What the Timeline row for this send says it was. Optional: a send with none is recorded as a plain Inbox message or picture. */
+export type ActivityContext = {
+  kind: ActivityKind;
+  contentName: string;
+  contentRefType?: "poster" | "forward" | "message" | null;
+  contentRefId?: string | null;
+  mode: ActivityMode;
+  batchRef?: string | null;
+  /** For a bulk send, who the row is about when the conversation could not be read (a refusal before anything was reserved). */
+  recipient?: { customerId: string | null; name: string };
+};
+
+type Draft = ({ kind: "text"; body: string } | { kind: "poster"; caption: string; posterId: string | null; image: Uint8Array; mime: string; filename: string }) & { activity?: ActivityContext };
 
 /**
  * What may be sent to this conversation right now — checked before anything is
@@ -564,8 +578,17 @@ async function dispatch(userId: string, conversationId: string, clientKey: strin
     return r.ok ? ok({ messageId: r.messageId, wamid: `preview:${r.messageId}` }) : fail("rule_violation", r.error);
   }
   const g = await gate(conversationId, scopeIds);
-  if (!g.ok) return g;
-  const { own, to } = g.data;
+  if (!g.ok) {
+    /* A bulk send answers EVERY recipient, so a recipient it could not send to still gets a row of their own, saying why. */
+    if (draft.activity?.mode === "bulk" && draft.activity.recipient) {
+      await recordActivity({ kind: draft.activity.kind, contentName: draft.activity.contentName, contentRefType: draft.activity.contentRefType ?? null, contentRefId: draft.activity.contentRefId ?? null, caption: draft.kind === "poster" ? draft.caption : null, senderId: userId, customerId: draft.activity.recipient.customerId, recipientName: draft.activity.recipient.name, mode: "bulk", channel: "kapso", action: "not_sent", reason: g.error, batchRef: draft.activity.batchRef ?? null });
+    }
+    return g;
+  }
+  const { own, to, conv } = g.data;
+  const ctx: ActivityContext = draft.activity ?? { kind: draft.kind === "poster" ? "image" : "message", contentName: draft.kind === "poster" ? draft.caption.slice(0, 60) || "Picture" : draft.body.slice(0, 60), contentRefType: draft.kind === "poster" ? (draft.posterId ? "poster" : null) : "message", contentRefId: draft.kind === "poster" ? draft.posterId : null, mode: "inbox" };
+  const note = (waMessageId: string) =>
+    recordActivity({ kind: ctx.kind, contentName: ctx.contentName, contentRefType: ctx.contentRefType ?? null, contentRefId: ctx.contentRefId ?? null, caption: draft.kind === "poster" ? draft.caption || null : draft.body, senderId: userId, customerId: conv.customerId, recipientName: conv.title, mode: ctx.mode, channel: "kapso", action: "kapso_handed", waMessageId, batchRef: ctx.batchRef ?? null });
   const rowId = randomUUID();
   /* Reserve the send under the browser's own key: a second press of Send finds this row and sends nothing. */
   const reserved = await db
@@ -608,13 +631,17 @@ async function dispatch(userId: string, conversationId: string, clientKey: strin
       .update(studioWaMessages)
       .set({ status: "failed", errorText: unsure ? `${sent.error} It is not known whether this message went — check the conversation before sending it again.` : sent.error, errorCode: sent.code, updatedAt: sql`now()` })
       .where(eq(studioWaMessages.id, rowId));
+    /* It was attempted, so it has a row: Kapso's own answer on the message (failed, with its reason) is what the Timeline shows. */
+    await note(rowId);
     return fail("unavailable", sent.error);
   }
   const wamid = sent.data.wamid;
+  let finalId: string = rowId;
   await db.transaction(async (tx) => {
     /* A webhook can reach us before this line: then the real row exists already and this reservation folds into it. */
     const [other] = await tx.select().from(studioWaMessages).where(eq(studioWaMessages.wamid, wamid)).limit(1).for("update");
     if (other && other.id !== rowId) {
+      finalId = other.id;
       await tx.delete(studioWaMessages).where(eq(studioWaMessages.id, rowId));
       await tx
         .update(studioWaMessages)
@@ -629,20 +656,21 @@ async function dispatch(userId: string, conversationId: string, clientKey: strin
       .set({ lastMessageText: preview.slice(0, 140), lastMessageAt: sql`greatest(${studioWaConversations.lastMessageAt}, now())`, updatedAt: sql`now()` })
       .where(eq(studioWaConversations.id, conversationId));
   });
-  return ok({ messageId: rowId, wamid });
+  await note(finalId);
+  return ok({ messageId: finalId, wamid });
 }
 
-export async function sendTextMessage(userId: string, input: { conversationId: string; body: string; clientKey: string; scopeIds: string[] | null }) {
+export async function sendTextMessage(userId: string, input: { conversationId: string; body: string; clientKey: string; scopeIds: string[] | null; activity?: ActivityContext }) {
   const bad = checkText(input.body);
   if (bad) return fail("invalid_request", bad);
-  return dispatch(userId, input.conversationId, input.clientKey, { kind: "text", body: input.body.trim() }, input.scopeIds);
+  return dispatch(userId, input.conversationId, input.clientKey, { kind: "text", body: input.body.trim(), ...(input.activity ? { activity: input.activity } : {}) }, input.scopeIds);
 }
 
-export async function sendPosterMessage(userId: string, input: { conversationId: string; caption: string; clientKey: string; posterId: string | null; image: Uint8Array; mime: string; filename: string; scopeIds: string[] | null }) {
+export async function sendPosterMessage(userId: string, input: { conversationId: string; caption: string; clientKey: string; posterId: string | null; image: Uint8Array; mime: string; filename: string; scopeIds: string[] | null; activity?: ActivityContext }) {
   const bad = checkCaption(input.caption);
   if (bad) return fail("invalid_request", bad);
   if (input.image.byteLength > IMAGE_MAX_BYTES) return fail("rule_violation", "That poster is larger than the 5 MB WhatsApp allows for a picture.");
-  return dispatch(userId, input.conversationId, input.clientKey, { kind: "poster", caption: input.caption, posterId: input.posterId, image: input.image, mime: input.mime, filename: input.filename }, input.scopeIds);
+  return dispatch(userId, input.conversationId, input.clientKey, { kind: "poster", caption: input.caption, posterId: input.posterId, image: input.image, mime: input.mime, filename: input.filename, ...(input.activity ? { activity: input.activity } : {}) }, input.scopeIds);
 }
 
 /** LOCAL PREVIEW only: a generic preview picture sent into the in-memory sample chat. Refused outright when the preview gate is closed. */

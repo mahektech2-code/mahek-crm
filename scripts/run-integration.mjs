@@ -55,6 +55,8 @@ const files = [
   "src/lib/studio/forward.integration.test.ts",
   // The WhatsApp Inbox on a fake Kapso: the company number judged from Kapso, signed webhooks stored once, CRM names, window/DND refusals, one press of Send = one message.
   "src/lib/studio/inbox.integration.test.ts",
+  // The Studio Timeline: one permanent row per recipient per act, provider status only from Kapso, scoped reads and history API.
+  "src/lib/studio/timeline.integration.test.ts",
   // The Inbox scoped to the CRM's ownership, explicit-only, bulk-forward outcomes, and the (off) Org Chart approval routing.
   "src/lib/studio/inbox-scope.integration.test.ts",
   // Direct action calls, the weekly limit across the CRM and the Studio, and the manual refresh's neutral answer and minimum interval.
