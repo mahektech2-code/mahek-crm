@@ -136,7 +136,7 @@ export function InboxApp({ initial, openId }: { initial: Snapshot; openId: strin
     const r = await refreshFromKapso();
     setBusy(false);
     if (!r.ok) setError(r.error);
-    else setNote(`Refreshed from Kapso: ${r.data.conversations} conversations, ${r.data.messages} new messages.`);
+    else setNote(r.data.refreshed ? "Refreshed from Kapso." : `Refreshed a moment ago — try again in ${r.data.retryAfterSeconds ?? 30} seconds.`);
     void load(openIdState, q);
   };
 

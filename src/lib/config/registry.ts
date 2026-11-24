@@ -2015,6 +2015,15 @@ export const SETTINGS = [
       "The company WhatsApp number whose conversations the Studio's WhatsApp Inbox shows, digits with the country code. The Inbox only treats Kapso as connected when a LIVE (not sandbox) number in the Kapso project matches this one — a sandbox number is never shown as the company's WhatsApp. Changing it points the Inbox at a different number; conversations already stored stay readable.",
     default: "919137466424",
   },
+  {
+    key: "studio.approvalByOrgChart",
+    type: "boolean",
+    category: "attachments",
+    label: "Studio: route design approvals through the Org Chart",
+    description:
+      "Reserved for a later release and OFF. When approvals are switched on, the nearest person above the uploader on the CRM Org Chart who has been explicitly given Approve designs will be the one asked. Nothing reads this today: publishing is not held back, no request is made and nobody is notified, whichever way it is set.",
+    default: false,
+  },
   /* ----------------------------------------------------------- attachments */
   {
     key: "attachments.maxSizeMb",
@@ -7117,6 +7126,7 @@ export type Config = {
 
   "studio.publishImmediately": boolean;
   "studio.whatsapp.number": string;
+  "studio.approvalByOrgChart": boolean;
   "attachments.maxSizeMb": number;
   "attachments.acceptedTypes": string[];
   "attachments.maxPerComplaint": number;

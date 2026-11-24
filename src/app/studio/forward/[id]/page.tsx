@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { PageHeader } from "@/components/ui/primitives";
+import { canOpenModule } from "@/lib/access";
 import { requireUser } from "@/lib/auth";
 import type { ForwardStatus } from "@/lib/studio/domain/forward";
 import { forwardRecipients, getForward, imageUrlOf } from "@/lib/studio/forward-service";
@@ -35,7 +36,7 @@ export default async function ForwardPage({ params }: { params: Promise<{ id: st
       {forward.status === "cancelled" && !rows.length ? null : forward.status === "draft" ? (
         <ForwardSetup forwardId={forward.id} title={forward.title} imageUrl={imageUrl} />
       ) : (
-        <ForwardRun title={forward.title} imageUrl={imageUrl} cancelled={forward.status === "cancelled"} rows={rows.map((r) => ({ id: r.id, company: r.company, place: r.place, status: r.status as ForwardStatus }))} />
+        <ForwardRun title={forward.title} imageUrl={imageUrl} cancelled={forward.status === "cancelled"} forwardId={forward.id} inbox={forward.status === "started" && (await canOpenModule(user.id, "studio.inbox"))} rows={rows.map((r) => ({ id: r.id, company: r.company, place: r.place, status: r.status as ForwardStatus }))} />
       )}
     </div>
   );

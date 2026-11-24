@@ -55,6 +55,10 @@ const files = [
   "src/lib/studio/forward.integration.test.ts",
   // The WhatsApp Inbox on a fake Kapso: the company number judged from Kapso, signed webhooks stored once, CRM names, window/DND refusals, one press of Send = one message.
   "src/lib/studio/inbox.integration.test.ts",
+  // The Inbox scoped to the CRM's ownership, explicit-only, bulk-forward outcomes, and the (off) Org Chart approval routing.
+  "src/lib/studio/inbox-scope.integration.test.ts",
+  // Direct action calls, the weekly limit across the CRM and the Studio, and the manual refresh's neutral answer and minimum interval.
+  "src/lib/studio/inbox-audit.integration.test.ts",
   // The Locker: register scope, renewals that supersede, one reminder digest;
   // the vault's dual control, audit-before-plaintext, tamper and break-glass rules.
   "src/lib/locker/register.integration.test.ts",
