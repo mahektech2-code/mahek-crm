@@ -78,6 +78,8 @@ import {
   type TerritoryKind,
 } from "@/lib/services/territory-service";
 import { territoryLeaves, territoryName } from "@/lib/territory-rules";
+import { setGeoAllocations } from "@/lib/services/geo-service";
+import type { GeoAllocation, GeoPick } from "@/lib/geography/geo-picker";
 import { acknowledgementProblem, leavesByState } from "@/lib/geography/territory-options";
 import { citiesInWords, cityColumns, normaliseCities } from "@/lib/journey-cities";
 import { bookIdsIgnoringTerritory } from "@/lib/services/mbos-service";
@@ -2529,6 +2531,60 @@ export async function setSalesmanTerritories(input: {
       e instanceof Error ? e.message : "That could not be saved.",
       "validation",
     );
+  }
+}
+
+/**
+ * WHERE HE WORKS IN THE OFFICIAL GEOGRAPHY — states, districts, talukas and the
+ * urban local bodies in them. A separate record from `setSalesmanTerritories`
+ * on purpose: this one narrows NO shop list and moves NO shop. It is the
+ * vocabulary a manager proposes journey days from, until a later, separately
+ * approved step teaches shop matching about talukas. So there is no hand-over,
+ * no tombstone and no acknowledgement here — only the same gate, the same team
+ * scope and an audit row.
+ *
+ * Picks are ids from the master and nothing else; `setGeoAllocations` drops an
+ * id the master does not hold and keeps a ULB ticked through two talukas as one.
+ */
+export async function setSalesmanGeoTerritories(input: {
+  salesmanId: string;
+  picks: GeoPick[];
+}): Promise<Result<void>> {
+  try {
+    const user = await requireSalesAccess(SALES_MANAGER("sales.people", "sales.territory"));
+    if (await salesmanOutsideScope(input.salesmanId)) return err(NOT_YOUR_TEAM, "not_permitted");
+
+    const [person] = await db
+      .select({ id: users.id, name: users.name })
+      .from(users)
+      .where(eq(users.id, input.salesmanId))
+      .limit(1);
+    if (!person) return err("That account is not on MahekOne.", "not_found");
+    if (!Array.isArray(input.picks)) return err("Those picks were not understood.", "validation");
+
+    const { before, after } = await setGeoAllocations(input.salesmanId, input.picks, user.id, () => gen("geo"));
+    const sig = (a: GeoAllocation[]) => a.map((x) => `${x.level}:${x.unitId ?? x.ulbId}`).sort();
+    if (JSON.stringify(sig(before)) === JSON.stringify(sig(after))) return okVoid("Nothing changed.");
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.salesman.geo_territories",
+      entityType: "user",
+      entityId: input.salesmanId,
+      beforeState: { geoTerritories: sig(before) } as never,
+      afterState: { geoTerritories: sig(after) } as never,
+    });
+
+    revalidatePath("/sales/people");
+    revalidatePath("/sales/journeys");
+    return okVoid(
+      after.length
+        ? `${person.name}'s official areas are saved (${after.length}).`
+        : `${person.name} has no official areas set.`,
+    );
+  } catch (e) {
+    return err(e instanceof Error ? e.message : "That could not be saved.", "validation");
   }
 }
 

@@ -719,7 +719,7 @@ function DayDrawer({
   const actions = useVisitActions();
   const plan = day.plan;
   /* The cities being proposed for this day — every one of them, the first the
-     primary. (`cities` above is what his book names, offered as a shortcut.) */
+     primary. (`cities` above is where he works plus what his book names, offered as a shortcut.) */
   const [chosen, setChosen] = React.useState<string[]>(
     plan?.dayState === "planned" || plan?.dayState === "refused" ? [] : (plan?.cities ?? []),
   );
@@ -911,7 +911,7 @@ function DayDrawer({
                 disabled={busy}
                 label="A different city"
                 placeholder="Or propose a different city"
-                emptyHint="No city in his book matches — what you type is still proposed"
+                emptyHint="No allocated or book city matches — what you type is still proposed"
                 className="min-w-[260px]"
               />
               <Button
@@ -932,7 +932,7 @@ function DayDrawer({
                 disabled={busy}
                 label={`City for ${shortDate(day.date)}`}
                 placeholder="Propose a city"
-                emptyHint="No city in his book matches — what you type is still proposed"
+                emptyHint="No allocated or book city matches — what you type is still proposed"
                 className="min-w-[260px]"
               />
               <Button

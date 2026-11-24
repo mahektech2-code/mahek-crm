@@ -17,6 +17,9 @@ import {
   teamJourneySummary,
 } from "@/lib/services/journey-service";
 import { monthGrid, monthParam } from "@/lib/journey-days";
+import { proposeCityOptions } from "@/lib/journey-city-options";
+import { workingTerritoriesFor } from "@/lib/services/territory-service";
+import { geoCityNamesFor } from "@/lib/services/geo-service";
 import { Empty, ScreenHeader } from "@/components/console/parts";
 import { JourneysScreen } from "./journeys-screen";
 import { PersonModal, type PersonPane } from "./person-modal";
@@ -224,11 +227,13 @@ async function SalesmanSection({
 
   const month = monthParam(params.month, now);
   const grid = monthGrid(month);
-  const [plans, visits, facts, book] = await Promise.all([
+  const [plans, visits, facts, book, territories, officialCities] = await Promise.all([
     journeyPlansBetween(grid.from, grid.to, selected.id),
     visitsBetween({ from: grid.from, to: grid.to, salesmanId: selected.id, limit: 3000 }),
     calendarFacts(selected.id, grid.from, grid.to),
     fieldBook({ salesmanId: selected.id }),
+    workingTerritoriesFor(selected.id),
+    geoCityNamesFor(selected.id),
   ]);
   const history = await journeyHistory(
     selected.id,
@@ -236,7 +241,12 @@ async function SalesmanSection({
     grid.from,
     grid.to,
   );
-  const cities = [...new Set(book.map((c) => c.city).filter(Boolean))].sort();
+  /* Where he works first, then his book's — see `proposeCityOptions`. */
+  const cities = proposeCityOptions(
+    territories,
+    book.map((c) => c.city),
+    officialCities,
+  );
   const openDay = /^\d{4}-\d{2}-\d{2}$/.test(params.open ?? "") ? params.open! : null;
 
   return (
@@ -292,13 +302,20 @@ async function ProposeSection({
   const to = addDays(from, horizon - 1);
   const selected = team.find((t) => t.id === selectedId)!;
 
-  const [plans, book] = await Promise.all([
+  const [plans, book, territories, officialCities] = await Promise.all([
     journeyPlansBetween(from, to, selected.id),
     fieldBook({ salesmanId: selected.id }),
+    workingTerritoriesFor(selected.id),
+    geoCityNamesFor(selected.id),
   ]);
-  /* The cities his own book names. A manager proposes a place, and the places
-   * worth proposing are the ones he has customers in. */
-  const cities = [...new Set(book.map((c) => c.city).filter(Boolean))].sort();
+  /* The towns he is allocated under "Where they work" come first, then the
+   * cities his own book names. Free text is still accepted by the box, so a
+   * town nobody has sold in yet can be proposed. */
+  const cities = proposeCityOptions(
+    territories,
+    book.map((c) => c.city),
+    officialCities,
+  );
 
   return (
     <>
