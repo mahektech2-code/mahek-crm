@@ -2,7 +2,8 @@
 
 import { useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
-import { Button, Card, Textarea } from "@/components/ui/primitives";
+import Link from "next/link";
+import { Button, Card, Textarea, buttonClass } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
 import { ConfirmDialog } from "@/components/ui/overlays";
 import { recordShare, removePoster } from "@/lib/actions/studio";
@@ -27,6 +28,8 @@ export function PosterActions(props: {
   caption: string | null;
   whatsappHref: string | null;
   whatsappBlocked: string | null;
+  inboxHref?: string | null;
+  inboxNote?: string | null;
   canRemove: boolean;
 }) {
   const router = useRouter();
@@ -99,10 +102,19 @@ export function PosterActions(props: {
           <Textarea rows={4} value={caption} onChange={(e) => setCaption(e.target.value)} />
         </label>
       ) : null}
+      {props.inboxHref ? (
+        <div>
+          <Link href={props.inboxHref} className={buttonClass({ variant: "whatsapp" })}>
+            Send in Inbox
+          </Link>
+          <p className="mt-1.5 text-[12.5px] text-muted">Opens their chat in the WhatsApp Inbox with this poster and message ready. It is sent through Kapso, and you can see when it is delivered and read.</p>
+        </div>
+      ) : null}
+      {props.inboxNote ? <p className="text-[12.5px] text-muted">{props.inboxNote}</p> : null}
       {props.whatsappHref ? (
         <div>
-          <Button variant="whatsapp" onClick={openWhatsapp}>
-            Open WhatsApp chat
+          <Button variant={props.inboxHref ? "secondary" : "whatsapp"} onClick={openWhatsapp}>
+            {props.inboxHref ? "Open in the WhatsApp app instead" : "Open WhatsApp chat"}
           </Button>
           <p className="mt-1.5 text-[12.5px] text-muted">Opens their chat with the message written. Attach the poster you downloaded, then send — MahekOne sends nothing itself.</p>
         </div>
