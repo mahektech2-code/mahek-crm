@@ -20,6 +20,12 @@
 # under a second with nothing spent, and the action's hidden output said only
 # "is_error: true".
 #
+# AND IT CHECKS THE MODEL THAT RUNS. The check used to ask Haiku while the
+# action ran Opus, so every run from 2026-11-19 to 2026-11-24 passed the check
+# and then died in 0.6 s with $0 spent: a key Haiku accepts is not a key Opus
+# accepts. `CLAUDE_MODEL` is the one place the model is named, and a failed
+# run prints Claude's own messages, which is where the refusal is written.
+#
 # CONCURRENCY IS ON THE JOB, NOT THE WORKFLOW. At the workflow level it was
 # applied before the job's `if`, so Claude's own "I'll analyze this" comment
 # started a run that was going to be skipped — and that run, queued in the
@@ -44,6 +50,8 @@ jobs:
       cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      CLAUDE_MODEL: claude-opus-5-5
     permissions:
       contents: write
       pull-requests: write
@@ -61,13 +69,13 @@ jobs:
           fi
           code=$(curl -sS -o /tmp/anthropic.json -w '%{http_code}' https://api.anthropic.com/v1/messages \
             -H "x-api-key: $ANTHROPIC_API_KEY" -H "anthropic-version: 2023-06-01" -H "content-type: application/json" \
-            -d '{"model":"claude-haiku-5-5","max_tokens":1,"messages":[{"role":"user","content":"ok"}]}')
+            -d "{\"model\":\"$CLAUDE_MODEL\",\"max_tokens\":1,\"messages\":[{\"role\":\"user\",\"content\":\"ok\"}]}")
           if [ "$code" != "200" ]; then
             msg=$(jq -r '.error.message // "no message"' /tmp/anthropic.json 2>/dev/null)
-            echo "::error::Anthropic refused the ANTHROPIC_API_KEY secret ($code): $msg — a revoked key, or an account with no credit left."
+            echo "::error::Anthropic refused the ANTHROPIC_API_KEY secret for $CLAUDE_MODEL ($code): $msg — a revoked key, a workspace without that model, or an account with no credit left."
             exit 1
           fi
-          echo "Key accepted."
+          echo "Key accepted for $CLAUDE_MODEL."
 
       - uses: actions/checkout@v7
         with:
@@ -88,9 +96,20 @@ jobs:
           trigger_phrase: "@claude"
           branch_prefix: claude/fb-
           claude_args: >-
+            --model ${{ env.CLAUDE_MODEL }}
             --max-turns 80
             --allowedTools "Edit,Write,Read,Glob,Grep,Bash(npm run test*),Bash(npx tsc*),Bash(npx eslint*),Bash(git status*),Bash(git diff*),Bash(git log*),Bash(gh pr create*),Bash(gh pr view*)"
             --append-system-prompt "This issue was opened by MahekOne from a staff feedback report. Follow AGENTS.md. Make the smallest change that fixes what the reporter saw and add a test. Run npm run test and npx tsc --noEmit (with NODE_OPTIONS=--max-old-space-size=7000). Then open a pull request against main whose body contains 'Fixes #<this issue number>' and the 'Feedback: FB-<n>' line from the issue. OPENING THE PULL REQUEST IS PART OF THE TASK: do not stop at a Create-a-PR link. Commit and push with the provided git scripts, then run gh pr create --base main --head <your branch> yourself, as ready for review, never --draft. Before opening it, npm run test, npx tsc --noEmit and npx eslint on the files you changed must all pass; the pull request should be ready to merge as it stands. If the report does not say enough, comment with your question instead of guessing. Never merge."
+
+      # The action keeps Claude's messages in a file and logs only the verdict,
+      # so a refusal reads as a bare "is_error: true". Print everything but the
+      # long init message, which is where the reason actually is.
+      - name: Say why Claude stopped
+        if: failure() && steps.claude.outputs.execution_file != ''
+        env:
+          OUT: ${{ steps.claude.outputs.execution_file }}
+        run: |
+          jq -c 'if type == "array" then .[] else . end | select(.type != "system")' "$OUT" | cut -c1-2000
 
       # If Claude pushed a branch but did not open the pull request itself,
       # open it here, so a fix never sits on a branch nobody knows about.
