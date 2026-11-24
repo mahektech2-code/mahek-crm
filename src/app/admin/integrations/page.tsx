@@ -463,6 +463,47 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
         </Card>
       </Section>
 
+      <Section
+        id="whatsapp-inbox"
+        title="WhatsApp Inbox (Kapso)"
+        hint="What the Studio's WhatsApp Inbox reaches the company number through. Server to server only — neither value ever reaches a browser. Which number the Inbox is for is a setting, under Settings → Platform → Attachments (Studio)."
+      >
+        <Card>
+          <div className="divide-y divide-divider">
+            {secrets
+              .filter((s) => s.name === "kapso.apiKey")
+              .map((s) => (
+                <SecretCredentialRow
+                  key={s.name}
+                  row={row(s)}
+                  canWrite={canWrite}
+                  meta={{
+                    label: "Kapso API key",
+                    env: "KAPSO_API_KEY",
+                    what: "Lets the Inbox check the connection, load conversations and send messages and posters from the company WhatsApp number. Without it the Inbox says the key is not set.",
+                    where: "your Kapso project's API keys. Paste it on its own — it is shown back as the last four characters only",
+                  }}
+                />
+              ))}
+            {secrets
+              .filter((s) => s.name === "kapso.webhookSecret")
+              .map((s) => (
+                <SecretCredentialRow
+                  key={s.name}
+                  row={row(s)}
+                  canWrite={canWrite}
+                  meta={{
+                    label: "Kapso webhook secret",
+                    env: "KAPSO_WEBHOOK_SECRET",
+                    what: "Checked on every webhook Kapso sends to /api/studio/whatsapp/webhook. A webhook that does not carry a matching signature is refused, so new messages and delivery ticks stop arriving live (Refresh from Kapso still works).",
+                    where: "a long random string you make up here — then set the same value as the secret on the Kapso webhook for the company number",
+                  }}
+                />
+              ))}
+          </div>
+        </Card>
+      </Section>
+
       <Section id="maps" title="Maps" hint={"The key the Live map and Territory's shop map call Ola Maps with — for the streets under both, and for laying a salesman's trail onto the road he actually walked."}>
         <MapsSection
           data={{
