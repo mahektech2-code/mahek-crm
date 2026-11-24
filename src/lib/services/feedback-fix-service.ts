@@ -14,16 +14,19 @@ import { KIND_SHORT, IMPACT_SHORT, feedbackRef } from "@/lib/feedback-labels";
 import {
   FIX_NEEDS,
   commitIsInBuild,
+  confidencePct,
   diagnosisSchema,
   isCommitBuild,
   issueBody,
   issueTitle,
   redact,
   routeHint,
+  shouldAutoFix,
   type Diagnosis,
   type FixNeed,
 } from "@/lib/feedback-fix";
 import { getFeedback, type FeedbackRow } from "./feedback-service";
+import { triagerIds } from "./feedback-access";
 
 /* ---------------------------------------------------------------------------
  * FIXING A REPORT, wired to the database, the model and GitHub.
@@ -31,7 +34,10 @@ import { getFeedback, type FeedbackRow } from "./feedback-service";
  * Four steps, each a write here and a button in the console:
  *   1. read it — what does it need? (the AI, overrulable by a person)
  *   2. send it to the developer — a GitHub issue, only for a code change
- *   3. ask Claude — the label the repository's Claude workflow starts on
+ *   3. ask Claude — the label the repository's Claude workflow starts on.
+ *      AUTOMATIC since Nov 2026 (`feedbackFix.autoFix`): a report read as a
+ *      code change is sent and labelled without anybody pressing a button,
+ *      and the hourly check picks up any the moment after() missed.
  *   4. close the loop — the hourly check finds the pull request that fixed it,
  *      waits until its commit is in the build now serving, and closes the
  *      report, telling everybody who reported it.
@@ -73,7 +79,7 @@ export async function getFix(feedbackId: string): Promise<FixView | null> {
   return {
     need: (FIX_NEEDS as readonly string[]).includes(r.need ?? "") ? (r.need as FixNeed) : null,
     needByPerson: !!r.needDecidedById,
-    diagnosis: parsed.success ? parsed.data : null,
+    diagnosis: parsed.success ? { ...parsed.data, confidence: confidencePct(parsed.data.confidence) } : null,
     diagnosedAt: iso(r.diagnosedAt),
     issueNumber: r.issueNumber,
     issueUrl: r.issueUrl,
@@ -195,6 +201,7 @@ export async function diagnoseFeedback(
     model: config["feedbackFix.model"],
   });
   if (!output) return { ok: false, error: "No AI model could read it just now — choose what it needs by hand." };
+  const read = { ...output, confidence: confidencePct(output.confidence) };
 
   const [existing] = await db
     .select({ needDecidedById: feedbackFixes.needDecidedById })
@@ -202,12 +209,13 @@ export async function diagnoseFeedback(
     .where(eq(feedbackFixes.feedbackId, rootId))
     .limit(1);
   await upsertFix(rootId, {
-    ...(existing?.needDecidedById ? {} : { need: output.need }),
-    diagnosis: output,
+    ...(existing?.needDecidedById ? {} : { need: read.need }),
+    diagnosis: read,
     diagnosisModel: model,
     diagnosedAt: new Date(),
     diagnosedById: actorId,
   });
+  await autoRequestAiFix(rootId);
   return { ok: true, fix: (await getFix(rootId))! };
 }
 
@@ -233,7 +241,7 @@ function consoleUrl(rowId: string): string | null {
 /** Opens the GitHub issue, once. A second press answers with the first. */
 export async function createIssue(
   rootId: string,
-  actorId: string,
+  actorId: string | null,
 ): Promise<{ ok: true; number: number; url: string } | { ok: false; error: string }> {
   const fix = await getFix(rootId);
   if (fix?.issueNumber && fix.issueUrl) return { ok: true, number: fix.issueNumber, url: fix.issueUrl };
@@ -277,7 +285,7 @@ export async function createIssue(
   return recordIssue(rootId, actorId, res.json);
 }
 
-async function recordIssue(rootId: string, actorId: string, json: unknown) {
+async function recordIssue(rootId: string, actorId: string | null, json: unknown) {
   const issue = json as { number?: number; html_url?: string };
   if (!issue?.number || !issue.html_url) return { ok: false as const, error: "GitHub did not say which issue it opened." };
   await upsertFix(rootId, {
@@ -286,7 +294,13 @@ async function recordIssue(rootId: string, actorId: string, json: unknown) {
     issueCreatedAt: new Date(),
     issueCreatedById: actorId,
   });
-  await teamNote(rootId, actorId, `Sent to the developer as GitHub issue #${issue.number}.`);
+  await teamNote(
+    rootId,
+    actorId,
+    actorId
+      ? `Sent to the developer as GitHub issue #${issue.number}.`
+      : `Sent to the developer automatically as GitHub issue #${issue.number}.`,
+  );
   return { ok: true as const, number: issue.number, url: issue.html_url };
 }
 
@@ -299,7 +313,7 @@ async function recordIssue(rootId: string, actorId: string, json: unknown) {
  */
 export async function requestAiFix(
   rootId: string,
-  actorId: string,
+  actorId: string | null,
 ): Promise<{ ok: true; issueNumber: number } | { ok: false; error: string }> {
   const fix = await getFix(rootId);
   if (fix?.need !== "code_change") return { ok: false, error: "Only a report that needs a code change can go to Claude." };
@@ -311,8 +325,38 @@ export async function requestAiFix(
   const res = await gh(`/issues/${issue.number}/labels`, { method: "POST", body: { labels: [label] } });
   if (!res.ok) return { ok: false, error: res.error };
   await upsertFix(rootId, { aiFixRequestedAt: new Date(), aiFixRequestedById: actorId });
-  await teamNote(rootId, actorId, `Asked Claude to write a fix on issue #${issue.number}. A person reviews its pull request before anything is merged.`);
+  await teamNote(
+    rootId,
+    actorId,
+    `${actorId ? "Asked" : "Automatically asked"} Claude to write a fix on issue #${issue.number}. A person reviews its pull request before anything is merged.`,
+  );
   return { ok: true, issueNumber: issue.number };
+}
+
+/**
+ * Asks Claude with nobody pressing the button, where `shouldAutoFix` says so.
+ * Called after every reading, after a person chooses "code change", and by the
+ * hourly check for any report the first two missed. Never throws: a GitHub
+ * failure leaves the button, and the next hourly pass tries again.
+ */
+export async function autoRequestAiFix(rootId: string): Promise<boolean> {
+  try {
+    const config = await getConfig();
+    const fix = await getFix(rootId);
+    const go = shouldAutoFix(
+      fix ? { ...fix, confidence: fix.diagnosis?.confidence ?? null } : null,
+      {
+        enabled: config["feedbackFix.autoFix"],
+        connected: await githubConnected(),
+        minConfidence: config["feedbackFix.autoFixMinConfidence"],
+      },
+    );
+    if (!go) return false;
+    return (await requestAiFix(rootId, null)).ok;
+  } catch (e) {
+    console.error("Automatic Claude fix failed:", e instanceof Error ? e.message : e);
+    return false;
+  }
 }
 
 /* ------------------------------------------------------- 4. close the loop */
@@ -385,7 +429,7 @@ async function closeAsLive(rootId: string, authorId: string) {
   );
 }
 
-export type FixSyncResult = { checked: number; merged: number; closed: number; errors: number };
+export type FixSyncResult = { checked: number; merged: number; closed: number; errors: number; asked: number };
 
 /**
  * The hourly check. For every report with an issue whose fix is not yet live:
@@ -393,9 +437,20 @@ export type FixSyncResult = { checked: number; merged: number; closed: number; e
  * build now serving. Only then is the report closed.
  */
 export async function syncFeedbackFixes(): Promise<FixSyncResult> {
-  const result: FixSyncResult = { checked: 0, merged: 0, closed: 0, errors: 0 };
+  const result: FixSyncResult = { checked: 0, merged: 0, closed: 0, errors: 0, asked: 0 };
   if (!(await githubConnected())) return result;
   const build = process.env.MAHEK_BUILD;
+
+  // Code changes nobody has asked Claude about yet — the after() that should
+  // have asked was cut short, GitHub was down, or the setting was just turned on.
+  if ((await getConfig())["feedbackFix.autoFix"]) {
+    const waiting = await db
+      .select({ id: feedbackFixes.feedbackId })
+      .from(feedbackFixes)
+      .where(and(eq(feedbackFixes.need, "code_change"), isNull(feedbackFixes.aiFixRequestedAt), isNull(feedbackFixes.deployedAt)))
+      .limit(10);
+    for (const w of waiting) if (await autoRequestAiFix(w.id)) result.asked += 1;
+  }
 
   const rows = await db
     .select()
@@ -434,7 +489,7 @@ export async function syncFeedbackFixes(): Promise<FixSyncResult> {
     }
     await upsertFix(f.feedbackId, set);
     if (live) {
-      const author = f.aiFixRequestedById ?? f.issueCreatedById ?? f.diagnosedById;
+      const author = f.aiFixRequestedById ?? f.issueCreatedById ?? f.diagnosedById ?? (await automaticAuthor(f.feedbackId));
       if (author) {
         await closeAsLive(f.feedbackId, author);
         result.closed += 1;
@@ -446,7 +501,25 @@ export async function syncFeedbackFixes(): Promise<FixSyncResult> {
 
 /* --------------------------------------------------------------- helpers */
 
-async function teamNote(rootId: string, authorId: string, body: string) {
+/**
+ * Whose name a line written by nobody goes under — every line of a thread is
+ * somebody's. Whoever the report is assigned to, else a platform
+ * administrator, else anybody who may triage it.
+ */
+async function automaticAuthor(rootId: string): Promise<string | null> {
+  const [row] = await db.select({ assigneeId: feedback.assigneeId }).from(feedback).where(eq(feedback.id, rootId)).limit(1);
+  if (row?.assigneeId) return row.assigneeId;
+  const [admin] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(and(eq(users.role, "admin"), eq(users.active, true)))
+    .limit(1);
+  return admin?.id ?? (await triagerIds())[0] ?? null;
+}
+
+async function teamNote(rootId: string, actorId: string | null, body: string) {
+  const authorId = actorId ?? (await automaticAuthor(rootId));
+  if (!authorId) return;
   await db.insert(feedbackMessages).values({
     id: `fbm_${randomUUID().slice(0, 12)}`,
     feedbackId: rootId,
