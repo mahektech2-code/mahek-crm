@@ -88,6 +88,22 @@ function useSave(onClose: () => void) {
 
 const accountByName = (kit: MoneyKit, name: string): KitAccount | undefined => kit.accounts.find((a) => a.name === name);
 
+/** A note is rarely needed: a link until somebody wants one. */
+function NoteBox({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [open, setOpen] = React.useState(!!value);
+  if (!open)
+    return (
+      <button type="button" onClick={() => setOpen(true)} className={linkClass("brand", "self-end justify-self-start pb-2 text-sm font-semibold")}>
+        + Note
+      </button>
+    );
+  return (
+    <MField label="Note">
+      <MInput autoFocus value={value} onChange={(x) => onChange(x.target.value)} />
+    </MField>
+  );
+}
+
 /* ================================================================ expense */
 
 export function ExpenseDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => void }) {
@@ -152,13 +168,13 @@ export function ExpenseDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => 
               <MMoney autoFocus paise={amount} onPaise={setAmount} invalid={!!e.amount} />
             </MField>
             <MField label="Paid to" error={e.payee}>
-              <MInput value={payee} onChange={(x) => setPayee(x.target.value)} placeholder="Shop or person" />
+              <MInput value={payee} onChange={(x) => setPayee(x.target.value)} />
             </MField>
             <MField label="Category" req error={e.category}>
               <MSelect value={category} onChange={setCategory} options={kit.categories} placeholder="Choose…" invalid={!!e.category} />
             </MField>
-            <MField label="What was it for?" req error={e.description}>
-              <MInput value={description} onChange={(x) => setDescription(x.target.value)} invalid={!!e.description} placeholder="e.g. October electricity" />
+            <MField label="For" req error={e.description}>
+              <MInput value={description} onChange={(x) => setDescription(x.target.value)} invalid={!!e.description} />
             </MField>
             <MField label="Bill number" req error={e.invoiceNo}>
               <MInput value={invoiceNo} onChange={(x) => setInvoiceNo(x.target.value)} invalid={!!e.invoiceNo} />
@@ -178,26 +194,24 @@ export function ExpenseDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => 
           </MField>
           {!isCash ? (
             <div className="grid grid-cols-3 gap-x-4 gap-y-4">
-              <MField label="Paid by" req error={e.mode}>
+              <MField label="Mode" req error={e.mode}>
                 <MSelect value={mode} onChange={setMode} options={PAY_MODES.filter((m) => m !== "Cash")} />
               </MField>
               <MField label="UTR / cheque no." error={e.reference} className="col-span-2">
-                <MInput value={reference} onChange={(x) => setReference(x.target.value)} placeholder="Optional" />
+                <MInput value={reference} onChange={(x) => setReference(x.target.value)} />
               </MField>
             </div>
           ) : null}
           <div className="grid grid-cols-2 gap-4">
             <MField label="Bill photo">
-              <FileBox value={file} onChange={setFile} empty="Add a photo or PDF" />
+              <FileBox value={file} onChange={setFile} empty="Add photo" />
             </MField>
-            <MField label="Note">
-              <MInput value={note} onChange={(x) => setNote(x.target.value)} placeholder="Optional" />
-            </MField>
+            <NoteBox value={note} onChange={setNote} />
           </div>
           {e._ ? <Note tone="danger">{e._}</Note> : null}
         </div>
       </div>
-      <MoneyFoot left={needsApproval ? "Above " + inr(kit.approvalAbove) + " — the accountant approves it" : ""}>
+      <MoneyFoot left={needsApproval ? "Needs approval" : ""}>
         <Button onClick={onClose}>Cancel</Button>
         <Button variant="primary" disabled={busy || (!!dupNow && !different)} onClick={submit}>
           {busy ? "Saving…" : "Save expense"}
@@ -214,11 +228,11 @@ function pettyChoices(kit: MoneyKit, amount: number): CardChoice[] {
   const bank = kit.accounts.find((a) => a.kind === "bank");
   const petty = kit.accounts.find((a) => a.kind === "petty");
   const out: CardChoice[] = [];
-  if (bank) out.push({ key: bank.name, name: `${bank.name.split(" ")[0]} GPay`, kind: "bank", mark: 0, sub: "paid by GPay / UPI" });
+  if (bank) out.push({ key: bank.name, name: `${bank.name.split(" ")[0]} GPay`, kind: "bank", mark: 0, sub: "" });
   const show = kit.seesBalances;
-  if (petty) out.push({ key: petty.name, name: petty.name, kind: "petty", sub: show ? inr(petty.balance) : "petty cash box", after: show && amount > 0 ? `${inr(petty.balance)} → ${inr(petty.balance - amount)}` : undefined });
-  out.push({ key: FROM_WITHDRAWAL, name: `Cash withdrawn from ${bank ? bank.name.split(" ")[0] : "a bank"}`, kind: "cash", sub: "choose the withdrawal" });
-  out.push({ key: FROM_CUSTOMER_CASH, name: "Cash from a customer", kind: "customer", sub: "choose whose cash" });
+  if (petty) out.push({ key: petty.name, name: petty.name, kind: "petty", sub: show ? inr(petty.balance) : "", after: show && amount > 0 ? `${inr(petty.balance)} → ${inr(petty.balance - amount)}` : undefined });
+  out.push({ key: FROM_WITHDRAWAL, name: `Cash withdrawn from ${bank ? bank.name.split(" ")[0] : "a bank"}`, kind: "cash", sub: "" });
+  out.push({ key: FROM_CUSTOMER_CASH, name: "Cash from a customer", kind: "customer", sub: "" });
   return out;
 }
 
@@ -268,13 +282,13 @@ export function PettyDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => vo
               <MMoney autoFocus paise={amount} onPaise={setAmount} invalid={!!e.amount} />
             </MField>
             <MField label="Paid to" error={e.payee}>
-              <MInput value={payee} onChange={(x) => setPayee(x.target.value)} placeholder="Shop or person" />
+              <MInput value={payee} onChange={(x) => setPayee(x.target.value)} />
             </MField>
             <MField label="Category" req error={e.category}>
               <MSelect value={category} onChange={setCategory} options={kit.categories} placeholder="Choose…" invalid={!!e.category} />
             </MField>
-            <MField label="What was it for?" error={e.description}>
-              <MInput value={purpose} onChange={(x) => setPurpose(x.target.value)} placeholder="Optional" />
+            <MField label="For" error={e.description}>
+              <MInput value={purpose} onChange={(x) => setPurpose(x.target.value)} />
             </MField>
             <MField label="Bill number" req error={e.invoiceNo}>
               <MInput value={invoiceNo} onChange={(x) => setInvoiceNo(x.target.value)} invalid={!!e.invoiceNo} />
@@ -287,7 +301,7 @@ export function PettyDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => vo
             <PaidFromCards choices={pettyChoices(kit, amount ?? 0)} value={from} onChange={setFrom} error={e.paidFrom} />
           </MField>
           {isSource ? (
-            <MField label={from === FROM_CUSTOMER_CASH ? "Which customer's cash?" : "Which withdrawal?"} req error={e.source} hint={sources.length ? undefined : "Nothing has cash left. Enter the money received first."}>
+            <MField label={from === FROM_CUSTOMER_CASH ? "Whose cash?" : "Which withdrawal?"} req error={e.source} hint={sources.length ? undefined : "Nothing has cash left."}>
               <MSelect
                 value={source}
                 onChange={setSource}
@@ -299,16 +313,14 @@ export function PettyDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => vo
           ) : null}
           <div className="grid grid-cols-2 gap-4">
             <MField label="Bill photo" req error={e.files}>
-              <FileBox value={file} onChange={setFile} empty="Add a photo of the bill" />
+              <FileBox value={file} onChange={setFile} empty="Add photo" />
             </MField>
-            <MField label="Note">
-              <MInput value={note} onChange={(x) => setNote(x.target.value)} placeholder="Optional" />
-            </MField>
+            <NoteBox value={note} onChange={setNote} />
           </div>
           {e._ ? <Note tone="danger">{e._}</Note> : null}
         </div>
       </div>
-      <MoneyFoot left="The accountant checks it after you save">
+      <MoneyFoot>
         <Button onClick={onClose}>Cancel</Button>
         <Button variant="primary" disabled={busy} onClick={submit}>
           {busy ? "Saving…" : "Save"}
@@ -415,8 +427,8 @@ export function ReceiptDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => 
               <Segments options={["Customer", "Other party"]} value={fromKind} onChange={setFromKind} />
             </MField>
             {fromKind === "Customer" ? (
-              <MField label="Which customer?" req error={e.customer} hint={open ? `They owe ${inr(open.outstanding)}` : undefined}>
-                <input list="money-customers" value={customer} onChange={(x) => setCustomer(x.target.value)} className={boxClass(!!e.customer)} placeholder="Type to search" />
+              <MField label="Customer" req error={e.customer} hint={open ? `They owe ${inr(open.outstanding)}` : undefined}>
+                <input list="money-customers" value={customer} onChange={(x) => setCustomer(x.target.value)} className={boxClass(!!e.customer)} />
                 <datalist id="money-customers">
                   {kit.customers.map((c) => (
                     <option key={c.id} value={c.label} />
@@ -424,7 +436,7 @@ export function ReceiptDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => 
                 </datalist>
               </MField>
             ) : (
-              <MField label="Who paid?" req error={e.customer}>
+              <MField label="Paid by" req error={e.customer}>
                 <MInput value={payer} onChange={(x) => setPayer(x.target.value)} invalid={!!e.customer} />
               </MField>
             )}
@@ -434,12 +446,12 @@ export function ReceiptDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => 
             <MField label="Date" req error={e.date}>
               <MInput type="date" value={date} max={kit.today} onChange={(x) => setDate(x.target.value)} invalid={!!e.date} />
             </MField>
-            <MField label="What is it for?">
+            <MField label="For">
               <MSelect value={purpose} onChange={setPurpose} options={["Invoice payment", "Advance from customer", "Other"]} />
             </MField>
             {isBank ? (
               <>
-                <MField label="Paid by" req error={e.mode}>
+                <MField label="Mode" req error={e.mode}>
                   <MSelect value={mode} onChange={setMode} options={PAY_MODES.filter((m) => m !== "Cash")} />
                 </MField>
                 <MField label="UTR / cheque no." req error={e.reference} className="col-span-2">
@@ -451,7 +463,7 @@ export function ReceiptDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => 
 
           {fromKind === "Customer" && cust ? (
             <div>
-              <div className="mb-1.5 text-sm font-semibold text-body">Which bills does it pay? Oldest are ticked first.</div>
+              <div className="mb-1.5 text-sm font-semibold text-body">Bills it pays</div>
               {list.length ? (
                 <LineTable
                   head={[{ l: "", w: "w-12" }, { l: "Invoice" }, { l: "Bill date" }, { l: "Due" }, { l: "Balance", align: "right" }, { l: "Apply", align: "right" }]}
@@ -578,22 +590,20 @@ export function TransferDialog({ kit, onClose }: { kit: MoneyKit; onClose: () =>
             <MField label="Date" req error={e.date}>
               <MInput type="date" value={date} max={kit.today} onChange={(x) => setDate(x.target.value)} />
             </MField>
-            <MField label={fromBank ? "Cheque / slip no." : "Deposit slip no."} error={e.reference}>
-              <MInput value={reference} onChange={(x) => setReference(x.target.value)} placeholder="Optional" />
+            <MField label="Slip no." error={e.reference}>
+              <MInput value={reference} onChange={(x) => setReference(x.target.value)} />
             </MField>
           </div>
           <div className="grid grid-cols-2 gap-4">
-            <MField label="Note">
-              <MInput value={description} onChange={(x) => setDescription(x.target.value)} placeholder="Optional — e.g. weekly petty cash top-up" />
-            </MField>
+            <NoteBox value={description} onChange={setDescription} />
             <MField label="Slip photo">
-              <FileBox value={file} onChange={setFile} empty="Add a photo or PDF" />
+              <FileBox value={file} onChange={setFile} empty="Add photo" />
             </MField>
           </div>
           {e._ ? <Note tone="danger">{e._}</Note> : null}
         </div>
       </div>
-      <MoneyFoot left="Moving money is not an expense — nothing is spent">
+      <MoneyFoot>
         <Button onClick={onClose}>Cancel</Button>
         <Button variant="primary" disabled={busy || !from || !to || from === to || !amt} onClick={submit}>
           {busy ? "Saving…" : "Save"}
@@ -623,10 +633,10 @@ export function AdvanceDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => 
   const amt = amount ?? 0;
   const choices: CardChoice[] = [];
   const show = kit.seesBalances;
-  if (petty) choices.push({ key: petty.name, name: petty.name, kind: "petty", sub: show ? inr(petty.balance) : "petty cash box", after: show && amt ? `${inr(petty.balance)} → ${inr(petty.balance - amt)}` : undefined });
-  if (cash) choices.push({ key: cash.name, name: cash.name, kind: "cash", sub: show ? inr(cash.balance) : "office cash", after: show && amt ? `${inr(cash.balance)} → ${inr(cash.balance - amt)}` : undefined });
-  if (bank) choices.push({ key: bank.name, name: `${bank.name.split(" ")[0]} GPay`, kind: "bank", sub: "sent by GPay / UPI" });
-  choices.push({ key: FROM_CUSTOMER_CASH, name: "Cash from a customer", kind: "customer", sub: "choose whose cash" });
+  if (petty) choices.push({ key: petty.name, name: petty.name, kind: "petty", sub: show ? inr(petty.balance) : "", after: show && amt ? `${inr(petty.balance)} → ${inr(petty.balance - amt)}` : undefined });
+  if (cash) choices.push({ key: cash.name, name: cash.name, kind: "cash", sub: show ? inr(cash.balance) : "", after: show && amt ? `${inr(cash.balance)} → ${inr(cash.balance - amt)}` : undefined });
+  if (bank) choices.push({ key: bank.name, name: `${bank.name.split(" ")[0]} GPay`, kind: "bank", sub: "" });
+  choices.push({ key: FROM_CUSTOMER_CASH, name: "Cash from a customer", kind: "customer", sub: "" });
   const isCustomer = from === FROM_CUSTOMER_CASH;
   const accName = isCustomer ? (cash?.name ?? "") : from;
   const fromAcc = accountByName(kit, accName);
@@ -655,7 +665,7 @@ export function AdvanceDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => 
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
         <div className="grid gap-4">
           <div className="grid grid-cols-3 gap-x-4 gap-y-4">
-            <MField label="To whom?" req error={e.employee}>
+            <MField label="To" req error={e.employee}>
               <MSelect
                 value={personId}
                 onChange={setPersonId}
@@ -678,10 +688,10 @@ export function AdvanceDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => 
                 }}
               />
             </MField>
-            <MField label="What is it for?" error={e.purpose}>
-              <MInput value={purpose} onChange={(x) => setPurpose(x.target.value)} placeholder="What the money is for" />
+            <MField label="For" error={e.purpose}>
+              <MInput value={purpose} onChange={(x) => setPurpose(x.target.value)} />
             </MField>
-            <MField label="Bills due by" error={e.billsDueOn} hint="A reminder goes out on this day">
+            <MField label="Bills due by" error={e.billsDueOn}>
               <MInput type="date" value={billsDue} onChange={(x) => setBillsDue(x.target.value)} />
             </MField>
             {fromAcc?.kind === "bank" ? (
@@ -694,7 +704,7 @@ export function AdvanceDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => 
             <PaidFromCards choices={choices} value={from} onChange={setFrom} error={e.from} />
           </MField>
           {isCustomer ? (
-            <MField label="Which customer's cash?" req>
+            <MField label="Whose cash?" req>
               <MSelect value={source} onChange={setSource} placeholder={kit.customerCash.length ? "Choose…" : "Nothing with cash left"} options={kit.customerCash.map((s) => ({ v: s.label.split(" · ")[0], l: `${s.label} · ${inr(s.left)} left` }))} />
             </MField>
           ) : null}
@@ -706,7 +716,7 @@ export function AdvanceDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => 
           {e._ ? <Note tone="danger">{e._}</Note> : null}
         </div>
       </div>
-      <MoneyFoot left="Not an expense yet — their bills are, once checked">
+      <MoneyFoot>
         <Button onClick={onClose}>Cancel</Button>
         <Button variant="primary" disabled={busy} onClick={submit}>
           {busy ? "Saving…" : "Give advance"}
@@ -864,7 +874,7 @@ export function BillsDialog({ kit, target, onClose }: { kit: MoneyKit; target: B
               <button type="button" onClick={() => many.current?.click()} className={linkClass("brand", "font-semibold")}>
                 Upload several photos at once
               </button>{" "}
-              — each photo becomes a line
+
               <input ref={many} type="file" multiple accept="image/jpeg,image/png,application/pdf" className="hidden" onChange={(x) => uploadMany(x.target.files)} />
             </div>
           </div>
@@ -880,7 +890,7 @@ export function BillsDialog({ kit, target, onClose }: { kit: MoneyKit; target: B
           {e._ ? <Note tone="danger">{e._}</Note> : null}
         </div>
       </div>
-      <MoneyFoot left="No bill? Tick “No bill?” on the line and say why">
+      <MoneyFoot>
         <Button onClick={draft}>Save draft</Button>
         <Button variant="primary" disabled={busy || !counted} onClick={submit}>
           {busy ? "Submitting…" : `Submit ${counted} bill${counted === 1 ? "" : "s"} · ${inr(total)}`}

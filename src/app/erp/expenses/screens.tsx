@@ -46,8 +46,8 @@ export function TopTabs({ tabs, more }: { tabs: Tab[]; more: Tab[] }) {
   );
 }
 
-/** Which account's statement: a small segmented switch. */
-export function AccountSwitch({ tabs }: { tabs: Tab[] }) {
+/** The switch inside a tab — Expenses · Petty cash · Advances, or the accounts of a statement. */
+export function SegSwitch({ tabs }: { tabs: Tab[] }) {
   return (
     <nav aria-label="Account" className="inline-flex flex-wrap gap-0.5 rounded-lg bg-divider p-[3px]">
       {tabs.map((t) => (
@@ -69,24 +69,18 @@ export function AccountSwitch({ tabs }: { tabs: Tab[] }) {
 
 const QUICK_ICON: Record<string, string> = { Expense: "rupee", "Petty cash spend": "wallet", "Money received": "doc", "Move money": "swap", Advance: "person" };
 
-/** Home's "What do you want to do?": every kind of entry as a big plain button. */
+/** Home's add buttons: every kind of entry, one tap each. */
 export function QuickAdd({ items }: { items: { l: string; sub: string; href: string }[] }) {
   return (
-    <div className="mb-5">
-      <div className="mb-2 text-sm font-semibold text-body">What do you want to enter?</div>
-      <CardGrid min="card">
-        {items.map((i) => (
-          <NavLink key={i.l} href={i.href} className="flex items-start gap-3 rounded-card border border-line bg-surface px-4 py-3.5 no-underline hover:border-brand hover:bg-brand-soft hover:no-underline">
-            <span className="mt-0.5 inline-flex h-8 w-8 flex-none items-center justify-center rounded-control bg-brand-soft text-brand">
-              <Icon name={QUICK_ICON[i.l] ?? "plus"} size={16} />
-            </span>
-            <span className="min-w-0">
-              <span className="block text-sm font-semibold text-ink">{i.l}</span>
-              <span className="block text-meta text-muted">{i.sub}</span>
-            </span>
-          </NavLink>
-        ))}
-      </CardGrid>
+    <div className="mb-5 flex flex-wrap gap-2.5">
+      {items.map((i) => (
+        <NavLink key={i.l} href={i.href} title={i.sub} className="flex items-center gap-2.5 rounded-card border border-line bg-surface px-4 py-3 text-sm font-semibold text-ink no-underline hover:border-brand hover:bg-brand-soft hover:no-underline">
+          <span className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-control bg-brand-soft text-brand">
+            <Icon name={QUICK_ICON[i.l] ?? "plus"} size={15} />
+          </span>
+          {i.l}
+        </NavLink>
+      ))}
     </div>
   );
 }
@@ -230,6 +224,7 @@ const TxnId = ({ t }: { t: TxnRow }) => <span className="font-mono text-sm text-
 export type ListKind = "paid" | "petty" | "review" | "cancelled" | "all" | "receipts" | "transfers";
 
 export function TxnTable({
+  bank = true,
   kind,
   rows,
   accounts,
@@ -241,6 +236,8 @@ export function TxnTable({
   capped,
   empty,
 }: {
+  /** Whether the "In bank?" column is drawn — the accountant's, not the team's. */
+  bank?: boolean;
   kind: ListKind;
   rows: (TxnRow & { dup: boolean })[];
   accounts: KitAccount[];
@@ -286,7 +283,10 @@ export function TxnTable({
                 paidFromText(t),
                 kind === "petty" || (kind === "all" && t.status === "cancelled") ? reviewText(t) : bankMatchText(t, t.dup),
               ];
-  const csv = [head.map((h) => h.l), ...rows.map(csvRow)];
+  /* The team does not see the bank side: without `bank`, the "In bank?" column goes. */
+  const dropLast = !bank && head[head.length - 1].l === "In bank?";
+  const cols = dropLast ? head.slice(0, -1) : head;
+  const csv = [cols.map((h) => h.l), ...rows.map((t) => (dropLast ? csvRow(t).slice(0, -1) : csvRow(t)))];
   return (
     <>
       <FilterBar filters={filters} count={total} sum={sum} csv={csv} csvName={`petty-cash-${kind}`} />
@@ -294,7 +294,7 @@ export function TxnTable({
         <table className="w-full">
           <thead>
             <Tr>
-              {head.map((h, i) => (
+              {cols.map((h, i) => (
                 <Th key={i} align={h.align} className={cx("bg-surface", h.w)}>
                   {h.l}
                 </Th>
@@ -321,9 +321,11 @@ export function TxnTable({
                     <Td align="right" className="font-bold text-ink">
                       {inr(t.amountPaise)}
                     </Td>
-                    <Td>
-                      <BankMatch t={t} />
-                    </Td>
+                    {dropLast ? null : (
+                      <Td>
+                        <BankMatch t={t} />
+                      </Td>
+                    )}
                   </>
                 ) : kind === "transfers" ? (
                   <>
@@ -339,9 +341,11 @@ export function TxnTable({
                     <Td align="right" className="font-bold text-ink">
                       {inr(t.amountPaise)}
                     </Td>
-                    <Td>
-                      <BankMatch t={t} />
-                    </Td>
+                    {dropLast ? null : (
+                      <Td>
+                        <BankMatch t={t} />
+                      </Td>
+                    )}
                   </>
                 ) : kind === "review" ? (
                   <>
@@ -378,7 +382,7 @@ export function TxnTable({
                     <Td>
                       <PaidFromCell t={t} accounts={accounts} />
                     </Td>
-                    <Td>{kind === "petty" ? <ReviewPill t={t} /> : kind === "all" && t.status === "cancelled" ? <ReviewPill t={t} /> : <BankMatch t={t} dup={t.dup} />}</Td>
+                    {dropLast ? null : <Td>{kind === "petty" ? <ReviewPill t={t} /> : kind === "all" && t.status === "cancelled" ? <ReviewPill t={t} /> : <BankMatch t={t} dup={t.dup} />}</Td>}
                   </>
                 )}
               </OpenRow>

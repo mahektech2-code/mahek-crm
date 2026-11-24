@@ -12,17 +12,15 @@ import { FLAG, inr, nf } from "@/lib/erp/ui";
 import { LIST_QUERY_KEYS, pageOf, parseListQuery } from "@/lib/erp/list-query";
 import { withReadMemo } from "@/lib/erp/read-memo";
 import { scopeFor, windowInfo } from "@/lib/erp/window";
-import { Card, cx, Td, Th, Tr } from "@/components/ui/primitives";
-import { CardGrid } from "@/components/ui/card-grid";
+import { Card, cx } from "@/components/ui/primitives";
 import { ListScreen } from "../_ui/list-screen";
 import { lightPage, lightRow, lightSpec } from "@/lib/erp/lazy-forms";
 import { Page } from "../_ui/page-head";
-import { NewMenu } from "../_ui/new-menu";
 import { linkClass, SectionTitle } from "../_ui/look";
 import { MoneyDialogHost } from "./money-dialogs";
 import type { FilterDef } from "./money-client";
 import type { MoneyKit } from "./money-ui";
-import { AccountCards, AccountSwitch, AdvancePage, AdvancesTable, Panel, QuickAdd, StatementView, TopTabs, TxnDrawerView, TxnTable, type ListKind, type Tab } from "./screens";
+import { AccountCards, SegSwitch, AdvancePage, AdvancesTable, Panel, QuickAdd, StatementView, TopTabs, TxnDrawerView, TxnTable, type ListKind, type Tab } from "./screens";
 import { Icon } from "@/components/shell/icons";
 import { buttonClass } from "@/components/ui/primitives";
 
@@ -50,27 +48,27 @@ const LIST_KIND: Record<string, ListKind> = {
   moneyTransfers: "transfers",
 };
 const STATEMENTS: Record<string, string> = { stmtKotak: "macc_kotak", stmtIcici: "macc_icici", stmtCash: "macc_cash", stmtPetty: "macc_petty" };
-/* The one row of tabs, in the words the team uses. A tab is drawn when its first held view is. */
-const MAIN: { label: string; keys: string[] }[] = [
-  { label: "Home", keys: ["moneyOverview"] },
-  { label: "Expenses", keys: ["expenses"] },
-  { label: "Petty cash", keys: ["pettyExpenses"] },
-  { label: "Advances", keys: ["advances"] },
-  { label: "Money received", keys: ["moneyReceipts"] },
-  { label: "Transfers", keys: ["moneyTransfers"] },
-  { label: "Statements", keys: Object.keys(STATEMENTS) },
-  { label: "To approve", keys: ["moneyReview"] },
+/*
+ * LAYERED: four everyday tabs, and inside a tab a small switch for its kinds.
+ * Paid holds expenses, petty cash and advances; Received holds all money in
+ * and what the bank has not shown yet. A view not listed in a switch (bank or
+ * cash receipts) still belongs to its tab. Everything else is under "More".
+ */
+const GROUPS: { label: string; segs: { key: string; label: string }[]; also?: string[] }[] = [
+  { label: "Home", segs: [{ key: "moneyOverview", label: "Home" }] },
+  { label: "Paid", segs: [{ key: "expenses", label: "Expenses" }, { key: "pettyExpenses", label: "Petty cash" }, { key: "advances", label: "Advances" }] },
+  { label: "Received", segs: [{ key: "moneyReceipts", label: "All" }, { key: "receiptsUnmatched", label: "Not in bank yet" }], also: ["receiptsBank", "receiptsCash"] },
+  { label: "Moved", segs: [{ key: "moneyTransfers", label: "Moved" }] },
+  { label: "To approve", segs: [{ key: "moneyReview", label: "To approve" }] },
 ];
 /* Rarely needed: behind "More ▾". */
 const MORE: { key: string; label: string }[] = [
-  { key: "receiptsUnmatched", label: "Received, not yet in bank" },
-  { key: "receiptsBank", label: "Received in bank" },
-  { key: "receiptsCash", label: "Received in cash" },
-  { key: "moneyTxns", label: "All expenses" },
-  { key: "expensesCancelled", label: "Cancelled" },
+  { key: "stmtKotak", label: "Statements" },
+  { key: "moneyAccounts", label: "Accounts" },
   { key: "moneyReports", label: "Reports" },
   { key: "moneyAudit", label: "Audit trail" },
-  { key: "moneyAccounts", label: "Accounts" },
+  { key: "moneyTxns", label: "All expenses" },
+  { key: "expensesCancelled", label: "Cancelled" },
   { key: "legacyPetty", label: "Old records" },
 ];
 /* Pages that show what the accounts hold, or the money's totals: the
@@ -135,24 +133,25 @@ export default async function PettyCashPage({ searchParams }: { searchParams: Pr
     return `${base.split("?")[0]}?${u.toString()}`;
   };
 
-  /* ONE row of tabs: the pages the team uses every day, in plain words, and
-     everything else behind "More". The registry's views (and so every grant)
-     are unchanged; this only decides how they are drawn. */
-  const current = views.find((v) => v.key === view)!;
+  /* The tabs, the current tab's switch, and "More". The registry's views
+     (and so every grant) are unchanged; this only decides how they are drawn. */
   const [overview, kitBase] = await Promise.all([moneyOverview(day), moneyKitData(day)]);
   const toApprove = overview.review.n + overview.pettyReview.n + overview.sentBack.n;
-  const firstHeld = (keys: string[]) => keys.find((k) => known.has(k));
   const main: Tab[] = [];
-  for (const m of MAIN) {
-    const k = firstHeld(m.keys);
-    if (!k) continue;
-    if (m.keys.includes("moneyReview") && !toApprove && !approver) continue;
-    main.push({ key: m.label, label: m.label, href: erpLink(k), active: m.keys.includes(view), count: m.keys.includes("moneyReview") ? toApprove || undefined : undefined });
+  let segs: Tab[] = [];
+  for (const g of GROUPS) {
+    const held = g.segs.filter((x) => known.has(x.key));
+    if (!held.length) continue;
+    /* "To approve" is the accountant's desk; the team reaches what was sent back from Home. */
+    if (g.label === "To approve" && !approver) continue;
+    const active = g.segs.some((x) => x.key === view) || !!g.also?.includes(view);
+    main.push({ key: g.label, label: g.label, href: erpLink(held[0].key), active, count: g.label === "To approve" ? toApprove || undefined : undefined });
+    if (active && held.length > 1) segs = held.map((x) => ({ key: x.key, label: x.label, href: erpLink(x.key), active: x.key === view }));
   }
-  const more = MORE.filter((m) => known.has(m.key)).map((m) => ({ key: m.key, label: m.label, href: erpLink(m.key), active: m.key === view }));
-  /* The account statements: one tab, the accounts as a switch inside it. */
-  const stmtTabs: Tab[] = views.filter((v) => STATEMENTS[v.key]).map((v) => ({ key: v.key, label: v.label, href: erpLink(v.key), active: v.key === view }));
-  void current;
+  const inStatements = !!STATEMENTS[view];
+  const more = MORE.filter((m) => known.has(m.key)).map((m) => ({ key: m.key, label: m.label, href: erpLink(m.key), active: m.key === view || (m.key === "stmtKotak" && inStatements) }));
+  /* The account statements: the accounts as the switch. */
+  if (inStatements) segs = views.filter((v) => STATEMENTS[v.key]).map((v) => ({ key: v.key, label: v.label, href: erpLink(v.key), active: v.key === view }));
 
   /* Without balances, the accounts reach the browser without them too. */
   const kit: MoneyKit = { ...kitBase, accounts: seesBal ? kitBase.accounts : kitBase.accounts.map((a) => ({ ...a, balance: 0 })), today: day, me: ctx.actor.name, approver, seesBalances: seesBal };
@@ -171,19 +170,22 @@ export default async function PettyCashPage({ searchParams }: { searchParams: Pr
       title="Petty Cash"
       actions={
         canWrite ? (
-          <div className="flex items-center gap-2">
-            {ADD[view] ? (
-              <NavLink href={here({ dlg: ADD[view].dlg, open: null })} className={buttonClass({ variant: "primary" })}>
-                <Icon name="plus" size={16} />
-                {ADD[view].l}
-              </NavLink>
-            ) : null}
-            <NewMenu items={newMenu()} label={ADD[view] ? "Other" : "Add"} variant={ADD[view] ? "secondary" : "primary"} />
-          </div>
+          ADD[view] ? (
+            <NavLink href={here({ dlg: ADD[view].dlg, open: null })} className={buttonClass({ variant: "primary" })}>
+              <Icon name="plus" size={16} />
+              {ADD[view].l}
+            </NavLink>
+          ) : null
         ) : null
       }
     >
       <TopTabs tabs={main} more={more} />
+      {segs.length ? (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <SegSwitch tabs={segs} />
+          {inStatements ? <PeriodLinks period={period} href={(p) => here({ p, open: null })} /> : null}
+        </div>
+      ) : null}
       {body}
       {host}
     </Page>
@@ -200,17 +202,17 @@ export default async function PettyCashPage({ searchParams }: { searchParams: Pr
     const filters: FilterDef[] = [];
     if (TXN_VIEWS[view].windowed) filters.push({ name: "p", label: "Period", value: period, options: PERIODS.map((p) => ({ v: p.v, l: `${p.l} ▾` })) });
     if (kind !== "receipts" && kind !== "transfers") filters.push({ name: "cat", label: "Category", value: f.category ?? "", options: [{ v: "", l: "Category: All ▾" }, ...opts.categories.map((c) => ({ v: c, l: c }))] });
-    filters.push({
+    if (seesBal) filters.push({
       name: "party",
       label: kind === "receipts" ? "Received from" : "Vendor",
       value: f.party ?? "",
       options: [{ v: "", l: kind === "receipts" ? "Received from: All ▾" : kind === "transfers" ? "Party: All ▾" : "Vendor: All ▾" }, ...opts.parties.map((c) => ({ v: c, l: c }))],
     });
-    filters.push({ name: "acc", label: "Account", value: f.account ?? "", options: [{ v: "", l: kind === "receipts" ? "Into: All ▾" : "Paid from: All ▾" }, ...kit.accounts.map((a) => ({ v: a.id, l: a.name }))] });
+    if (seesBal) filters.push({ name: "acc", label: "Account", value: f.account ?? "", options: [{ v: "", l: kind === "receipts" ? "Into: All ▾" : "Paid from: All ▾" }, ...kit.accounts.map((a) => ({ v: a.id, l: a.name }))] });
     return shell(
       <>
         <Panel>
-          <TxnTable kind={kind} rows={data.rows} accounts={kit.accounts} approver={approver && canWrite} openId={openId} filters={filters} total={data.total} sum={data.sum} capped={data.capped} empty={EMPTY[view] ?? "Nothing here."} />
+          <TxnTable bank={seesBal} kind={kind} rows={data.rows} accounts={kit.accounts} approver={approver && canWrite} openId={openId} filters={filters} total={data.total} sum={data.sum} capped={data.capped} empty={EMPTY[view] ?? "Nothing here."} />
         </Panel>
         {drawerView}
       </>,
@@ -240,17 +242,12 @@ export default async function PettyCashPage({ searchParams }: { searchParams: Pr
     const st = await statementView(STATEMENTS[view], period, day);
     return shell(
       <>
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <AccountSwitch tabs={stmtTabs} />
-          <PeriodLinks period={period} href={(p) => here({ p, open: null })} />
-        </div>
-        {st ? <StatementView st={st} openId={openId} /> : <Card className="p-6 text-sm text-muted">This account is not set up. Add it under More › Accounts.</Card>}
+        {st ? <StatementView st={st} openId={openId} /> : <Card className="p-6 text-sm text-muted">This account is not set up. Set it up under More › Accounts.</Card>}
         <p className="mt-3 text-sm text-muted">
-          This is what we entered. The bank&apos;s own statement is read and matched in{" "}
+          The bank&apos;s own statement:{" "}
           <NavLink href="/accounts/bank-statements" className={linkClass("brand", "font-semibold")}>
             Accounts › Bank statements
           </NavLink>
-          .
         </p>
         {drawerView}
       </>,
@@ -264,23 +261,21 @@ export default async function PettyCashPage({ searchParams }: { searchParams: Pr
     const work: { l: string; n: number; v: string; href: string; danger?: boolean }[] = [
       { l: "Expenses to approve", n: o.review.n, v: inr(o.review.paise), href: erpLink("moneyReview") },
       { l: "Petty cash to check", n: o.pettyReview.n, v: inr(o.pettyReview.paise), href: erpLink("moneyReview") },
-      { l: "Sent back — to be fixed", n: o.sentBack.n, v: inr(o.sentBack.paise), href: erpLink("moneyReview") },
-      { l: "Advances not yet settled", n: o.advancesOpen.n, v: inr(o.advancesOpen.withThem), href: erpLink("advances") },
-      { l: "Advances with bills late", n: o.advancesOpen.late, v: "", href: erpLink("advances"), danger: true },
-      { l: "Money received, not yet seen in bank", n: o.receiptsNotInBank.n, v: inr(o.receiptsNotInBank.paise), href: erpLink("receiptsUnmatched") },
+      { l: "Sent back to fix", n: o.sentBack.n, v: inr(o.sentBack.paise), href: erpLink("moneyReview") },
+      { l: "Advances open", n: o.advancesOpen.n, v: inr(o.advancesOpen.withThem), href: erpLink("advances") },
+      { l: "Advance bills late", n: o.advancesOpen.late, v: "", href: erpLink("advances"), danger: true },
+      { l: "Not in bank yet", n: o.receiptsNotInBank.n, v: inr(o.receiptsNotInBank.paise), href: erpLink("receiptsUnmatched") },
       ...(approver ? [{ l: "Bank lines to match", n: o.unmatchedLines.n, v: inr(o.unmatchedLines.paise), href: "/accounts/bank-reconcile" }] : []),
       /* No list narrows to just these, so the line says where they are marked. */
-      { l: "Possible double entries — marked on Expenses", n: o.duplicates.n, v: inr(o.duplicates.paise), href: erpLink("expenses"), danger: true },
+      { l: "Possible double entries", n: o.duplicates.n, v: inr(o.duplicates.paise), href: erpLink("expenses"), danger: true },
     ].filter((w) => w.n > 0);
-    const maxCat = Math.max(1, ...o.byCategory.map((c) => c.paise));
-    const month = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"][Number(day.slice(5, 7)) - 1];
     return shell(
       <>
         {seesBal ? <AccountCards accounts={o.accounts.map((a) => ({ id: a.id, name: a.name, kind: a.kind, last4: a.last4, balance: a.balance, unmatched: a.unmatched }))} day={day} /> : null}
         {canWrite ? <QuickAdd items={newMenu()} /> : null}
-        <CardGrid min="panel">
+        {work.length ? (
           <Panel>
-            <div className="border-b border-divider px-5 py-4">
+            <div className="border-b border-divider px-5 py-3.5">
               <SectionTitle>Waiting</SectionTitle>
             </div>
             <ul className="divide-y divide-divider">
@@ -293,72 +288,11 @@ export default async function PettyCashPage({ searchParams }: { searchParams: Pr
                   </NavLink>
                 </li>
               ))}
-              {!work.length ? <li className="px-5 py-4 text-sm text-muted">Nothing waiting. All clear.</li> : null}
             </ul>
           </Panel>
-          {seesBal ? (
-          <Panel>
-            <div className="border-b border-divider px-5 py-4">
-              <SectionTitle aside={<span className="text-sm text-muted">{month}</span>}>Received this month</SectionTitle>
-            </div>
-            {o.byCustomer.length ? (
-              <table className="w-full table-fixed">
-                <thead>
-                  <Tr>
-                    <Th className="bg-surface">Customer</Th>
-                    <Th align="right" className="w-28 bg-surface">
-                      Cash
-                    </Th>
-                    <Th align="right" className="w-28 bg-surface">
-                      Bank
-                    </Th>
-                  </Tr>
-                </thead>
-                <tbody>
-                  {o.byCustomer.map((c) => (
-                    <Tr key={c.name} className="[&>td]:h-10 [&>td]:text-sm">
-                      <Td className="truncate font-semibold text-ink" title={c.name}>
-                        {c.name}
-                      </Td>
-                      <Td align="right">{c.cash ? inr(c.cash) : "—"}</Td>
-                      <Td align="right">{c.bank ? inr(c.bank) : "—"}</Td>
-                    </Tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <p className="px-5 py-4 text-sm text-muted">Nothing received this month yet.</p>
-            )}
-            <div className="px-5 py-3">
-              <NavLink href={erpLink("moneyReceipts")} className={linkClass("brand", "text-sm")}>
-                All receipts
-              </NavLink>
-            </div>
-          </Panel>
-          ) : null}
-          <Panel>
-            <div className="border-b border-divider px-5 py-4">
-              <SectionTitle aside={<span className="text-sm text-muted">{month}</span>}>Petty cash by category</SectionTitle>
-            </div>
-            {o.byCategory.length ? (
-              <ul className="grid gap-3 px-5 py-4">
-                {o.byCategory.map((c) => (
-                  <li key={c.name}>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-body">{c.name}</span>
-                      <span className="font-semibold text-ink tabular-nums">{inr(c.paise)}</span>
-                    </div>
-                    <div className="mt-1.5 h-2 rounded-full bg-divider">
-                      <div className="h-full rounded-full bg-brand" style={{ width: `${Math.max(4, Math.round((c.paise / maxCat) * 100))}%` }} />
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="px-5 py-4 text-sm text-muted">No petty cash or advance bills this month yet.</p>
-            )}
-          </Panel>
-        </CardGrid>
+        ) : (
+          <p className="text-sm text-muted">Nothing waiting.</p>
+        )}
       </>,
     );
   }

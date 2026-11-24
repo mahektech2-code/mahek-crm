@@ -154,7 +154,7 @@ export function PaidFromCards({ choices, value, onChange, error }: { choices: Ca
               title={c.disabled}
               onClick={() => onChange(c.key)}
               className={cx(
-                "min-h-17 rounded-card border bg-surface px-3.5 py-3 text-left transition-colors",
+                "rounded-card border bg-surface px-3.5 py-3 text-left transition-colors",
                 on ? "border-2 border-success ring-2 ring-success-soft" : "border-line hover:border-muted",
                 c.disabled && "cursor-not-allowed opacity-50",
                 !c.disabled && "cursor-pointer",
@@ -164,7 +164,7 @@ export function PaidFromCards({ choices, value, onChange, error }: { choices: Ca
                 <AccountMark kind={c.kind} name={c.name} index={c.mark} />
                 <span className="text-sm leading-6 font-semibold text-ink">{c.name}</span>
               </span>
-              <span className="mt-1 block text-sm text-muted tabular-nums">{on && c.after ? c.after : c.sub}</span>
+              {(on && c.after) || c.sub ? <span className="mt-1 block text-sm text-muted tabular-nums">{on && c.after ? c.after : c.sub}</span> : null}
             </button>
           );
         })}
@@ -175,9 +175,6 @@ export function PaidFromCards({ choices, value, onChange, error }: { choices: Ca
 }
 
 /** The cards an account list offers: what each holds now, and — for the chosen one — after this amount leaves. */
-/** What an account is, in words — the card's line when its balance is not shown. */
-export const accountKindWord = (k: KitAccount["kind"]) => (k === "bank" ? "bank account" : k === "petty" ? "petty cash box" : "office cash");
-
 export function accountChoices(accounts: KitAccount[], amount: number, dir: "out" | "in", only?: KitAccount["kind"][], showBalance = true): CardChoice[] {
   return accounts
     .filter((a) => !only || only.includes(a.kind))
@@ -188,7 +185,7 @@ export function accountChoices(accounts: KitAccount[], amount: number, dir: "out
         name: a.name,
         kind: a.kind,
         mark: bankIndex(accounts, a.id),
-        sub: showBalance ? inr(a.balance) : accountKindWord(a.kind),
+        sub: showBalance ? inr(a.balance) : "",
         after: showBalance ? (amount > 0 ? `${inr(a.balance)} → ${inr(after)}` : inr(a.balance)) : undefined,
       };
     });
