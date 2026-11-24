@@ -2,8 +2,7 @@
  * AUDIT: DIRECT ACTION CALLS AND THE COMBINED WEEKLY LIMIT — against a real database and a FAKE Kapso
  * (a stand-in for the HTTP calls: no real message is ever sent). What it proves, allowed AND denied:
  *
- *   1. `studio.inbox` is explicit-only: not carried by holding the whole Studio, by being its manager or admin, or by being
- *      the platform administrator without a row;
+ *   1. `studio.inbox` is held with the Studio like its other screens (a narrowed grant needs it ticked);
  *   2. a conversation is read, searched, opened, marked read and answered only by somebody the CRM lets see its lead or
  *      customer — and an unmatched number is read by the whole-book reader alone;
  *   3. a bulk send of an uploaded poster answers EVERY recipient (sent / skipped / failed) and never sends free text outside

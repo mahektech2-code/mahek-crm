@@ -2,8 +2,7 @@
  * THE INBOX IS SCOPED, EXPLICIT, AND NEVER FREE-TEXTS OUTSIDE THE WINDOW — against a real database and a FAKE Kapso
  * (a stand-in for the HTTP calls: no real message is ever sent). What it proves, allowed AND denied:
  *
- *   1. `studio.inbox` is explicit-only: not carried by holding the whole Studio, by being its manager or admin, or by being
- *      the platform administrator without a row;
+ *   1. `studio.inbox` is held with the Studio like its other screens (a narrowed grant needs it ticked);
  *   2. a conversation is read, searched, opened, marked read and answered only by somebody the CRM lets see its lead or
  *      customer — and an unmatched number is read by the whole-book reader alone;
  *   3. a bulk send of an uploaded poster answers EVERY recipient (sent / skipped / failed) and never sends free text outside
@@ -127,22 +126,20 @@ after(async () => {
 
 const convId = async (k: string) => (await db.select().from(studioWaConversations).where(eq(studioWaConversations.phoneKey, k.slice(-10))))[0]!.id;
 
-describe("studio.inbox is explicit-only", () => {
-  test("a Studio manager, a Studio admin and a whole-Studio grant do not hold it; a ticked row does", async () => {
-    const mgr = await makeUser("Plain Manager", "manager", ["studio.home"]);
-    const adm = await makeUser("Studio Admin", "admin", ["studio.home"]);
+describe("studio.inbox is held with the Studio, like its other screens", () => {
+  test("a whole-Studio grant holds it, a narrowed grant does not unless it is ticked, and a ticked row does", async () => {
     const whole = await makeUser("Whole App", "associate", []);
-    assert.equal(await canOpenModule(mgr.id, "studio.inbox"), false);
-    assert.equal(await canOpenModule(adm.id, "studio.inbox"), false);
-    assert.equal(await canOpenModule(whole.id, "studio.inbox"), false, "no module rows means every module — except an explicit-only one");
+    const narrowed = await makeUser("Narrowed", "associate", ["studio.home"]);
+    assert.equal(await canOpenModule(whole.id, "studio.inbox"), true, "no module rows means every module");
+    assert.equal(await canOpenModule(narrowed.id, "studio.inbox"), false, "a narrowed grant holds only what it names");
     assert.equal(await canOpenModule(priya.id, "studio.inbox"), true);
   });
-  test("the platform administrator holds it only when it is ticked for them too", async () => {
-    const boss = await makeUser("Platform Admin", "admin", ["studio.home"]);
+  test("a platform administrator holds it with the whole Studio, and not when narrowed away from it", async () => {
+    const boss = await makeUser("Platform Admin", "admin", []);
     await db.insert(appAccess).values({ id: id("aca"), userId: boss.id, app: "admin", role: "admin" });
-    assert.equal(await canOpenModule(boss.id, "studio.inbox"), false);
-    await db.insert(appModuleAccess).values({ id: id("amx"), userId: boss.id, app: "studio", module: "studio.inbox" });
     assert.equal(await canOpenModule(boss.id, "studio.inbox"), true);
+    const narrowedBoss = await makeUser("Narrowed Admin", "admin", ["studio.home"]);
+    assert.equal(await canOpenModule(narrowedBoss.id, "studio.inbox"), false);
   });
   test("the screen's own API refuses somebody without it", async () => {
     const nobody = await makeUser("No Inbox", "associate", ["studio.home"]);
