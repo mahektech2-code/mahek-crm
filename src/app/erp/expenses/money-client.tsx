@@ -411,3 +411,55 @@ export function ImportStatement({ accounts, current }: { accounts: string[]; cur
 }
 
 export { Link };
+
+/**
+ * "More ▾" at the end of Petty Cash's one row of tabs: the pages a team member
+ * rarely needs (reports, the audit trail, cancelled, account setup…), kept out
+ * of sight until asked for. Lit when the page you are on is one of them.
+ */
+export function MoreTabs({ items }: { items: { key: string; label: string; href: string; active: boolean }[] }) {
+  const [open, setOpen] = React.useState(false);
+  const box = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (box.current && !box.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+  useEscape(() => setOpen(false), open);
+  const current = items.find((i) => i.active);
+  if (!items.length) return null;
+  return (
+    <div ref={box} className="relative -mb-px">
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className={cx(
+          "flex cursor-pointer items-center gap-1.5 border-b-2 px-4 py-3.5 text-sm whitespace-nowrap",
+          current ? "border-brand font-semibold text-brand-hover" : "border-transparent font-medium text-muted hover:text-body",
+        )}
+      >
+        {current ? current.label : "More"} ▾
+      </button>
+      {open ? (
+        <div role="menu" className="absolute right-0 z-40 mt-1 grid w-56 gap-0.5 rounded-card border border-line bg-surface p-1.5 shadow-lg">
+          {items.map((i) => (
+            <Link
+              key={i.key}
+              role="menuitem"
+              href={i.href}
+              onClick={() => setOpen(false)}
+              className={cx("block rounded-control px-3 py-2 text-sm hover:bg-brand-soft", i.active ? "font-semibold text-brand-hover" : "text-ink")}
+            >
+              {i.label}
+            </Link>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}

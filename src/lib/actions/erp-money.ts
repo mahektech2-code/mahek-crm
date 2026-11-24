@@ -37,6 +37,21 @@ async function run<T>(fn: (actor: M.Actor, ctx: ErpContext) => Promise<Result<T>
   }
 }
 
+/**
+ * A save's message names the account's balance after it ("Kotak Bank now
+ * ₹5,51,550"). Only somebody who sees balances (`M.seesBalances`) is told it;
+ * for everybody else the message stops at what was saved.
+ */
+async function runSave<T>(fn: (actor: M.Actor, ctx: ErpContext) => Promise<Result<T>>): Promise<Result<T>> {
+  let sees = false;
+  const res = await run((a, ctx) => {
+    sees = M.seesBalances(a);
+    return fn(a, ctx);
+  });
+  if (res.ok && !sees && res.message) return { ...res, message: res.message.split(" · ")[0] };
+  return res;
+}
+
 /** `run`, refused first without the page's Edit or Delete tick (`requireErpTickWrite`). */
 async function runTick<T>(tick: Tick, fn: (actor: M.Actor, ctx: ErpContext) => Promise<Result<T>>): Promise<Result<T>> {
   try {
@@ -52,7 +67,7 @@ const n = (v: unknown): number | null => (typeof v === "number" && Number.isFini
 const list = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.length > 0).slice(0, 20) : []);
 
 export async function erpMoneyExpense(x: M.ExpenseInput) {
-  return run((a) =>
+  return runSave((a) =>
     M.saveExpense(a, {
       petty: !!x.petty,
       date: s(x.date) ?? "",
@@ -73,7 +88,7 @@ export async function erpMoneyExpense(x: M.ExpenseInput) {
 }
 
 export async function erpMoneyReceipt(x: M.ReceiptInput) {
-  return run((a) =>
+  return runSave((a) =>
     M.saveReceipt(a, {
       date: s(x.date) ?? "",
       into: s(x.into),
@@ -90,7 +105,7 @@ export async function erpMoneyReceipt(x: M.ReceiptInput) {
 }
 
 export async function erpMoneyTransfer(x: M.TransferInput) {
-  return run((a) =>
+  return runSave((a) =>
     M.saveTransfer(a, {
       date: s(x.date) ?? "",
       from: s(x.from),
@@ -106,7 +121,7 @@ export async function erpMoneyTransfer(x: M.TransferInput) {
 }
 
 export async function erpMoneyAdvance(x: M.AdvanceInput) {
-  return run((a) =>
+  return runSave((a) =>
     M.giveAdvance(a, {
       userId: s(x.userId),
       amountPaise: n(x.amountPaise),

@@ -7,7 +7,7 @@ import { erpLink } from "@/lib/erp/registry";
 import { MONEY_KIND_LABEL } from "@/lib/erp/engines/money";
 import { advanceEditLock, type AdvanceRow, type TxnRow } from "@/lib/erp/money";
 import type { bankView, statementView, TxnDetail } from "@/lib/erp/money-views";
-import { CancelTxn, Drawer, EditAdvance, FilterBar, ImportStatement, MatchButton, MatchLink, OpenRow, ReviewButtons, SettleBox, SplitLink, type FilterDef } from "./money-client";
+import { CancelTxn, Drawer, EditAdvance, FilterBar, ImportStatement, MatchButton, MatchLink, MoreTabs, OpenRow, ReviewButtons, SettleBox, SplitLink, type FilterDef } from "./money-client";
 import { AccountMark, labelClass, Note, Pill, SumStrip, Timeline, type KitAccount } from "./money-ui";
 
 /* ---------------------------------------------------------------------------
@@ -19,29 +19,69 @@ import { AccountMark, labelClass, Note, Pill, SumStrip, Timeline, type KitAccoun
 
 export type Tab = { key: string; label: string; href: string; active: boolean; count?: number };
 
-const SECTION_ICON: Record<string, string> = { Overview: "dashboard", Expenses: "rupee", Receipts: "doc", "Cash & Bank": "wallet" };
-
-/** The four sub-modules: an icon, the name, and a count pill — filled when it is the one you are on. */
-export function SectionNav({ sections }: { sections: Tab[] }) {
-  /* v4: the four sections are a segmented switch; the tabs under one are underlined. */
+/**
+ * Petty Cash's ONE row of tabs, standing on the page: the everyday pages in
+ * plain words, and "More ▾" for the rest. Only "To approve" carries a count —
+ * a row of numbers on every tab read as work everywhere.
+ */
+export function TopTabs({ tabs, more }: { tabs: Tab[]; more: Tab[] }) {
   return (
-    <nav aria-label="Petty Cash sections" className="mb-4 inline-flex flex-wrap gap-0.5 rounded-lg bg-divider p-[3px]">
-      {sections.map((t) => (
+    <nav aria-label="Petty Cash" className="mb-5 flex flex-wrap items-center gap-1 border-b border-line">
+      {tabs.map((t) => (
         <NavLink
           key={t.key}
           href={t.href}
           aria-current={t.active ? "page" : undefined}
           className={cx(
-            "flex items-center gap-2 rounded-md px-3.5 py-1.5 text-meta whitespace-nowrap no-underline hover:no-underline",
+            "-mb-px flex items-center gap-2 border-b-2 px-4 py-3.5 text-sm whitespace-nowrap no-underline hover:no-underline",
+            t.active ? "border-brand font-semibold text-brand-hover" : "border-transparent font-medium text-muted hover:text-body",
+          )}
+        >
+          {t.label}
+          {t.count ? <span className="rounded-full bg-brand px-2 text-xs leading-5 font-bold text-white tabular-nums">{nf(t.count)}</span> : null}
+        </NavLink>
+      ))}
+      <MoreTabs items={more} />
+    </nav>
+  );
+}
+
+/** The switch inside a tab — Expenses · Petty cash · Advances, or the accounts of a statement. */
+export function SegSwitch({ tabs }: { tabs: Tab[] }) {
+  return (
+    <nav aria-label="Account" className="inline-flex flex-wrap gap-0.5 rounded-lg bg-divider p-[3px]">
+      {tabs.map((t) => (
+        <NavLink
+          key={t.key}
+          href={t.href}
+          aria-current={t.active ? "page" : undefined}
+          className={cx(
+            "rounded-md px-3.5 py-1.5 text-sm whitespace-nowrap no-underline hover:no-underline",
             t.active ? "bg-surface font-semibold text-ink shadow-[0_1px_2px_rgba(20,20,30,0.08)]" : "font-medium text-muted hover:text-ink",
           )}
         >
-          <Icon name={SECTION_ICON[t.label] ?? "grid"} size={13} />
           {t.label}
-          {t.count ? <span className={cx("rounded-full px-1.5 text-2xs leading-[17px] font-bold tabular-nums", t.active ? "bg-brand text-white" : "bg-warn-soft text-warn-ink")}>{t.count}</span> : null}
         </NavLink>
       ))}
     </nav>
+  );
+}
+
+const QUICK_ICON: Record<string, string> = { Expense: "rupee", "Petty cash spend": "wallet", "Money received": "doc", "Move money": "swap", Advance: "person" };
+
+/** Home's add buttons: every kind of entry, one tap each. */
+export function QuickAdd({ items }: { items: { l: string; sub: string; href: string }[] }) {
+  return (
+    <div className="mb-5 flex flex-wrap gap-2.5">
+      {items.map((i) => (
+        <NavLink key={i.l} href={i.href} title={i.sub} className="flex items-center gap-2.5 rounded-card border border-line bg-surface px-4 py-3 text-sm font-semibold text-ink no-underline hover:border-brand hover:bg-brand-soft hover:no-underline">
+          <span className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-control bg-brand-soft text-brand">
+            <Icon name={QUICK_ICON[i.l] ?? "plus"} size={15} />
+          </span>
+          {i.l}
+        </NavLink>
+      ))}
+    </div>
   );
 }
 
@@ -122,11 +162,11 @@ export function BankMatch({ t, dup }: { t: TxnRow; dup?: boolean }) {
   if (t.status === "cancelled") return <Pill tone="muted">Cancelled</Pill>;
   if (dup) return <Pill tone="danger">Duplicate?</Pill>;
   const bankLegs = (t.fromKind === "bank" ? 1 : 0) + (t.toKind === "bank" ? 1 : 0);
-  if (!bankLegs) return <span className="text-sm text-muted">{t.kind === "transfer" ? "No bank side" : "Cash — none"}</span>;
+  if (!bankLegs) return <span className="text-sm text-muted">Cash</span>;
   const need = t.amountPaise * bankLegs;
-  if (t.matchedPaise >= need) return <Pill tone="info">{bankLegs > 1 ? "Both legs matched" : "Matched"}</Pill>;
-  if (t.matchedPaise > 0) return <Pill tone="warn">{bankLegs > 1 ? "One leg matched" : "Part matched"}</Pill>;
-  return <Pill tone="warn">Not matched</Pill>;
+  if (t.matchedPaise >= need) return <Pill tone="success">In bank</Pill>;
+  if (t.matchedPaise > 0) return <Pill tone="warn">{bankLegs > 1 ? "One side in bank" : "Partly in bank"}</Pill>;
+  return <Pill tone="muted">Not yet</Pill>;
 }
 
 /** The bank match, review and paid-from cells as plain words, for the export. */
@@ -134,11 +174,11 @@ function bankMatchText(t: TxnRow, dup?: boolean): string {
   if (t.status === "cancelled") return "Cancelled";
   if (dup) return "Duplicate?";
   const bankLegs = (t.fromKind === "bank" ? 1 : 0) + (t.toKind === "bank" ? 1 : 0);
-  if (!bankLegs) return t.kind === "transfer" ? "No bank side" : "Cash — none";
+  if (!bankLegs) return "Cash";
   const need = t.amountPaise * bankLegs;
-  if (t.matchedPaise >= need) return bankLegs > 1 ? "Both legs matched" : "Matched";
-  if (t.matchedPaise > 0) return bankLegs > 1 ? "One leg matched" : "Part matched";
-  return "Not matched";
+  if (t.matchedPaise >= need) return "In bank";
+  if (t.matchedPaise > 0) return bankLegs > 1 ? "One side in bank" : "Partly in bank";
+  return "Not yet";
 }
 
 function reviewText(t: TxnRow): string {
@@ -184,6 +224,7 @@ const TxnId = ({ t }: { t: TxnRow }) => <span className="font-mono text-sm text-
 export type ListKind = "paid" | "petty" | "review" | "cancelled" | "all" | "receipts" | "transfers";
 
 export function TxnTable({
+  bank = true,
   kind,
   rows,
   accounts,
@@ -195,6 +236,8 @@ export function TxnTable({
   capped,
   empty,
 }: {
+  /** Whether the "In bank?" column is drawn — the accountant's, not the team's. */
+  bank?: boolean;
   kind: ListKind;
   rows: (TxnRow & { dup: boolean })[];
   accounts: KitAccount[];
@@ -209,16 +252,16 @@ export function TxnTable({
   const H = (l: string, align?: "right", w?: string) => ({ l, align, w });
   const head =
     kind === "receipts"
-      ? [H("Transaction", undefined, "w-40"), H("Date", undefined, "w-24"), H("Received from"), H("Into"), H("Mode / ref"), H("Applied to"), H("Amount", "right"), H("Bank match")]
+      ? [H("No.", undefined, "w-40"), H("Date", undefined, "w-24"), H("Received from"), H("Into"), H("How"), H("Applied to"), H("Amount", "right"), H("In bank?")]
       : kind === "transfers"
-        ? [H("Transaction", undefined, "w-40"), H("Date", undefined, "w-24"), H("From → To"), H("Slip / ref"), H("Amount", "right"), H("Bank match")]
+        ? [H("No.", undefined, "w-40"), H("Date", undefined, "w-24"), H("From → To"), H("Slip / ref."), H("Amount", "right"), H("In bank?")]
         : kind === "review"
-          ? [H("Transaction", undefined, "w-40"), H("Date", undefined, "w-24"), H("Category"), H("Paid to"), H("Paid from"), H("Amount", "right"), H("Submitted by"), H("Decision", "right")]
+          ? [H("No.", undefined, "w-40"), H("Date", undefined, "w-24"), H("Category"), H("Paid to"), H("Paid from"), H("Amount", "right"), H("Submitted by"), H("Decision", "right")]
           : kind === "cancelled"
-            ? [H("Transaction", undefined, "w-40"), H("Date", undefined, "w-24"), H("Type"), H("Party"), H("Amount", "right"), H("Why")]
+            ? [H("No.", undefined, "w-40"), H("Date", undefined, "w-24"), H("Type"), H("Party"), H("Amount", "right"), H("Why")]
             : kind === "petty"
-              ? [H("Transaction", undefined, "w-40"), H("Date", undefined, "w-24"), H("Category"), H("Paid to"), H("Bill no."), H("Amount", "right"), H("Paid from"), H("Status")]
-              : [H("Transaction", undefined, "w-40"), H("Date", undefined, "w-24"), H("Category"), H("Paid to"), H("Invoice no."), H("Amount", "right"), H("Paid from"), H("Bank match")];
+              ? [H("No.", undefined, "w-40"), H("Date", undefined, "w-24"), H("Category"), H("Paid to"), H("Bill no."), H("Amount", "right"), H("Paid from"), H("Status")]
+              : [H("No.", undefined, "w-40"), H("Date", undefined, "w-24"), H("Category"), H("Paid to"), H("Invoice no."), H("Amount", "right"), H("Paid from"), H("In bank?")];
   /* Each exported row is the same columns as its tab's header, in the same order. */
   const rupees = (t: TxnRow) => String(t.amountPaise / 100);
   const csvRow = (t: TxnRow & { dup: boolean }): string[] =>
@@ -240,7 +283,10 @@ export function TxnTable({
                 paidFromText(t),
                 kind === "petty" || (kind === "all" && t.status === "cancelled") ? reviewText(t) : bankMatchText(t, t.dup),
               ];
-  const csv = [head.map((h) => h.l), ...rows.map(csvRow)];
+  /* The team does not see the bank side: without `bank`, the "In bank?" column goes. */
+  const dropLast = !bank && head[head.length - 1].l === "In bank?";
+  const cols = dropLast ? head.slice(0, -1) : head;
+  const csv = [cols.map((h) => h.l), ...rows.map((t) => (dropLast ? csvRow(t).slice(0, -1) : csvRow(t)))];
   return (
     <>
       <FilterBar filters={filters} count={total} sum={sum} csv={csv} csvName={`petty-cash-${kind}`} />
@@ -248,7 +294,7 @@ export function TxnTable({
         <table className="w-full">
           <thead>
             <Tr>
-              {head.map((h, i) => (
+              {cols.map((h, i) => (
                 <Th key={i} align={h.align} className={cx("bg-surface", h.w)}>
                   {h.l}
                 </Th>
@@ -275,9 +321,11 @@ export function TxnTable({
                     <Td align="right" className="font-bold text-ink">
                       {inr(t.amountPaise)}
                     </Td>
-                    <Td>
-                      <BankMatch t={t} />
-                    </Td>
+                    {dropLast ? null : (
+                      <Td>
+                        <BankMatch t={t} />
+                      </Td>
+                    )}
                   </>
                 ) : kind === "transfers" ? (
                   <>
@@ -293,9 +341,11 @@ export function TxnTable({
                     <Td align="right" className="font-bold text-ink">
                       {inr(t.amountPaise)}
                     </Td>
-                    <Td>
-                      <BankMatch t={t} />
-                    </Td>
+                    {dropLast ? null : (
+                      <Td>
+                        <BankMatch t={t} />
+                      </Td>
+                    )}
                   </>
                 ) : kind === "review" ? (
                   <>
@@ -332,7 +382,7 @@ export function TxnTable({
                     <Td>
                       <PaidFromCell t={t} accounts={accounts} />
                     </Td>
-                    <Td>{kind === "petty" ? <ReviewPill t={t} /> : kind === "all" && t.status === "cancelled" ? <ReviewPill t={t} /> : <BankMatch t={t} dup={t.dup} />}</Td>
+                    {dropLast ? null : <Td>{kind === "petty" ? <ReviewPill t={t} /> : kind === "all" && t.status === "cancelled" ? <ReviewPill t={t} /> : <BankMatch t={t} dup={t.dup} />}</Td>}
                   </>
                 )}
               </OpenRow>
