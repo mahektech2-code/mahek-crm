@@ -6,6 +6,7 @@ import { eq, and, gt } from "drizzle-orm";
 import { db } from "@/db";
 import { users, sessions, type User } from "@/db/schema";
 import { hashPassword, verifyPassword } from "./password";
+import { factorySessionAllows } from "./factory-session-paths";
 
 export { hashPassword, verifyPassword };
 
@@ -24,11 +25,13 @@ const SESSION_DAYS = 30;
  * again (`lib/console-confirm.ts`). An impersonation link proves nothing about
  * the person it signs in as, so it leaves this false.
  */
-export async function createSession(userId: string, remember = true, confirmed = false) {
+export async function createSession(userId: string, remember = true, confirmed = false, factoryOnly = false) {
   const id = randomUUID();
   const expiresAt = new Date(Date.now() + SESSION_DAYS * 86_400_000);
 
-  await db.insert(sessions).values({ id, userId, expiresAt, confirmedAt: confirmed ? new Date() : null });
+  /* A factory-only session (a PIN on the floor) is never password-confirmed:
+     four digits do not open the Admin Console. See `factorySessionAllows`. */
+  await db.insert(sessions).values({ id, userId, expiresAt, confirmedAt: confirmed && !factoryOnly ? new Date() : null, factoryOnly });
 
   const jar = await cookies();
   jar.set(SESSION_COOKIE, id, {
@@ -96,14 +99,23 @@ export const getCurrentUser = cache(async function getCurrentUser(): Promise<Use
   if (!id) return null;
 
   const rows = await db
-    .select({ user: users })
+    .select({ user: users, factoryOnly: sessions.factoryOnly })
     .from(sessions)
     .innerJoin(users, eq(users.id, sessions.userId))
     .where(and(eq(sessions.id, id), gt(sessions.expiresAt, new Date())))
     .limit(1);
 
   const user = rows[0]?.user ?? null;
-  return user && user.active ? user : null;
+  if (!user || !user.active) return null;
+  /* A PIN session is the Factory app's alone: anywhere else it is nobody, so
+     the person meets the ordinary password sign-in. The path is written by
+     `proxy.ts` on every request and stripped from what the client sends. */
+  if (rows[0].factoryOnly) {
+    const { headers } = await import("next/headers");
+    const path = (await headers()).get("x-mahek-path");
+    if (!factorySessionAllows(path)) return null;
+  }
+  return user;
 });
 
 /** Use in every page and action that requires a signed-in user. */
