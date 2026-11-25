@@ -40,6 +40,59 @@ test("a shop nothing can place is its own answer, not 'elsewhere'", () => {
   assert.ok(!hasNoPlace({ city: "Bhopal" }));
 });
 
+test('the placeholder "Unknown" the server writes for a lead with no town is no place', () => {
+  assert.ok(hasNoPlace({ city: "Unknown" }));
+  assert.ok(hasNoPlace({ city: "UNKNOWN" }));
+  assert.ok(hasNoPlace({ city: " unknown " }));
+  assert.ok(hasNoPlace({ city: "Unknown." }));
+  assert.ok(hasNoPlace({ city: "Unknown", area: null, beat: "Unknown" }));
+});
+
+test('"Unknown" beside a real area, or inside a real address, is still a place', () => {
+  assert.ok(!hasNoPlace({ city: "Unknown", area: "Mahad" }));
+  assert.ok(!hasNoPlace({ city: "Unknown", beat: "Mahad" }));
+  assert.ok(!hasNoPlace({ city: "Unknown Road, Mahad" }));
+});
+
+test('a lead with city "Unknown" goes to the shops nothing can place', () => {
+  const { here, elsewhere, unplaceable } = splitBook([{ id: "x", city: "Unknown" }], "Mahad");
+  assert.deepEqual(unplaceable.map((r) => r.id), ["x"]);
+  assert.equal(here.length, 0);
+  assert.equal(elsewhere.length, 0);
+});
+
+test('a lead with city "Unknown" but area Mahad is still in Mahad', () => {
+  const { here, elsewhere, unplaceable } = splitBook(
+    [{ id: "x", city: "Unknown", area: "Mahad" }],
+    "Mahad",
+  );
+  assert.deepEqual(here.map((r) => r.id), ["x"]);
+  assert.equal(elsewhere.length, 0);
+  assert.equal(unplaceable.length, 0);
+});
+
+test("a real city elsewhere is still elsewhere", () => {
+  const { here, elsewhere, unplaceable } = splitBook([{ id: "b", city: "Bhopal" }], "Mahad");
+  assert.deepEqual(elsewhere.map((r) => r.id), ["b"]);
+  assert.equal(here.length, 0);
+  assert.equal(unplaceable.length, 0);
+});
+
+test("with the placeholder in the mix, nothing is lost", () => {
+  const book = [
+    { id: "a", city: "Mahad" },
+    { id: "b", city: "Bhopal" },
+    { id: "c", city: "Unknown" },
+    { id: "d", city: "Unknown", area: "Mahad" },
+    { id: "e", city: null },
+  ];
+  const { here, elsewhere, unplaceable } = splitBook(book, "Mahad");
+  assert.deepEqual(here.map((r) => r.id), ["a", "d"]);
+  assert.deepEqual(elsewhere.map((r) => r.id), ["b"]);
+  assert.deepEqual(unplaceable.map((r) => r.id), ["c", "e"]);
+  assert.equal(here.length + elsewhere.length + unplaceable.length, book.length);
+});
+
 test("the book splits three ways, and nothing is lost", () => {
   const book = [
     { id: "a", city: "Gwalior" },
