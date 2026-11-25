@@ -3,6 +3,7 @@ import { asc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   geoLocalBodies,
+  geoReviewFlags,
   geoUlbDistricts,
   geoUlbSubdistricts,
   geoUnits,
@@ -19,22 +20,29 @@ import { indexGeo, normalizeGeoPicks, type GeoAllocation, type GeoData, type Geo
  * instead of drawing an empty picker.
  * ------------------------------------------------------------------------- */
 
+/** Whether anything has been loaded — one count, so a page can say so without carrying the master. */
+export async function hasGeoMaster(): Promise<boolean> {
+  const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(geoUnits);
+  return n > 0;
+}
+
 /** The whole master, or null while nothing has been loaded. */
 export async function loadGeoData(): Promise<GeoData | null> {
   const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(geoUnits);
   if (!n) return null;
 
-  const [units, ulbs, subLinks, districtLinks] = await Promise.all([
+  const [units, ulbs, subLinks, districtLinks, flags] = await Promise.all([
     db
       .select({ id: geoUnits.id, level: geoUnits.level, name: geoUnits.name, parentId: geoUnits.parentId })
       .from(geoUnits)
       .orderBy(asc(geoUnits.name)),
     db
-      .select({ id: geoLocalBodies.id, name: geoLocalBodies.name, lgdCode: geoLocalBodies.lgdCode, stateUnitId: geoLocalBodies.stateUnitId })
+      .select({ id: geoLocalBodies.id, name: geoLocalBodies.name, lgdCode: geoLocalBodies.lgdCode, stateUnitId: geoLocalBodies.stateUnitId, typeCode: geoLocalBodies.typeCode, typeName: geoLocalBodies.typeName })
       .from(geoLocalBodies)
       .orderBy(asc(geoLocalBodies.name)),
     db.select({ ulbId: geoUlbSubdistricts.ulbId, subdistrictId: geoUlbSubdistricts.subdistrictId }).from(geoUlbSubdistricts),
     db.select({ ulbId: geoUlbDistricts.ulbId, districtId: geoUlbDistricts.districtId }).from(geoUlbDistricts),
+    db.selectDistinct({ ulbId: geoReviewFlags.ulbId, flag: geoReviewFlags.flag }).from(geoReviewFlags),
   ]);
 
   return {
@@ -42,6 +50,7 @@ export async function loadGeoData(): Promise<GeoData | null> {
     ulbs,
     ulbSubdistricts: subLinks,
     ulbDistricts: districtLinks,
+    ulbFlags: flags.map((f) => ({ ulbId: f.ulbId, flag: f.flag as NonNullable<GeoData["ulbFlags"]>[number]["flag"] })),
   };
 }
 

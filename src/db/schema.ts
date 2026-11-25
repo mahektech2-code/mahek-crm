@@ -8929,6 +8929,8 @@ export const geoLocalBodies = pgTable(
     nameLocal: text("name_local"),
     /** The source's type code, kept as text and NOT decoded — no legend has been verified. */
     typeCode: text("type_code"),
+    /** The type AS THE SOURCE NAMES IT ("Town Panchayat", "Cantonment Board"). A code is not a reliable label across states. */
+    typeName: text("type_name"),
     stateUnitId: text("state_unit_id")
       .notNull()
       .references(() => geoUnits.id, { onDelete: "restrict" }),
@@ -8984,6 +8986,33 @@ export const geoUlbDistricts = pgTable(
   (t) => [
     primaryKey({ columns: [t.ulbId, t.districtId] }),
     index("geo_ulb_districts_district_idx").on(t.districtId),
+  ],
+);
+
+/**
+ * A flag the source file carried for a local body — kept as written, never resolved
+ * here. `unresolved` (no district anywhere), `several_districts` (one row per district
+ * the source lists it under) and `cantonment_not_in_first_master`.
+ */
+export const geoReviewFlags = pgTable(
+  "geo_review_flags",
+  {
+    id: text("id").primaryKey(),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => geoSources.id, { onDelete: "restrict" }),
+    ulbId: text("ulb_id")
+      .notNull()
+      .references(() => geoLocalBodies.id, { onDelete: "cascade" }),
+    districtId: text("district_id").references(() => geoUnits.id, { onDelete: "restrict" }),
+    flag: text("flag").notNull(),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("geo_review_flags_ulb_idx").on(t.ulbId),
+    index("geo_review_flags_source_idx").on(t.sourceId, t.flag),
+    check("geo_review_flags_flag_check", sql`${t.flag} in ('unresolved', 'several_districts', 'cantonment_not_in_first_master')`),
   ],
 );
 

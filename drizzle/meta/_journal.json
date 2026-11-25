@@ -2605,6 +2605,13 @@
       "when": 1795700040000,
       "tag": "0379_factory_only_sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 373,
+      "version": "7",
+      "when": 1795700080000,
+      "tag": "0380_geo_india_ulb",
+      "breakpoints": true
     }
   ]
 }
