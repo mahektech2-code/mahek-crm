@@ -12,7 +12,9 @@ import { appOrigin, hashResetToken, newResetToken, RESET_TTL_MINUTES } from "@/l
 import { err, ok, type Result } from "@/lib/result";
 import { grantAppWithDefaultModules, rederiveAccountLevel } from "@/lib/services/app-provisioning";
 import type { HireContext } from "../access";
-import { hireTrail, ensureExecution, getApplication, type AppBundle } from "./core";
+import { isOnboardingFlow } from "../blueprint-types";
+import { enroll } from "@/lib/training/service";
+import { hireTrail, ensureExecution, getApplication, stageOutcome, type AppBundle } from "./core";
 import { courierArrived, currentOffer } from "./offers";
 
 /* ---------------------------------------------------------------------------
@@ -96,6 +98,7 @@ export async function provisionPlan(b: AppBundle): Promise<ProvisionPlan> {
 export async function provisionBlockers(b: AppBundle): Promise<string[]> {
   const out: string[] = [];
   if (b.app.status !== "in_progress") return [`The application is ${b.app.status.replace("_", " ")}.`];
+  if (isOnboardingFlow(b.def)) return onboardingFlowBlockers(b);
   const stage = b.def.stages.find((s) => s.key === b.app.stageKey);
   if (stage?.type !== "system_setup") out.push(`They are at ${stage?.name ?? b.app.stageKey}, not field setup — every stage before it has to be passed.`);
   const items = await db.select().from(hireOnboardingItems).where(and(eq(hireOnboardingItems.applicationId, b.app.id), eq(hireOnboardingItems.done, true)));
@@ -116,6 +119,27 @@ export async function provisionBlockers(b: AppBundle): Promise<string[]> {
   return out;
 }
 
+/**
+ * The onboarding flow provisions BEFORE assets and training, so the account
+ * waits on what comes before it — compensation, documents and verification,
+ * employment documents back — and nothing after it. Every earlier stage was
+ * passed to get here; these re-read the records so a change since is caught.
+ */
+async function onboardingFlowBlockers(b: AppBundle): Promise<string[]> {
+  const out: string[] = [];
+  const stage = b.def.stages.find((s) => s.key === b.app.stageKey);
+  if (stage?.type !== "system_setup") out.push(`They are at ${stage?.name ?? b.app.stageKey}, not Provision — every stage before it has to be passed.`);
+  const offer = await currentOffer(b.app.id);
+  if (offer?.status !== "accepted") out.push("There is no accepted offer.");
+  for (const t of ["document_collection", "employment_docs"] as const) {
+    const st = b.def.stages.find((s) => s.type === t);
+    if (!st) continue;
+    const oc = await stageOutcome({ ...b.app, stageKey: st.key }, b.def);
+    if (oc.outcome !== "pass") out.push(oc.why ?? `${st.name} is not complete.`);
+  }
+  return out;
+}
+
 export type Provisioned = { userId: string; created: boolean; granted: string[]; alreadyHeld: string[]; resetSent: boolean; emailUsed: string | null };
 
 export async function provision(ctx: HireContext, applicationId: string, note: string): Promise<Result<Provisioned>> {
@@ -125,7 +149,17 @@ export async function provision(ctx: HireContext, applicationId: string, note: s
   const plan = await provisionPlan(b);
   if (plan.blockers.length) return err(`Not yet: ${plan.blockers[0]}`, "rule_violation");
   if (!plan.apps.length) return err("The blueprint grants no MahekOne app, so there is nothing to provision. Fix its Provisioning section.", "rule_violation");
-  const reasoning = note.trim().length >= 20 ? note.trim() : `Onboarding complete: documents verified, offer accepted, work kit and every training topic and setup step done. ${note.trim()}`.trim();
+  const flow = isOnboardingFlow(b.def);
+  const reasoning =
+    note.trim().length >= 20
+      ? note.trim()
+      : flow
+        ? `Compensation accepted, documents and background check clear, employment documents signed and back. ${note.trim()}`.trim()
+        : `Onboarding complete: documents verified, offer accepted, work kit and every training topic and setup step done. ${note.trim()}`.trim();
+  const setupAt = b.def.stages.findIndex((s) => s.type === "system_setup");
+  const after = flow ? b.def.stages[setupAt + 1] ?? null : null;
+  const todayYmd = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
+  let enrolled: string | null = null;
 
   const now = new Date();
   let userId = plan.existingUser?.id ?? null;
@@ -187,8 +221,23 @@ export async function provision(ctx: HireContext, applicationId: string, note: s
     }
     await tx
       .update(hireApplications)
-      .set({ status: "hired", hiredAt: now, employeeUserId: userId, closedAt: now, decisionReason: reasoning, updatedAt: now, updatedById: ctx.user.id })
+      .set({
+        status: "hired",
+        hiredAt: now,
+        employeeUserId: userId,
+        closedAt: now,
+        decisionReason: reasoning,
+        /* The onboarding flow carries on after the account: they move to the next stage, hired. */
+        ...(after ? { stageKey: after.key, stageEnteredAt: now } : { onboardingCompletedAt: now }),
+        updatedAt: now,
+        updatedById: ctx.user.id,
+      })
       .where(eq(hireApplications.id, applicationId));
+    if (after) await ensureExecution(applicationId, after, ctx.user.id, tx);
+    if (flow && b.def.training?.trackKey) {
+      const e = await enroll(tx, { userId: userId!, trackKey: b.def.training.trackKey, applicationId, trainerId: b.def.training.trainerId, assignedById: ctx.user.id, todayYmd });
+      if (e.ok) enrolled = b.def.training.trackKey;
+    }
     await tx.update(hireCandidates).set({ talentPoolStatus: "archived", updatedAt: now }).where(eq(hireCandidates.id, b.candidate.id));
     await tx.insert(hireDecisions).values({
       id: `hde_${randomUUID()}`,
@@ -222,7 +271,9 @@ export async function provision(ctx: HireContext, applicationId: string, note: s
         entityType: "application",
         entityId: applicationId,
         event: "training_portal_handoff",
-        summary: `Handed off to the Training Portal with employee account ${userId}. Hire recorded which topics were taught; the portal records what is learned.`,
+        summary: flow
+          ? `${enrolled ? `Enrolled on the training track “${enrolled}”. ` : ""}Onboarding continues${after ? ` at ${after.name}` : ""} — the employee acknowledges assets and takes their tests in the Training app.`
+          : `Handed off to the Training Portal with employee account ${userId}. Hire recorded which topics were taught; the portal records what is learned.`,
       },
       tx,
     );

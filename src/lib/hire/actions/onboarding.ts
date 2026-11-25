@@ -4,11 +4,34 @@ import { revalidatePath } from "next/cache";
 import { err, type Result } from "@/lib/result";
 import { HireNotPermitted, requireHireCap } from "../access";
 import type { HireCap } from "../roles";
-import { issueOffer, recordResponse, saveOffer, updateTracking, withdrawOffer, type OfferInput, type ResponseInput } from "../services/offers";
+import { decideApproval, issueOffer, recordResponse, saveOffer, updateTracking, withdrawOffer, type OfferInput, type ResponseInput } from "../services/offers";
 import { confirmImpact } from "@/lib/impact/registry";
 import type { ImpactConfirmation } from "@/lib/impact/types";
 import { confirmFields, setDocumentStatus, setItem, unmask, uploadDocument, type ItemKey } from "../services/onboarding";
 import { provision, type Provisioned } from "../services/provision";
+import {
+  acknowledgeAssetBySlip,
+  addBgvRemark,
+  addShipment,
+  approveEmploymentDoc,
+  courierEvent,
+  fileEmploymentDoc,
+  issueAsset,
+  markEmploymentDocSigned,
+  prepareEmploymentDocs,
+  publishPlan,
+  requestDocuments,
+  returnAsset,
+  revealBgvRemarks,
+  saveBgv,
+  savePlanDraft,
+  saveTemplate,
+  sendEmploymentDocs,
+  setAssetApplicable,
+  type BgvInput,
+  type PlanInput,
+  type ShipmentInput,
+} from "../services/onboarding-records";
 
 /* Onboarding's writes. Each checks its own capability — a server action is a URL. */
 
@@ -83,4 +106,96 @@ export async function setItemAction(applicationId: string, k: ItemKey, done: boo
 
 export async function provisionAction(applicationId: string, note: string): Promise<Result<Provisioned>> {
   return guarded("provision", (ctx) => provision(ctx, applicationId, note));
+}
+
+/* ------------------------------------------------ Onboarding & Training PRD */
+
+
+
+export async function decideApprovalAction(applicationId: string, decision: "approved" | "refused", note: string) {
+  return guarded("compensationApprove", (ctx) => decideApproval(ctx, applicationId, decision, note));
+}
+
+export async function requestDocumentsAction(applicationId: string, keys: string[]) {
+  return guarded("documents", (ctx) => requestDocuments(ctx, applicationId, keys));
+}
+
+export async function saveBgvAction(applicationId: string, input: BgvInput) {
+  return guarded("bgCheck", (ctx) => saveBgv(ctx, applicationId, input));
+}
+
+export async function addBgvRemarkAction(applicationId: string, text: string) {
+  return guarded("bgCheck", (ctx) => addBgvRemark(ctx, applicationId, text));
+}
+
+/** Reading the remarks is its own capability and a PII audit line; nothing re-renders. */
+export async function revealBgvRemarksAction(applicationId: string): Promise<Result<{ remarks: string[] }>> {
+  try {
+    const ctx = await requireHireCap("bgRemarks");
+    return await revealBgvRemarks(ctx, applicationId);
+  } catch (e) {
+    if (e instanceof HireNotPermitted) return err(e.message, "not_permitted");
+    return err("The remarks could not be shown.");
+  }
+}
+
+export async function prepareEmploymentDocsAction(applicationId: string, onlyKeys?: string[]) {
+  return guarded("employmentDocs", (ctx) => prepareEmploymentDocs(ctx, applicationId, onlyKeys));
+}
+
+export async function approveEmploymentDocAction(docId: string) {
+  return guarded("employmentDocs", (ctx) => approveEmploymentDoc(ctx, docId));
+}
+
+export async function sendEmploymentDocsAction(applicationId: string, docIds: string[]) {
+  return guarded("employmentDocs", (ctx) => sendEmploymentDocs(ctx, applicationId, docIds));
+}
+
+export async function markEmploymentDocSignedAction(form: FormData) {
+  const file = form.get("file");
+  return guarded("employmentDocs", (ctx) => markEmploymentDocSigned(ctx, String(form.get("docId") ?? ""), String(form.get("signedOn") ?? ""), file instanceof File && file.size ? file : null));
+}
+
+export async function fileEmploymentDocAction(form: FormData) {
+  const file = form.get("file");
+  return guarded("employmentDocs", (ctx) => fileEmploymentDoc(ctx, String(form.get("docId") ?? ""), file instanceof File && file.size ? file : null));
+}
+
+export async function addShipmentAction(applicationId: string, input: ShipmentInput) {
+  return guarded("courier", (ctx) => addShipment(ctx, applicationId, input));
+}
+
+export async function courierEventAction(shipmentId: string, input: { status: string; on: string; remarks?: string | null; company?: string | null; trackingNo?: string | null }) {
+  return guarded("courier", (ctx) => courierEvent(ctx, shipmentId, input));
+}
+
+export async function issueAssetAction(applicationId: string, key: string, input: { serial?: string | null; issuedOn: string }) {
+  return guarded("assets", (ctx) => issueAsset(ctx, applicationId, key, input));
+}
+
+export async function setAssetApplicableAction(applicationId: string, key: string, applicable: boolean, reason: string) {
+  return guarded("assets", (ctx) => setAssetApplicable(ctx, applicationId, key, applicable, reason));
+}
+
+export async function assetSlipAction(form: FormData) {
+  const file = form.get("file");
+  if (!(file instanceof File)) return err("Choose a file.", "validation");
+  return guarded("assets", (ctx) => acknowledgeAssetBySlip(ctx, String(form.get("applicationId") ?? ""), String(form.get("key") ?? ""), file));
+}
+
+export async function returnAssetAction(applicationId: string, key: string, returnedOn: string) {
+  return guarded("assets", (ctx) => returnAsset(ctx, applicationId, key, returnedOn));
+}
+
+export async function savePlanAction(key: string, input: PlanInput, publish: boolean) {
+  return guarded("incentivePlans", async (ctx) => {
+    const saved = await savePlanDraft(ctx, key, input);
+    if (!saved.ok || !publish) return saved;
+    const pub = await publishPlan(ctx, key.trim().toLowerCase());
+    return pub.ok ? { ...saved, message: pub.message } : pub;
+  });
+}
+
+export async function saveTemplateAction(key: string, input: { title: string; body: string }, publish: boolean) {
+  return guarded("employmentDocs", (ctx) => saveTemplate(ctx, key, input, publish));
 }

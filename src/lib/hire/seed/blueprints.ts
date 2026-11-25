@@ -650,7 +650,7 @@ export type SeedBlueprint = {
   locations: string[];
   headcount: number;
   version: number;
-  status: "published" | "draft";
+  status: "published" | "draft" | "retired";
   definition: BlueprintDefinition;
   ai: boolean;
   source: string;

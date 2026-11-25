@@ -7,7 +7,7 @@ import { installHire } from "../src/lib/hire/install";
 
 installHire()
   .then((r) => {
-    console.log(`Hire: ${r.blueprints.length ? `blueprints added — ${r.blueprints.join(", ")}` : "blueprints already in place"}; ${r.admins.length ? `Hire granted to ${r.admins.join(", ")}` : "every platform administrator already holds Hire"}.`);
+    console.log(`Hire: ${r.blueprints.length ? `blueprints added — ${r.blueprints.join(", ")}` : "blueprints already in place"}; ${r.admins.length ? `Hire granted to ${r.admins.join(", ")}` : "every platform administrator already holds Hire"}${r.content.length ? `; onboarding content added as drafts — ${r.content.join(", ")}` : ""}.`);
     process.exit(0);
   })
   .catch((e) => {

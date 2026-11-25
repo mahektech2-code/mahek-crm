@@ -24,6 +24,9 @@ export const STAGE_TYPES = [
   "system_setup",
   "reference_check",
   "decision_gate",
+  "compensation",
+  "employment_docs",
+  "training",
 ] as const;
 export type StageType = (typeof STAGE_TYPES)[number];
 
@@ -39,6 +42,9 @@ export const STAGE_TYPE_LABEL: Record<StageType, string> = {
   system_setup: "System Setup",
   reference_check: "Reference Check",
   decision_gate: "Decision Gate",
+  compensation: "Compensation",
+  employment_docs: "Employment Documents",
+  training: "Training",
 };
 
 /** Stage types that carry a score (PRD §4.3). */
@@ -194,7 +200,7 @@ export type DocumentRequirement = {
   key: string;
   label: string;
   /** `aadhaar` and `pan` are vaulted and masked; the rest are files. */
-  kind: "aadhaar" | "pan" | "bank" | "photo" | "certificate" | "payslip" | "address" | "other";
+  kind: "aadhaar" | "pan" | "bank" | "photo" | "certificate" | "payslip" | "address" | "resume" | "education" | "experience" | "other";
   mandatory: boolean;
   verify: boolean;
   retentionMonths: number;
@@ -221,17 +227,50 @@ export type GrowthStep = {
   value: number;
 };
 
+/** A pay item agreed beside the basic — travel allowance, mobile reimbursement. */
+export type OfferComponentDef = { key: string; label: string };
+
 export type OfferModel = {
   currency: "INR";
   grades: Grade[];
+  /** Free text, printed on the letter. With a plan named it is the plan's own description. */
   incentive: string;
   growth: GrowthStep[];
+  /** Whether this role earns an incentive at all. Absent on older versions: read as true when `incentive` says something. */
+  incentiveApplicable?: boolean;
+  /** `hire_incentive_plans.key`s an offer for this role may use. The latest published version is what an offer takes. */
+  incentivePlanKeys?: string[];
+  /** Pay items an offer may carry besides the basic. */
+  components?: OfferComponentDef[];
   approved: boolean;
   ai: boolean;
 };
 
+/** One employment document this role is sent: offer letter, contract, R&R, growth plan, policy acknowledgement. */
+export type EmploymentDocDef = {
+  key: string;
+  label: string;
+  /** `hire_doc_templates.key` — the latest published version is what is prepared. */
+  templateKey: string;
+  /** A signed paper copy has to come back by courier. */
+  hardCopy: boolean;
+  required: boolean;
+};
+
+export type OnboardingAsset = {
+  key: string;
+  label: string;
+  serial: boolean;
+  /** The employee confirms receipt in the Training app (PRD §11). Absent: not asked. */
+  acknowledge?: boolean;
+  /** Whether a new person gets it unless somebody says otherwise. Absent: yes. */
+  applicableByDefault?: boolean;
+};
+
 export type OnboardingPlan = {
-  assets: { key: string; label: string; serial: boolean }[];
+  assets: OnboardingAsset[];
+  /** Department introductions the onboarding owner makes (PRD §14). */
+  intros?: { key: string; label: string }[];
   modules: { key: string; name: string; topics: { key: string; title: string }[] }[];
   setup: { key: string; system: string; steps: { key: string; label: string }[] }[];
   approved: boolean;
@@ -267,12 +306,23 @@ export type FairnessConfig = {
 
 export type CoolingOff = { reasonCode: string; days: number };
 
+export type TrainingPlan = {
+  /** `training_tracks.key`; the latest published version is enrolled at provisioning. */
+  trackKey: string;
+  /** Who signs off retraining; null leaves it to whoever holds Trainer. */
+  trainerId: string | null;
+};
+
 export type BlueprintDefinition = {
   competencies: Competency[];
   stages: Stage[];
   documents: DocumentRequirement[];
   offer: OfferModel;
+  /** Absent on versions before the onboarding PRD. */
+  employmentDocs?: EmploymentDocDef[];
   onboarding: OnboardingPlan;
+  /** Absent on versions before the onboarding PRD. */
+  training?: TrainingPlan | null;
   provisioning: Provisioning;
   fairness: FairnessConfig;
   coolingOff: CoolingOff[];
@@ -309,3 +359,24 @@ export function stageIndex(def: BlueprintDefinition, key: string | null | undefi
 }
 
 export const isScored = (s: Pick<Stage, "type">) => SCORED_TYPES.has(s.type);
+
+/** Whether the role earns an incentive. Older versions carried only the text. */
+export const incentiveApplies = (o: OfferModel) => o.incentiveApplicable ?? Boolean(o.incentive?.trim());
+
+/**
+ * Whether this version runs the onboarding PRD's flow: compensation agreed as
+ * its own stage, provisioning BEFORE assets and training. Older versions keep
+ * the flow they were published with — documents and offer together, the
+ * account last.
+ */
+export const isOnboardingFlow = (def: Pick<BlueprintDefinition, "stages">) => def.stages.some((s) => s.type === "compensation");
+
+/** The index of the provisioning stage, or -1. */
+export const provisionIndex = (def: Pick<BlueprintDefinition, "stages">) => def.stages.findIndex((s) => s.type === "system_setup");
+
+/** Whether a stage sits after provisioning — reached only once the person is hired. */
+export function isPostHireStage(def: Pick<BlueprintDefinition, "stages">, key: string | null | undefined): boolean {
+  const p = provisionIndex(def);
+  const i = def.stages.findIndex((s) => s.key === key);
+  return p >= 0 && i > p;
+}

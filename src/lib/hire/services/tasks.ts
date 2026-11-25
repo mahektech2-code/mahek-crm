@@ -2,6 +2,7 @@ import "server-only";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { scopeWhere, seesScores, type HireContext } from "../access";
+import { getConfig } from "@/lib/config/store";
 import { istAt, istYmd, addYmd } from "./schedule";
 
 /* ---------------------------------------------------------------------------
@@ -10,7 +11,7 @@ import { istAt, istYmd, addYmd } from "./schedule";
  * step with the work. Each task points at the screen where it is done.
  * ------------------------------------------------------------------------- */
 
-export type TaskKind = "duplicate" | "screen" | "review" | "proposal" | "gate" | "interview" | "sla";
+export type TaskKind = "duplicate" | "screen" | "review" | "proposal" | "gate" | "interview" | "sla" | "approval" | "documents" | "acceptance" | "signature" | "courier" | "asset" | "retraining";
 
 export type HireTask = {
   key: string;
@@ -33,6 +34,13 @@ export const TASK_GROUP: Record<TaskKind, string> = {
   gate: "Decisions waiting at a gate",
   interview: "Your interviews today",
   sla: "Past the stage target",
+  approval: "Pay waiting for your approval",
+  documents: "Documents requested and not received",
+  acceptance: "Offers waiting for an answer",
+  signature: "Employment documents not signed",
+  courier: "Signed copies not back",
+  asset: "Assets not acknowledged",
+  retraining: "Retraining to sign off",
 };
 
 type Raw = Record<string, unknown>;
@@ -170,5 +178,81 @@ export async function tasksFor(ctx: HireContext, nowMs: number): Promise<HireTas
     }
   }
 
+  out.push(...(await onboardingTasks(ctx, nowMs)));
   return out.sort((a, b) => a.sinceIso.localeCompare(b.sinceIso));
+}
+
+/**
+ * PRD §20 — the onboarding reminders, each past its configured number of
+ * days. Derived from the same rows the screens read; nothing is stored.
+ */
+async function onboardingTasks(ctx: HireContext, nowMs: number): Promise<HireTask[]> {
+  const cfg = await getConfig();
+  const scope = scopeWhere(ctx);
+  const out: HireTask[] = [];
+  const day = 86_400_000;
+  const days = (v: unknown) => Math.floor((nowMs - new Date(v as string).getTime()) / day);
+  const name = (r: Raw) => String(r.full_name);
+
+  if (ctx.can("compensationApprove")) {
+    const rows = (await db.execute(sql`
+      select a.id, c.full_name, b.title, o.basic_paise, o.approval_requested_at from hire_offers o
+      join hire_applications a on a.id = o.application_id join hire_candidates c on c.id = a.candidate_id join hire_blueprints b on b.id = a.blueprint_id
+      where ${scope} and o.superseded_by_id is null and o.approval_status = 'pending'
+        and coalesce(o.approval_requested_by_id, '') <> ${ctx.user.id}`)) as unknown as Raw[];
+    for (const r of rows) out.push({ key: `apr:${r.id}`, kind: "approval", title: `Approve ${name(r)}’s pay`, meta: `${r.title} · ${new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(Number(r.basic_paise) / 100)} a month`, href: `/hire/offers?app=${r.id}`, sinceIso: new Date((r.approval_requested_at as string) ?? nowMs).toISOString(), overdue: days(r.approval_requested_at ?? nowMs) >= 1, applicationId: String(r.id) });
+  }
+  if (ctx.can("offer")) {
+    const rows = (await db.execute(sql`
+      select a.id, c.full_name, b.title, o.issued_at from hire_offers o
+      join hire_applications a on a.id = o.application_id join hire_candidates c on c.id = a.candidate_id join hire_blueprints b on b.id = a.blueprint_id
+      where ${scope} and a.status = 'in_progress' and o.superseded_by_id is null and o.status = 'issued'
+        and o.issued_at < ${new Date(nowMs - cfg["hire.reminders.acceptanceDays"] * day).toISOString()}::timestamptz`)) as unknown as Raw[];
+    for (const r of rows) out.push({ key: `acc:${r.id}`, kind: "acceptance", title: `${name(r)} has not answered the offer`, meta: `${r.title} · issued ${days(r.issued_at)} days ago`, href: `/hire/offers?app=${r.id}`, sinceIso: new Date(r.issued_at as string).toISOString(), overdue: true, applicationId: String(r.id) });
+  }
+  if (ctx.can("documents")) {
+    const rows = (await db.execute(sql`
+      select a.id, c.full_name, b.title, count(*)::int as n, min(d.requested_at) as since from hire_documents d
+      join hire_applications a on a.id = d.application_id join hire_candidates c on c.id = a.candidate_id join hire_blueprints b on b.id = a.blueprint_id
+      where ${scope} and a.status in ('in_progress','on_hold') and d.superseded_by_id is null and d.verification_status = 'requested'
+        and d.requested_at < ${new Date(nowMs - cfg["hire.reminders.documentsDays"] * day).toISOString()}::timestamptz
+      group by a.id, c.full_name, b.title`)) as unknown as Raw[];
+    for (const r of rows) out.push({ key: `doc:${r.id}`, kind: "documents", title: `Chase ${name(r)} for ${r.n} document${Number(r.n) === 1 ? "" : "s"}`, meta: `${r.title} · asked ${days(r.since)} days ago`, href: `/hire/documents?app=${r.id}`, sinceIso: new Date(r.since as string).toISOString(), overdue: true, applicationId: String(r.id) });
+  }
+  if (ctx.can("employmentDocs")) {
+    const rows = (await db.execute(sql`
+      select a.id, c.full_name, b.title, count(*)::int as n, min(e.sent_at) as since from hire_employment_docs e
+      join hire_applications a on a.id = e.application_id join hire_candidates c on c.id = a.candidate_id join hire_blueprints b on b.id = a.blueprint_id
+      where ${scope} and a.status in ('in_progress','on_hold') and e.superseded_by_id is null and e.status = 'sent'
+        and e.sent_at < ${new Date(nowMs - cfg["hire.reminders.signatureDays"] * day).toISOString()}::timestamptz
+      group by a.id, c.full_name, b.title`)) as unknown as Raw[];
+    for (const r of rows) out.push({ key: `sig:${r.id}`, kind: "signature", title: `${name(r)} has ${r.n} document${Number(r.n) === 1 ? "" : "s"} to sign`, meta: `${r.title} · sent ${days(r.since)} days ago`, href: `/hire/employment-docs?app=${r.id}`, sinceIso: new Date(r.since as string).toISOString(), overdue: true, applicationId: String(r.id) });
+  }
+  if (ctx.can("courier")) {
+    const today = istYmd(nowMs);
+    const rows = (await db.execute(sql`
+      select a.id, c.full_name, b.title, s.due_on, s.status from hire_courier_shipments s
+      join hire_applications a on a.id = s.application_id join hire_candidates c on c.id = a.candidate_id join hire_blueprints b on b.id = a.blueprint_id
+      where ${scope} and a.status in ('in_progress','on_hold') and s.direction = 'return' and s.status <> 'received'
+        and (s.status = 'issue' or (s.due_on is not null and s.due_on < ${today}::date))`)) as unknown as Raw[];
+    for (const r of rows) out.push({ key: `cou:${r.id}`, kind: "courier", title: `${name(r)}’s signed copies are not back`, meta: `${r.title} · ${r.status === "issue" ? "courier issue" : `due ${r.due_on}`}`, href: `/hire/employment-docs?app=${r.id}`, sinceIso: new Date(`${(r.due_on as string) ?? today}T00:00:00+05:30`).toISOString(), overdue: true, applicationId: String(r.id) });
+  }
+  if (ctx.can("assets")) {
+    const rows = (await db.execute(sql`
+      select a.id, c.full_name, b.title, count(*)::int as n, min(x.created_at) as since from hire_asset_issues x
+      join hire_applications a on a.id = x.application_id join hire_candidates c on c.id = a.candidate_id join hire_blueprints b on b.id = a.blueprint_id
+      where ${scope} and a.status = 'hired' and a.onboarding_completed_at is null and x.superseded_by_id is null and x.applicable
+        and x.issued_on is not null and x.acknowledged_at is null
+        and x.issued_on < ${istYmd(nowMs - cfg["hire.reminders.assetAckDays"] * day)}::date
+        and exists (select 1 from jsonb_array_elements(b.definition->'onboarding'->'assets') e where e->>'key' = x.asset_key and coalesce((e->>'acknowledge')::boolean, false))
+      group by a.id, c.full_name, b.title`)) as unknown as Raw[];
+    for (const r of rows) out.push({ key: `ast:${r.id}`, kind: "asset", title: `${name(r)} has not acknowledged ${r.n} asset${Number(r.n) === 1 ? "" : "s"}`, meta: String(r.title), href: `/hire/induction?app=${r.id}`, sinceIso: new Date(r.since as string).toISOString(), overdue: true, applicationId: String(r.id) });
+  }
+  if (ctx.can("trainingTrain")) {
+    const { retakeQueue } = await import("@/lib/training/service");
+    const q = await retakeQueue({ trainerId: ctx.role === "trainer" ? ctx.user.id : null, nowMs });
+    for (const r of q.filter((x) => x.state === "retraining_required"))
+      out.push({ key: `rt:${r.attemptId}`, kind: "retraining", title: `Review ${r.moduleTitle} with ${r.name}`, meta: `Scored ${r.scorePercent}% · pass ${r.passMark}%`, href: `/hire/train/retakes?attempt=${r.attemptId}`, sinceIso: r.failedAt, overdue: nowMs - new Date(r.failedAt).getTime() > cfg["hire.reminders.retrainingDays"] * day, applicationId: r.enrollmentId });
+  }
+  return out;
 }

@@ -1,5 +1,5 @@
 import type { BlueprintDefinition, Stage } from "../blueprint-types";
-import { isScored } from "../blueprint-types";
+import { isPostHireStage, isScored } from "../blueprint-types";
 
 /* ---------------------------------------------------------------------------
  * ENTRY GATING — the fix for D5 (spec §6.1). Pure.
@@ -34,8 +34,14 @@ export function canMove(def: BlueprintDefinition, st: AppState, targetKey: strin
   const from = def.stages.findIndex((s) => s.key === st.stageKey);
   const to = targetKey === "hired" ? def.stages.length : def.stages.findIndex((s) => s.key === targetKey);
   if (to < 0) return { ok: false, why: "That stage is not in this candidate’s blueprint.", overridable: false };
-  if (st.status !== "in_progress")
+  /* After provisioning the person is hired and still moving — through assets
+     and training — so `hired` moves too, but only between those stages. */
+  const postHire = targetKey !== "hired" && isPostHireStage(def, targetKey);
+  if (st.status === "hired" && !postHire) return { ok: false, why: "They are hired. Only the onboarding stages after Provision are left.", overridable: false };
+  if (st.status !== "in_progress" && st.status !== "hired")
     return { ok: false, why: `The application is ${st.status.replace("_", " ")} — resume it from the record first.`, overridable: false };
+  /* Nothing after Provision is reachable without an account: no override skips it. */
+  if (postHire && st.status !== "hired") return { ok: false, why: "Create their MahekOne account on Provision first — what comes after it happens in their own account.", overridable: false, route: "provision" };
   if (to === from) return { ok: false, why: "They are already in this stage.", overridable: false };
   if (to < from)
     return {

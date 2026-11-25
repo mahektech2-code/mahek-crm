@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { auditLog, hireBlueprints, hireUserRoles } from "@/db/schema";
+import { auditLog, hireBlueprints, hireDocTemplates, hireIncentivePlans, hireUserRoles, trainingModuleVersions, trainingModules, trainingTrackVersions, trainingTracks } from "@/db/schema";
 import { hireTrail } from "./services/core";
 import { grantAppWithDefaultModules, rederiveAccountLevel } from "@/lib/services/app-provisioning";
 import type { BlueprintDefinition } from "./blueprint-types";
-import { SALES_EXECUTIVE, SEED_BLUEPRINTS } from "./seed/blueprints";
+import { SALES_EXECUTIVE, SEED_BLUEPRINTS, type SeedBlueprint } from "./seed/blueprints";
+import { ACCOUNTS_EXECUTIVE_V3, SALES_EXECUTIVE_V4, SEED_INCENTIVE_PLANS, SEED_MODULES, SEED_TEMPLATES, SEED_TRACKS, TELECALLER_V2 } from "./seed/onboarding";
 
 /* ---------------------------------------------------------------------------
  * INSTALLING HIRE — nothing for anybody to remember.
@@ -62,11 +63,28 @@ function salesExecutiveV2(): BlueprintDefinition {
   return v2;
 }
 
+/**
+ * The Onboarding & Training PRD's versions of the three roles. A DRAFT on a
+ * real deployment: HR fills the bracketed material, publishes the plan,
+ * templates, modules and track, and then publishes these from the studio —
+ * the validator refuses one that names something unpublished. The demo seed
+ * publishes them (`publishOnboardingVersions`).
+ */
+export function onboardingSeedBlueprints(): SeedBlueprint[] {
+  const by = (k: string) => SEED_BLUEPRINTS.find((b) => b.key === k)!;
+  return [
+    { ...by("sales-executive"), version: 4, status: "draft", definition: SALES_EXECUTIVE_V4, source: "The Onboarding & Training PRD: compensation, documents and verification, employment documents, provision, assets, training." },
+    { ...by("telecaller"), version: 2, status: "draft", definition: TELECALLER_V2, source: "The Onboarding & Training PRD flow, no incentive." },
+    { ...by("accounts-executive"), version: 3, status: "draft", definition: ACCOUNTS_EXECUTIVE_V3, source: "The Onboarding & Training PRD flow — incentive not applicable." },
+  ];
+}
+
 export async function seedHireBlueprints(actorId: string | null = null): Promise<{ created: string[] }> {
   const created: string[] = [];
   const rows = [
     ...SEED_BLUEPRINTS.map((b) => ({ ...b })),
     { ...SEED_BLUEPRINTS[0], version: 2, status: "retired" as const, definition: salesExecutiveV2(), source: "The AppSheet app as imported, before the D4/D7/D8/D11/D12 fixes." },
+    ...onboardingSeedBlueprints(),
   ];
   for (const b of rows) {
     const [have] = await db.select({ id: hireBlueprints.id }).from(hireBlueprints).where(and(eq(hireBlueprints.key, b.key), eq(hireBlueprints.version, b.version))).limit(1);
@@ -132,9 +150,61 @@ export async function grantHireToPlatformAdmins(): Promise<{ granted: string[] }
   return { granted: rows.map((r) => r.name) };
 }
 
-export async function installHire(): Promise<{ blueprints: string[]; admins: string[] }> {
-  const [{ created }, { granted }] = [await seedHireBlueprints(null), await grantHireToPlatformAdmins()];
-  return { blueprints: created, admins: granted };
+/**
+ * The incentive plan, document templates, training modules and tracks the
+ * PRD's flow names — inserted where missing, never changed where present.
+ * `publish` (the demo) publishes them with their questions approved; on a real
+ * deployment they arrive as drafts with every question UNAPPROVED, because
+ * the material is the business's to write and a person's to approve.
+ */
+export async function seedOnboardingContent(actorId: string | null, publish: boolean): Promise<{ created: string[] }> {
+  const created: string[] = [];
+  const status = publish ? ("published" as const) : ("draft" as const);
+  const at = publish ? new Date() : null;
+  for (const p of SEED_INCENTIVE_PLANS) {
+    const [have] = await db.select({ id: hireIncentivePlans.id }).from(hireIncentivePlans).where(eq(hireIncentivePlans.key, p.key)).limit(1);
+    if (have) continue;
+    await db.insert(hireIncentivePlans).values({ id: `hip_${p.key}_v1`, key: p.key, version: 1, title: p.title, status, designations: p.designations, basis: p.basis, mode: p.mode, slabs: p.slabs, conditions: p.conditions, publishedAt: at, publishedById: publish ? actorId : null, createdById: actorId });
+    created.push(`incentive plan ${p.title}`);
+  }
+  for (const t of SEED_TEMPLATES) {
+    const [have] = await db.select({ id: hireDocTemplates.id }).from(hireDocTemplates).where(eq(hireDocTemplates.key, t.key)).limit(1);
+    if (have) continue;
+    await db.insert(hireDocTemplates).values({ id: `htp_${t.key}_v1`, key: t.key, version: 1, title: t.title, body: t.body, status, publishedAt: at, publishedById: publish ? actorId : null, createdById: actorId });
+    created.push(`template ${t.title}`);
+  }
+  for (const m of SEED_MODULES) {
+    const [have] = await db.select({ id: trainingModules.id }).from(trainingModules).where(eq(trainingModules.key, m.key)).limit(1);
+    if (have) continue;
+    const id = `tmo_${m.key}`;
+    const definition = { ...m.definition, questions: m.definition.questions.map((q) => ({ ...q, approved: publish })) };
+    await db.insert(trainingModules).values({ id, key: m.key, title: m.title, category: m.category, createdById: actorId });
+    await db.insert(trainingModuleVersions).values({ id: `tmv_${m.key}_v1`, moduleId: id, version: 1, status, definition, publishedAt: at, publishedById: publish ? actorId : null, createdById: actorId });
+    created.push(`module ${m.title}`);
+  }
+  for (const t of SEED_TRACKS) {
+    const [have] = await db.select({ id: trainingTracks.id }).from(trainingTracks).where(eq(trainingTracks.key, t.key)).limit(1);
+    if (have) continue;
+    const id = `ttr_${t.key}`;
+    await db.insert(trainingTracks).values({ id, key: t.key, title: t.title, createdById: actorId });
+    await db.insert(trainingTrackVersions).values({ id: `ttv_${t.key}_v1`, trackId: id, version: 1, status, definition: t.definition, publishedAt: at, publishedById: publish ? actorId : null, createdById: actorId });
+    created.push(`track ${t.title}`);
+  }
+  return { created };
+}
+
+/** The demo: publish the PRD versions, retiring what they replace. */
+export async function publishOnboardingVersions(actorId: string | null): Promise<void> {
+  for (const b of onboardingSeedBlueprints()) {
+    const id = `hbp_${b.key}_v${b.version}`;
+    await db.update(hireBlueprints).set({ status: "retired", retiredAt: new Date() }).where(and(eq(hireBlueprints.key, b.key), eq(hireBlueprints.status, "published"), sql`${hireBlueprints.id} <> ${id}`));
+    await db.update(hireBlueprints).set({ status: "published", publishedAt: new Date(), publishedById: actorId }).where(eq(hireBlueprints.id, id));
+  }
+}
+
+export async function installHire(): Promise<{ blueprints: string[]; admins: string[]; content: string[] }> {
+  const [{ created }, { granted }, content] = [await seedHireBlueprints(null), await grantHireToPlatformAdmins(), await seedOnboardingContent(null, false)];
+  return { blueprints: created, admins: granted, content: content.created };
 }
 
 let blueprintsChecked = false;

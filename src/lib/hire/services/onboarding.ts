@@ -5,11 +5,11 @@ import { hireDocuments, hireFiles, hireOnboardingItems, hireStageExecutions, hir
 import { err, ok, type Result } from "@/lib/result";
 import { fileStorage } from "@/lib/storage";
 import type { BlueprintDefinition, DocumentRequirement } from "../blueprint-types";
-import { stageByKey } from "../blueprint-types";
+import { isOnboardingFlow, isPostHireStage, stageByKey } from "../blueprint-types";
 import { maskNumber } from "../engines/identity";
 import type { HireContext } from "../access";
 import { extractDocument } from "../ai/extract-document";
-import { hireTrail, ensureExecution, getApplication, hid, stageOutcome, type AppBundle } from "./core";
+import { advanceIfPassed, hireTrail, ensureExecution, getApplication, hid, stageOutcome, type AppBundle } from "./core";
 import { boardRows, type BoardRow } from "./pipeline";
 import { cleanNumber, reveal, storeNumber, vaultAvailable, vaultEntry, type VaultKind } from "./vault";
 import { courierArrived, currentOffer } from "./offers";
@@ -21,21 +21,33 @@ import { courierArrived, currentOffer } from "./offers";
  * board is missing here too.
  * ------------------------------------------------------------------------- */
 
-export type OnboardScreen = "offers" | "documents" | "induction" | "provision";
+export type OnboardScreen = "offers" | "documents" | "empdocs" | "induction" | "provision";
 
+/** The stage types each screen lists people at. Both flows are here: an old version's offer lives at Documents & offer. */
 const STAGES: Record<OnboardScreen, string[]> = {
-  offers: ["document_collection", "checklist", "system_setup"],
-  documents: ["document_collection", "checklist", "system_setup"],
-  induction: ["checklist", "system_setup"],
-  provision: ["system_setup", "terminal"],
+  offers: ["compensation", "document_collection", "employment_docs", "checklist", "system_setup"],
+  documents: ["document_collection", "employment_docs", "checklist", "system_setup"],
+  empdocs: ["employment_docs", "system_setup"],
+  induction: ["checklist", "system_setup", "training"],
+  provision: ["system_setup", "terminal", "checklist", "training"],
 };
+
+/** Hired, and still at a stage after Provision. */
+export const stillOnboarding = (r: BoardRow) => r.status === "hired" && !r.onboardingCompletedAt && r.liveStageType !== "system_setup" && r.liveStageType !== "unknown";
 
 /** The candidates an onboarding screen lists, newest stage entry first. */
 export async function onboardList(ctx: HireContext, screen: OnboardScreen): Promise<BoardRow[]> {
   const rows = await boardRows(ctx);
   const recentHire = (r: BoardRow) => r.status === "hired" && r.totalHours < 24 * 120;
   return rows
-    .filter((r) => STAGES[screen].includes(r.stageType) && (r.status === "in_progress" || r.status === "on_hold" || (screen === "provision" && recentHire(r))))
+    .filter((r) => {
+      const open = r.status === "in_progress" || r.status === "on_hold";
+      if (open) return STAGES[screen].includes(r.liveStageType);
+      if (screen === "provision") return recentHire(r);
+      /* Hired people are still listed where their onboarding continues — not on Offers or Documents. */
+      if (screen === "induction") return stillOnboarding(r) && (r.liveStageType === "checklist" || r.liveStageType === "training");
+      return false;
+    })
     .sort((a, b) => (a.status === "hired" ? 1 : 0) - (b.status === "hired" ? 1 : 0) || a.hoursInStage - b.hoursInStage);
 }
 
@@ -83,7 +95,15 @@ export async function documentRows(b: AppBundle): Promise<DocRow[]> {
 export async function documentsReadiness(b: AppBundle, rows: DocRow[]): Promise<string[]> {
   const out: string[] = [];
   const missing = rows.filter((r) => r.req.mandatory && r.doc?.verificationStatus !== "verified" && r.doc?.verificationStatus !== "waived");
-  for (const r of missing) out.push(`${r.req.label} is mandatory and ${r.doc ? (r.doc.verificationStatus === "failed" ? "failed verification — ask for a new one" : "not verified yet") : "not collected"}.`);
+  for (const r of missing)
+    out.push(`${r.req.label} is required and ${r.doc ? (r.doc.verificationStatus === "failed" ? "was rejected — a new one is needed" : r.doc.verificationStatus === "requested" ? `was requested${r.doc.requestedAt ? ` on ${new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", day: "numeric", month: "short" }).format(r.doc.requestedAt)}` : ""} — not received` : "not verified yet") : "not requested yet"}.`);
+  if (isOnboardingFlow(b.def)) {
+    const { currentBgv, BGV_LABEL } = await import("./onboarding-records");
+    const bg = await currentBgv(b.app.id);
+    if (!bg) out.push("Say whether a background check is needed.");
+    else if (bg.required && bg.status !== "clear" && bg.status !== "not_applicable") out.push(`The background check is ${BGV_LABEL[bg.status].toLowerCase()}. Employment documents open once it is Clear or Not applicable.`);
+    return out;
+  }
   const offer = await currentOffer(b.app.id);
   if (!offer) out.push("No offer has been drafted yet.");
   else if (offer.status !== "accepted") out.push(`The offer is ${offer.status === "issued" ? "issued and waiting for an answer" : offer.status}.`);
@@ -127,8 +147,9 @@ export async function uploadDocument(ctx: HireContext, applicationId: string, re
   const stored = await fileStorage.upload({ key: `hire/${b.candidate.id}/${fileId}`, body: bytes, contentType: type });
   await db.insert(hireFiles).values({ id: fileId, candidateId: b.candidate.id, applicationId, purpose: "document", filename: file.name.slice(0, 200) || "document", contentType: type, sizeBytes: stored.sizeBytes, storedRef: stored.ref, uploadedById: ctx.user.id });
   const docId = hid("hdo");
+  const [asked] = await db.select({ at: hireDocuments.requestedAt, by: hireDocuments.requestedById }).from(hireDocuments).where(and(eq(hireDocuments.applicationId, applicationId), eq(hireDocuments.requirementKey, req.key), isNull(hireDocuments.supersededById))).limit(1);
   await supersede(applicationId, req.key, docId);
-  await db.insert(hireDocuments).values({ id: docId, applicationId, requirementKey: req.key, fileId, verificationStatus: "pending", createdById: ctx.user.id });
+  await db.insert(hireDocuments).values({ id: docId, applicationId, requirementKey: req.key, fileId, verificationStatus: "pending", requestedAt: asked?.at ?? null, requestedById: asked?.by ?? null, createdById: ctx.user.id });
   await hireTrail(ctx, { applicationId, candidateId: b.candidate.id, entityType: "document", entityId: docId, event: "document_uploaded", summary: `Uploaded ${req.label} (${type.replace("application/", "").replace("image/", "").toUpperCase()}, ${Math.round(stored.sizeBytes / 1024)} KB)` });
 
   const ex = await extractDocument({ requirement: req, bytes, contentType: type, actorId: ctx.user.id, applicationId, documentId: docId });
@@ -214,6 +235,10 @@ export async function confirmFields(ctx: HireContext, documentId: string, input:
     event: input.verify ? "document_verified" : "document_fields",
     summary: `${input.verify ? "Verified" : "Saved"} ${req.label}${corrected.length ? ` · corrected ${corrected.join(", ")}` : ""}${vaultId !== d.vaultId ? " · number stored in the vault" : ""}`,
   });
+  if (input.verify && isOnboardingFlow(b.def)) {
+    await refreshStage(ctx, b);
+    await advanceIfPassed(ctx, b.app.id);
+  }
   return ok(undefined, input.verify ? `${req.label} verified.` : "Saved.");
 }
 
@@ -233,6 +258,10 @@ export async function setDocumentStatus(ctx: HireContext, applicationId: string,
     await db.insert(hireDocuments).values({ id: hid("hdo"), applicationId, requirementKey, verificationStatus: "waived", verificationNotes: notes.trim(), verifiedById: ctx.user.id, verifiedAt: now, createdById: ctx.user.id });
   }
   await hireTrail(ctx, { applicationId, candidateId: b.candidate.id, entityType: "document", entityId: d?.id ?? null, event: `document_${status}`, summary: `${req.label}: ${status === "failed" ? "failed verification — a new one requested" : status === "waived" ? "waived" : "sent to manual review"} · “${notes.trim()}”` });
+  if (status === "waived" && isOnboardingFlow(b.def)) {
+    await refreshStage(ctx, b);
+    await advanceIfPassed(ctx, b.app.id);
+  }
   return ok(undefined, status === "failed" ? "Marked failed. Ask the candidate for a new one." : status === "waived" ? "Waived, with the reason on the record." : "Sent to manual review.");
 }
 
@@ -261,7 +290,7 @@ export async function unmask(ctx: HireContext, vaultId: string): Promise<Result<
 
 /* ------------------------------------------------------------- checklists */
 
-export type ItemKey = { kind: "asset" | "topic" | "setup"; group: string; item: string };
+export type ItemKey = { kind: "asset" | "topic" | "setup" | "intro"; group: string; item: string };
 
 export async function onboardItems(applicationId: string) {
   const rows = await db.select().from(hireOnboardingItems).where(eq(hireOnboardingItems.applicationId, applicationId));
@@ -272,6 +301,7 @@ export async function onboardItems(applicationId: string) {
 }
 
 function itemExists(def: BlueprintDefinition, k: ItemKey): string | null {
+  if (k.kind === "intro") return k.group === "dept" ? (def.onboarding.intros?.find((i) => i.key === k.item)?.label ?? null) : null;
   if (k.kind === "asset") return k.group === "assets" ? (def.onboarding.assets.find((a) => a.key === k.item)?.label ?? null) : null;
   if (k.kind === "topic") {
     const m = def.onboarding.modules.find((x) => x.key === k.group);
@@ -286,12 +316,19 @@ function itemExists(def: BlueprintDefinition, k: ItemKey): string | null {
 export async function setItem(ctx: HireContext, applicationId: string, k: ItemKey, done: boolean, serial?: string | null): Promise<Result> {
   const b = await getApplication(ctx, applicationId);
   if (!b) return err("That candidate is not on your list.", "not_found");
-  if (b.app.status !== "in_progress") return err(`The application is ${b.app.status.replace("_", " ")}.`, "rule_violation");
   const label = itemExists(b.def, k);
   if (!label) return err("That item is not in this role’s onboarding plan.", "validation");
   const at = b.def.stages.findIndex((s) => s.key === b.app.stageKey);
-  const need = b.def.stages.findIndex((s) => s.type === (k.kind === "setup" ? "system_setup" : "checklist"));
-  if (need >= 0 && at < need) return err(k.kind === "setup" ? "Field setup starts once the work kit and induction are done." : "Induction starts after documents and the offer.", "rule_violation");
+  if (isOnboardingFlow(b.def)) {
+    /* The onboarding flow ticks these after the account exists: the person is hired and at Assets & induction. */
+    if (k.kind === "asset") return err("Assets are issued on Assets & induction, with their serial and date.", "rule_violation");
+    if (b.app.status !== "hired" || !isPostHireStage(b.def, b.app.stageKey)) return err("Introductions, topics and setup steps are ticked once their account is created on Provision.", "rule_violation");
+    if (b.app.onboardingCompletedAt) return err("Onboarding is complete.", "rule_violation");
+  } else {
+    if (b.app.status !== "in_progress") return err(`The application is ${b.app.status.replace("_", " ")}.`, "rule_violation");
+    const need = b.def.stages.findIndex((s) => s.type === (k.kind === "setup" ? "system_setup" : "checklist"));
+    if (need >= 0 && at < need) return err(k.kind === "setup" ? "Field setup starts once the work kit and induction are done." : "Induction starts after documents and the offer.", "rule_violation");
+  }
   const asset = k.kind === "asset" ? b.def.onboarding.assets.find((a) => a.key === k.item) : null;
   const ser = serial?.trim() || null;
   if (done && asset?.serial && !ser) return { ok: false, error: `${asset.label} needs its serial number before it is marked received.`, code: "validation", fieldErrors: [{ field: "serial", message: "Required" }] };
@@ -309,9 +346,10 @@ export async function setItem(ctx: HireContext, applicationId: string, k: ItemKe
     entityType: "onboarding",
     entityId: `${k.kind}:${k.group}:${k.item}`,
     event: done ? "onboarding_done" : "onboarding_undone",
-    summary: `${k.kind === "asset" ? (done ? "Received" : "Marked pending") : k.kind === "topic" ? (done ? "Taught" : "Un-ticked") : done ? "Completed" : "Re-opened"}: ${label}${ser ? ` · serial ${ser}` : ""}`,
+    summary: `${k.kind === "asset" ? (done ? "Received" : "Marked pending") : k.kind === "topic" ? (done ? "Taught" : "Un-ticked") : k.kind === "intro" ? (done ? "Introduced to" : "Un-ticked introduction to") : done ? "Completed" : "Re-opened"}: ${label}${ser ? ` · serial ${ser}` : ""}`,
   });
   await refreshStage(ctx, b);
+  if (done && isOnboardingFlow(b.def)) await advanceIfPassed(ctx, applicationId);
   return ok(undefined, done ? "Saved." : "Re-opened.");
 }
 
@@ -320,7 +358,7 @@ async function refreshStage(ctx: HireContext, b: AppBundle) {
   const fresh = await getApplication(ctx, b.app.id);
   if (!fresh) return;
   const stage = stageByKey(fresh.def, fresh.app.stageKey);
-  if (!stage || (stage.type !== "checklist" && stage.type !== "system_setup" && stage.type !== "document_collection")) return;
+  if (!stage || !["checklist", "system_setup", "document_collection", "compensation", "employment_docs", "training"].includes(stage.type)) return;
   const oc = await stageOutcome(fresh.app, fresh.def);
   const ex = await ensureExecution(fresh.app.id, stage, ctx.user.id);
   const status = oc.outcome === "pass" ? "completed" : "in_progress";

@@ -28,7 +28,13 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const [doc] = await db.select({ key: hireDocuments.requirementKey }).from(hireDocuments).where(eq(hireDocuments.fileId, f.id)).limit(1);
   const req = doc ? b.def.documents.find((r) => r.key === doc.key) : null;
   const restricted = f.purpose === "document" && (req?.pii === "restricted" || req?.kind === "aadhaar" || req?.kind === "pan" || req?.kind === "bank");
-  const allowed = restricted ? ctx.can("unmask") : ctx.can("documents") || ctx.can("unmask") || (f.purpose !== "document" && ctx.can("interview"));
+  const allowed = restricted
+    ? ctx.can("unmask")
+    : f.purpose === "employment_doc"
+      ? ctx.can("employmentDocs") || ctx.can("documents")
+      : f.purpose === "asset_slip"
+        ? ctx.can("assets") || ctx.can("documents")
+        : ctx.can("documents") || ctx.can("unmask") || (f.purpose !== "document" && ctx.can("interview"));
   if (!allowed) return notFound();
 
   let bytes: ArrayBuffer;

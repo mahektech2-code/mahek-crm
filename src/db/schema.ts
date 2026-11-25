@@ -16360,6 +16360,8 @@ export const hireApplications = pgTable(
     override: jsonb("override").$type<{ by: string; byName: string; reason: string; at: string; into: string }>(),
     hiredAt: timestamp("hired_at", { withTimezone: true }),
     employeeUserId: text("employee_user_id").references(() => users.id),
+    /** Hired is set at provisioning; this is when the last stage after it (assets, training) passed. */
+    onboardingCompletedAt: timestamp("onboarding_completed_at", { withTimezone: true }),
     closedAt: timestamp("closed_at", { withTimezone: true }),
     ...hireStamps(),
   },
@@ -16637,6 +16639,9 @@ export const hireDocuments = pgTable(
     extractionConfidence: doublePrecision("extraction_confidence"),
     verificationStatus: text("verification_status").notNull().default("pending"),
     verificationNotes: text("verification_notes"),
+    /** PRD §7: asked for, before anything came back. */
+    requestedAt: timestamp("requested_at", { withTimezone: true }),
+    requestedById: text("requested_by_id").references(() => users.id),
     verifiedById: text("verified_by_id").references(() => users.id),
     verifiedAt: timestamp("verified_at", { withTimezone: true }),
     supersededById: text("superseded_by_id"),
@@ -16644,7 +16649,7 @@ export const hireDocuments = pgTable(
   },
   (t) => [
     index("hire_documents_app").on(t.applicationId),
-    check("hire_documents_status", sql`${t.verificationStatus} in ('pending','verified','failed','manual_review','waived')`),
+    check("hire_documents_status", sql`${t.verificationStatus} in ('requested','pending','verified','failed','manual_review','waived')`),
   ],
 );
 
@@ -16701,11 +16706,248 @@ export const hireOffers = pgTable(
     response: text("response"),
     negotiatedFromId: text("negotiated_from_id"),
     supersededById: text("superseded_by_id"),
+    /** PRD §6: whether this person earns an incentive at all. An accountant's offer says No. */
+    incentiveApplicable: boolean("incentive_applicable").notNull().default(true),
+    /** The plan VERSION the offer was made under — `hire_incentive_plans.id`, never updated. */
+    incentivePlanId: text("incentive_plan_id"),
+    /** Pay items beside the basic, in paise. */
+    components: jsonb("components").$type<HireOfferComponent[]>().notNull().default([]),
+    effectiveDate: date("effective_date"),
+    /** The basic of the FIRST offer in a negotiation chain — what was proposed before anybody bargained. */
+    proposedBasicPaise: bigint("proposed_basic_paise", { mode: "number" }),
+    /** not_needed | pending | approved | refused — a negotiated figure past the line waits for an approver. */
+    approvalStatus: text("approval_status").notNull().default("not_needed"),
+    approvalRequestedAt: timestamp("approval_requested_at", { withTimezone: true }),
+    approvalRequestedById: text("approval_requested_by_id").references(() => users.id),
+    approvedById: text("approved_by_id").references(() => users.id),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    approvalNote: text("approval_note"),
+    /** Why the figures changed, kept beside them. */
+    changeReason: text("change_reason"),
     ...hireStamps(),
   },
   (t) => [
     index("hire_offers_app").on(t.applicationId),
     check("hire_offers_status", sql`${t.status} in ('draft','issued','accepted','declined','withdrawn')`),
+    check("hire_offers_approval", sql`${t.approvalStatus} in ('not_needed','pending','approved','refused')`),
+  ],
+);
+
+export type HireOfferComponent = { key: string; label: string; amountPaise: number; per: "month" | "year" | "one_time" };
+
+/** One incentive slab: sales from `fromPaise` up to `toPaise` (null: no ceiling). */
+export type HireIncentiveSlab = { fromPaise: number; toPaise: number | null; kind: "percent" | "fixed"; value: number };
+
+/**
+ * PRD §6 — incentive plans are configuration, never constants. One VERSION
+ * per row, frozen once published, exactly like a blueprint: an offer points at
+ * the version it was made under, and changing the slabs is a new version.
+ */
+export const hireIncentivePlans = pgTable(
+  "hire_incentive_plans",
+  {
+    id: text("id").primaryKey(),
+    key: text("key").notNull(),
+    version: integer("version").notNull(),
+    title: text("title").notNull(),
+    /** draft | published | retired */
+    status: text("status").notNull().default("draft"),
+    designations: jsonb("designations").$type<string[]>().notNull().default([]),
+    /** What the slabs are measured on, in words — "Monthly invoiced sales, net of returns". */
+    basis: text("basis").notNull().default(""),
+    /** whole: the whole month at the slab reached · marginal: each slab on the sales within it. */
+    mode: text("mode").notNull().default("whole"),
+    slabs: jsonb("slabs").$type<HireIncentiveSlab[]>().notNull().default([]),
+    conditions: text("conditions").notNull().default(""),
+    effectiveFrom: date("effective_from"),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    publishedById: text("published_by_id").references(() => users.id),
+    ...hireStamps(),
+  },
+  (t) => [
+    uniqueIndex("hire_incentive_plans_key_version").on(t.key, t.version),
+    check("hire_incentive_plans_status", sql`${t.status} in ('draft','published','retired')`),
+    check("hire_incentive_plans_mode", sql`${t.mode} in ('whole','marginal')`),
+  ],
+);
+
+/**
+ * PRD §8 — the background check, on the APPLICATION (it lived on the offer as
+ * one dropdown). Superseded, never edited: a change is a new row pointing back.
+ * The remarks are vaulted; only `bgRemarks` opens them, with a PII audit line.
+ */
+export const hireBackgroundChecks = pgTable(
+  "hire_background_checks",
+  {
+    id: text("id").primaryKey(),
+    applicationId: text("application_id")
+      .notNull()
+      .references(() => hireApplications.id),
+    required: boolean("required").notNull().default(true),
+    /** not_started | in_progress | clear | concern | not_applicable */
+    status: text("status").notNull().default("not_started"),
+    method: text("method"),
+    vendor: text("vendor"),
+    initiatedOn: date("initiated_on"),
+    completedOn: date("completed_on"),
+    checkedById: text("checked_by_id").references(() => users.id),
+    /** Vault entries holding the restricted remarks, oldest first. */
+    remarkVaultIds: jsonb("remark_vault_ids").$type<string[]>().notNull().default([]),
+    supersededById: text("superseded_by_id"),
+    ...hireStamps(),
+  },
+  (t) => [
+    index("hire_background_checks_app").on(t.applicationId),
+    check("hire_background_checks_status", sql`${t.status} in ('not_started','in_progress','clear','concern','not_applicable')`),
+  ],
+);
+
+/**
+ * PRD §9 — an employment document template. One VERSION per row; the body is
+ * text with {{placeholders}} filled from the accepted offer, so the figures
+ * on a contract are the offer's and nothing is retyped.
+ */
+export const hireDocTemplates = pgTable(
+  "hire_doc_templates",
+  {
+    id: text("id").primaryKey(),
+    key: text("key").notNull(),
+    version: integer("version").notNull(),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    /** draft | published | retired */
+    status: text("status").notNull().default("draft"),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    publishedById: text("published_by_id").references(() => users.id),
+    ...hireStamps(),
+  },
+  (t) => [
+    uniqueIndex("hire_doc_templates_key_version").on(t.key, t.version),
+    check("hire_doc_templates_status", sql`${t.status} in ('draft','published','retired')`),
+  ],
+);
+
+/**
+ * PRD §9 — one employment document for one application, moving
+ * prepared → approved → sent → signed → filed. Each step keeps who and when.
+ * A recall supersedes the row; nothing is deleted.
+ */
+export const hireEmploymentDocs = pgTable(
+  "hire_employment_docs",
+  {
+    id: text("id").primaryKey(),
+    applicationId: text("application_id")
+      .notNull()
+      .references(() => hireApplications.id),
+    docKey: text("doc_key").notNull(),
+    label: text("label").notNull(),
+    templateId: text("template_id").references(() => hireDocTemplates.id),
+    templateVersion: integer("template_version"),
+    /** The rendered text as prepared — what was approved and sent. */
+    body: text("body").notNull().default(""),
+    /** prepared | approved | sent | signed | filed */
+    status: text("status").notNull().default("prepared"),
+    hardCopy: boolean("hard_copy").notNull().default(false),
+    preparedById: text("prepared_by_id").references(() => users.id),
+    preparedAt: timestamp("prepared_at", { withTimezone: true }).notNull().defaultNow(),
+    approvedById: text("approved_by_id").references(() => users.id),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    sentById: text("sent_by_id").references(() => users.id),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    signedOn: date("signed_on"),
+    signedRecordedById: text("signed_recorded_by_id").references(() => users.id),
+    /** The signed scan, a `hire_files` row. */
+    signedFileId: text("signed_file_id"),
+    filedById: text("filed_by_id").references(() => users.id),
+    filedAt: timestamp("filed_at", { withTimezone: true }),
+    supersededById: text("superseded_by_id"),
+    ...hireStamps(),
+  },
+  (t) => [
+    index("hire_employment_docs_app").on(t.applicationId),
+    check("hire_employment_docs_status", sql`${t.status} in ('prepared','approved','sent','signed','filed')`),
+  ],
+);
+
+/** PRD §10 — one courier shipment, either way. Its status is its newest event. */
+export const hireCourierShipments = pgTable(
+  "hire_courier_shipments",
+  {
+    id: text("id").primaryKey(),
+    applicationId: text("application_id")
+      .notNull()
+      .references(() => hireApplications.id),
+    /** outbound: to the candidate · return: the signed copies coming back */
+    direction: text("direction").notNull(),
+    company: text("company"),
+    trackingNo: text("tracking_no"),
+    /** The employment documents in the envelope. */
+    docKeys: jsonb("doc_keys").$type<string[]>().notNull().default([]),
+    /** Cached from the newest event — the events are the record. */
+    status: text("status").notNull(),
+    dueOn: date("due_on"),
+    ...hireStamps(),
+  },
+  (t) => [
+    index("hire_courier_shipments_app").on(t.applicationId),
+    check("hire_courier_shipments_direction", sql`${t.direction} in ('outbound','return')`),
+  ],
+);
+
+/** Append-only: every status a shipment passed through, with who and when. */
+export const hireCourierEvents = pgTable(
+  "hire_courier_events",
+  {
+    id: text("id").primaryKey(),
+    shipmentId: text("shipment_id")
+      .notNull()
+      .references(() => hireCourierShipments.id),
+    /** to_be_sent | sent | delivered | awaited | return_sent | received | issue */
+    status: text("status").notNull(),
+    eventOn: date("event_on").notNull(),
+    remarks: text("remarks"),
+    byId: text("by_id").references(() => users.id),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("hire_courier_events_shipment").on(t.shipmentId, t.at),
+    check("hire_courier_events_status", sql`${t.status} in ('to_be_sent','sent','delivered','awaited','return_sent','received','issue')`),
+  ],
+);
+
+/**
+ * PRD §11 — a company asset issued to a person. Append-only history: a
+ * correction, return or replacement is a new row superseding the last, so
+ * what was issued when is never overwritten.
+ */
+export const hireAssetIssues = pgTable(
+  "hire_asset_issues",
+  {
+    id: text("id").primaryKey(),
+    applicationId: text("application_id")
+      .notNull()
+      .references(() => hireApplications.id),
+    assetKey: text("asset_key").notNull(),
+    label: text("label").notNull(),
+    applicable: boolean("applicable").notNull().default(true),
+    /** Why it does not apply — said once, kept. */
+    notApplicableReason: text("not_applicable_reason"),
+    serial: text("serial"),
+    issuedOn: date("issued_on"),
+    issuedById: text("issued_by_id").references(() => users.id),
+    acknowledgedAt: timestamp("acknowledged_at", { withTimezone: true }),
+    /** in_app: the employee pressed I have it · signed_slip: a slip was uploaded */
+    ackMethod: text("ack_method"),
+    ackFileId: text("ack_file_id"),
+    /** What the employee said was wrong, instead of acknowledging. */
+    problem: text("problem"),
+    returnedOn: date("returned_on"),
+    supersededById: text("superseded_by_id"),
+    ...hireStamps(),
+  },
+  (t) => [
+    index("hire_asset_issues_app").on(t.applicationId),
+    check("hire_asset_issues_ack", sql`${t.ackMethod} is null or ${t.ackMethod} in ('in_app','signed_slip')`),
   ],
 );
 
@@ -16727,7 +16969,7 @@ export const hireOnboardingItems = pgTable(
   },
   (t) => [
     uniqueIndex("hire_onboarding_item").on(t.applicationId, t.kind, t.groupKey, t.itemKey),
-    check("hire_onboarding_kind", sql`${t.kind} in ('asset','topic','setup')`),
+    check("hire_onboarding_kind", sql`${t.kind} in ('asset','topic','setup','intro')`),
   ],
 );
 
@@ -16853,6 +17095,194 @@ export type HireOffer = typeof hireOffers.$inferSelect;
 export type HireDocument = typeof hireDocuments.$inferSelect;
 export type HireMessage = typeof hireMessages.$inferSelect;
 export type HireAiTask = typeof hireAiTasks.$inferSelect;
+export type HireIncentivePlan = typeof hireIncentivePlans.$inferSelect;
+export type HireBackgroundCheck = typeof hireBackgroundChecks.$inferSelect;
+export type HireDocTemplate = typeof hireDocTemplates.$inferSelect;
+export type HireEmploymentDoc = typeof hireEmploymentDocs.$inferSelect;
+export type HireCourierShipment = typeof hireCourierShipments.$inferSelect;
+export type HireCourierEvent = typeof hireCourierEvents.$inferSelect;
+export type HireAssetIssue = typeof hireAssetIssues.$inferSelect;
+
+/* ---------------------------------------------------------------------------
+ * TRAINING (Onboarding & Training PRD §12–18). Modules and tracks are
+ * versioned documents, frozen when published; attempts are append-only and a
+ * trigger refuses to change one once it is submitted — a correction is its
+ * own row. A learner is a `users.id`, never a name. Hire authors it; the new
+ * employee reads it at /learn.
+ * ------------------------------------------------------------------------- */
+
+export const trainingModules = pgTable(
+  "training_modules",
+  {
+    id: text("id").primaryKey(),
+    key: text("key").notNull().unique(),
+    title: text("title").notNull(),
+    category: text("category").notNull().default("other"),
+    active: boolean("active").notNull().default(true),
+    ...hireStamps(),
+  },
+);
+
+export const trainingModuleVersions = pgTable(
+  "training_module_versions",
+  {
+    id: text("id").primaryKey(),
+    moduleId: text("module_id")
+      .notNull()
+      .references(() => trainingModules.id),
+    version: integer("version").notNull(),
+    /** draft | published | retired */
+    status: text("status").notNull().default("draft"),
+    definition: jsonb("definition").$type<import("@/lib/training/types").ModuleDefinition>().notNull(),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    publishedById: text("published_by_id").references(() => users.id),
+    ...hireStamps(),
+  },
+  (t) => [
+    uniqueIndex("training_module_versions_key").on(t.moduleId, t.version),
+    check("training_module_versions_status", sql`${t.status} in ('draft','published','retired')`),
+  ],
+);
+
+export const trainingTracks = pgTable("training_tracks", {
+  id: text("id").primaryKey(),
+  key: text("key").notNull().unique(),
+  title: text("title").notNull(),
+  active: boolean("active").notNull().default(true),
+  ...hireStamps(),
+});
+
+export const trainingTrackVersions = pgTable(
+  "training_track_versions",
+  {
+    id: text("id").primaryKey(),
+    trackId: text("track_id")
+      .notNull()
+      .references(() => trainingTracks.id),
+    version: integer("version").notNull(),
+    status: text("status").notNull().default("draft"),
+    definition: jsonb("definition").$type<import("@/lib/training/types").TrackDefinition>().notNull(),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    publishedById: text("published_by_id").references(() => users.id),
+    ...hireStamps(),
+  },
+  (t) => [
+    uniqueIndex("training_track_versions_key").on(t.trackId, t.version),
+    check("training_track_versions_status", sql`${t.status} in ('draft','published','retired')`),
+  ],
+);
+
+/** One person on one track version. */
+export const trainingEnrollments = pgTable(
+  "training_enrollments",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    applicationId: text("application_id").references(() => hireApplications.id),
+    trackVersionId: text("track_version_id")
+      .notNull()
+      .references(() => trainingTrackVersions.id),
+    trainerId: text("trainer_id").references(() => users.id),
+    assignedById: text("assigned_by_id").references(() => users.id),
+    assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull().defaultNow(),
+    dueOn: date("due_on"),
+    /** A cache of "every required module passed", set by the engine's answer — never typed. */
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    /** active | completed | withdrawn */
+    status: text("status").notNull().default("active"),
+  },
+  (t) => [
+    index("training_enrollments_user").on(t.userId),
+    index("training_enrollments_app").on(t.applicationId),
+    check("training_enrollments_status", sql`${t.status} in ('active','completed','withdrawn')`),
+  ],
+);
+
+/** Append-only: studying, and a trainer's sign-off of the review after a fail. */
+export const trainingEvents = pgTable(
+  "training_events",
+  {
+    id: text("id").primaryKey(),
+    enrollmentId: text("enrollment_id")
+      .notNull()
+      .references(() => trainingEnrollments.id),
+    moduleKey: text("module_key").notNull(),
+    /** studied | retraining_signed_off */
+    kind: text("kind").notNull(),
+    seconds: integer("seconds"),
+    note: text("note"),
+    actorId: text("actor_id").references(() => users.id),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("training_events_enrollment").on(t.enrollmentId, t.moduleKey, t.at),
+    check("training_events_kind", sql`${t.kind} in ('studied','retraining_signed_off')`),
+  ],
+);
+
+export type TrainingAttemptItem = { questionKey: string; optionOrder: string[] };
+export type TrainingAnswer = { questionKey: string; optionKey: string | null; correct: boolean | null; at: string };
+
+/**
+ * One sitting of a module's test. The server draws the questions, keeps the
+ * deadline and scores it; the browser is never sent a correct answer. Once
+ * `submitted_at` is set a trigger refuses any change.
+ */
+export const trainingAttempts = pgTable(
+  "training_attempts",
+  {
+    id: text("id").primaryKey(),
+    enrollmentId: text("enrollment_id")
+      .notNull()
+      .references(() => trainingEnrollments.id),
+    moduleKey: text("module_key").notNull(),
+    moduleVersionId: text("module_version_id")
+      .notNull()
+      .references(() => trainingModuleVersions.id),
+    attemptNo: integer("attempt_no").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    deadlineAt: timestamp("deadline_at", { withTimezone: true }),
+    submittedAt: timestamp("submitted_at", { withTimezone: true }),
+    items: jsonb("items").$type<TrainingAttemptItem[]>().notNull(),
+    answers: jsonb("answers").$type<TrainingAnswer[]>().notNull().default([]),
+    totalQuestions: integer("total_questions").notNull(),
+    correctAnswers: integer("correct_answers"),
+    scorePercent: doublePrecision("score_percent"),
+    passMark: integer("pass_mark").notNull(),
+    /** passed | failed, once submitted */
+    result: text("result"),
+    trainerId: text("trainer_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("training_attempts_no").on(t.enrollmentId, t.moduleKey, t.attemptNo),
+    check("training_attempts_result", sql`${t.result} is null or ${t.result} in ('passed','failed')`),
+  ],
+);
+
+/** The authorised correction of a submitted attempt (PRD §21). The attempt itself is never changed. */
+export const trainingAttemptCorrections = pgTable("training_attempt_corrections", {
+  id: text("id").primaryKey(),
+  attemptId: text("attempt_id")
+    .notNull()
+    .references(() => trainingAttempts.id),
+  scorePercent: doublePrecision("score_percent").notNull(),
+  result: text("result").notNull(),
+  reason: text("reason").notNull(),
+  byId: text("by_id")
+    .notNull()
+    .references(() => users.id),
+  at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type TrainingModule = typeof trainingModules.$inferSelect;
+export type TrainingModuleVersion = typeof trainingModuleVersions.$inferSelect;
+export type TrainingTrack = typeof trainingTracks.$inferSelect;
+export type TrainingTrackVersion = typeof trainingTrackVersions.$inferSelect;
+export type TrainingEnrollment = typeof trainingEnrollments.$inferSelect;
+export type TrainingEvent = typeof trainingEvents.$inferSelect;
+export type TrainingAttempt = typeof trainingAttempts.$inferSelect;
 
 /* ---------------------------------------------------------------------------
  * VENDOR PAYOUTS — what Mahek owes its suppliers and the day it will be paid.

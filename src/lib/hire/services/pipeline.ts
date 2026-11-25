@@ -35,6 +35,11 @@ export type BoardRow = {
   stageIndex: number;
   stageName: string;
   stageType: string;
+  /** The type of the stage they are AT, even once hired — onboarding goes on after the account. */
+  liveStageType: string;
+  onboardingCompletedAt: string | null;
+  hiredAt: string | null;
+  employeeUserId: string | null;
   stageCount: number;
   status: string;
   holdReason: string | null;
@@ -70,7 +75,7 @@ export async function boardRows(ctx: HireContext, opts: { blueprintKey?: string;
   const rows = (await db.execute(sql`
     select a.id, a.candidate_id, c.code, c.full_name, c.primary_phone, a.location, c.gender, c.age_band, c.source,
            a.blueprint_id, b.key as bp_key, b.title as bp_title, b.version, b.family, b.definition,
-           a.stage_key, a.status, a.hold_reason, a.applied_at, a.stage_entered_at,
+           a.stage_key, a.status, a.hold_reason, a.applied_at, a.stage_entered_at, a.onboarding_completed_at, a.hired_at, a.employee_user_id,
            a.recruiter_id, ru.name as recruiter_name, a.interviewer_id, iu.name as interviewer_name, a.hiring_manager_id,
            (a.duplicate->>'status') = 'open' as dup_open, a.override is not null as overridden,
            exists (select 1 from hire_rejection_proposals p where p.application_id = a.id and p.status = 'open') as proposal_open,
@@ -125,6 +130,10 @@ export async function boardRows(ctx: HireContext, opts: { blueprintKey?: string;
       stageIndex: hired ? def.stages.length : idx,
       stageName: hired ? "Hired" : (stage?.name ?? stageKey),
       stageType: hired ? "terminal" : (stage?.type ?? "unknown"),
+      liveStageType: stage?.type ?? "unknown",
+      onboardingCompletedAt: r.onboarding_completed_at ? new Date(r.onboarding_completed_at as string).toISOString() : null,
+      hiredAt: r.hired_at ? new Date(r.hired_at as string).toISOString() : null,
+      employeeUserId: (r.employee_user_id as string) ?? null,
       stageCount: def.stages.length,
       status: String(r.status),
       holdReason: (r.hold_reason as string) ?? null,
