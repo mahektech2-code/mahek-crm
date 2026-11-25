@@ -29,6 +29,7 @@ import type { BlueprintDefinition, Stage } from "../blueprint-types";
 import { isScored } from "../blueprint-types";
 import { scoreFixed } from "../engines/scoring";
 import { seedHireBlueprints } from "../install";
+import { seedOnboardingDemo } from "./onboarding-demo";
 
 export { seedHireBlueprints };
 
@@ -60,6 +61,8 @@ const STAFF: { email: string; phone: string; name: string; role: string; level: 
   { email: "sanjay@mahek.in", phone: "9820012007", name: "Sanjay Patil", role: "hiring_manager", level: "manager" },
   { email: "farida@mahek.in", phone: "9820012008", name: "Farida Khan", role: "onboarding", level: "associate" },
   { email: "farhan@mahek.in", phone: "9820012009", name: "Farhan Shaikh", role: "admin", level: "admin" },
+  { email: "rohini@mahek.in", phone: "9820012010", name: "Rohini Deshpande", role: "trainer", level: "associate" },
+  { email: "sunil.kadam@mahek.in", phone: "9820012011", name: "Sunil Kadam", role: "sales_head", level: "manager" },
 ];
 
 const QUOTES: Record<string, string[]> = {
@@ -283,7 +286,7 @@ async function makeCandidate(
 
 export async function seedHireDemo(opts: { reset: boolean }) {
   if (!opts.reset) throw new Error("seedHireDemo wipes Hire's data first — pass { reset: true } (npm run hire:seed -- --reset).");
-  await db.execute(sql`truncate hire_audit, hire_ai_outputs, hire_ai_tasks, hire_messages, hire_onboarding_items, hire_offers, hire_profiles, hire_documents, hire_vault, hire_files, hire_sessions, hire_rejection_proposals, hire_decisions, hire_briefing_responses, hire_answers, hire_stage_executions, hire_outcomes, hire_applications, hire_candidates, hire_user_roles, hire_blueprints cascade`);
+  await db.execute(sql`truncate training_attempt_corrections, training_attempts, training_events, training_enrollments, training_track_versions, training_tracks, training_module_versions, training_modules, hire_courier_events, hire_courier_shipments, hire_employment_docs, hire_doc_templates, hire_background_checks, hire_asset_issues, hire_incentive_plans, hire_audit, hire_ai_outputs, hire_ai_tasks, hire_messages, hire_onboarding_items, hire_offers, hire_profiles, hire_documents, hire_vault, hire_files, hire_sessions, hire_rejection_proposals, hire_decisions, hire_briefing_responses, hire_answers, hire_stage_executions, hire_outcomes, hire_applications, hire_candidates, hire_user_roles, hire_blueprints cascade`);
   await db.execute(sql`alter sequence hire_candidate_code_seq restart with 1100`);
 
   /* Staff */
@@ -502,6 +505,9 @@ export async function seedHireDemo(opts: { reset: boolean }) {
   /* Hired outcomes for Quality */
   const hiredApps = (await db.execute(sql`select id from hire_applications where status = 'hired'`)) as unknown as { id: string }[];
   for (const h of hiredApps) await db.execute(sql`insert into hire_outcomes (application_id, performance_score, left_at) values (${h.id}, ${ri(55, 95)}, ${rnd() < 0.12 ? calendarDate(daysAgo(ri(1, 60))) : null}) on conflict do nothing`);
+
+  /* The Onboarding & Training PRD: somebody at every step, and two who can sign in to /learn. */
+  await seedOnboardingDemo(staff);
 
   const [{ apps }] = (await db.execute(sql`select count(*)::int as apps from hire_applications`)) as unknown as { apps: number }[];
   return { staff: Object.keys(staff).length, applications: apps };

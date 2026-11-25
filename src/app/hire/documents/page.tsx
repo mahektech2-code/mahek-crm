@@ -28,11 +28,12 @@ export default async function DocumentsPage({ searchParams }: { searchParams: Pr
     const mine = docs.filter((d) => d.app === r.id);
     const okCount = mandatory.filter((m) => mine.some((d) => d.key === m.key && (d.st === "verified" || d.st === "waived"))).length;
     const review = mine.some((d) => d.st === "manual_review" || d.st === "pending");
+    const asked = mine.filter((d) => d.st === "requested").length;
     rows.push({
       id: r.id,
       name: r.name,
       meta: `${r.blueprintTitle} · ${r.location ?? "—"} · ${r.stageName}`,
-      badge: okCount === mandatory.length ? { l: "Complete", tone: "success" } : review ? { l: "To verify", tone: "warn" } : { l: `${mandatory.length - okCount} missing`, tone: "danger" },
+      badge: okCount === mandatory.length ? { l: "Verified", tone: "success" } : review ? { l: "To verify", tone: "info" } : asked ? { l: `${asked} requested`, tone: "warn" } : { l: `${mandatory.length - okCount} not requested`, tone: "danger" },
     });
   }
   const selected = sp.app ?? rows[0]?.id ?? null;
@@ -40,8 +41,8 @@ export default async function DocumentsPage({ searchParams }: { searchParams: Pr
   return (
     <OnboardFrame
       title="Documents"
-      sub="What has been collected and verified. Identity and bank numbers stay masked unless someone with the right role unmasks them — and that is logged."
-      listLabel={`Collecting documents · ${rows.length}`}
+      sub="Request, receive and verify the candidate’s soft copies, and record the background check. Identity and bank numbers go to the vault and stay masked unless someone with the right role unmasks them — and that is logged."
+      listLabel={`At documents & verification · ${rows.length}`}
       rows={rows}
       selected={selected}
       basePath="/hire/documents"

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/modal";
 import { cx } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
-import { confirmFieldsAction, documentStatusAction, unmaskAction, uploadDocumentAction } from "@/lib/hire/actions/onboarding";
+import { confirmFieldsAction, documentStatusAction, requestDocumentsAction, unmaskAction, uploadDocumentAction } from "@/lib/hire/actions/onboarding";
 import { AiField, Btn, Callout, Icon, Label, Locked, Pill, fd, type Tone } from "../_ui/kit";
 
 export type DocView = {
@@ -22,6 +22,7 @@ export type DocView = {
   verifiedBy: string | null;
   verifiedAt: string | null;
   uploadedAt: string | null;
+  requestedAt: string | null;
   file: { id: string; filename: string; contentType: string; sizeKb: number } | null;
   masked: string | null;
   vaultId: string | null;
@@ -29,13 +30,18 @@ export type DocView = {
   confidence: number | null;
 };
 
+/* PRD §7's words: Not requested · Requested · Received · Under review · Verified · Rejected · Not applicable. */
 const STATUS: Record<string, [string, Tone]> = {
-  pending: ["To verify", "warn"],
-  manual_review: ["Manual review", "warn"],
+  requested: ["Requested", "warn"],
+  pending: ["Received", "info"],
+  manual_review: ["Under review", "warn"],
   verified: ["Verified", "success"],
-  failed: ["Failed — new one asked", "danger"],
-  waived: ["Waived", "muted"],
+  failed: ["Rejected — resubmission", "danger"],
+  waived: ["Not applicable", "muted"],
 };
+
+/** Whether a document may be asked for: nothing live yet, or the live one was rejected. */
+const askable = (d: DocView) => !d.status || d.status === "failed";
 
 const NUMBER_HINT: Record<string, string> = { aadhaar: "12 digits", pan: "5 letters, 4 digits, 1 letter", bank: "Account number, 9 to 18 digits" };
 const DEFAULT_FIELDS: Record<string, string[]> = {
@@ -80,6 +86,18 @@ export function DocumentsBoard({
   const [shown, setShown] = useState<Record<string, string>>({});
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploadKey, setUploadKey] = useState<string | null>(null);
+  const [picked, setPicked] = useState<string[]>([]);
+  const askableKeys = docs.filter(askable).map((d) => d.key);
+  const chosen = picked.filter((k) => askableKeys.includes(k));
+  const askFor = () =>
+    start(async () => {
+      const r = await requestDocumentsAction(applicationId, chosen);
+      toast.push(r.ok ? (r.message ?? "Requested.") : r.error, r.ok ? "info" : "error");
+      if (r.ok) {
+        setPicked([]);
+        router.refresh();
+      }
+    });
 
   const pickFile = (key: string) => {
     setUploadKey(key);
@@ -131,20 +149,45 @@ export function DocumentsBoard({
     <>
       <input ref={fileRef} type="file" accept="application/pdf,image/jpeg,image/png,image/webp" className="hidden" onChange={(e) => onFile(e.target.files?.[0])} />
       <div className="overflow-hidden rounded-[6px] border border-line bg-surface">
+        {open && canDocuments ? (
+          <div className="flex items-center gap-3 border-b border-divider bg-page px-4 py-2.5">
+            <label className="flex items-center gap-2 text-[13px] text-body">
+              <input
+                type="checkbox"
+                aria-label="Select every document that can be requested"
+                checked={askableKeys.length > 0 && chosen.length === askableKeys.length}
+                disabled={!askableKeys.length}
+                onChange={(e) => setPicked(e.target.checked ? askableKeys : [])}
+              />
+              {askableKeys.length ? `${askableKeys.length} not requested or rejected` : "Everything has been asked for"}
+            </label>
+            <span className="flex-1" />
+            <Btn size="sm" kind="primary" disabled={pending || !chosen.length} title={chosen.length ? undefined : "Tick the documents to ask for"} onClick={askFor}>
+              Request selected{chosen.length ? ` (${chosen.length})` : ""}
+            </Btn>
+          </div>
+        ) : null}
         {docs.map((d) => {
           const missing = d.mandatory && d.status !== "verified" && d.status !== "waived";
-          const [sl, st] = d.status ? (STATUS[d.status] ?? [d.status, "neutral"]) : d.mandatory ? (["Missing", "danger"] as [string, Tone]) : (["Not collected", "muted"] as [string, Tone]);
+          const [sl, st] = d.status ? (STATUS[d.status] ?? [d.status, "neutral"]) : (["Not requested", "muted"] as [string, Tone]);
           const restricted = d.vaulted || d.pii === "restricted";
           return (
-            <div key={d.key} className={cx("grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_auto_auto] items-center gap-3 border-t border-divider px-4 py-3 first:border-t-0", missing && open ? "shadow-[inset_3px_0_0_var(--color-danger)]" : "")}>
+            <div key={d.key} className={cx("grid grid-cols-[20px_minmax(0,1.4fr)_minmax(0,1fr)_auto_auto] items-center gap-3 border-t border-divider px-4 py-3 first:border-t-0", missing && open ? "shadow-[inset_3px_0_0_var(--color-danger)]" : "")}>
+              <span>
+                {open && canDocuments && askable(d) ? (
+                  <input type="checkbox" aria-label={`Request ${d.label}`} checked={chosen.includes(d.key)} onChange={(e) => setPicked((p) => (e.target.checked ? [...p, d.key] : p.filter((k) => k !== d.key)))} />
+                ) : null}
+              </span>
               <span className="min-w-0">
                 <span className="block text-sm font-medium text-heading">{d.label}</span>
                 <span className="block truncate text-xs text-muted">
-                  {d.mandatory ? "Mandatory" : "Optional"} · {d.pii === "none" ? "not personal" : d.pii}
-                  {d.file ? ` · ${d.file.filename} · ${d.file.sizeKb} KB · ${fd(d.uploadedAt)}` : ""}
+                  {d.mandatory ? "Required" : "Optional"} · {d.pii === "none" ? "not personal" : d.pii}
+                  {d.requestedAt ? ` · requested ${fd(d.requestedAt)}` : ""}
+                  {d.file ? ` · received ${fd(d.uploadedAt)} · ${d.file.filename} · ${d.file.sizeKb} KB` : ""}
                   {d.verifiedBy && d.status !== "pending" ? ` · ${d.status === "verified" ? "verified" : d.status} by ${d.verifiedBy} ${fd(d.verifiedAt)}` : ""}
                 </span>
                 {d.notes && (d.status === "failed" || d.status === "waived") ? <span className="block text-xs text-muted">“{d.notes}”</span> : null}
+                {missing && !d.status && open ? <span className="block text-xs text-danger">Not requested yet</span> : null}
               </span>
               <span className="min-w-0 text-[13px] tabular-nums">
                 {d.vaulted ? (
@@ -208,7 +251,7 @@ export function DocumentsBoard({
                     {!d.mandatory || d.status !== "waived" ? (
                       d.status !== "verified" && d.status !== "waived" ? (
                         <Btn size="sm" kind="ghost" disabled={pending} onClick={() => setReason({ key: d.key, status: "waived", label: d.label })}>
-                          Waive
+                          Not applicable
                         </Btn>
                       ) : null
                     ) : null}
@@ -266,12 +309,12 @@ export function DocumentsBoard({
       <Modal
         open={Boolean(reason)}
         onClose={() => setReason(null)}
-        title={reason?.status === "failed" ? `Mark ${reason?.label} failed` : `Waive ${reason?.label}`}
+        title={reason?.status === "failed" ? `Reject ${reason?.label}` : `${reason?.label}: not applicable`}
         footer={
           <>
             <Btn onClick={() => setReason(null)}>Cancel</Btn>
             <Btn kind={reason?.status === "failed" ? "danger" : "primary"} disabled={pending || reasonText.trim().length < 10} onClick={sendReason}>
-              {reason?.status === "failed" ? "Mark failed · ask for a new one" : "Waive"}
+              {reason?.status === "failed" ? "Reject · ask for a new one" : "Mark not applicable"}
             </Btn>
           </>
         }
@@ -369,7 +412,7 @@ function ReviewPanel({
       </div>
       <div className="flex flex-wrap items-center gap-2 border-t border-divider px-4 py-3">
         <Btn kind="danger" size="sm" disabled={busy || !doc.docId} onClick={onFail}>
-          Mark failed · ask for a new one
+          Reject · ask for a new one
         </Btn>
         <span className="flex-1" />
         <Btn size="sm" disabled={busy} onClick={() => onSave(fields, idNumber || undefined, false)}>

@@ -74,6 +74,7 @@ export function onboardingSeedBlueprints(): SeedBlueprint[] {
   const by = (k: string) => SEED_BLUEPRINTS.find((b) => b.key === k)!;
   return [
     { ...by("sales-executive"), version: 4, status: "draft", definition: SALES_EXECUTIVE_V4, source: "The Onboarding & Training PRD: compensation, documents and verification, employment documents, provision, assets, training." },
+    // role-name-ok: "telecaller" here is a blueprint's key, not the retired account role
     { ...by("telecaller"), version: 2, status: "draft", definition: TELECALLER_V2, source: "The Onboarding & Training PRD flow, no incentive." },
     { ...by("accounts-executive"), version: 3, status: "draft", definition: ACCOUNTS_EXECUTIVE_V3, source: "The Onboarding & Training PRD flow — incentive not applicable." },
   ];

@@ -2,6 +2,7 @@
 
 import { APPS, NEVER_PROVISIONED } from "@/lib/apps";
 import {
+  incentiveApplies,
   MASKABLE,
   QUESTION_TYPES,
   SCORED_TYPES,
@@ -21,7 +22,9 @@ import { Callout, Label, Pill } from "../../_ui/kit";
 import { Add, Area, Card, Check, ElementHead, F, Num, Remove, Sel, Txt } from "./fields";
 
 export type Mut = (fn: (d: StudioDefinition) => void) => void;
-export type SecProps = { def: StudioDefinition; mut: Mut; ro: boolean; critic: CriticFinding[]; goRubric: (ref: string) => void; rubricRef: string };
+/** What a blueprint may name that lives elsewhere — published plans, templates and tracks, and who trains. */
+export type StudioRefs = { plans: { key: string; title: string }[]; templates: { key: string; title: string }[]; tracks: { key: string; title: string }[]; trainers: { id: string; name: string }[] };
+export type SecProps = { def: StudioDefinition; mut: Mut; ro: boolean; critic: CriticFinding[]; goRubric: (ref: string) => void; rubricRef: string; refs: StudioRefs };
 
 const nextKey = (prefix: string, taken: string[]) => {
   for (let i = 1; ; i++) if (!taken.includes(`${prefix}${i}`)) return `${prefix}${i}`;
@@ -463,7 +466,7 @@ export function Briefing({ def, mut, ro }: SecProps) {
 
 /* ------------------------------------------------------------ documents */
 
-const DOC_KINDS = [["aadhaar", "Aadhaar"], ["pan", "PAN"], ["bank", "Bank"], ["photo", "Photograph"], ["certificate", "Certificate"], ["payslip", "Payslip"], ["address", "Address proof"], ["other", "Other"]] as const;
+const DOC_KINDS = [["aadhaar", "Aadhaar"], ["pan", "PAN"], ["bank", "Bank"], ["photo", "Photograph"], ["resume", "Resume / CV"], ["education", "Education"], ["experience", "Experience proof"], ["certificate", "Certificate"], ["payslip", "Payslip"], ["address", "Address proof"], ["other", "Other"]] as const;
 
 export function Documents({ def, mut, ro }: SecProps) {
   return (
@@ -493,8 +496,11 @@ export function Documents({ def, mut, ro }: SecProps) {
 
 /* ---------------------------------------------------------------- offer */
 
-export function OfferSec({ def, mut, ro }: SecProps) {
+export function OfferSec({ def, mut, ro, refs }: SecProps) {
   const o = def.offer;
+  const applies = incentiveApplies(o);
+  const planKeys = o.incentivePlanKeys ?? [];
+  const components = o.components ?? [];
   return (
     <div className="flex flex-col gap-3">
       <Card>
@@ -510,7 +516,46 @@ export function OfferSec({ def, mut, ro }: SecProps) {
           </div>
         ))}
         <Add ro={ro} onClick={() => mut((d) => void d.offer.grades.push({ key: `G${d.offer.grades.length + 1}`, label: "", basicMinPaise: 0, basicMaxPaise: 0 }))}>Add a grade</Add>
-        <F label="Incentive" className="mt-4"><Area value={o.incentive} ro={ro} onChange={(v) => mut((d) => void (d.offer.incentive = v))} /></F>
+        <div className="mt-4">
+          <Check ro={ro} checked={applies} label="Incentive applies to this role" onChange={(v) => mut((d) => void (d.offer.incentiveApplicable = v))} />
+        </div>
+        {applies ? (
+          <>
+            <F label="Incentive, in words — printed on the letter when no plan is named" className="mt-3"><Area value={o.incentive} ro={ro} onChange={(v) => mut((d) => void (d.offer.incentive = v))} /></F>
+            <Label className="mt-4 mb-2">Incentive plans an offer may use</Label>
+            {refs.plans.length ? (
+              <div className="grid grid-cols-2 gap-2">
+                {refs.plans.map((pl) => (
+                  <Check
+                    key={pl.key}
+                    ro={ro}
+                    checked={planKeys.includes(pl.key)}
+                    label={pl.title}
+                    onChange={(v) => mut((d) => void (d.offer.incentivePlanKeys = v ? [...planKeys, pl.key] : planKeys.filter((k) => k !== pl.key)))}
+                  />
+                ))}
+              </div>
+            ) : (
+              <Callout>No incentive plan is published yet — publish one on Incentive plans, then name it here.</Callout>
+            )}
+            {planKeys.filter((k) => !refs.plans.some((pl) => pl.key === k)).map((k) => (
+              <div key={k} className="mt-2 flex items-center gap-2 text-[13px] text-danger">
+                Names “{k}”, which has no published version.
+                <Remove ro={ro} onClick={() => mut((d) => void (d.offer.incentivePlanKeys = planKeys.filter((x) => x !== k)))} />
+              </div>
+            ))}
+          </>
+        ) : (
+          <p className="mt-2 mb-0 text-[13px] text-muted">Offers for this role print “Incentive: Not applicable”.</p>
+        )}
+        <Label className="mt-4 mb-2">Other pay items an offer may carry</Label>
+        {components.map((c, i) => (
+          <div key={c.key} className="mb-2 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
+            <Txt value={c.label} ro={ro} placeholder="Travel allowance" onChange={(v) => mut((d) => void ((d.offer.components ??= [])[i].label = v))} />
+            <Remove ro={ro} onClick={() => mut((d) => void (d.offer.components ??= []).splice(i, 1))} />
+          </div>
+        ))}
+        <Add ro={ro} onClick={() => mut((d) => void (d.offer.components ??= []).push({ key: nextKey("c", (d.offer.components ?? []).map((x) => x.key)), label: "" }))}>Add a pay item</Add>
         <Label className="mt-4 mb-2">Growth path — one definition, read by the briefing and the offer letter</Label>
         {o.growth.map((g, i) => (
           <div key={i} className="mb-2 grid grid-cols-[90px_90px_minmax(0,1fr)_150px_110px_auto] items-center gap-2">
@@ -541,15 +586,26 @@ export function Onboarding({ def, mut, ro }: SecProps) {
       <ElementHead title="Onboarding plan" ai={o.ai} approved={o.approved} ro={ro} onApprove={() => mut((d) => void (d.onboarding.approved = true))} />
       <Label className="mt-4 mb-2">Work kit</Label>
       {o.assets.map((a, i) => (
-        <div key={a.key} className="mb-2 grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3">
+        <div key={a.key} className="mb-2 grid grid-cols-[minmax(0,1fr)_auto_auto_auto_auto] items-center gap-3">
           <Txt value={a.label} ro={ro} onChange={(v) => mut((d) => void (d.onboarding.assets[i].label = v))} />
           <Check ro={ro} checked={a.serial} label="Has a serial" onChange={(v) => mut((d) => void (d.onboarding.assets[i].serial = v))} />
+          <Check ro={ro} checked={a.applicableByDefault ?? true} label="Applicable by default" onChange={(v) => mut((d) => void (d.onboarding.assets[i].applicableByDefault = v))} />
+          <Check ro={ro} checked={Boolean(a.acknowledge)} label="Employee acknowledges" onChange={(v) => mut((d) => void (d.onboarding.assets[i].acknowledge = v))} />
           <Remove ro={ro} onClick={() => mut((d) => void d.onboarding.assets.splice(i, 1))} />
         </div>
       ))}
-      <Add ro={ro} onClick={() => mut((d) => void d.onboarding.assets.push({ key: nextKey("a", d.onboarding.assets.map((x) => x.key)), label: "", serial: false }))}>Add an item</Add>
+      <Add ro={ro} onClick={() => mut((d) => void d.onboarding.assets.push({ key: nextKey("a", d.onboarding.assets.map((x) => x.key)), label: "", serial: false, acknowledge: true }))}>Add an item</Add>
 
-      <Label className="mt-5 mb-2">Training modules — complete only when every topic is ticked</Label>
+      <Label className="mt-5 mb-2">Department introductions — ticked by the onboarding owner</Label>
+      {(o.intros ?? []).map((it, i) => (
+        <div key={it.key} className="mb-2 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
+          <Txt value={it.label} ro={ro} placeholder="Accounting" onChange={(v) => mut((d) => void ((d.onboarding.intros ??= [])[i].label = v))} />
+          <Remove ro={ro} onClick={() => mut((d) => void (d.onboarding.intros ??= []).splice(i, 1))} />
+        </div>
+      ))}
+      <Add ro={ro} onClick={() => mut((d) => void (d.onboarding.intros ??= []).push({ key: nextKey("i", (d.onboarding.intros ?? []).map((x) => x.key)), label: "" }))}>Add a department</Add>
+
+      <Label className="mt-5 mb-2">Topics ticked by hand — complete only when every topic is ticked{def.training?.trackKey ? " (the training track carries the tested modules)" : ""}</Label>
       {o.modules.map((m, i) => (
         <div key={m.key} className="mb-3 rounded-[4px] border border-divider p-3">
           <div className="flex items-center gap-2">
@@ -576,6 +632,79 @@ export function Onboarding({ def, mut, ro }: SecProps) {
   );
 }
 
+/* ------------------------------------------------- employment documents */
+
+export function EmploymentDocsSec({ def, mut, ro, refs }: SecProps) {
+  const docs = def.employmentDocs ?? [];
+  const hasStage = def.stages.some((s) => s.type === "employment_docs");
+  const tplOptions = refs.templates.map((t) => [t.key, t.title] as const);
+  return (
+    <div className="flex flex-col gap-3">
+      {!hasStage ? <Callout tone="warn">There is no Employment Documents stage in this blueprint, so these are never prepared. Add one on Stages — it comes after documents and verification, before Provision.</Callout> : null}
+      {!refs.templates.length ? <Callout>No template is published yet. Publish templates on Employment docs → Templates, then pick them here.</Callout> : null}
+      {docs.map((d0, i) => {
+        const set = (fn: (x: (typeof docs)[number]) => void) => mut((d) => fn((d.employmentDocs ??= [])[i]));
+        const known = refs.templates.some((t) => t.key === d0.templateKey);
+        return (
+          <Card key={d0.key} tone={known ? undefined : "warn"}>
+            <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-end gap-3">
+              <F label="Document"><Txt value={d0.label} ro={ro} placeholder="Appointment contract" onChange={(v) => set((x) => void (x.label = v))} /></F>
+              <F label="Template">
+                {tplOptions.length ? (
+                  <Sel value={d0.templateKey} ro={ro} options={known ? tplOptions : [[d0.templateKey, `${d0.templateKey || "Pick a template"} — not published`] as const, ...tplOptions]} onChange={(v) => set((x) => void (x.templateKey = v))} />
+                ) : (
+                  <Txt value={d0.templateKey} ro={ro} placeholder="template key" onChange={(v) => set((x) => void (x.templateKey = v))} />
+                )}
+              </F>
+              <Remove ro={ro} onClick={() => mut((d) => void (d.employmentDocs ??= []).splice(i, 1))} />
+            </div>
+            <div className="mt-3 flex gap-5">
+              <Check ro={ro} checked={d0.hardCopy} label="Signed hard copy comes back by courier" onChange={(v) => set((x) => void (x.hardCopy = v))} />
+              <Check ro={ro} checked={d0.required} label="Required before Provision" onChange={(v) => set((x) => void (x.required = v))} />
+            </div>
+          </Card>
+        );
+      })}
+      <Add ro={ro} onClick={() => mut((d) => void (d.employmentDocs ??= []).push({ key: nextKey("e", (d.employmentDocs ?? []).map((x) => x.key)), label: "", templateKey: refs.templates[0]?.key ?? "", hardCopy: false, required: true }))}>Add a document</Add>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------- training */
+
+export function TrainingSec({ def, mut, ro, refs }: SecProps) {
+  const t = def.training ?? null;
+  const hasStage = def.stages.some((s) => s.type === "training");
+  const known = !t?.trackKey || refs.tracks.some((x) => x.key === t.trackKey);
+  return (
+    <Card tone={known ? undefined : "warn"}>
+      <p className="mt-0 mb-3 text-[13px] text-muted">
+        The person is enrolled on this track’s published version when their account is created on Provision. The Training stage passes when every required module is passed.
+      </p>
+      {!hasStage ? <Callout tone="warn">There is no Training stage, so nobody on this version is held to the track. Add one on Stages, after Provision.</Callout> : null}
+      <div className="mt-3 grid grid-cols-2 gap-3">
+        <F label="Track">
+          <Sel
+            value={t?.trackKey ?? ""}
+            ro={ro}
+            options={[["", "No track"] as const, ...(known ? [] : [[t!.trackKey, `${t!.trackKey} — not published`] as const]), ...refs.tracks.map((x) => [x.key, x.title] as const)]}
+            onChange={(v) => mut((d) => void (d.training = v ? { trackKey: v, trainerId: d.training?.trainerId ?? null } : null))}
+          />
+        </F>
+        <F label="Trainer who signs off retraining">
+          <Sel
+            value={t?.trainerId ?? ""}
+            ro={ro || !t?.trackKey}
+            options={[["", "Whoever holds Trainer"] as const, ...refs.trainers.map((x) => [x.id, x.name] as const)]}
+            onChange={(v) => mut((d) => void (d.training = d.training ? { ...d.training, trainerId: v || null } : null))}
+          />
+        </F>
+      </div>
+      {!refs.tracks.length ? <div className="mt-3"><Callout>No track is published yet — build one on Train → Tracks.</Callout></div> : null}
+    </Card>
+  );
+}
+
 /* --------------------------------------------------------- provisioning */
 
 export function Provisioning({ def, mut, ro }: SecProps) {
@@ -584,7 +713,11 @@ export function Provisioning({ def, mut, ro }: SecProps) {
   return (
     <Card>
       <ElementHead title="What the hire receives" ai={p.ai} approved={p.approved} ro={ro} onApprove={() => mut((d) => void (d.provisioning.approved = true))} />
-      <p className="mt-2 mb-3 text-[13px] text-muted">Provisioning the MahekOne account is the last act of the pipeline and what makes a candidate hired.</p>
+      <p className="mt-2 mb-3 text-[13px] text-muted">
+        {def.stages.some((s) => s.type === "compensation")
+          ? "Provisioning the MahekOne account is what makes a candidate hired. In this flow it comes before assets and training, so the employee acknowledges assets and takes their tests in their own account."
+          : "Provisioning the MahekOne account is the last act of the pipeline and what makes a candidate hired."}
+      </p>
       <Label className="mb-2">Apps granted</Label>
       <div className="grid grid-cols-2 gap-2">
         {grantable.map((a) => (

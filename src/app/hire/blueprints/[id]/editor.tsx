@@ -11,7 +11,7 @@ import { deleteDraft, newVersion, publishBlueprint, runCritic, saveDraft, type I
 import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { Btn, Callout, Label, Pill } from "../../_ui/kit";
 import { Area, F, Num, Txt } from "./fields";
-import { Briefing, Competencies, Documents, Fairness, OfferSec, Onboarding, Provisioning, Questions, Rubrics, Stages, Thresholds, type Mut, type SecProps } from "./sections";
+import { Briefing, Competencies, Documents, EmploymentDocsSec, Fairness, OfferSec, Onboarding, Provisioning, Questions, Rubrics, Stages, Thresholds, TrainingSec, type Mut, type SecProps, type StudioRefs } from "./sections";
 
 export const SECS = [
   ["identity", "Identity"],
@@ -23,7 +23,9 @@ export const SECS = [
   ["briefing", "Briefing"],
   ["documents", "Documents"],
   ["offer", "Offer"],
+  ["employment", "Employment documents"],
   ["onboarding", "Onboarding"],
+  ["training", "Training"],
   ["provisioning", "Provisioning"],
   ["fairness", "Fairness"],
 ] as const;
@@ -38,8 +40,10 @@ const SUB: Record<Sec, string> = {
   thresholds: "Pass marks, auto-reject floors and grace, per scored stage.",
   briefing: "What a candidate must hear and accept before an offer. Blocking points stop progression on a disagreement.",
   documents: "What is collected and verified. Identity and bank numbers are vaulted and masked.",
-  offer: "Grades, salary bands, incentive and the growth ladder the briefing and the letter both read.",
-  onboarding: "Work kit, training modules with their topics, and system setup.",
+  offer: "Grades, salary bands, whether an incentive applies and which plans, other pay items, and the growth ladder the briefing and the letter both read.",
+  employment: "The documents sent after verification — each from a versioned template, approved by a second person, signed, and back by courier where a hard copy is needed.",
+  onboarding: "Company assets (and whether the employee acknowledges them), department introductions, topics ticked by hand, and system setup.",
+  training: "The training track the new employee is enrolled on, and who signs off a retake.",
   provisioning: "Which MahekOne apps and role the hire receives — the end of the pipeline.",
   fairness: "What is masked during evaluation, what is monitored, and what is never inferred.",
 };
@@ -58,6 +62,7 @@ export type EditorProps = {
   inFlight: number;
   hasPrevious: boolean;
   publishedLine: string;
+  refs: StudioRefs;
 };
 
 export function Editor(p: EditorProps) {
@@ -85,7 +90,8 @@ export function Editor(p: EditorProps) {
   };
   const go = (s: Sec, q?: string) => router.replace(`${pathname}?s=${s}${q ? `&q=${encodeURIComponent(q)}` : ""}`, { scroll: false });
 
-  const issues = studioIssues(def);
+  /* The page hands over what is published; the validator flags a plan, template or track that is not. */
+  const issues = studioIssues(def, { planKeys: new Set(p.refs.plans.map((x) => x.key)), templateKeys: new Set(p.refs.templates.map((x) => x.key)), trackKeys: new Set(p.refs.tracks.map((x) => x.key)) });
   const errors = issues.filter((i) => i.level === "error");
   const warnings = issues.filter((i) => i.level === "warning");
   const appr = approvalCount(def);
@@ -139,7 +145,7 @@ export function Editor(p: EditorProps) {
       if (sec === "fairness") d.fairness.approved = true;
     });
 
-  const props: SecProps = { def, mut, ro, critic: p.critic, goRubric: (ref) => go("rubrics", ref), rubricRef };
+  const props: SecProps = { def, mut, ro, critic: p.critic, goRubric: (ref) => go("rubrics", ref), rubricRef, refs: p.refs };
   const pending = appr.pending.length;
 
   return (
@@ -223,8 +229,12 @@ export function Editor(p: EditorProps) {
           <Documents {...props} />
         ) : sec === "offer" ? (
           <OfferSec {...props} />
+        ) : sec === "employment" ? (
+          <EmploymentDocsSec {...props} />
         ) : sec === "onboarding" ? (
           <Onboarding {...props} />
+        ) : sec === "training" ? (
+          <TrainingSec {...props} />
         ) : sec === "provisioning" ? (
           <Provisioning {...props} />
         ) : (

@@ -121,6 +121,7 @@ const MAY_CREATE_ACCOUNTS: Record<string, string> = {
   "scripts/create-accounts-users.ts": "skips an employee who already has an account, links the one it makes",
   "src/db/seed.ts": "dev seed",
   "src/lib/hire/seed/seed.ts": "dev seed",
+  "src/lib/hire/seed/onboarding-demo.ts": "dev seed — finds the account by email or phone first",
   "src/lib/factory/demo-seed.ts": "dev seed",
 };
 

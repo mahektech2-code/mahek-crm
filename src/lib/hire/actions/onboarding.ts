@@ -10,14 +10,11 @@ import type { ImpactConfirmation } from "@/lib/impact/types";
 import { confirmFields, setDocumentStatus, setItem, unmask, uploadDocument, type ItemKey } from "../services/onboarding";
 import { provision, type Provisioned } from "../services/provision";
 import {
-  acknowledgeAssetBySlip,
   addBgvRemark,
   addShipment,
   approveEmploymentDoc,
   courierEvent,
-  fileEmploymentDoc,
   issueAsset,
-  markEmploymentDocSigned,
   prepareEmploymentDocs,
   publishPlan,
   requestDocuments,
@@ -151,15 +148,7 @@ export async function sendEmploymentDocsAction(applicationId: string, docIds: st
   return guarded("employmentDocs", (ctx) => sendEmploymentDocs(ctx, applicationId, docIds));
 }
 
-export async function markEmploymentDocSignedAction(form: FormData) {
-  const file = form.get("file");
-  return guarded("employmentDocs", (ctx) => markEmploymentDocSigned(ctx, String(form.get("docId") ?? ""), String(form.get("signedOn") ?? ""), file instanceof File && file.size ? file : null));
-}
 
-export async function fileEmploymentDocAction(form: FormData) {
-  const file = form.get("file");
-  return guarded("employmentDocs", (ctx) => fileEmploymentDoc(ctx, String(form.get("docId") ?? ""), file instanceof File && file.size ? file : null));
-}
 
 export async function addShipmentAction(applicationId: string, input: ShipmentInput) {
   return guarded("courier", (ctx) => addShipment(ctx, applicationId, input));
@@ -177,11 +166,6 @@ export async function setAssetApplicableAction(applicationId: string, key: strin
   return guarded("assets", (ctx) => setAssetApplicable(ctx, applicationId, key, applicable, reason));
 }
 
-export async function assetSlipAction(form: FormData) {
-  const file = form.get("file");
-  if (!(file instanceof File)) return err("Choose a file.", "validation");
-  return guarded("assets", (ctx) => acknowledgeAssetBySlip(ctx, String(form.get("applicationId") ?? ""), String(form.get("key") ?? ""), file));
-}
 
 export async function returnAssetAction(applicationId: string, key: string, returnedOn: string) {
   return guarded("assets", (ctx) => returnAsset(ctx, applicationId, key, returnedOn));

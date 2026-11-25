@@ -4,12 +4,13 @@ import { cx } from "@/components/ui/primitives";
 import { requireHire, type HireContext } from "@/lib/hire/access";
 import { aiState } from "@/lib/hire/ai/orchestrator";
 import { PROFILE_FIELDS } from "@/lib/hire/ai/parse-cv";
-import { isScored, REJECTION_LABEL } from "@/lib/hire/blueprint-types";
+import { isOnboardingFlow, isPostHireStage, isScored, REJECTION_LABEL } from "@/lib/hire/blueprint-types";
 import { confidenceWord } from "@/lib/hire/engines/scoring";
 import { displayPhone } from "@/lib/hire/engines/identity";
 import { lockedWhy } from "@/lib/hire/roles";
 import { candidateRecord, type CandidateRecord, type RecordAnswer, type RecordExecution } from "@/lib/hire/services/candidate";
 import { CandidateDocuments } from "../../documents/candidate-documents";
+import { OnboardingTab } from "./onboarding-tab";
 import { AiCard, BtnLink, Callout, EvidenceList, Label, Locked, Panel, Pill, Quote, StatusPill, fd, fdt, fmtScore, type ConfWord } from "../../_ui/kit";
 import {
   AiRunButton,
@@ -33,6 +34,7 @@ const TABS = [
   ["stages", "Stages"],
   ["profile", "Profile"],
   ["documents", "Documents"],
+  ["onboarding", "Onboarding"],
   ["communication", "Communication"],
   ["activity", "Activity"],
 ] as const;
@@ -55,7 +57,9 @@ export default async function CandidatePage({ params, searchParams }: { params: 
   const rec = await candidateRecord(ctx, id);
   if (!rec) notFound();
   const sp = await searchParams;
-  const allowed: Tab[] = rec.canSeeScores ? TABS.map((t) => t[0]) : ["overview", "stages", "profile"];
+  /* The Onboarding tab exists for a version that runs the onboarding flow. */
+  const flow = isOnboardingFlow(rec.bundle.def);
+  const allowed: Tab[] = rec.canSeeScores ? TABS.map((t) => t[0]).filter((k) => k !== "onboarding" || flow) : ["overview", "stages", "profile"];
   const tab: Tab = (allowed as string[]).includes(sp.tab ?? "") ? (sp.tab as Tab) : "overview";
   const ai = await aiState();
 
@@ -82,6 +86,7 @@ export default async function CandidatePage({ params, searchParams }: { params: 
           {tab === "stages" ? <Stages rec={rec} /> : null}
           {tab === "profile" ? <Profile ctx={ctx} rec={rec} /> : null}
           {tab === "documents" ? <CandidateDocuments ctx={ctx} applicationId={id} /> : null}
+          {tab === "onboarding" ? <OnboardingTab ctx={ctx} b={rec.bundle} /> : null}
           {tab === "communication" ? <Communication ctx={ctx} rec={rec} aiOn={ai.on} /> : null}
           {tab === "activity" ? <Activity rec={rec} /> : null}
         </div>
@@ -93,7 +98,8 @@ export default async function CandidatePage({ params, searchParams }: { params: 
 /* ------------------------------------------------------------------ header */
 
 function Header({ ctx, rec }: { ctx: HireContext; rec: CandidateRecord }) {
-  const { app, candidate, blueprint, stage } = rec.bundle;
+  const { app, candidate, blueprint, stage, def } = rec.bundle;
+  const onboarding = app.status === "hired" && !app.onboardingCompletedAt && isOnboardingFlow(def) && isPostHireStage(def, app.stageKey);
   const initials = candidate.fullName.split(" ").map((w) => w[0]).join("").slice(0, 2);
   const pipeline = ctx.can("addCandidate") || ctx.can("decide");
   const open = app.status === "in_progress";
@@ -125,7 +131,26 @@ function Header({ ctx, rec }: { ctx: HireContext; rec: CandidateRecord }) {
         <Locked key="gate" why={lockedWhy("decide")}>Decision gate</Locked>
       ),
     );
-  if (open && stage?.type === "document_collection")
+  if (open && stage?.type === "compensation")
+    actions.push(
+      <BtnLink key="off" kind="primary" href={`/hire/offers?app=${app.id}`}>
+        Offer
+      </BtnLink>,
+    );
+  if (open && stage?.type === "employment_docs")
+    actions.push(
+      <BtnLink key="emp" kind="primary" href={`/hire/employment-docs?app=${app.id}`}>
+        Employment docs
+      </BtnLink>,
+    );
+  if (onboarding) actions.push(<BtnLink key="ai" kind="primary" href={`/hire/induction?app=${app.id}`}>Assets & induction</BtnLink>);
+  if (open && stage?.type === "document_collection" && isOnboardingFlow(def))
+    actions.push(
+      <BtnLink key="doc" href={`/hire/documents?app=${app.id}`}>
+        Documents
+      </BtnLink>,
+    );
+  if (open && stage?.type === "document_collection" && !isOnboardingFlow(def))
     actions.push(
       <BtnLink key="off" href={`/hire/offers?app=${app.id}`}>
         Offer
@@ -145,6 +170,7 @@ function Header({ ctx, rec }: { ctx: HireContext; rec: CandidateRecord }) {
   if (pipeline && rec.canSeeScores) actions.push(<StatusButtons key="st" applicationId={app.id} status={app.status} />);
 
   const markers: { l: string; tone: "warn" | "info" | "danger" | "muted" }[] = [];
+  if (onboarding) markers.push({ l: "Onboarding", tone: "info" });
   if (app.override) markers.push({ l: "Gate override", tone: "warn" });
   if (app.reapplicationOfId) markers.push({ l: "Reapplication", tone: "info" });
   if (candidate.doNotContact) markers.push({ l: "Do not contact", tone: "danger" });
@@ -155,7 +181,7 @@ function Header({ ctx, rec }: { ctx: HireContext; rec: CandidateRecord }) {
     displayPhone(candidate.primaryPhone),
     `${blueprint.title} v${blueprint.version}`,
     app.location,
-    app.status === "hired" ? "Hired" : (stage?.name ?? app.stageKey),
+    app.status === "hired" ? (onboarding ? `Hired · ${stage?.name ?? "onboarding"}` : "Hired") : (stage?.name ?? app.stageKey),
     `Applied ${fd(app.appliedAt)}`,
     rec.people.recruiter ? `Recruiter ${rec.people.recruiter}` : "No recruiter assigned",
   ].filter(Boolean);

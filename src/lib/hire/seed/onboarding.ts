@@ -409,6 +409,7 @@ export const SEED_TRACKS: { key: string; title: string; definition: TrackDefinit
   {
     key: "telecaller-onboarding",
     title: "Telecaller onboarding",
+    // role-name-ok: "Telecaller" here is a designation's name, not the retired account role
     definition: { designations: ["Telecaller"], sequential: true, completeWithinDays: 21, items: seq(["thinner-basics", "company-induction", "customer-classification", "relationship", "objections"], ["company-induction"]) },
   },
   {

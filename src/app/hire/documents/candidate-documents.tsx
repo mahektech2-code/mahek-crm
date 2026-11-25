@@ -1,9 +1,13 @@
 import type { HireContext } from "@/lib/hire/access";
+import { isOnboardingFlow } from "@/lib/hire/blueprint-types";
 import { lockedWhy } from "@/lib/hire/roles";
+import { currentBgv } from "@/lib/hire/services/onboarding-records";
+import { approverName } from "@/lib/hire/services/offers";
 import { getApplication } from "@/lib/hire/services/core";
 import { documentRows, documentsReadiness, VAULTED } from "@/lib/hire/services/onboarding";
 import { vaultAvailable, vaultKeyLine } from "@/lib/hire/services/vault";
 import { Callout, Icon } from "../_ui/kit";
+import { BgvCard } from "./bgv-card";
 import { DocumentsBoard, type DocView } from "./documents-board";
 
 /**
@@ -33,7 +37,8 @@ export async function CandidateDocuments({ ctx, applicationId }: { ctx: HireCont
     notes: r.doc?.verificationNotes ?? null,
     verifiedBy: r.verifiedBy,
     verifiedAt: r.doc?.verifiedAt?.toISOString() ?? null,
-    uploadedAt: r.doc?.createdAt.toISOString() ?? null,
+    uploadedAt: r.doc && r.doc.verificationStatus !== "requested" ? r.doc.createdAt.toISOString() : null,
+    requestedAt: r.doc?.requestedAt?.toISOString() ?? null,
     file: r.file ? { id: r.file.id, filename: r.file.filename, contentType: r.file.contentType, sizeKb: Math.max(1, Math.round(r.file.sizeBytes / 1024)) } : null,
     masked: r.masked,
     vaultId: r.vaultId,
@@ -41,6 +46,10 @@ export async function CandidateDocuments({ ctx, applicationId }: { ctx: HireCont
     confidence: r.doc?.extractionConfidence ?? null,
   }));
   const done = rows.filter((r) => r.doc?.verificationStatus === "verified" || r.doc?.verificationStatus === "waived").length;
+  const flow = isOnboardingFlow(b.def);
+  const bg = flow ? await currentBgv(b.app.id) : null;
+  const checkedBy = bg ? await approverName(bg.checkedById) : null;
+  const open = reached && (b.app.status === "in_progress" || b.app.status === "on_hold");
 
   return (
     <div className="flex flex-col gap-4">
@@ -53,7 +62,7 @@ export async function CandidateDocuments({ ctx, applicationId }: { ctx: HireCont
       {!reached ? <Callout tone="neutral">Documents are collected after the decision gate. {b.candidate.fullName} is at {b.stage?.name ?? "—"}.</Callout> : null}
       {reached && b.app.status === "in_progress"
         ? readiness.map((w) => (
-            <Callout key={w} tone={/mandatory/.test(w) ? "danger" : "warn"}>
+            <Callout key={w} tone={/required/.test(w) ? "danger" : "warn"}>
               {w}
             </Callout>
           ))
@@ -66,8 +75,20 @@ export async function CandidateDocuments({ ctx, applicationId }: { ctx: HireCont
         vaultReady={vaultAvailable()}
         lockedDocuments={lockedWhy("documents")}
         lockedUnmask={lockedWhy("unmask")}
-        open={reached && (b.app.status === "in_progress" || b.app.status === "on_hold")}
+        open={open}
       />
+      {flow ? (
+        <BgvCard
+          key={bg?.id ?? "none"}
+          applicationId={b.app.id}
+          bgv={bg ? { required: bg.required, status: bg.status, method: bg.method, vendor: bg.vendor, initiatedOn: bg.initiatedOn, completedOn: bg.completedOn, checkedBy, remarks: bg.remarkVaultIds.length } : null}
+          open={open}
+          canEdit={ctx.can("bgCheck")}
+          editWhy={lockedWhy("bgCheck")}
+          canRemarks={ctx.can("bgRemarks")}
+          remarksWhy={lockedWhy("bgRemarks")}
+        />
+      ) : null}
       <div className="text-xs text-muted">
         Hire never decides a document is forged. What the AI notices is listed for a person to judge; low confidence goes to manual review instead of a guess.
       </div>
