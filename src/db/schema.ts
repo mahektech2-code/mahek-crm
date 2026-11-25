@@ -11872,6 +11872,40 @@ export const priceAiRuns = pgTable(
 );
 
 /**
+ * A READING TRIAL: the same photograph read by two providers, and how the
+ * answers compared — never the answers themselves. A visiting card is a
+ * person's name and number and the lead scan keeps neither photo nor reading,
+ * so a trial row holds per-field VERDICTS ("same", "differs", "right",
+ * "missed") and timings, which is everything the comparison needs and nothing
+ * worth leaking. See `lib/services/read-trial-service.ts`.
+ *
+ * `subjectId` is the expense line for a bill trial (so a bill is read once),
+ * and a random id shared by the two rows of one lead scan.
+ */
+export const aiReadTrials = pgTable(
+  "ai_read_trials",
+  {
+    id: text("id").primaryKey(),
+    /** `lead_scan` | `expense_bill`. */
+    feature: text("feature").notNull(),
+    /** `openai` | `sarvam`. */
+    provider: text("provider").notNull(),
+    subjectId: text("subject_id"),
+    ok: boolean("ok").notNull().default(false),
+    ms: integer("ms"),
+    /** Why it failed, in the provider's words, cut short. Never a value read. */
+    error: text("error"),
+    /** Field name → verdict. */
+    fields: jsonb("fields").$type<Record<string, string>>().notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("ai_read_trials_feature_idx").on(t.feature, t.createdAt),
+    index("ai_read_trials_subject_idx").on(t.feature, t.subjectId),
+  ],
+);
+
+/**
  * AN OVERRIDE — one shop × one product × dates. Applied through the shop's
  * agreed-prices list (`kind = 'agreed'`), which layers over its book per
  * product; this row says when it starts and ends, and the sync job publishes

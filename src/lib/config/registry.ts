@@ -2383,6 +2383,43 @@ export const SETTINGS = [
     max: 6,
   },
   /*
+   * WHO READS FIRST, AND THE TRIAL THAT DECIDES IT. Sarvam is built for India
+   * and may read a Marathi board better than OpenAI; that is a hypothesis, so
+   * OpenAI stays first until the trial on Admin Console → Integrations says
+   * otherwise. Sarvam first still falls back to OpenAI on any failure. See
+   * `lib/services/read-trial-service.ts`.
+   */
+  {
+    key: "leadScan.provider",
+    type: "text",
+    category: "voice",
+    label: "Who reads the card first",
+    description:
+      "OpenAI reads the photographs and takes a second, closer look at a GSTIN it missed. Sarvam is built for Indian scripts; with it first, anything Sarvam fails on or finds nothing in goes to OpenAI, and a reading left in an Indian script is put into English by OpenAI. Change this only once the reading trial on Admin Console → Integrations shows Sarvam doing better. Sarvam keeps the photographs it is sent for its account's retention (eight days), where OpenAI is asked to keep none.",
+    default: "openai",
+    options: ["openai", "sarvam"],
+  },
+  {
+    key: "leadScan.trial",
+    type: "boolean",
+    category: "voice",
+    label: "Trial the other reader on every scan",
+    description:
+      "After a scan has been answered, read the same photographs with the provider that did not read them and record how the two compared, field by field — never what either read. The salesman waits for nothing extra. Off by default because it sends every card photo to a second company, and Sarvam keeps what it is sent for eight days; the results are on Admin Console → Integrations.",
+    default: false,
+  },
+  {
+    key: "readTrial.expenseBills",
+    type: "integer",
+    category: "voice",
+    label: "Bills per reading trial",
+    description:
+      "How many of the latest expense bill photos one press of \"Read bills with both\" on Admin Console → Integrations sends to OpenAI and to Sarvam, to score each against the amount, bill number and date the salesman typed. A bill already in the trial is not read again. Each bill costs one read from each provider.",
+    default: 20,
+    min: 1,
+    max: 100,
+  },
+  /*
    * FILLING A LEAD BY VOICE — the New lead form's "Speak about the shop" on
    * the MBOS handset. Reading words needs no eyes, so unlike the card scan it
    * takes the OpenAI-then-Sarvam ladder the visit assistant uses. How long a
@@ -7402,6 +7439,9 @@ export type Config = {
   "leadScan.enabled": boolean;
   "leadScan.model": string;
   "leadScan.maxImages": number;
+  "leadScan.provider": "openai" | "sarvam";
+  "leadScan.trial": boolean;
+  "readTrial.expenseBills": number;
   "leadVoice.enabled": boolean;
   "leadVoice.model": string;
 

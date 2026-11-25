@@ -2,6 +2,7 @@ import "server-only";
 import { cache } from "react";
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql, type Column, type SQL } from "drizzle-orm";
 import { db } from "@/db";
+import { summariseTrials, type ProviderSummary } from "@/lib/engines/read-trial";
 import { notificationAppSql } from "@/lib/notification-app-sql";
 import { popsUpIn } from "@/lib/notification-feed";
 import { APP_TIMEZONE, asDate, calendarDate } from "@/lib/business-date";
@@ -12,6 +13,7 @@ import {
   type TimelineKind,
 } from "@/lib/timeline-kinds";
 import {
+  aiReadTrials,
   bills,
   calls,
   complaints,
@@ -2391,3 +2393,42 @@ export async function listAmChanges(customerId: string) {
 }
 
 export { daysBetween, lte, orders, calls };
+
+/* ------------------------------------------------------- reading trial */
+
+/** The trial's window: long enough to collect a verdict, short enough to read after a provider changes its model. */
+const READ_TRIAL_DAYS = 90;
+/** A ceiling, not a page — the summary is counts, and twice this many reads is past deciding anything. */
+const READ_TRIAL_ROW_CAP = 5000;
+
+/**
+ * Sarvam beside OpenAI, per feature — Admin Console → Integrations. Counts
+ * only: the rows hold verdicts, never a value read (`engines/read-trial.ts`).
+ */
+export async function readTrialSummary(): Promise<{
+  leadScan: ProviderSummary[];
+  expenseBill: ProviderSummary[];
+  days: number;
+  since: Date | null;
+}> {
+  const rows = await db
+    .select({
+      feature: aiReadTrials.feature,
+      provider: aiReadTrials.provider,
+      ok: aiReadTrials.ok,
+      ms: aiReadTrials.ms,
+      fields: aiReadTrials.fields,
+      createdAt: aiReadTrials.createdAt,
+    })
+    .from(aiReadTrials)
+    .where(sql`${aiReadTrials.createdAt} > now() - make_interval(days => ${READ_TRIAL_DAYS})`)
+    .orderBy(desc(aiReadTrials.createdAt))
+    .limit(READ_TRIAL_ROW_CAP);
+  const oldest = rows.at(-1)?.createdAt;
+  return {
+    leadScan: summariseTrials(rows, "lead_scan"),
+    expenseBill: summariseTrials(rows, "expense_bill"),
+    days: READ_TRIAL_DAYS,
+    since: oldest ? asDate(oldest) : null,
+  };
+}
