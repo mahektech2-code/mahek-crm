@@ -398,7 +398,7 @@ async function selectConversations(extra: ReturnType<typeof sql>, limit: number,
            and (${MATCH(sql`customers.phone`)} or ${MATCH(sql`customers.whatsapp_phone`)} or ${MATCH(sql`customers.alt_phone`)} or ${MATCH(sql`customers.payment_whatsapp_phone`)}
                 or exists (select 1 from customer_contacts cc where cc.customer_id = customers.id and ${MATCH(sql`cc.phone`)}))
       ) d on true
-     where ${extra}${scopeIds === null ? sql`` : sql` and m.customer_id is not null`}
+     where ${extra}
      order by conv.last_message_at desc nulls last
      limit ${limit}`)) as unknown as RawConversation[];
   const now = new Date();
