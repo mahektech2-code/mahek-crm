@@ -2016,6 +2016,32 @@ export const SETTINGS = [
     default: "919137466424",
   },
   {
+    key: "studio.inbox.posterTemplate",
+    type: "text",
+    category: "attachments",
+    label: "Studio: the approved WhatsApp template a poster is sent with",
+    description:
+      "The NAME of an approved WhatsApp message template (as it is in Kapso) that has an IMAGE header and a body. WhatsApp does not let a free message or picture go to somebody who has not written in the last 24 hours; an approved template is the only way. With a name here, a poster's page can send the poster to such a customer as that template, and the chat then lives in the Inbox. Blank: that is off and only a customer who wrote in the last 24 hours can be sent a poster from the Studio.",
+    default: "",
+  },
+  {
+    key: "studio.inbox.posterTemplateLanguage",
+    type: "text",
+    category: "attachments",
+    label: "Studio: language code of that template",
+    description: "The language code the template was approved in, as Kapso shows it - for example en, en_US or hi.",
+    default: "en",
+  },
+  {
+    key: "studio.inbox.posterTemplateParams",
+    type: "text",
+    category: "attachments",
+    label: "Studio: what fills the template's body variables, in order",
+    description:
+      "A comma-separated list for {{1}}, {{2}} ... of the template body: name (the person the poster greets), company (their business) and sender (the person sending it). Example: name,company. A template with no variables takes an empty list.",
+    default: "name",
+  },
+  {
     key: "studio.approvalByOrgChart",
     type: "boolean",
     category: "attachments",
@@ -7135,6 +7161,9 @@ export type Config = {
 
   "studio.publishImmediately": boolean;
   "studio.whatsapp.number": string;
+  "studio.inbox.posterTemplate": string;
+  "studio.inbox.posterTemplateLanguage": string;
+  "studio.inbox.posterTemplateParams": string;
   "studio.approvalByOrgChart": boolean;
   "attachments.maxSizeMb": number;
   "attachments.acceptedTypes": string[];
