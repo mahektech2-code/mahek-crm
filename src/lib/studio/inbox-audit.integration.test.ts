@@ -4,7 +4,7 @@
  *
  *   1. `studio.inbox` is held with the Studio like its other screens (a narrowed grant needs it ticked);
  *   2. a conversation is read, searched, opened, marked read and answered only by somebody the CRM lets see its lead or
- *      customer — and an unmatched number is read by the whole-book reader alone;
+ *      customer — and an unmatched number is read by everybody who holds the Inbox;
  *   3. a bulk send of an uploaded poster answers EVERY recipient (sent / skipped / failed) and never sends free text outside
  *      the 24-hour window, or while the founder's switch is off;
  *   4. the future Org Chart approval routing is OFF, picks only somebody explicitly given Approve designs, and notifies nobody.
@@ -135,19 +135,17 @@ after(async () => {
 });
 
 describe("poster, forward and bulk actions called directly", () => {
-  test("sendPoster: her own poster goes into her own conversation, and is refused into another employee's and into an unmatched number's - nothing is uploaded or sent", async () => {
+  test("sendPoster: her own poster goes into any conversation on the company number, each send reaching Kapso once", async () => {
     const made = await makePoster({ customerId: cA, templateId: "diwali-classic", language: "en", showProduct: true });
     assert.ok(made.ok, made.ok ? "" : made.error);
     const posterId = made.ok ? made.data.id : "";
     const theirs = await sendPoster({ conversationId: await convId(PB), posterId, caption: "Hi", clientKey: key() });
-    assert.equal(theirs.ok, false);
+    assert.ok(theirs.ok, theirs.ok ? "" : theirs.error);
     const unmatched = await sendPoster({ conversationId: await convId(PX), posterId, caption: "Hi", clientKey: key() });
-    assert.equal(unmatched.ok, false);
-    assert.equal(media(), 0, "no picture reached Kapso");
-    assert.equal(sends().length, 0);
+    assert.ok(unmatched.ok, unmatched.ok ? "" : unmatched.error);
     const own = await sendPoster({ conversationId: await convId(PA), posterId, caption: "Hi", clientKey: key() });
     assert.ok(own.ok, own.ok ? "" : own.error);
-    assert.equal(sends().length, 1, "the control: her own conversation works");
+    assert.equal(sends().length, 3, "one send per conversation");
   });
 
   test("sendPoster: somebody else's poster id is 'not found' to an employee outside its creator's reach", async () => {
@@ -160,14 +158,13 @@ describe("poster, forward and bulk actions called directly", () => {
     assert.equal(media(), 0);
   });
 
-  test("sendForward (single): refused into another employee's conversation and into an unmatched number; nothing is uploaded", async () => {
+  test("sendForward (single): goes into another employee's conversation and into an unmatched number, once each", async () => {
     const forwardId = await upload();
     for (const p of [PB, PX]) {
       const r = await sendForward({ conversationId: await convId(p), forwardId, caption: "Hi", clientKey: key() });
-      assert.equal(r.ok, false, p);
+      assert.ok(r.ok, p + (r.ok ? "" : r.error));
     }
-    assert.equal(media(), 0);
-    assert.equal(sends().length, 0);
+    assert.equal(sends().length, 2);
   });
 
   test("an employee cannot use somebody else's forward at all", async () => {
@@ -190,10 +187,10 @@ describe("poster, forward and bulk actions called directly", () => {
     assert.equal(sends().length, 0);
   });
 
-  test("openConversation on somebody else's conversation changes nothing, on her own it marks read", async () => {
+  test("openConversation marks any conversation on the company number read", async () => {
     const theirs = await convId(PB);
     await openConversation(theirs);
-    assert.equal((await db.select().from(studioWaConversations).where(eq(studioWaConversations.id, theirs)))[0]!.unread, 1);
+    assert.equal((await db.select().from(studioWaConversations).where(eq(studioWaConversations.id, theirs)))[0]!.unread, 0);
     const mine = await convId(PA);
     await openConversation(mine);
     assert.equal((await db.select().from(studioWaConversations).where(eq(studioWaConversations.id, mine)))[0]!.unread, 0);

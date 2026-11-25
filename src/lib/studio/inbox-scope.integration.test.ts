@@ -3,8 +3,7 @@
  * (a stand-in for the HTTP calls: no real message is ever sent). What it proves, allowed AND denied:
  *
  *   1. `studio.inbox` is held with the Studio like its other screens (a narrowed grant needs it ticked);
- *   2. a conversation is read, searched, opened, marked read and answered only by somebody the CRM lets see its lead or
- *      customer — and an unmatched number is read by the whole-book reader alone;
+ *   2. every conversation on the company number is read, searched, opened, marked read and answered by everybody holding the Inbox; the CRM name shows only for a record the viewer may see
  *   3. a bulk send of an uploaded poster answers EVERY recipient (sent / skipped / failed) and never sends free text outside
  *      the 24-hour window, or while the founder's switch is off;
  *   4. the future Org Chart approval routing is OFF, picks only somebody explicitly given Approve designs, and notifies nobody.
@@ -148,55 +147,59 @@ describe("studio.inbox is held with the Studio, like its other screens", () => {
   });
 });
 
-describe("a conversation is seen only by somebody who may see its lead or customer", () => {
+describe("every conversation on the company number is seen by everybody who holds the Inbox", () => {
   const titles = async (scopeIds: string[] | null, q?: string) => (await listConversationRows({ scopeIds, ...(q ? { q } : {}) })).rows.map((r) => r.title).sort();
 
-  test("listing: each salesman sees their own customer; the manager sees the team's; an unmatched number is for the whole book only", async () => {
-    assert.deepEqual(await titles([priya.id]), ["Alpha Paints"]);
-    assert.deepEqual(await titles([rakesh.id]), ["Beta Coatings"]);
-    assert.deepEqual(await titles([manager.id, priya.id, rakesh.id]), ["Alpha Paints", "Beta Coatings"]);
-    assert.deepEqual(await titles([]), [], "nobody's reach, nothing");
-    const all = await titles(null);
-    assert.equal(all.length, 3, "the whole-book reader also sees the number that matches no record");
+  test("listing: everybody sees all three conversations, but the CRM name is shown only for a record the viewer may see", async () => {
+    assert.deepEqual(await titles([priya.id]), ["Alpha Paints", "WA name", "WA name"]);
+    assert.deepEqual(await titles([rakesh.id]), ["Beta Coatings", "WA name", "WA name"]);
+    assert.deepEqual(await titles([manager.id, priya.id, rakesh.id]), ["Alpha Paints", "Beta Coatings", "WA name"]);
+    assert.equal((await titles([])).length, 3, "even a reach of nobody still reads the company number's chats");
+    assert.equal((await titles(null)).length, 3);
   });
 
-  test("searching cannot reach a record outside the viewer's book, by name or by number", async () => {
-    assert.deepEqual(await titles([priya.id], "Beta"), []);
-    assert.deepEqual(await titles([priya.id], "9820022222"), []);
+  test("searching finds any conversation by number, and by CRM name only within the viewer's book", async () => {
+    assert.equal((await titles([priya.id], "9820022222")).length, 1, "the number finds the chat");
+    assert.deepEqual(await titles([priya.id], "Beta"), [], "a record outside the viewer's book is not searchable by its CRM name");
     assert.deepEqual(await titles([priya.id], "Alpha"), ["Alpha Paints"]);
   });
 
-  test("opening, reading the thread and marking read answer 'not there' for somebody else's conversation, and work for one's own", async () => {
+  test("opening, reading the thread and marking read work for any conversation", async () => {
     const mine = await convId(PA);
     const theirs = await convId(PB);
+    const stranger = await convId(PX);
     assert.ok(await getConversation(mine, [priya.id]));
-    assert.equal(await getConversation(theirs, [priya.id]), null);
-    assert.equal((await threadMessages(theirs, [priya.id])).length, 0);
-    assert.equal((await threadMessages(mine, [priya.id])).length, 1);
+    assert.ok(await getConversation(theirs, [priya.id]));
+    assert.ok(await getConversation(stranger, [priya.id]));
+    assert.equal((await threadMessages(theirs, [priya.id])).length, 1);
     await markRead(theirs, [priya.id]);
-    assert.equal((await db.select().from(studioWaConversations).where(eq(studioWaConversations.id, theirs)))[0]!.unread, 1, "an outsider's markRead changed nothing");
-    await markRead(mine, [priya.id]);
-    assert.equal((await db.select().from(studioWaConversations).where(eq(studioWaConversations.id, mine)))[0]!.unread, 0);
+    assert.equal((await db.select().from(studioWaConversations).where(eq(studioWaConversations.id, theirs)))[0]!.unread, 0);
   });
 
-  test("the polling API returns only the viewer's conversations and refuses to open another's", async () => {
+  test("the conversation shown for somebody else's customer carries no CRM detail beyond the safeguards", async () => {
+    const row = await getConversation(await convId(PB), [priya.id]);
+    assert.ok(row);
+    assert.equal(row.customerId, null, "no CRM record id for a customer the viewer may not see");
+    assert.equal(row.title, "WA name");
+  });
+
+  test("the polling API returns every conversation and opens any of them", async () => {
     const res = await inboxRoute(new Request(`http://x/api/studio/inbox?c=${await convId(PB)}`));
-    const body = (await res.json()) as { conversations: { title: string }[]; active: unknown; messages: unknown[] };
-    assert.deepEqual(body.conversations.map((c) => c.title), ["Alpha Paints"]);
-    assert.equal(body.active, null);
-    assert.equal(body.messages.length, 0);
+    const body = (await res.json()) as { conversations: { title: string }[]; active: { id: string } | null; messages: unknown[] };
+    assert.equal(body.conversations.length, 3);
+    assert.ok(body.active);
+    assert.equal(body.messages.length, 1);
   });
 
-  test("sending: allowed into one's own conversation, refused (and nothing reaches Kapso) into somebody else's or an unmatched number's", async () => {
+  test("sending: allowed into any conversation inside its window, each send reaching Kapso once", async () => {
     await switchOn();
     const own = await sendText({ conversationId: await convId(PA), body: "Hello Alpha", clientKey: "key-own-0001" });
     assert.ok(own.ok, own.ok ? "" : own.error);
-    assert.equal(sends().length, 1);
     const other = await sendText({ conversationId: await convId(PB), body: "Hi Beta", clientKey: "key-other-0001" });
-    assert.equal(other.ok, false);
+    assert.ok(other.ok, other.ok ? "" : other.error);
     const unmatched = await sendText({ conversationId: await convId(PX), body: "Who is this", clientKey: "key-unmatched01" });
-    assert.equal(unmatched.ok, false);
-    assert.equal(sends().length, 1, "only the one send to one's own conversation reached Kapso");
+    assert.ok(unmatched.ok, unmatched.ok ? "" : unmatched.error);
+    assert.equal(sends().length, 3);
   });
 });
 
