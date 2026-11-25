@@ -529,6 +529,10 @@ export async function completeReminder(
 export async function dismissReminder(
   reminderId: string,
   reason: string,
+  /* An enquiry's follow-up is cancelled from the Enquiries desk, which has already
+     shown the reminder belongs to that enquiry; a manager there holds no CRM book,
+     so the customer-scope question below could only ever refuse them. */
+  opts: { enquiryChecked?: boolean } = {},
 ): Promise<Result> {
   if (!reason.trim()) {
     return err("A reason is required to dismiss a reminder.", "validation", [
@@ -550,8 +554,10 @@ export async function dismissReminder(
     .from(reminders)
     .where(eq(reminders.id, reminderId));
   if (!existing) return err("That reminder no longer exists.", "not_found");
-  const outOfScope = await assertReminderInScope(existing, ctx.user.id);
-  if (outOfScope) return outOfScope;
+  if (!opts.enquiryChecked) {
+    const outOfScope = await assertReminderInScope(existing, ctx.user.id);
+    if (outOfScope) return outOfScope;
+  }
   if (existing.status !== "pending") {
     return err("That reminder is already closed.", "conflict");
   }

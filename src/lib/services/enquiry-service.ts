@@ -1591,7 +1591,7 @@ export async function cancelEnquiryReminder(enquiryId: string, reminderId: strin
   const found = await enquiryReminder(enquiryId, reminderId);
   if (!found.ok) return found;
 
-  const r = await dismissSharedReminder(reminderId, reason);
+  const r = await dismissSharedReminder(reminderId, reason, { enquiryChecked: true });
   if (!r.ok) return r;
   await writeActivity(enquiryId, "reminder_cancelled", user.id, reason.trim(), { reminderId, dueDate: found.data.dueDate });
   return okVoid("Follow-up cancelled.");
