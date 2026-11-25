@@ -152,6 +152,18 @@ export async function uploadImage(phoneNumberId: string, bytes: Uint8Array, file
   return r.data.id ? { ok: true, data: { id: r.data.id } } : { ok: false, status: 0, error: "Kapso did not accept the picture.", code: "no_media_id" };
 }
 
+/** An approved template with a picture in its header and text in its body: the one message WhatsApp lets go to somebody outside the 24-hour window. */
+export async function sendTemplate(phoneNumberId: string, to: string, t: { name: string; language: string; headerImageId: string; bodyParams: string[] }): Promise<KapsoResult<{ wamid: string }>> {
+  const components: unknown[] = [{ type: "header", parameters: [{ type: "image", image: { id: t.headerImageId } }] }];
+  if (t.bodyParams.length) components.push({ type: "body", parameters: t.bodyParams.map((text) => ({ type: "text", text })) });
+  const r = await call<SendAnswer>(`${META}/${encodeURIComponent(phoneNumberId)}/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ messaging_product: "whatsapp", recipient_type: "individual", to, type: "template", template: { name: t.name, language: { code: t.language }, components } }),
+  });
+  return r.ok ? wamidOf(r.data) : r;
+}
+
 export async function sendImage(phoneNumberId: string, to: string, mediaId: string, caption: string): Promise<KapsoResult<{ wamid: string }>> {
   const r = await call<SendAnswer>(`${META}/${encodeURIComponent(phoneNumberId)}/messages`, {
     method: "POST",

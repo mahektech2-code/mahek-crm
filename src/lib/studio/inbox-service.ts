@@ -116,6 +116,8 @@ const notReady = (c: Connection) =>
 
 /* ----------------------------------------------------------------- upserts */
 
+const LOCAL_PREFIX = "local:";
+
 async function upsertConversation(tx: Tx, c: NormalConversation, phoneNumberId: string) {
   await tx
     .insert(studioWaConversations)
@@ -132,6 +134,17 @@ async function upsertConversation(tx: Tx, c: NormalConversation, phoneNumberId: 
         updatedAt: sql`now()`,
       },
     });
+  /* A chat started here before the customer ever wrote has a placeholder id. Once Kapso names the conversation, the placeholder's
+     messages move into it and the placeholder goes, so one number is never two chats. */
+  const key = phoneKey(c.phone);
+  if (key && !c.id.startsWith(LOCAL_PREFIX)) {
+    const local = LOCAL_PREFIX + key;
+    const [has] = await tx.select({ id: studioWaConversations.id }).from(studioWaConversations).where(eq(studioWaConversations.id, local)).limit(1);
+    if (has) {
+      await tx.update(studioWaMessages).set({ conversationId: c.id }).where(eq(studioWaMessages.conversationId, local));
+      await tx.delete(studioWaConversations).where(eq(studioWaConversations.id, local));
+    }
+  }
 }
 
 type Extras = { sentById?: string | null; posterId?: string | null };
@@ -508,7 +521,7 @@ export type ActivityContext = {
   recipient?: { customerId: string | null; name: string };
 };
 
-type Draft = ({ kind: "text"; body: string } | { kind: "poster"; caption: string; posterId: string | null; image: Uint8Array; mime: string; filename: string }) & { activity?: ActivityContext };
+type Draft = ({ kind: "text"; body: string } | { kind: "poster"; caption: string; posterId: string | null; image: Uint8Array; mime: string; filename: string; template?: { name: string; language: string; params: string[] } }) & { activity?: ActivityContext };
 
 /**
  * What may be sent to this conversation right now — checked before anything is
@@ -553,7 +566,7 @@ async function contactSafeguards(conv: ConversationRow): Promise<string | null> 
   return null;
 }
 
-async function gate(conversationId: string, scopeIds: string[] | null): Promise<Result<{ own: string; to: string; conv: ConversationRow }>> {
+async function gate(conversationId: string, scopeIds: string[] | null, opts: { template?: boolean } = {}): Promise<Result<{ own: string; to: string; conv: ConversationRow }>> {
   const conn = await connection();
   const own = connectedId(conn);
   if (!own) return notReady(conn);
@@ -567,7 +580,8 @@ async function gate(conversationId: string, scopeIds: string[] | null): Promise<
   if (!to) return fail("rule_violation", "This conversation has no phone number to send to.");
   const refused = await contactSafeguards(conv);
   if (refused) return fail("rule_violation", refused);
-  if (!conv.windowOpen) return fail("rule_violation", WINDOW_CLOSED_MESSAGE);
+  /* An approved template is exactly what WhatsApp allows outside the 24-hour window, so the window is not asked of it. */
+  if (!opts.template && !conv.windowOpen) return fail("rule_violation", WINDOW_CLOSED_MESSAGE);
   return ok({ own, to, conv });
 }
 
@@ -577,7 +591,7 @@ async function dispatch(userId: string, conversationId: string, clientKey: strin
     const r = await previewSend(userId, conversationId, clientKey, draft.kind === "text" ? { kind: "text", body: draft.body } : { kind: "poster", caption: draft.caption, posterId: draft.posterId });
     return r.ok ? ok({ messageId: r.messageId, wamid: `preview:${r.messageId}` }) : fail("rule_violation", r.error);
   }
-  const g = await gate(conversationId, scopeIds);
+  const g = await gate(conversationId, scopeIds, { template: draft.kind === "poster" && Boolean(draft.template) });
   if (!g.ok) {
     /* A bulk send answers EVERY recipient, so a recipient it could not send to still gets a row of their own, saying why. */
     if (draft.activity?.mode === "bulk" && draft.activity.recipient) {
@@ -622,7 +636,7 @@ async function dispatch(userId: string, conversationId: string, clientKey: strin
     sent = await kapso.sendText(own, to, draft.body);
   } else {
     const up = await kapso.uploadImage(own, draft.image, draft.filename, draft.mime);
-    sent = up.ok ? await kapso.sendImage(own, to, up.data.id, draft.caption) : up;
+    sent = !up.ok ? up : draft.template ? await kapso.sendTemplate(own, to, { name: draft.template.name, language: draft.template.language, headerImageId: up.data.id, bodyParams: draft.template.params }) : await kapso.sendImage(own, to, up.data.id, draft.caption);
   }
   if (!sent.ok) {
     /* A refusal means nothing went. A timeout or lost connection does not say — so it is marked, never retried. */
@@ -671,6 +685,42 @@ export async function sendPosterMessage(userId: string, input: { conversationId:
   if (bad) return fail("invalid_request", bad);
   if (input.image.byteLength > IMAGE_MAX_BYTES) return fail("rule_violation", "That poster is larger than the 5 MB WhatsApp allows for a picture.");
   return dispatch(userId, input.conversationId, input.clientKey, { kind: "poster", caption: input.caption, posterId: input.posterId, image: input.image, mime: input.mime, filename: input.filename, ...(input.activity ? { activity: input.activity } : {}) }, input.scopeIds);
+}
+
+/** Settings that say how a poster goes as a template, or null where that is off. */
+export async function posterTemplateConfig(): Promise<{ name: string; language: string; params: string[] } | null> {
+  const cfg = await getConfig();
+  const name = String(cfg["studio.inbox.posterTemplate"] ?? "").trim();
+  if (!name) return null;
+  const language = String(cfg["studio.inbox.posterTemplateLanguage"] ?? "en").trim() || "en";
+  const params = String(cfg["studio.inbox.posterTemplateParams"] ?? "").split(",").map((p) => p.trim().toLowerCase()).filter(Boolean);
+  return { name, language, params };
+}
+
+/** The chat for a number, made here as a placeholder when the customer has never written. Kapso's own conversation replaces it once it exists. */
+async function conversationOrPlaceholder(phone: string): Promise<string | null> {
+  const to = sendableNumber(phone);
+  const key = phoneKey(to ?? phone);
+  if (!to || !key) return null;
+  const existing = await conversationForNumber(to, null);
+  if (existing) return existing.id;
+  const conn = await connection();
+  const own = connectedId(conn);
+  if (!own) return null;
+  await db.insert(studioWaConversations).values({ id: LOCAL_PREFIX + key, phoneNumberId: own, phone: to, phoneKey: key }).onConflictDoNothing();
+  return LOCAL_PREFIX + key;
+}
+
+/** A poster sent as the approved template, to somebody who may never have written. Every safeguard but the 24-hour window applies. */
+export async function sendPosterAsTemplate(userId: string, input: { phone: string; values: { name: string; company: string; sender: string }; caption: string; clientKey: string; posterId: string | null; image: Uint8Array; mime: string; filename: string; scopeIds: string[] | null; activity?: ActivityContext }) {
+  const tpl = await posterTemplateConfig();
+  if (!tpl) return fail("rule_violation", "No approved WhatsApp template is set up for posters, so a poster cannot be sent to somebody who has not written in the last 24 hours.");
+  if (input.image.byteLength > IMAGE_MAX_BYTES) return fail("rule_violation", "That poster is larger than the 5 MB WhatsApp allows for a picture.");
+  const conversationId = await conversationOrPlaceholder(input.phone);
+  if (!conversationId) return fail("unavailable", "The WhatsApp Inbox is not connected, or this person has no usable phone number.");
+  const params = tpl.params.map((p) => (p === "company" ? input.values.company : p === "sender" ? input.values.sender : input.values.name) || "-");
+  const r = await dispatch(userId, conversationId, input.clientKey, { kind: "poster", caption: input.caption, posterId: input.posterId, image: input.image, mime: input.mime, filename: input.filename, template: { name: tpl.name, language: tpl.language, params }, ...(input.activity ? { activity: input.activity } : {}) }, input.scopeIds);
+  return r.ok ? ok({ ...r.data, conversationId }) : r;
 }
 
 /** LOCAL PREVIEW only: a generic preview picture sent into the in-memory sample chat. Refused outright when the preview gate is closed. */

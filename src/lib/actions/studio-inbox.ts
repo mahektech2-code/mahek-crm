@@ -15,7 +15,7 @@ import { recordActivity } from "@/lib/studio/timeline-service";
 import { resolveStudioScope } from "@/lib/studio/scope";
 import { err, ok, type Result } from "@/lib/result";
 import { downloadFilename } from "@/lib/studio/domain/caption";
-import { claimRefresh, conversationForNumber, markRead, sendPosterMessage, sendPreviewPosterMessage, sendTextMessage, syncFromKapso } from "@/lib/studio/inbox-service";
+import { claimRefresh, conversationForNumber, markRead, posterTemplateConfig, sendPosterAsTemplate, sendPosterMessage, sendPreviewPosterMessage, sendTextMessage, syncFromKapso } from "@/lib/studio/inbox-service";
 import { previewEnabled } from "@/lib/studio/inbox-preview";
 import { isPreviewAsset } from "@/lib/studio/inbox-preview-assets";
 import { renderRecipe } from "@/lib/studio/render-service";
@@ -86,6 +86,43 @@ export async function sendPoster(input: { conversationId: string; posterId: stri
   if (!r.ok) return err(r.error);
   await audit(user.id, "studio.inbox.sent", input.conversationId, { kind: "poster", posterId: poster.id, messageId: r.data.messageId });
   return ok({ messageId: r.data.messageId });
+}
+
+/** A poster sent as the approved template, for somebody who has not written in the last 24 hours. The chat appears in the Inbox. */
+export async function sendPosterTemplate(input: { posterId: string; clientKey: string }): Promise<Result<{ conversationId: string }>> {
+  const user = await guard();
+  if (!user) return err("You do not have the WhatsApp Inbox.", "not_permitted");
+  if (!KEY_RE.test(input.clientKey ?? "")) return err("That poster could not be sent. Reload the page and try again.");
+  const poster = await getPoster(String(input.posterId ?? ""));
+  if (!poster || poster.removedAt) return err("That poster was not found.", "not_found");
+  if (!poster.customerId) return err("The record this poster was made for is gone, so there is nobody to send it to.", "not_found");
+  const { scope } = await resolveStudioScope();
+  const recipient = await getRecipient(scope.userIds, poster.customerId);
+  if (!recipient) return err("That person is no longer in your book.", "not_found");
+  if (!recipient.whatsappPhone) return err("There is no usable phone number on their record.");
+  const drawn = await renderRecipe(recipeOf(poster), "jpeg");
+  if (!drawn.ok) return err(drawn.error);
+  const filename = downloadFilename(poster.templateId, poster.recipient.company, poster.language, drawn.data.format);
+  const r = await sendPosterAsTemplate(user.id, {
+    phone: recipient.whatsappPhone,
+    values: { name: poster.recipient.contact ?? poster.recipient.company, company: poster.recipient.company, sender: poster.senderName ?? user.name },
+    caption: "",
+    clientKey: input.clientKey,
+    posterId: poster.id,
+    image: drawn.data.image,
+    mime: drawn.data.format === "jpeg" ? "image/jpeg" : "image/png",
+    filename,
+    scopeIds: scope.userIds,
+    activity: { kind: "image", contentName: poster.templateName, contentRefType: "poster", contentRefId: poster.id, mode: "inbox", recipient: { customerId: poster.customerId, name: poster.recipient.company } },
+  });
+  if (!r.ok) return err(r.error);
+  await audit(user.id, "studio.inbox.sent", r.data.conversationId, { kind: "poster-template", posterId: poster.id, messageId: r.data.messageId });
+  return ok({ conversationId: r.data.conversationId });
+}
+
+/** Whether a poster can be sent as a template at all: the setting is filled in. */
+export async function posterTemplateReady(): Promise<boolean> {
+  return Boolean(await posterTemplateConfig());
 }
 
 /** An uploaded picture as WhatsApp takes it: JPEG or PNG, re-encoded where it is a WebP or too large. Null where it cannot be prepared. */

@@ -61,6 +61,8 @@ const files = [
   "src/lib/studio/inbox-scope.integration.test.ts",
   // Direct action calls, the weekly limit across the CRM and the Studio, and the manual refresh's neutral answer and minimum interval.
   "src/lib/studio/inbox-audit.integration.test.ts",
+  // A poster sent as the approved template where WhatsApp takes nothing else: no chat yet, a closed window, the placeholder chat folding into Kapso's, every other safeguard.
+  "src/lib/studio/inbox-template.integration.test.ts",
   // The Locker: register scope, renewals that supersede, one reminder digest;
   // the vault's dual control, audit-before-plaintext, tamper and break-glass rules.
   "src/lib/locker/register.integration.test.ts",
