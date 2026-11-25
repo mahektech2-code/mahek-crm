@@ -170,23 +170,25 @@ export default async function Page({
         />
       ) : (
         <Table
-          minWidth={1260}
+          minWidth={1460}
           head={
             <>
-              {head("name", "Name", 190)}
-              <HeadCell width={140}>Work number</HeadCell>
+              {head("name", "Name", 180)}
+              <HeadCell width={130}>Work number</HeadCell>
               {head("customers", "Customers", 110, "right")}
-              {head("synced", "Handset", 180)}
-              <HeadCell width={190}>Works</HeadCell>
-              {head("hometown", "Hometowns", 180)}
+              {head("synced", "Handset", 190)}
+              <HeadCell width={250}>Works</HeadCell>
+              {head("hometown", "Hometowns", 200)}
               {head("login", "Last signed in", 150)}
-              <HeadCell />
+              {/* Wide enough for its two actions and the menu on one line: with no
+                  width the fixed table squeezed it and they spilled past its edge. */}
+              <HeadCell width={300} />
             </>
           }
         >
           {sorted.map((t, i) => (
             <Row key={t.id} striped={i % 2 === 1}>
-              <Cell truncate={220}>
+              <Cell>
                 <EntityLink
                   href={`/sales/people/${t.id}`}
                 >
@@ -198,7 +200,7 @@ export default async function Page({
                   </span>
                 )}
               </Cell>
-              <Cell>{t.phone ?? <span className="text-muted">Not recorded</span>}</Cell>
+              <Cell>{t.phone ? <span className="whitespace-nowrap">{t.phone}</span> : <span className="text-muted">Not recorded</span>}</Cell>
               <Cell align="right">
                 {t.customerCount ? (
                   plural(t.customerCount, "shop")
@@ -213,7 +215,7 @@ export default async function Page({
               </Cell>
               <Cell>
                 {t.deviceBoundAt ? (
-                  <span title={`Bound ${stamp(t.deviceBoundAt)}`}>
+                  <span className="whitespace-nowrap" title={`Bound ${stamp(t.deviceBoundAt)}`}>
                     {t.lastSeenAt ? `Synced ${stamp(t.lastSeenAt)}` : "Bound, never synced"}
                   </span>
                 ) : (
@@ -224,7 +226,7 @@ export default async function Page({
                   it never widens it. Both are shown because the pair is the
                   question somebody actually has: how many shops are his, and
                   how many of those are in front of him today. */}
-              <Cell truncate={190}>
+              <Cell>
                 <WorksCell salesman={t} />
               </Cell>
               <Cell>
@@ -238,13 +240,13 @@ export default async function Page({
               </Cell>
               <Cell>
                 {t.lastLoginAt ? (
-                  stamp(t.lastLoginAt)
+                  <span className="whitespace-nowrap">{stamp(t.lastLoginAt)}</span>
                 ) : (
                   <span className="text-muted">Never</span>
                 )}
               </Cell>
               <Cell align="right">
-                <span className="inline-flex items-center gap-2">
+                <span className="inline-flex items-center gap-3 whitespace-nowrap">
                   <Territories salesman={t} places={places} />
                   <Link
                     href={`/sales/journeys?salesman=${t.id}`}

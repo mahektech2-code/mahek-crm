@@ -507,10 +507,10 @@ function PersonRow({ p, href }: { p: SalesmanDay; href: string }) {
           )}
         >
           <span className={cx("block size-1.5 flex-none rounded-full", status.dot)} />
-          <span className="truncate">{status.word}</span>
+          <span className="whitespace-nowrap">{status.word}</span>
         </span>
         {p.withinGeofence === false ? (
-          <span className="mt-1 block truncate text-[11px] text-warn-ink" title="Punched in outside the permitted radius">
+          <span className="mt-1 block text-[11px] whitespace-nowrap text-warn-ink" title="Punched in outside the permitted radius">
             Punched in off site
           </span>
         ) : null}
@@ -526,13 +526,13 @@ function PersonRow({ p, href }: { p: SalesmanDay; href: string }) {
       <td className="px-4 py-2.5 text-right tabular-nums">
         <span className={p.orders ? "font-medium text-ink" : "text-faint"}>{p.orders || "—"}</span>
       </td>
-      <td className="truncate px-4 py-2.5 text-right tabular-nums" title="Captured in the field, before accounts approve it">
+      <td className="px-4 py-2.5 text-right whitespace-nowrap tabular-nums" title="Captured in the field, before accounts approve it">
         <span className={Number(p.orderValuePaise) ? "text-ink" : "text-faint"}>
           {Number(p.orderValuePaise) ? money(p.orderValuePaise) : "—"}
         </span>
       </td>
       <td
-        className="truncate px-4 py-2.5 text-right tabular-nums"
+        className="px-4 py-2.5 text-right whitespace-nowrap tabular-nums"
         title="Reported by the salesman; confirmed only once accounts find it in the bank"
       >
         <span className={Number(p.collectedPaise) ? "text-ink" : "text-faint"}>
