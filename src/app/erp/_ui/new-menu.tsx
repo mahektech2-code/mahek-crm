@@ -13,7 +13,7 @@ import { popoverClass } from "./look";
  */
 export type NewMenuItem = { l: string; sub?: string; href: string };
 
-export function NewMenu({ items, label = "New" }: { items: NewMenuItem[]; label?: string }) {
+export function NewMenu({ items, label = "New", variant = "primary" }: { items: NewMenuItem[]; label?: string; variant?: "primary" | "secondary" }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -31,8 +31,8 @@ export function NewMenu({ items, label = "New" }: { items: NewMenuItem[]; label?
   }, [open]);
   return (
     <div ref={box} className="relative">
-      <button type="button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)} className={buttonClass({ variant: "primary" })}>
-        <ShellIcon name="plus" size={16} />
+      <button type="button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)} className={buttonClass({ variant })}>
+        {variant === "primary" ? <ShellIcon name="plus" size={16} /> : null}
         {label} ▾
       </button>
       {open ? (

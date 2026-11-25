@@ -47,7 +47,7 @@ const newKey = () => `k${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`;
 
 const dayLabel = (iso: string) => stampDate(iso);
 
-export function InboxApp({ initial, openId }: { initial: Snapshot; openId: string | null }) {
+export function InboxApp({ initial, openId, readyPoster = null }: { initial: Snapshot; openId: string | null; readyPoster?: Item | null }) {
   const [snap, setSnap] = useState<Snapshot>(initial);
   const [openIdState, setOpenId] = useState<string | null>(openId);
   const [q, setQ] = useState("");
@@ -55,7 +55,9 @@ export function InboxApp({ initial, openId }: { initial: Snapshot; openId: strin
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  const [picker, setPicker] = useState(false);
+  /* Arriving from a poster's page opens the send box on that poster, once. */
+  const [picker, setPicker] = useState(Boolean(readyPoster));
+  const [readyItem, setReadyItem] = useState<Item | null>(readyPoster);
   const key = useRef(newKey());
   const endRef = useRef<HTMLDivElement | null>(null);
 
@@ -136,7 +138,7 @@ export function InboxApp({ initial, openId }: { initial: Snapshot; openId: strin
     const r = await refreshFromKapso();
     setBusy(false);
     if (!r.ok) setError(r.error);
-    else setNote(`Refreshed from Kapso: ${r.data.conversations} conversations, ${r.data.messages} new messages.`);
+    else setNote(r.data.refreshed ? "Refreshed from Kapso." : `Refreshed a moment ago — try again in ${r.data.retryAfterSeconds ?? 30} seconds.`);
     void load(openIdState, q);
   };
 
@@ -272,9 +274,14 @@ export function InboxApp({ initial, openId }: { initial: Snapshot; openId: strin
         <PosterPicker
           conversationId={active.id}
           title={active.title}
-          onClose={() => setPicker(false)}
+          initial={readyItem}
+          onClose={() => {
+            setPicker(false);
+            setReadyItem(null);
+          }}
           onSent={() => {
             setPicker(false);
+            setReadyItem(null);
             void load(openIdState, q);
           }}
         />
@@ -366,11 +373,11 @@ function ConnectionBanner({ conn, onRefresh, busy }: { conn: PublicConnection; o
   );
 }
 
-function PosterPicker({ conversationId, title, onClose, onSent }: { conversationId: string; title: string; onClose: () => void; onSent: () => void }) {
+function PosterPicker({ conversationId, title, initial = null, onClose, onSent }: { conversationId: string; title: string; initial?: Item | null; onClose: () => void; onSent: () => void }) {
   const [kind, setKind] = useState<"posters" | "forwards">("posters");
   const [items, setItems] = useState<Item[] | null>(null);
   const [canForwards, setCanForwards] = useState(false);
-  const [pick, setPick] = useState<Item | null>(null);
+  const [pick, setPick] = useState<Item | null>(initial);
   const [caption, setCaption] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -390,6 +397,19 @@ function PosterPicker({ conversationId, title, onClose, onSent }: { conversation
       live = false;
     };
   }, [kind]);
+
+  /* The suggested message for a poster that was chosen before the box opened. */
+  useEffect(() => {
+    if (!initial) return;
+    let live = true;
+    void fetch(`/api/studio/inbox/caption?kind=poster&id=${encodeURIComponent(initial.id)}`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d: { ok: boolean; caption?: string }) => live && d.ok && setCaption(d.caption ?? ""))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [initial]);
 
   const choose = async (it: Item) => {
     setPick(it);

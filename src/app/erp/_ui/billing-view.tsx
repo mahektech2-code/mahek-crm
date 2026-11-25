@@ -76,7 +76,6 @@ function Block({ title, children }: { title: string; children: React.ReactNode }
 
 function Sheet({ sheet }: { sheet: BillingSheet }) {
   const showRate = sheet.rows.some((r) => r.rate);
-  const showBoxes = sheet.rows.some((r) => r.boxes);
   const showWeight = sheet.rows.some((r) => r.weight);
   const showDiscount = sheet.rows.some((r) => r.discount);
   const showAmount = sheet.rows.some((r) => r.amount);
@@ -111,7 +110,7 @@ function Sheet({ sheet }: { sheet: BillingSheet }) {
               <Th>Order</Th>
               <Th>Description of goods</Th>
               <Th align="right">Cans</Th>
-              {showBoxes ? <Th align="right">Boxes</Th> : null}
+              <Th align="right">Box qty</Th>
               <Th align="right">Litres</Th>
               {showWeight ? <Th align="right">Weight</Th> : null}
               {showRate ? <Th align="right">Rate</Th> : null}
@@ -133,11 +132,9 @@ function Sheet({ sheet }: { sheet: BillingSheet }) {
                 <Td align="right" className="whitespace-normal">
                   <CopyValue label="cans" value={r.cans} strong end />
                 </Td>
-                {showBoxes ? (
-                  <Td align="right" className="whitespace-normal">
-                    <CopyValue label="boxes" value={r.boxes} end />
-                  </Td>
-                ) : null}
+                <Td align="right" className="whitespace-normal">
+                  <CopyValue label="box qty" value={r.boxes} end />
+                </Td>
                 <Td align="right" className="whitespace-normal">
                   <CopyValue label="litres" value={r.litres} end />
                 </Td>

@@ -94,11 +94,11 @@ const WIN: ScreenWindow = { label: "Date", default: REGISTER_DEFAULT };
 /** "+ New ▾" on every Petty Cash tab: each kind of record, opening its form on its own tab. */
 export function newMenu(): { l: string; sub: string; href: string }[] {
   return [
-    { l: "Expense", sub: "a cost we paid", href: erpLink("expenses", { dlg: "expense" }) },
-    { l: "Petty cash expense", sub: "production's small spends", href: erpLink("pettyExpenses", { dlg: "petty" }) },
-    { l: "Receipt", sub: "money that came in", href: erpLink("moneyReceipts", { dlg: "receipt" }) },
-    { l: "Transfer", sub: "bank ↔ cash, bank ↔ bank", href: erpLink("moneyTransfers", { dlg: "transfer" }) },
-    { l: "Advance", sub: "a lump sum to an employee", href: erpLink("advances", { dlg: "advance" }) },
+    { l: "Expense", sub: "A bill we paid — rent, power, a supplier", href: erpLink("expenses", { dlg: "expense" }) },
+    { l: "Petty cash spend", sub: "A small factory spend, with its bill photo", href: erpLink("pettyExpenses", { dlg: "petty" }) },
+    { l: "Money received", sub: "A customer or anybody paid us", href: erpLink("moneyReceipts", { dlg: "receipt" }) },
+    { l: "Move money", sub: "Bank to cash, cash to bank, bank to bank", href: erpLink("moneyTransfers", { dlg: "transfer" }) },
+    { l: "Advance", sub: "Money given to an employee — bills come later", href: erpLink("advances", { dlg: "advance" }) },
   ];
 }
 

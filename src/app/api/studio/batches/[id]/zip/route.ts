@@ -2,6 +2,7 @@ import { downloadFilename } from "@/lib/studio/domain/caption";
 import { studioCaller, notFound } from "@/lib/studio/http";
 import { renderRecipe } from "@/lib/studio/render-service";
 import { getBatch, recipeOf } from "@/lib/studio/service";
+import { recordBatchZipDownload } from "@/lib/studio/timeline-service";
 import { buildZip, type ZipEntry } from "@/lib/studio/zip";
 
 /* Every poster of a bulk run in one ZIP. They are drawn here, one at a time —
@@ -22,6 +23,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ id: string 
   if (!batch) return notFound();
   const entries: ZipEntry[] = [];
   const failed: string[] = [];
+  const included: typeof batch.posters = [];
   for (const [i, p] of batch.posters.entries()) {
     const drawn = await renderRecipe(recipeOf(p), format);
     if (!drawn.ok) {
@@ -32,10 +34,13 @@ export async function GET(request: Request, ctx: { params: Promise<{ id: string 
     const ext = file.slice(file.lastIndexOf("."));
     const name = `${String(i + 1).padStart(2, "0")}-${file.slice(0, file.lastIndexOf(".")).replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 52)}${ext}`;
     entries.push({ name, data: drawn.data.image });
+    included.push(p);
   }
   if (failed.length) entries.push({ name: "not-included.txt", data: new TextEncoder().encode(`These could not be drawn:\n${failed.join("\n")}\n`) });
   if (!entries.length) return new Response("None of these posters could be drawn.", { status: 422 });
   const zip = buildZip(entries);
+  /* Downloading is not sending: the Timeline records what was in the ZIP, as a download. */
+  await recordBatchZipDownload(caller.user.id, { id: batch.id, templateName: batch.templateName }, included);
   return new Response(new Uint8Array(zip), {
     headers: { "Content-Type": "application/zip", "Content-Disposition": `attachment; filename="posters-${batch.templateId}.zip"`, "Cache-Control": "private, no-store" },
   });

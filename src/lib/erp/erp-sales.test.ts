@@ -636,7 +636,15 @@ describe("the billing view", () => {
     const blind = { ...ctx, powers: new Set([...ctx.powers].filter((p) => p !== "viewSalesRate" && p !== "viewSalesAmounts")) };
     const [hidden] = await billingViewFor(blind, [ticked.id]);
     assert.ok(hidden.rows.every((r) => r.rate == null && r.amount == null));
-    assert.deepEqual(hidden.totals, [{ l: "Total weight", v: { show: "7.8 kg", copy: "7.8" } }], "3 loose cans of 1.1 kg and one box of 4.5 kg: weight is not money");
+    assert.deepEqual(
+      hidden.totals,
+      [
+        { l: "Total can qty", v: { show: "3", copy: "3" } },
+        { l: "Total box qty", v: { show: "1", copy: "1" } },
+        { l: "Total weight", v: { show: "7.8 kg", copy: "7.8" } },
+      ],
+      "3 loose cans of 1.1 kg and one box of 4.5 kg: cans, boxes and weight are not money",
+    );
   });
 });
 

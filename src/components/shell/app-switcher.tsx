@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "./icons";
 import { cx } from "@/components/ui/primitives";
 import type { AppDefinition, AppId } from "@/lib/apps";
+import { APP_ICON_PATH, GROUP_TONE, groupApps } from "@/lib/launcher-groups";
 
 /**
  * The grid button in every app header.
@@ -13,38 +14,22 @@ import type { AppDefinition, AppId } from "@/lib/apps";
  * It switches app rather than going back to the launcher: a telecaller who
  * wants Orders wants Orders, and routing them via a page of tiles to click a
  * second time is a step that exists only because it was easier to build. The
- * launcher is still one row away for anyone who wants to see everything.
+ * launcher is still one click away for anyone who wants to see everything.
  *
  * Only rendered when the account opens more than one app — a single app is not
  * a choice, and the button would be a lie.
  *
- * Each app is drawn with a GLYPH rather than its initials. Initials were the
- * whole identity of a row, and two apps share them — Accounts and Admin
- * Console are both "AC" — so the one mark meant to tell rows apart at a glance
- * was the one that could not. A line of what the app is for sits under the
- * name, because "HRMS" and "ERP" say nothing to somebody who has not opened
- * them yet.
+ * THE PANEL IS THE LAUNCHER IN SMALL (Nov 2026). It was one two-column wall of
+ * seventeen rows with two lines of description each, every icon the same
+ * purple, so finding an app meant reading. It now draws the launcher's own
+ * shelves (`lib/launcher-groups.ts`) — Sell, Money & operations, People,
+ * Company — each in its colour, as compact tiles with the app's own glyph and
+ * one line of what it is for. A search box at the top narrows the tiles as you
+ * type; the 1–9 shortcuts follow the shelves' order, which is the launcher's,
+ * so the same key opens the same app on both.
  */
-const GLYPH: Record<AppId, string> = {
-  crm: "phone",
-  field: "phone",
-  sales: "dashboard",
-  accounts: "wallet",
-  people: "people",
-  reports: "chart",
-  hrms: "people",
-  admin: "settings",
-  founder: "target",
-  enquiries: "mail",
-  erp: "clipboard",
-  website: "grid",
-  hire: "people",
-  factory: "clipboard",
-  docs: "book",
-  tasks: "check",
-  studio: "image",
-  locker: "lock",
-};
+
+type Shelf = ReturnType<typeof groupApps<AppDefinition>>[number];
 
 export function AppSwitcher({
   apps,
@@ -58,85 +43,124 @@ export function AppSwitcher({
 }) {
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
+  const [query, setQuery] = React.useState("");
   const boxRef = React.useRef<HTMLDivElement>(null);
   const buttonRef = React.useRef<HTMLButtonElement>(null);
-  const gridRef = React.useRef<HTMLDivElement>(null);
-  const itemRefs = React.useRef<(HTMLElement | null)[]>([]);
+  const searchRef = React.useRef<HTMLInputElement>(null);
+  const itemRefs = React.useRef<Map<AppId, HTMLElement>>(new Map());
+
+  /* The launcher's order: the shelves, and the apps in each. The shortcuts follow it. */
+  const shelves = React.useMemo(() => groupApps(apps), [apps]);
+  const ordered = React.useMemo(() => shelves.flatMap((s) => s.apps), [shelves]);
+  const keyOf = React.useMemo(() => new Map(ordered.slice(0, 9).map((a, i) => [a.id, String(i + 1)])), [ordered]);
+
+  const q = query.trim().toLowerCase();
+  const shown: Shelf[] = q
+    ? shelves
+        .map((s) => ({ ...s, apps: s.apps.filter((a) => a.name.toLowerCase().includes(q) || a.description.toLowerCase().includes(q)) }))
+        .filter((s) => s.apps.length)
+    : shelves;
+  const shownApps = shown.flatMap((s) => s.apps);
+
+  const close = React.useCallback((refocus = false) => {
+    setOpen(false);
+    setQuery("");
+    if (refocus) buttonRef.current?.focus();
+  }, []);
+
+  const go = React.useCallback(
+    (app: AppDefinition) => {
+      close();
+      if (app.id !== current) router.push(app.href);
+    },
+    [close, current, router],
+  );
 
   React.useEffect(() => {
     if (!open) return;
-
-    // Focus lands on the app you are in, so the arrows start from "here".
-    const start = Math.max(
-      0,
-      apps.findIndex((a) => a.id === current),
-    );
-    itemRefs.current[start]?.focus();
-
+    // Typing finds an app straight away; the arrows start from the search box.
+    searchRef.current?.focus();
     const onDown = (e: MouseEvent) => {
-      if (boxRef.current && !boxRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) close();
     };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setOpen(false);
-        buttonRef.current?.focus();
-        return;
-      }
-      // While the menu is open the number on each tile opens it, which is
-      // the same key that opens it on the launcher.
-      if (/^[1-9]$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey) {
-        const app = apps[Number(e.key) - 1];
-        if (!app) return;
-        e.preventDefault();
-        setOpen(false);
-        if (app.id !== current) router.push(app.href);
-        return;
-      }
-      // Arrows walk the grid: along a row, or down and up by a whole row —
-      // two tiles wide on a desk, one on a narrow window.
-      const arrow = ARROW_STEP[e.key];
-      if (!arrow) return;
-      const columns = gridRef.current
-        ? getComputedStyle(gridRef.current).gridTemplateColumns.split(" ").length
-        : 1;
-      const step = arrow.vertical ? arrow.by * columns : arrow.by;
-      const at = itemRefs.current.findIndex(
-        (el) => el === document.activeElement,
-      );
-      const next = at === -1 ? 0 : at + step;
-      if (next < 0 || next >= apps.length) return;
-      e.preventDefault();
-      itemRefs.current[next]?.focus();
-    };
-
     document.addEventListener("mousedown", onDown);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [open, apps, current, router]);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open, close]);
+
+  /* Arrows walk the tiles by where they are on screen, so a shelf of two sits under a shelf of three without the steps going wrong. */
+  const move = (from: HTMLElement | null, key: string) => {
+    const tiles = shownApps.map((a) => itemRefs.current.get(a.id)).filter((el): el is HTMLElement => !!el);
+    if (!tiles.length) return;
+    if (!from || from === searchRef.current) {
+      if (key === "ArrowDown" || key === "ArrowRight") tiles[0].focus();
+      return;
+    }
+    const at = tiles.indexOf(from);
+    if (key === "ArrowRight") return tiles[at + 1]?.focus();
+    if (key === "ArrowLeft") return (tiles[at - 1] ?? searchRef.current)?.focus();
+    const r = from.getBoundingClientRect();
+    const cx0 = r.left + r.width / 2;
+    let best: HTMLElement | null = null;
+    let score = Infinity;
+    for (const el of tiles) {
+      if (el === from) continue;
+      const o = el.getBoundingClientRect();
+      const dy = key === "ArrowDown" ? o.top - r.bottom : r.top - o.bottom;
+      if (dy < -2) continue;
+      const s = dy * 1000 + Math.abs(o.left + o.width / 2 - cx0);
+      if (s < score) {
+        score = s;
+        best = el;
+      }
+    }
+    if (best) best.focus();
+    else if (key === "ArrowUp") searchRef.current?.focus();
+  };
+
+  const onPanelKey = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      close(true);
+      return;
+    }
+    const inSearch = e.target === searchRef.current;
+    // The number on a tile opens it — the launcher's keys — unless a search is being typed.
+    if (/^[1-9]$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey && !(inSearch && query)) {
+      const app = ordered[Number(e.key) - 1];
+      if (!app) return;
+      e.preventDefault();
+      go(app);
+      return;
+    }
+    if (inSearch && e.key === "Enter" && shownApps[0]) {
+      e.preventDefault();
+      go(shownApps[0]);
+      return;
+    }
+    if (["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight"].includes(e.key)) {
+      if (inSearch && (e.key === "ArrowLeft" || e.key === "ArrowRight")) return;
+      e.preventDefault();
+      move(document.activeElement as HTMLElement | null, e.key);
+    }
+  };
+
+  const currentApp = apps.find((a) => a.id === current);
 
   return (
     <div ref={boxRef} className="relative flex-none">
       <button
         ref={buttonRef}
         type="button"
-        onClick={() => setOpen((o) => !o)}
-        title="Switch app"
+        onClick={() => (open ? close() : setOpen(true))}
+        title={open ? undefined : "Switch app"}
         aria-label="Switch app"
-        aria-haspopup="menu"
+        aria-haspopup="dialog"
         aria-expanded={open}
         className={cx(
           label
             ? "flex h-[34px] cursor-pointer items-center gap-2 rounded-control border border-brand-softer bg-surface px-2.5 text-[13px] font-semibold text-ink transition-colors duration-100 hover:bg-canvas"
             : "flex h-8 w-8 cursor-pointer items-center justify-center rounded-[4px] border transition-colors duration-100",
-          !label &&
-            (open
-              ? "border-brand bg-brand-soft text-brand"
-              : "border-line bg-surface text-muted hover:bg-canvas hover:text-body"),
+          !label && (open ? "border-brand bg-brand-soft text-brand" : "border-line bg-surface text-muted hover:bg-canvas hover:text-body"),
         )}
       >
         {label ? (
@@ -156,137 +180,155 @@ export function AppSwitcher({
 
       {open ? (
         <div
-          role="menu"
+          role="dialog"
           aria-label="Switch app"
-          className="animate-fade-in absolute top-10 left-0 z-50 w-[min(620px,calc(100vw-24px))] overflow-hidden rounded-[8px] border border-line bg-surface shadow-[0_12px_32px_rgba(22,22,22,0.14),0_2px_6px_rgba(22,22,22,0.06)]"
+          onKeyDown={onPanelKey}
+          className="animate-fade-in absolute top-10 left-0 z-50 flex max-h-[min(640px,calc(100vh-72px))] w-[min(960px,calc(100vw-24px))] flex-col overflow-hidden rounded-[12px] border border-line bg-surface shadow-[0_18px_48px_rgba(22,22,22,0.16),0_2px_8px_rgba(22,22,22,0.06)]"
         >
-          <div className="flex items-baseline justify-between gap-4 px-4 pt-3.5 pb-2">
-            <span className="text-sm font-semibold text-ink">
-              Switch app
+          {/* Search and the way out to the launcher. */}
+          <div className="flex items-center gap-3 border-b border-divider px-4 py-3">
+            <div className="relative min-w-0 flex-1">
+              <Icon name="search" size={16} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted" />
+              <input
+                ref={searchRef}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={currentApp ? `Find an app — you are in ${currentApp.name}` : "Find an app"}
+                aria-label="Find an app"
+                className="h-10 w-full rounded-[8px] border border-line bg-canvas pr-3 pl-9 text-sm text-ink outline-none placeholder:text-faint focus:border-brand focus:bg-surface focus:ring-2 focus:ring-brand-soft"
+              />
+            </div>
+            <Link
+              href="/apps"
+              onClick={() => close()}
+              className="group hidden flex-none items-center gap-1.5 rounded-[8px] px-2.5 py-2 text-[13px] font-semibold text-brand no-underline hover:bg-brand-soft hover:no-underline sm:flex"
+            >
+              <Icon name="grid" size={15} />
+              Launcher
+              <Icon name="arrowRight" size={14} className="transition-transform duration-100 group-hover:translate-x-0.5" />
+            </Link>
+          </div>
+
+          {/* The shelves. */}
+          <div
+            className="grid min-h-0 flex-1 grid-cols-1 content-start gap-x-3 gap-y-4 overflow-y-auto px-3 pt-3.5 pb-3 sm:grid-cols-2 lg:[grid-template-columns:var(--shelves)]"
+            style={{ "--shelves": `repeat(${Math.max(1, shown.length)}, minmax(0, 1fr))` } as React.CSSProperties}
+          >
+            {shown.length === 0 ? (
+              <div className="col-span-full px-3 py-10 text-center text-sm text-muted">
+                No app matches “{query.trim()}”.
+              </div>
+            ) : (
+              shown.map((shelf) => {
+                const tone = GROUP_TONE[shelf.id];
+                return (
+                  <section key={shelf.id} aria-label={shelf.title} className="min-w-0">
+                    <h3 className="mb-1.5 flex items-center gap-2 px-1.5 text-2xs font-semibold tracking-[0.06em] text-muted uppercase">
+                      <span aria-hidden className="h-1.5 w-1.5 rounded-full" style={{ background: tone.dot }} />
+                      {shelf.title}
+                    </h3>
+                    <div className="flex flex-col gap-1">
+                      {shelf.apps.map((app) => {
+                        const here = app.id === current;
+                        const key = keyOf.get(app.id);
+                        const setRef = (el: HTMLElement | null) => {
+                          if (el) itemRefs.current.set(app.id, el);
+                          else itemRefs.current.delete(app.id);
+                        };
+                        const body = (
+                          <>
+                            <span
+                              aria-hidden
+                              className="flex h-10 w-10 flex-none items-center justify-center rounded-[10px] transition-transform duration-100 group-hover:scale-105"
+                              style={{ background: here ? tone.dot : tone.bg, color: here ? "#fff" : tone.fg }}
+                            >
+                              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                <path d={APP_ICON_PATH[app.id]} />
+                              </svg>
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="flex items-center gap-1.5">
+                                <span className="truncate text-sm font-semibold text-ink">{app.name}</span>
+                                {here ? (
+                                  <span className="flex-none rounded-full bg-brand px-1.5 text-[10px] leading-4 font-semibold text-white">Open</span>
+                                ) : !app.built ? (
+                                  <span className="flex-none rounded-full bg-divider px-1.5 text-[10px] leading-4 font-medium text-muted">Soon</span>
+                                ) : null}
+                              </span>
+                              <span className="mt-0.5 block truncate text-xs text-muted" title={app.description}>
+                                {app.description}
+                              </span>
+                            </span>
+                            {key && !here ? (
+                              <kbd className="hidden h-5 min-w-5 flex-none items-center justify-center self-start rounded-[4px] border border-line bg-surface px-1 font-sans text-[11px] font-medium text-faint group-hover:flex group-focus-visible:flex">
+                                {key}
+                              </kbd>
+                            ) : null}
+                          </>
+                        );
+                        const shape =
+                          "group flex min-h-[60px] items-center gap-3 rounded-[10px] border px-2.5 py-2 text-left no-underline outline-none hover:no-underline";
+                        return here ? (
+                          <button
+                            key={app.id}
+                            ref={setRef}
+                            type="button"
+                            aria-current="page"
+                            onClick={() => close()}
+                            className={cx(shape, "cursor-default border-brand-softer bg-brand-soft focus-visible:ring-2 focus-visible:ring-brand")}
+                          >
+                            {body}
+                          </button>
+                        ) : (
+                          <Link
+                            key={app.id}
+                            ref={setRef}
+                            href={app.href}
+                            onClick={() => close()}
+                            className={cx(
+                              shape,
+                              "border-transparent hover:border-line hover:bg-canvas focus-visible:border-brand focus-visible:bg-canvas focus-visible:ring-2 focus-visible:ring-brand-soft",
+                            )}
+                          >
+                            {body}
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  </section>
+                );
+              })
+            )}
+          </div>
+
+          {/* How to drive it without the mouse. */}
+          <div className="hidden items-center gap-4 border-t border-divider bg-canvas px-4 py-2 text-xs text-muted sm:flex">
+            <span className="flex items-center gap-1.5">
+              <Key>↑</Key>
+              <Key>↓</Key>
+              <Key>←</Key>
+              <Key>→</Key> move
             </span>
-            {apps.length > 1 ? (
-              <span className="hidden items-center gap-1 text-xs text-muted sm:flex">
-                Press
-                <Key>1</Key>–<Key>{String(Math.min(apps.length, 9))}</Key>
-                to jump
+            <span className="flex items-center gap-1.5">
+              <Key>Enter</Key> open
+            </span>
+            {ordered.length > 1 ? (
+              <span className="flex items-center gap-1.5">
+                <Key>1</Key>–<Key>{String(Math.min(ordered.length, 9))}</Key> jump
               </span>
             ) : null}
-          </div>
-
-          <div
-            ref={gridRef}
-            className="grid grid-cols-1 gap-1 px-2 pb-2 sm:grid-cols-2"
-          >
-            {apps.map((app, i) => {
-              const here = app.id === current;
-              const tile = (
-                <>
-                  <span
-                    className={cx(
-                      "flex h-9 w-9 flex-none items-center justify-center rounded-[6px] transition-colors duration-100",
-                      here
-                        ? "bg-brand text-white"
-                        : "bg-brand-soft text-brand group-hover:bg-brand group-hover:text-white group-focus-visible:bg-brand group-focus-visible:text-white",
-                    )}
-                  >
-                    <Icon name={GLYPH[app.id]} size={18} />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-center gap-1.5">
-                      <span className="truncate text-sm font-medium text-ink">
-                        {app.name}
-                      </span>
-                      {!here && !app.built ? (
-                        <span className="flex-none rounded-[10px] bg-divider px-1.5 text-[10px] leading-4 font-medium text-muted">
-                          Not built yet
-                        </span>
-                      ) : null}
-                    </span>
-                    <span className="mt-0.5 line-clamp-2 text-xs leading-[17px] text-muted">
-                      {app.description}
-                    </span>
-                  </span>
-                  {here ? (
-                    <span
-                      title="You are here"
-                      className="flex h-5 w-5 flex-none items-center justify-center rounded-full bg-brand text-white"
-                    >
-                      <Icon name="check" size={12} strokeWidth={2.5} />
-                      <span className="sr-only">You are here</span>
-                    </span>
-                  ) : i < 9 ? (
-                    <Key>{String(i + 1)}</Key>
-                  ) : null}
-                </>
-              );
-
-              const shape =
-                "group flex items-start gap-3 rounded-[6px] px-2.5 py-2.5 text-left no-underline outline-none hover:no-underline";
-              const setRef = (el: HTMLElement | null) => {
-                itemRefs.current[i] = el;
-              };
-
-              return here ? (
-                <button
-                  key={app.id}
-                  ref={setRef}
-                  type="button"
-                  role="menuitem"
-                  aria-current="page"
-                  onClick={() => setOpen(false)}
-                  className={cx(
-                    shape,
-                    "cursor-default bg-brand-soft ring-1 ring-brand-softer focus-visible:ring-brand",
-                  )}
-                >
-                  {tile}
-                </button>
-              ) : (
-                <Link
-                  key={app.id}
-                  ref={setRef}
-                  href={app.href}
-                  role="menuitem"
-                  onClick={() => setOpen(false)}
-                  className={cx(
-                    shape,
-                    "hover:bg-canvas focus-visible:bg-canvas focus-visible:ring-1 focus-visible:ring-brand",
-                  )}
-                >
-                  {tile}
-                </Link>
-              );
-            })}
-          </div>
-
-          <Link
-            href="/apps"
-            role="menuitem"
-            onClick={() => setOpen(false)}
-            className="group flex items-center justify-between gap-3 border-t border-divider bg-canvas px-4 py-2.5 text-[13px] text-muted no-underline hover:text-body hover:no-underline"
-          >
-            All apps, and what is waiting in each
-            <span className="flex items-center gap-1 font-medium text-brand">
-              Open launcher
-              <Icon
-                name="arrowRight"
-                size={14}
-                className="transition-transform duration-100 group-hover:translate-x-0.5"
-              />
+            <span className="flex items-center gap-1.5">
+              <Key>Esc</Key> close
             </span>
-          </Link>
+            <span className="ml-auto">
+              {apps.length} app{apps.length === 1 ? "" : "s"} on your account
+            </span>
+          </div>
         </div>
       ) : null}
     </div>
   );
 }
-
-const ARROW_STEP: Record<string, { by: number; vertical: boolean }> = {
-  ArrowRight: { by: 1, vertical: false },
-  ArrowLeft: { by: -1, vertical: false },
-  ArrowDown: { by: 1, vertical: true },
-  ArrowUp: { by: -1, vertical: true },
-};
 
 function Key({ children }: { children: string }) {
   return (

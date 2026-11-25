@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { cx, PaiseInput } from "@/components/ui/primitives";
+import { cx } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
 import { addDays } from "@/lib/business-date";
 import type { Result } from "@/lib/result";
@@ -22,10 +22,8 @@ import {
   bankIndex,
   Button,
   checkboxClass,
-  FigureBoxes,
   FileBox,
   fd,
-  fdLong,
   FROM_CUSTOMER_CASH,
   FROM_WITHDRAWAL,
   inr,
@@ -37,7 +35,6 @@ import {
   MoneyFoot,
   MoneyHead,
   MoneyShell,
-  MoneySteps,
   MSelect,
   Note,
   PaidFromCards,
@@ -91,11 +88,28 @@ function useSave(onClose: () => void) {
 
 const accountByName = (kit: MoneyKit, name: string): KitAccount | undefined => kit.accounts.find((a) => a.name === name);
 
+/** A note is rarely needed: a link until somebody wants one. */
+function NoteBox({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [open, setOpen] = React.useState(!!value);
+  if (!open)
+    return (
+      <button type="button" onClick={() => setOpen(true)} className={linkClass("brand", "self-end justify-self-start pb-2 text-sm font-semibold")}>
+        + Note
+      </button>
+    );
+  return (
+    <MField label="Note">
+      <MInput autoFocus value={value} onChange={(x) => onChange(x.target.value)} />
+    </MField>
+  );
+}
+
 /* ================================================================ expense */
 
 export function ExpenseDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => void }) {
   const { busy, errs, save } = useSave(onClose);
-  const [page, setPage] = React.useState<0 | 1>(0);
+  /* ONE page, in the order a person tells it: how much, to whom, for what,
+     from which account. The server checks every rule again on save. */
   const [date, setDate] = React.useState(kit.today);
   const [category, setCategory] = React.useState("");
   const [amount, setAmount] = React.useState<number | null>(null);
@@ -104,14 +118,12 @@ export function ExpenseDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => 
   const [description, setDescription] = React.useState("");
   const banks = kit.accounts.filter((a) => a.kind === "bank");
   const [paidFrom, setPaidFrom] = React.useState(banks[0]?.name ?? kit.accounts[0]?.name ?? "");
-  const [paidOn, setPaidOn] = React.useState(kit.today);
   const [mode, setMode] = React.useState("NEFT");
   const [reference, setReference] = React.useState("");
   const [file, setFile] = React.useState<Upload>(null);
   const [note, setNote] = React.useState("");
   const [dup, setDup] = React.useState<{ id: string; label: string; date: string; amountPaise: number } | null>(null);
   const [different, setDifferent] = React.useState(false);
-  const [tried, setTried] = React.useState(false);
 
   React.useEffect(() => {
     if (!invoiceNo.trim()) return;
@@ -122,23 +134,15 @@ export function ExpenseDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => 
 
   const acc = accountByName(kit, paidFrom);
   const isCash = acc && acc.kind !== "bank";
-  const whatDone = !!(category && amount && invoiceNo.trim() && description.trim());
-  const payDone = !!(paidFrom && paidOn && (isCash || mode));
-  const local: Errors = {};
-  if (tried) {
-    if (!category) local.category = "Choose the category.";
-    if (!amount) local.amount = "Enter the amount paid.";
-    if (!invoiceNo.trim()) local.invoiceNo = "The invoice or bill number is required.";
-    if (!description.trim()) local.description = "Say what it was for.";
-  }
-  if (dupNow && !different) local.invoiceNo = `Already on ${dupNow.label} (${fd(dupNow.date)}, ${inr(dupNow.amountPaise)})`;
-  const e = { ...errs, ...local };
+  const e: Errors = { ...errs };
+  if (dupNow && !different) e.invoiceNo = `Already entered as ${dupNow.label} (${fd(dupNow.date)}, ${inr(dupNow.amountPaise)})`;
+  const needsApproval = (amount ?? 0) > kit.approvalAbove;
 
   const submit = () =>
     save(() =>
       erpMoneyExpense({
         petty: false,
-        date: paidOn,
+        date,
         category,
         payee,
         invoiceNo,
@@ -147,132 +151,73 @@ export function ExpenseDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => 
         paidFrom,
         source: null,
         mode: isCash ? "Cash" : mode,
-        reference,
-        note: [date !== paidOn ? `Expense dated ${fdLong(date)}.` : "", note].filter(Boolean).join(" ") || null,
+        reference: isCash ? null : reference,
+        note: note || null,
         files: file ? [file.id] : [],
         duplicateOverride: different,
       }),
     );
 
   return (
-    <MoneyShell onClose={onClose} label="New expense" width={900}>
-      <MoneyHead title="New expense" code={`${kit.nextTxn} · assigned on save`} onClose={onClose} />
-      <MoneySteps steps={["What & who", "Payment", "Review"]} at={page === 1 ? 2 : whatDone ? 1 : 0} done={[whatDone, page === 1 && payDone, false]} />
+    <MoneyShell onClose={onClose} label="Add expense" width={820}>
+      <MoneyHead title="Add expense" onClose={onClose} />
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-        {page === 0 ? (
-          <div className="grid gap-4">
-            <div className="grid grid-cols-3 gap-x-4 gap-y-4">
-              <MField label="Expense date" req error={e.date}>
-                <MInput type="date" value={date} max={kit.today} onChange={(x) => setDate(x.target.value)} invalid={!!e.date} />
-              </MField>
-              <MField label="Category" req error={e.category}>
-                <MSelect value={category} onChange={setCategory} options={kit.categories} placeholder="Choose…" invalid={!!e.category} />
-              </MField>
-              <MField label="Amount" req error={e.amount}>
-                <MMoney paise={amount} onPaise={setAmount} invalid={!!e.amount} />
-              </MField>
-              <MField label="Vendor / payee" error={e.payee}>
-                <MInput value={payee} onChange={(x) => setPayee(x.target.value)} placeholder="Who was paid" />
-              </MField>
-              <MField label="Invoice number" req error={e.invoiceNo}>
-                <MInput value={invoiceNo} onChange={(x) => setInvoiceNo(x.target.value)} invalid={!!e.invoiceNo} />
-              </MField>
-              <MField label="Description / purpose" req error={e.description}>
-                <MInput value={description} onChange={(x) => setDescription(x.target.value)} invalid={!!e.description} />
-              </MField>
-            </div>
-            {dupNow ? (
-              <Note tone="danger">
-                <b>Looks like a duplicate.</b> Same invoice number{payee ? ", vendor" : ""} and amount as {dupNow.label}.{" "}
-                <a href={`?view=expenses&open=${dupNow.id}`} target="_blank" rel="noreferrer" className={linkClass("brand", "font-semibold")}>
-                  Open it
-                </a>{" "}
-                · or tick{" "}
-                <label className="inline-flex cursor-pointer items-center gap-1.5 font-bold">
-                  <input type="checkbox" className={checkboxClass} checked={different} onChange={(x) => setDifferent(x.target.checked)} />
-                  &quot;This is a different invoice&quot;
-                </label>{" "}
-                to save anyway.
-              </Note>
-            ) : null}
-            <MField label="Paid from" req>
-              <PaidFromCards choices={accountChoices(kit.accounts, amount ?? 0, "out")} value={paidFrom} onChange={setPaidFrom} error={e.paidFrom} />
+        <div className="grid gap-4">
+          <div className="grid grid-cols-3 gap-x-4 gap-y-4">
+            <MField label="Amount" req error={e.amount}>
+              <MMoney autoFocus paise={amount} onPaise={setAmount} invalid={!!e.amount} />
             </MField>
-            <div className="grid grid-cols-3 gap-x-4 gap-y-4">
-              <MField label="Paid on" req error={e.date}>
-                <MInput type="date" value={paidOn} max={kit.today} onChange={(x) => setPaidOn(x.target.value)} />
-              </MField>
-              <MField label="Mode" req error={e.mode}>
-                <MSelect value={isCash ? "Cash" : mode} onChange={setMode} options={isCash ? ["Cash"] : PAY_MODES.filter((m) => m !== "Cash")} />
-              </MField>
-              <MField label="UTR / cheque / reference" error={e.reference} hint={acc?.kind === "bank" ? `Used to match the ${acc.name.split(" ")[0]} statement line` : undefined}>
-                <MInput value={reference} onChange={(x) => setReference(x.target.value)} disabled={!!isCash} placeholder={isCash ? "Cash — none" : ""} />
-              </MField>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <MField label="Invoice / supporting document">
-                <FileBox value={file} onChange={setFile} empty="Attach the invoice — photo or PDF" />
-              </MField>
-              <MField label="Notes">
-                <MInput value={note} onChange={(x) => setNote(x.target.value)} placeholder="Optional" />
-              </MField>
-            </div>
-            {e._ ? <Note tone="danger">{e._}</Note> : null}
+            <MField label="Paid to" error={e.payee}>
+              <MInput value={payee} onChange={(x) => setPayee(x.target.value)} />
+            </MField>
+            <MField label="Category" req error={e.category}>
+              <MSelect value={category} onChange={setCategory} options={kit.categories} placeholder="Choose…" invalid={!!e.category} />
+            </MField>
+            <MField label="For" req error={e.description}>
+              <MInput value={description} onChange={(x) => setDescription(x.target.value)} invalid={!!e.description} />
+            </MField>
+            <MField label="Bill number" req error={e.invoiceNo}>
+              <MInput value={invoiceNo} onChange={(x) => setInvoiceNo(x.target.value)} invalid={!!e.invoiceNo} />
+            </MField>
+            <MField label="Date paid" req error={e.date}>
+              <MInput type="date" value={date} max={kit.today} onChange={(x) => setDate(x.target.value)} invalid={!!e.date} />
+            </MField>
           </div>
-        ) : (
-          <Review
-            rows={[
-              ["Expense date", fdLong(date)],
-              ["Category", category],
-              ["Amount", inr(amount ?? 0)],
-              ["Vendor / payee", payee || "—"],
-              ["Invoice number", invoiceNo],
-              ["Description", description],
-              ["Paid from", acc ? `${acc.name} · ${inr(acc.balance)} → ${inr(acc.balance - (amount ?? 0))}` : paidFrom],
-              ["Paid on", fdLong(paidOn)],
-              ["Mode", isCash ? "Cash" : mode],
-              ["Reference", reference || "—"],
-              ["Document", file?.name ?? "None attached"],
-              ["Approval", (amount ?? 0) > kit.approvalAbove ? `Goes to the Accountant — above ${inr(kit.approvalAbove)}` : "Paid — no approval needed"],
-            ]}
-            errors={e}
-            onChange={() => setPage(0)}
-          />
-        )}
+          {dupNow ? (
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-danger">
+              <input type="checkbox" className={checkboxClass} checked={different} onChange={(x) => setDifferent(x.target.checked)} />
+              This is a different bill — save it anyway
+            </label>
+          ) : null}
+          <MField label="Paid from" req>
+            <PaidFromCards choices={accountChoices(kit.accounts, amount ?? 0, "out", undefined, kit.seesBalances)} value={paidFrom} onChange={setPaidFrom} error={e.paidFrom} />
+          </MField>
+          {!isCash ? (
+            <div className="grid grid-cols-3 gap-x-4 gap-y-4">
+              <MField label="Mode" req error={e.mode}>
+                <MSelect value={mode} onChange={setMode} options={PAY_MODES.filter((m) => m !== "Cash")} />
+              </MField>
+              <MField label="UTR / cheque no." error={e.reference} className="col-span-2">
+                <MInput value={reference} onChange={(x) => setReference(x.target.value)} />
+              </MField>
+            </div>
+          ) : null}
+          <div className="grid grid-cols-2 gap-4">
+            <MField label="Bill photo">
+              <FileBox value={file} onChange={setFile} empty="Add photo" />
+            </MField>
+            <NoteBox value={note} onChange={setNote} />
+          </div>
+          {e._ ? <Note tone="danger">{e._}</Note> : null}
+        </div>
       </div>
-      <MoneyFoot left={`Created by ${kit.me} · needs approval above ${inr(kit.approvalAbove)}`}>
-        <Button onClick={() => (page === 1 ? setPage(0) : onClose())}>{page === 1 ? "Back" : "Cancel"}</Button>
-        {page === 0 ? (
-          <Button variant="primary" disabled={!!dupNow && !different} onClick={() => (whatDone && paidFrom ? setPage(1) : setTried(true))}>
-            Next: Review
-          </Button>
-        ) : (
-          <Button variant="primary" disabled={busy} onClick={submit}>
-            {busy ? "Saving…" : "Save expense"}
-          </Button>
-        )}
+      <MoneyFoot left={needsApproval ? "Needs approval" : ""}>
+        <Button onClick={onClose}>Cancel</Button>
+        <Button variant="primary" disabled={busy || (!!dupNow && !different)} onClick={submit}>
+          {busy ? "Saving…" : "Save expense"}
+        </Button>
       </MoneyFoot>
     </MoneyShell>
-  );
-}
-
-function Review({ rows, errors, onChange }: { rows: [string, string][]; errors: Errors; onChange: () => void }) {
-  const any = Object.values(errors).filter(Boolean);
-  return (
-    <div className="grid gap-4">
-      {any.length ? <Note tone="danger">{any[0]}</Note> : null}
-      <div className="overflow-hidden rounded-card border border-line">
-        {rows.map(([l, v]) => (
-          <div key={l} className="flex gap-4 border-b border-divider px-4 py-2.5 text-sm last:border-b-0">
-            <span className="w-48 flex-none text-muted">{l}</span>
-            <span className="min-w-0 flex-1 font-medium text-ink">{v}</span>
-          </div>
-        ))}
-      </div>
-      <button type="button" onClick={onChange} className={linkClass("brand", "justify-self-start text-sm font-semibold")}>
-        Change something
-      </button>
-    </div>
   );
 }
 
@@ -283,10 +228,11 @@ function pettyChoices(kit: MoneyKit, amount: number): CardChoice[] {
   const bank = kit.accounts.find((a) => a.kind === "bank");
   const petty = kit.accounts.find((a) => a.kind === "petty");
   const out: CardChoice[] = [];
-  if (bank) out.push({ key: bank.name, name: `${bank.name.split(" ")[0]} GPay`, kind: "bank", mark: 0, sub: `matched on ${bank.name.split(" ")[0]} statement` });
-  if (petty) out.push({ key: petty.name, name: petty.name, kind: "petty", sub: inr(petty.balance), after: amount > 0 ? `${inr(petty.balance)} → ${inr(petty.balance - amount)}` : undefined });
-  out.push({ key: FROM_WITHDRAWAL, name: `Cash withdrawn from ${bank ? bank.name.split(" ")[0] : "a bank"}`, kind: "cash", sub: "pick the withdrawal TXN" });
-  out.push({ key: FROM_CUSTOMER_CASH, name: "Cash from a customer", kind: "customer", sub: "pick the cash receipt" });
+  if (bank) out.push({ key: bank.name, name: `${bank.name.split(" ")[0]} GPay`, kind: "bank", mark: 0, sub: "" });
+  const show = kit.seesBalances;
+  if (petty) out.push({ key: petty.name, name: petty.name, kind: "petty", sub: show ? inr(petty.balance) : "", after: show && amount > 0 ? `${inr(petty.balance)} → ${inr(petty.balance - amount)}` : undefined });
+  out.push({ key: FROM_WITHDRAWAL, name: `Cash withdrawn from ${bank ? bank.name.split(" ")[0] : "a bank"}`, kind: "cash", sub: "" });
+  out.push({ key: FROM_CUSTOMER_CASH, name: "Cash from a customer", kind: "customer", sub: "" });
   return out;
 }
 
@@ -326,75 +272,58 @@ export function PettyDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => vo
         duplicateOverride: false,
       }),
     );
-  const example = kit.customerCash[0];
   return (
-    <MoneyShell onClose={onClose} label="New petty cash expense" width={880}>
-      <MoneyHead title="New petty cash expense" code={kit.nextTxn} onClose={onClose} />
+    <MoneyShell onClose={onClose} label="Add petty cash spend" width={820}>
+      <MoneyHead title="Add petty cash spend" onClose={onClose} />
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
         <div className="grid gap-4">
           <div className="grid grid-cols-3 gap-x-4 gap-y-4">
-            <MField label="Date" req error={e.date}>
-              <MInput type="date" value={date} max={kit.today} onChange={(x) => setDate(x.target.value)} invalid={!!e.date} />
-            </MField>
-            <MField label="Category" req error={e.category}>
-              <MSelect value={category} onChange={setCategory} options={kit.categories} placeholder="Choose…" invalid={!!e.category} />
-            </MField>
             <MField label="Amount" req error={e.amount}>
-              <MMoney paise={amount} onPaise={setAmount} invalid={!!e.amount} />
+              <MMoney autoFocus paise={amount} onPaise={setAmount} invalid={!!e.amount} />
             </MField>
             <MField label="Paid to" error={e.payee}>
               <MInput value={payee} onChange={(x) => setPayee(x.target.value)} />
             </MField>
-            <MField label="Invoice / bill no." req error={e.invoiceNo}>
+            <MField label="Category" req error={e.category}>
+              <MSelect value={category} onChange={setCategory} options={kit.categories} placeholder="Choose…" invalid={!!e.category} />
+            </MField>
+            <MField label="For" error={e.description}>
+              <MInput value={purpose} onChange={(x) => setPurpose(x.target.value)} />
+            </MField>
+            <MField label="Bill number" req error={e.invoiceNo}>
               <MInput value={invoiceNo} onChange={(x) => setInvoiceNo(x.target.value)} invalid={!!e.invoiceNo} />
             </MField>
-            <MField label="Purpose" error={e.description}>
-              <MInput value={purpose} onChange={(x) => setPurpose(x.target.value)} />
+            <MField label="Date" req error={e.date}>
+              <MInput type="date" value={date} max={kit.today} onChange={(x) => setDate(x.target.value)} invalid={!!e.date} />
             </MField>
           </div>
           <MField label="Paid from" req>
             <PaidFromCards choices={pettyChoices(kit, amount ?? 0)} value={from} onChange={setFrom} error={e.paidFrom} />
           </MField>
-          {from === FROM_CUSTOMER_CASH ? (
-            <Note tone="warn">
-              Paying from <b>customer cash</b>? The receipt must already be in <b>Receipts</b>. You pick it here
-              {example ? (
-                <>
-                  {" "}— e.g.{" "}
-                  <i>
-                    {example.label} · {inr(example.left)} still unused
-                  </i>
-                </>
-              ) : null}{" "}
-              — and the two are linked.
-            </Note>
-          ) : null}
           {isSource ? (
-            <MField label={from === FROM_CUSTOMER_CASH ? "Cash receipt it came from" : "Withdrawal it came from"} req error={e.source}>
+            <MField label={from === FROM_CUSTOMER_CASH ? "Whose cash?" : "Which withdrawal?"} req error={e.source} hint={sources.length ? undefined : "Nothing has cash left."}>
               <MSelect
                 value={source}
                 onChange={setSource}
                 placeholder={sources.length ? "Choose…" : "Nothing with cash left"}
-                options={sources.map((s) => ({ v: s.label.split(" · ")[0], l: `${s.label} · ${inr(s.left)} unused` }))}
+                options={sources.map((s) => ({ v: s.label.split(" · ")[0], l: `${s.label} · ${inr(s.left)} left` }))}
                 invalid={!!e.source}
               />
             </MField>
           ) : null}
           <div className="grid grid-cols-2 gap-4">
             <MField label="Bill photo" req error={e.files}>
-              <FileBox value={file} onChange={setFile} empty="Photo of the bill" />
+              <FileBox value={file} onChange={setFile} empty="Add photo" />
             </MField>
-            <MField label="Notes">
-              <MInput value={note} onChange={(x) => setNote(x.target.value)} placeholder="Optional" />
-            </MField>
+            <NoteBox value={note} onChange={setNote} />
           </div>
           {e._ ? <Note tone="danger">{e._}</Note> : null}
         </div>
       </div>
-      <MoneyFoot left={`Submitted by ${kit.me} → the Accountant reviews it`}>
+      <MoneyFoot>
         <Button onClick={onClose}>Cancel</Button>
         <Button variant="primary" disabled={busy} onClick={submit}>
-          {busy ? "Saving…" : "Submit for review"}
+          {busy ? "Saving…" : "Save"}
         </Button>
       </MoneyFoot>
     </MoneyShell>
@@ -485,22 +414,21 @@ export function ReceiptDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => 
         files: [],
       }),
     );
-  const who = fromKind === "Customer" ? (customer ? customer.split(",")[0] : "") : payer;
   return (
-    <MoneyShell onClose={onClose} label="New receipt" width={960}>
-      <MoneyHead title="New receipt" code={`${kit.nextTxn} · assigned on save`} onClose={onClose} />
+    <MoneyShell onClose={onClose} label="Add money received" width={880}>
+      <MoneyHead title="Add money received" onClose={onClose} />
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
         <div className="grid gap-4">
           <div className="grid grid-cols-3 gap-x-4 gap-y-4">
-            <MField label="Receipt date" req error={e.date}>
-              <MInput type="date" value={date} max={kit.today} onChange={(x) => setDate(x.target.value)} invalid={!!e.date} />
+            <MField label="Amount" req error={e.amount}>
+              <MMoney autoFocus paise={amount} onPaise={setAmount} invalid={!!e.amount} />
             </MField>
-            <MField label="Received from" req>
+            <MField label="From" req>
               <Segments options={["Customer", "Other party"]} value={fromKind} onChange={setFromKind} />
             </MField>
             {fromKind === "Customer" ? (
-              <MField label="Customer" req error={e.customer} hint={open ? `Outstanding ${inr(open.outstanding)} · ${open.list.length} open bill${open.list.length === 1 ? "" : "s"}` : undefined}>
-                <input list="money-customers" value={customer} onChange={(x) => setCustomer(x.target.value)} className={boxClass(!!e.customer)} placeholder="Search a customer" />
+              <MField label="Customer" req error={e.customer} hint={open ? `They owe ${inr(open.outstanding)}` : undefined}>
+                <input list="money-customers" value={customer} onChange={(x) => setCustomer(x.target.value)} className={boxClass(!!e.customer)} />
                 <datalist id="money-customers">
                   {kit.customers.map((c) => (
                     <option key={c.id} value={c.label} />
@@ -512,22 +440,13 @@ export function ReceiptDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => 
                 <MInput value={payer} onChange={(x) => setPayer(x.target.value)} invalid={!!e.customer} />
               </MField>
             )}
-            <MField label="Amount received" req error={e.amount}>
-              <MMoney paise={amount} onPaise={setAmount} invalid={!!e.amount} />
-            </MField>
             <MField label="Received into" req error={e.into}>
-              <span className={cx("flex h-9 items-center gap-2 rounded-control border bg-surface pl-3", e.into ? "border-danger" : "border-brand ring-2 ring-brand-soft")}>
-                {acc ? <AccountMark kind={acc.kind} name={acc.name} size="sm" index={bankIndex(kit.accounts, acc.id)} /> : null}
-                <select value={into} onChange={(x) => setInto(x.target.value)} className="h-full min-w-0 flex-1 cursor-pointer border-none bg-transparent pr-2 text-sm font-semibold text-ink outline-none">
-                  {kit.accounts.map((a) => (
-                    <option key={a.id} value={a.name}>
-                      {a.name}
-                    </option>
-                  ))}
-                </select>
-              </span>
+              <AccSelect kit={kit} value={into} onChange={setInto} options={kit.accounts} invalid={!!e.into} />
             </MField>
-            <MField label="Purpose" req>
+            <MField label="Date" req error={e.date}>
+              <MInput type="date" value={date} max={kit.today} onChange={(x) => setDate(x.target.value)} invalid={!!e.date} />
+            </MField>
+            <MField label="For">
               <MSelect value={purpose} onChange={setPurpose} options={["Invoice payment", "Advance from customer", "Other"]} />
             </MField>
             {isBank ? (
@@ -535,7 +454,7 @@ export function ReceiptDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => 
                 <MField label="Mode" req error={e.mode}>
                   <MSelect value={mode} onChange={setMode} options={PAY_MODES.filter((m) => m !== "Cash")} />
                 </MField>
-                <MField label="UTR / cheque / reference" req error={e.reference} hint={`Matched later on the ${acc!.name.split(" ")[0]} statement`}>
+                <MField label="UTR / cheque no." req error={e.reference} className="col-span-2">
                   <MInput value={reference} onChange={(x) => setReference(x.target.value)} />
                 </MField>
               </>
@@ -544,14 +463,14 @@ export function ReceiptDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => 
 
           {fromKind === "Customer" && cust ? (
             <div>
-              <div className="mb-1.5 text-sm font-semibold text-body">Apply to open invoices — oldest first</div>
+              <div className="mb-1.5 text-sm font-semibold text-body">Bills it pays</div>
               {list.length ? (
                 <LineTable
                   head={[{ l: "", w: "w-12" }, { l: "Invoice" }, { l: "Bill date" }, { l: "Due" }, { l: "Balance", align: "right" }, { l: "Apply", align: "right" }]}
                   foot={
                     <Tr>
                       <Td />
-                      <Td className="text-sm text-muted">Left on account: {inr(onAccount)}</Td>
+                      <Td className="text-sm text-muted">Not against a bill: {inr(onAccount)}</Td>
                       <Td />
                       <Td />
                       <Td />
@@ -591,38 +510,18 @@ export function ReceiptDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => 
                   })}
                 </LineTable>
               ) : (
-                <div className="rounded-card border border-line px-4 py-3 text-sm text-muted">No open invoices — the whole amount stays on account.</div>
+                <div className="rounded-card border border-line px-4 py-3 text-sm text-muted">No unpaid bills — the whole amount is kept on their account.</div>
               )}
             </div>
           ) : null}
 
-          {acc ? (
-            <FigureBoxes
-              items={[
-                { l: `${acc.name} now`, v: inr(acc.balance) },
-                { l: "This receipt", v: `+ ${inr(amount ?? 0)}`, tone: "success" },
-                { l: `${acc.name} after`, v: inr(acc.balance + (amount ?? 0)), sub: who ? `from ${who}, ${fd(date)}` : undefined },
-              ]}
-            />
-          ) : null}
-          <Note tone="info">
-            {isBank ? (
-              <>
-                Bank receipt: the UTR is how it is <b>matched</b> later on the {acc!.name.split(" ")[0]} statement — never entered again there.
-              </>
-            ) : (
-              <>
-                Cash receipt: no UTR needed. A <b>bank</b> receipt asks for the UTR and is <b>matched</b> later on that bank&apos;s statement — never entered again there.
-              </>
-            )}
-          </Note>
           {e._ ? <Note tone="danger">{e._}</Note> : null}
         </div>
       </div>
-      <MoneyFoot left={`Receipt ${kit.nextTxn} · created by ${kit.me}`}>
+      <MoneyFoot left={kit.seesBalances && acc && amount ? `${acc.name}: ${inr(acc.balance)} → ${inr(acc.balance + amount)}` : ""}>
         <Button onClick={onClose}>Cancel</Button>
         <Button variant="primary" disabled={busy} onClick={submit}>
-          {busy ? "Saving…" : "Save receipt"}
+          {busy ? "Saving…" : "Save"}
         </Button>
       </MoneyFoot>
     </MoneyShell>
@@ -630,9 +529,6 @@ export function ReceiptDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => 
 }
 
 /* =============================================================== transfer */
-
-const TYPES = ["Bank → Cash", "Cash → Bank", "Bank → Bank", "Cash → Cash"] as const;
-const sideKinds = (side: string): KitAccount["kind"][] => (side === "Bank" ? ["bank"] : ["cash", "petty"]);
 
 function AccSelect({ kit, value, onChange, options, invalid }: { kit: MoneyKit; value: string; onChange: (v: string) => void; options: KitAccount[]; invalid?: boolean }) {
   const a = accountByName(kit, value);
@@ -653,81 +549,64 @@ function AccSelect({ kit, value, onChange, options, invalid }: { kit: MoneyKit; 
 
 export function TransferDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => void }) {
   const { busy, errs, save } = useSave(onClose);
-  const [type, setType] = React.useState<string>(TYPES[0]);
-  const [fromSide, toSide] = type.split(" → ");
-  const fromList = kit.accounts.filter((a) => sideKinds(fromSide).includes(a.kind));
-  const toList = kit.accounts.filter((a) => sideKinds(toSide).includes(a.kind));
-  const [from, setFrom] = React.useState(fromList[0]?.name ?? "");
-  const [to, setTo] = React.useState(toList.find((a) => a.name !== fromList[0]?.name)?.name ?? "");
+  /* Two boxes, From and To, over every account. How it moved follows from
+     the two kinds exactly as the old four "types" did. */
+  const bank = kit.accounts.find((a) => a.kind === "bank");
+  const cashLike = kit.accounts.find((a) => a.kind !== "bank");
+  const [from, setFrom] = React.useState(bank?.name ?? kit.accounts[0]?.name ?? "");
+  const [to, setTo] = React.useState(cashLike?.name ?? kit.accounts.find((a) => a.name !== (bank?.name ?? kit.accounts[0]?.name))?.name ?? "");
   const [date, setDate] = React.useState(kit.today);
   const [amount, setAmount] = React.useState<number | null>(null);
   const [reference, setReference] = React.useState("");
   const [description, setDescription] = React.useState("");
   const [file, setFile] = React.useState<Upload>(null);
-  const pickType = (t: string) => {
-    setType(t);
-    const [f, tt] = t.split(" → ");
-    const fl = kit.accounts.filter((a) => sideKinds(f).includes(a.kind));
-    const tl = kit.accounts.filter((a) => sideKinds(tt).includes(a.kind));
-    setFrom(fl[0]?.name ?? "");
-    setTo(tl.find((a) => a.name !== fl[0]?.name)?.name ?? "");
-  };
   const fa = accountByName(kit, from);
   const ta = accountByName(kit, to);
+  const fromBank = fa?.kind === "bank";
+  const toBank = ta?.kind === "bank";
   const amt = amount ?? 0;
   const e = errs;
-  const mode = fromSide === "Cash" && toSide === "Cash" ? "Cash" : fromSide === "Bank" && toSide === "Bank" ? "NEFT" : fromSide === "Bank" ? "Cheque" : "Cash";
+  const mode = fromBank && toBank ? "NEFT" : fromBank ? "Cheque" : "Cash";
   const submit = () => save(() => erpMoneyTransfer({ date, from, to, amountPaise: amount, mode, reference, source: null, note: description, files: file ? [file.id] : [] }));
+  const line = (a: KitAccount | undefined, sign: 1 | -1) => (a ? `${a.name}: ${inr(a.balance)} → ${inr(a.balance + sign * amt)}` : "");
   return (
-    <MoneyShell onClose={onClose} label="New transfer" width={840}>
-      <MoneyHead title="New transfer" code={`${kit.nextTxn} · one ID, two legs`} onClose={onClose} />
+    <MoneyShell onClose={onClose} label="Move money" width={760}>
+      <MoneyHead title="Move money" onClose={onClose} />
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
         <div className="grid gap-4">
-          <MField label="Transaction type" req>
-            <Segments options={[...TYPES]} value={type} onChange={pickType} />
-          </MField>
           <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-end gap-5">
-            <MField label="From account" req error={e.from}>
-              <AccSelect kit={kit} value={from} onChange={setFrom} options={fromList} invalid={!!e.from} />
+            <MField label="From" req error={e.from} hint={!kit.seesBalances ? undefined : amt ? line(fa, -1) : fa ? `Has ${inr(fa.balance)}` : undefined}>
+              <AccSelect kit={kit} value={from} onChange={setFrom} options={kit.accounts} invalid={!!e.from} />
             </MField>
-            <span className="pb-2.5 text-2xl text-brand">→</span>
-            <MField label="To account" req error={e.to}>
-              <AccSelect kit={kit} value={to} onChange={setTo} options={toList} invalid={!!e.to} />
+            <span className={cx("text-2xl text-brand", kit.seesBalances && (amt || fa) ? "pb-8" : "pb-2.5")}>→</span>
+            <MField label="To" req error={e.to ?? (from && from === to ? "Choose a different account." : undefined)} hint={!kit.seesBalances ? undefined : amt ? line(ta, 1) : ta ? `Has ${inr(ta.balance)}` : undefined}>
+              <AccSelect kit={kit} value={to} onChange={setTo} options={kit.accounts} invalid={!!e.to || (!!from && from === to)} />
             </MField>
           </div>
           <div className="grid grid-cols-3 gap-x-4 gap-y-4">
+            <MField label="Amount" req error={e.amount}>
+              <MMoney autoFocus paise={amount} onPaise={setAmount} invalid={!!e.amount} />
+            </MField>
             <MField label="Date" req error={e.date}>
               <MInput type="date" value={date} max={kit.today} onChange={(x) => setDate(x.target.value)} />
             </MField>
-            <MField label="Amount" req error={e.amount}>
-              <MMoney paise={amount} onPaise={setAmount} invalid={!!e.amount} />
-            </MField>
-            <MField label={fromSide === "Bank" ? "Withdrawal slip / cheque / ref" : "Deposit slip / ref"} error={e.reference}>
+            <MField label="Slip no." error={e.reference}>
               <MInput value={reference} onChange={(x) => setReference(x.target.value)} />
             </MField>
           </div>
-          <FigureBoxes
-            items={[
-              ...(fa ? [{ l: fa.name, v: inr(fa.balance), sub: `→ ${inr(fa.balance - amt)}`, subTone: "danger" as const }] : []),
-              ...(ta ? [{ l: ta.name, v: inr(ta.balance), sub: `→ ${inr(ta.balance + amt)}`, subTone: "success" as const }] : []),
-              { l: "Income / Expense", v: "₹0", sub: "a transfer is neither", subTone: "muted" as const },
-            ]}
-          />
           <div className="grid grid-cols-2 gap-4">
-            <MField label="Description">
-              <MInput value={description} onChange={(x) => setDescription(x.target.value)} />
-            </MField>
-            <MField label="Attachment">
-              <FileBox value={file} onChange={setFile} empty="Drop slip photo or PDF" dashed />
+            <NoteBox value={description} onChange={setDescription} />
+            <MField label="Slip photo">
+              <FileBox value={file} onChange={setFile} empty="Add photo" />
             </MField>
           </div>
           {e._ ? <Note tone="danger">{e._}</Note> : null}
         </div>
       </div>
-      <MoneyFoot left="From and To can't be the same · amount must be above ₹0">
+      <MoneyFoot>
         <Button onClick={onClose}>Cancel</Button>
         <Button variant="primary" disabled={busy || !from || !to || from === to || !amt} onClick={submit}>
-          {busy ? "Posting…" : "Post transfer"}
+          {busy ? "Saving…" : "Save"}
         </Button>
       </MoneyFoot>
     </MoneyShell>
@@ -753,10 +632,11 @@ export function AdvanceDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => 
   const [source, setSource] = React.useState("");
   const amt = amount ?? 0;
   const choices: CardChoice[] = [];
-  if (petty) choices.push({ key: petty.name, name: petty.name, kind: "petty", sub: inr(petty.balance), after: amt ? `${inr(petty.balance)} → ${inr(petty.balance - amt)}` : undefined });
-  if (cash) choices.push({ key: cash.name, name: cash.name, kind: "cash", sub: inr(cash.balance), after: amt ? `${inr(cash.balance)} → ${inr(cash.balance - amt)}` : undefined });
-  if (bank) choices.push({ key: bank.name, name: `${bank.name.split(" ")[0]} GPay`, kind: "bank", sub: `matched on ${bank.name.split(" ")[0]} statement` });
-  choices.push({ key: FROM_CUSTOMER_CASH, name: "Cash from a customer", kind: "customer", sub: "pick the cash receipt" });
+  const show = kit.seesBalances;
+  if (petty) choices.push({ key: petty.name, name: petty.name, kind: "petty", sub: show ? inr(petty.balance) : "", after: show && amt ? `${inr(petty.balance)} → ${inr(petty.balance - amt)}` : undefined });
+  if (cash) choices.push({ key: cash.name, name: cash.name, kind: "cash", sub: show ? inr(cash.balance) : "", after: show && amt ? `${inr(cash.balance)} → ${inr(cash.balance - amt)}` : undefined });
+  if (bank) choices.push({ key: bank.name, name: `${bank.name.split(" ")[0]} GPay`, kind: "bank", sub: "" });
+  choices.push({ key: FROM_CUSTOMER_CASH, name: "Cash from a customer", kind: "customer", sub: "" });
   const isCustomer = from === FROM_CUSTOMER_CASH;
   const accName = isCustomer ? (cash?.name ?? "") : from;
   const fromAcc = accountByName(kit, accName);
@@ -780,17 +660,17 @@ export function AdvanceDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => 
       }),
     );
   return (
-    <MoneyShell onClose={onClose} label="Give an advance" width={780}>
-      <MoneyHead title="Give an advance" code={`${kit.nextTxn} · ${kit.nextAdv}`} onClose={onClose} />
+    <MoneyShell onClose={onClose} label="Give advance" width={780}>
+      <MoneyHead title="Give advance" onClose={onClose} />
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
         <div className="grid gap-4">
           <div className="grid grid-cols-3 gap-x-4 gap-y-4">
-            <MField label="Given to" req error={e.employee}>
+            <MField label="To" req error={e.employee}>
               <MSelect
                 value={personId}
                 onChange={setPersonId}
                 placeholder="Choose…"
-                options={kit.employees.map((x) => ({ v: x.id, l: `${x.name}${x.dept ? ` · ${x.dept}` : ""}${x.open ? " — holds an open advance" : ""}` }))}
+                options={kit.employees.map((x) => ({ v: x.id, l: `${x.name}${x.dept ? ` · ${x.dept}` : ""}${x.open ? " — has an advance open" : ""}` }))}
                 invalid={!!e.employee}
               />
             </MField>
@@ -809,45 +689,37 @@ export function AdvanceDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => 
               />
             </MField>
             <MField label="For" error={e.purpose}>
-              <MInput value={purpose} onChange={(x) => setPurpose(x.target.value)} placeholder="What the money is for" />
+              <MInput value={purpose} onChange={(x) => setPurpose(x.target.value)} />
             </MField>
-            <MField label="Bills due by" error={e.billsDueOn} hint={`${kit.billsDays} days, then ${employee ? first : "they are"} ${employee ? "is " : ""}reminded`}>
+            <MField label="Bills due by" error={e.billsDueOn}>
               <MInput type="date" value={billsDue} onChange={(x) => setBillsDue(x.target.value)} />
             </MField>
-            <MField label="Handed over as" error={e.mode}>
-              <MSelect value={fromAcc?.kind === "bank" ? (handed === "Cash" ? "UPI" : handed) : "Cash"} onChange={setHanded} options={fromAcc?.kind === "bank" ? ["UPI", "NEFT", "IMPS"] : ["Cash"]} />
-            </MField>
+            {fromAcc?.kind === "bank" ? (
+              <MField label="Sent by" error={e.mode}>
+                <MSelect value={handed === "Cash" ? "UPI" : handed} onChange={setHanded} options={["UPI", "NEFT", "IMPS"]} />
+              </MField>
+            ) : null}
           </div>
           <MField label="Paid from" req>
             <PaidFromCards choices={choices} value={from} onChange={setFrom} error={e.from} />
           </MField>
           {isCustomer ? (
-            <MField label="Cash receipt it came from" req>
-              <MSelect value={source} onChange={setSource} placeholder={kit.customerCash.length ? "Choose…" : "Nothing with cash left"} options={kit.customerCash.map((s) => ({ v: s.label.split(" · ")[0], l: `${s.label} · ${inr(s.left)} unused` }))} />
+            <MField label="Whose cash?" req>
+              <MSelect value={source} onChange={setSource} placeholder={kit.customerCash.length ? "Choose…" : "Nothing with cash left"} options={kit.customerCash.map((s) => ({ v: s.label.split(" · ")[0], l: `${s.label} · ${inr(s.left)} left` }))} />
             </MField>
           ) : null}
-          <Note tone="info">
-            This is a <b>transfer</b>, not an expense: {fromAcc?.name ?? "the account"} goes down {inr(amt)} and{" "}
-            <b>Advance · {employee || "the employee"}</b> goes up {inr(amt)}. Nothing reaches the expense books until {employee ? "their" : "the"} bills are approved.{" "}
-            {employee ? (
-              emp?.open ? (
-                <>
-                  {first} <b>already holds an open advance</b> — settle it first.
-                </>
-              ) : (
-                <>
-                  {first} already holds <b>no other open advance</b>.
-                </>
-              )
-            ) : null}
-          </Note>
+          {emp?.open ? (
+            <Note tone="warn">
+              {first} already has an advance that is not settled. Settle that one first.
+            </Note>
+          ) : null}
           {e._ ? <Note tone="danger">{e._}</Note> : null}
         </div>
       </div>
-      <MoneyFoot left={`Given by ${kit.me}${employee ? ` · ${first} is told on his phone` : ""}`}>
+      <MoneyFoot>
         <Button onClick={onClose}>Cancel</Button>
         <Button variant="primary" disabled={busy} onClick={submit}>
-          {busy ? "Giving…" : "Give advance"}
+          {busy ? "Saving…" : "Give advance"}
         </Button>
       </MoneyFoot>
     </MoneyShell>
@@ -922,10 +794,10 @@ export function BillsDialog({ kit, target, onClose }: { kit: MoneyKit; target: B
   return (
     <MoneyShell onClose={onClose} label="Submit bills" width={980}>
       <MoneyHead
-        title={`Submit bills against ${target.label}`}
+        title={`Bills for ${target.employee}'s advance`}
         code={
           <span className="font-sans text-sm text-muted">
-            {target.employee} · {inr(target.withThem)} not yet accounted for
+            {target.label} · {inr(target.withThem)} still to show bills for
           </span>
         }
         onClose={onClose}
@@ -959,14 +831,7 @@ export function BillsDialog({ kit, target, onClose }: { kit: MoneyKit; target: B
                       )}
                     </Td>
                     <Td align="right">
-                      <span className="flex h-9 items-center rounded-control border border-line bg-surface px-2 focus-within:border-brand">
-                        <span className="mr-1 text-sm text-muted">₹</span>
-                        <PaiseInput
-                          paise={l.amount}
-                          onPaise={(amount) => set(i, { amount })}
-                          className="min-w-0 flex-1 border-none bg-transparent text-right text-sm font-bold text-ink outline-none"
-                        />
-                      </span>
+                      <MMoney paise={l.amount} onPaise={(p) => set(i, { amount: p })} />
                     </Td>
                     <Td>
                       {l.noBill ? (
@@ -1009,7 +874,7 @@ export function BillsDialog({ kit, target, onClose }: { kit: MoneyKit; target: B
               <button type="button" onClick={() => many.current?.click()} className={linkClass("brand", "font-semibold")}>
                 Upload several photos at once
               </button>{" "}
-              — each photo becomes a line for you to fill in
+
               <input ref={many} type="file" multiple accept="image/jpeg,image/png,application/pdf" className="hidden" onChange={(x) => uploadMany(x.target.files)} />
             </div>
           </div>
@@ -1022,13 +887,10 @@ export function BillsDialog({ kit, target, onClose }: { kit: MoneyKit; target: B
               left >= 0 ? { l: "Left after this", v: inr(left), tone: "success" } : { l: "Owed back to you", v: inr(-left), tone: "danger" },
             ]}
           />
-          <Note tone="warn">
-            A line with <b>no bill</b> needs a sentence saying why, and is flagged for the Accountant. Spent more than you were given? Add the bills anyway — the extra is <b>owed back to you</b> once approved.
-          </Note>
           {e._ ? <Note tone="danger">{e._}</Note> : null}
         </div>
       </div>
-      <MoneyFoot left="Goes to the Accountant for review · the Production Head sees it too">
+      <MoneyFoot>
         <Button onClick={draft}>Save draft</Button>
         <Button variant="primary" disabled={busy || !counted} onClick={submit}>
           {busy ? "Submitting…" : `Submit ${counted} bill${counted === 1 ? "" : "s"} · ${inr(total)}`}

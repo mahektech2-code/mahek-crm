@@ -27,7 +27,10 @@ export type ErpIcon =
  * and one grant each. A view is that list again, reached from its screen
  * rather than from the sidebar: it keeps its own server module (its rows, its
  * actions) under its own key, and it is opened by holding the SCREEN. It is
- * never a module of its own, so it can never be granted apart from its screen.
+ * never a module of its own (`lib/modules.ts`), but since Nov 2026 a screen
+ * can be NARROWED to some of its tabs in Manage access — a tab row under the
+ * page, Access only (`lib/access/tab-grants.ts`); a page with no tab rows
+ * holds every tab.
  */
 export type ErpView = {
   /** The server module key that draws this tab. */
@@ -58,6 +61,13 @@ export type ErpScreen = {
   built: boolean;
   /** Tabs, the first being what the screen opens on. Absent: the screen is one list, its own key. */
   views?: ErpView[];
+  /**
+   * Its place in a flow the sidebar numbers — Purchase is 1 Requirements …
+   * 5 Bills, in the order the work happens. Drawn in place of the row's icon.
+   */
+  step?: number;
+  /** A small heading drawn above this row inside its group ("Tools"), starting a set of rows that are not steps. */
+  heading?: string;
 };
 
 export type ErpGroup = {
@@ -67,13 +77,15 @@ export type ErpGroup = {
   screens: ErpScreen[];
 };
 
-const s = (key: string, slug: string, label: string, sub: string, built = false, views?: ErpView[]): ErpScreen => ({
+const s = (key: string, slug: string, label: string, sub: string, built = false, views?: ErpView[], place?: { step?: number; heading?: string }): ErpScreen => ({
   key,
   slug,
   label,
   sub,
   built,
   ...(views ? { views } : {}),
+  ...(place?.step ? { step: place.step } : {}),
+  ...(place?.heading ? { heading: place.heading } : {}),
 });
 
 const v = (key: string, label: string, alt?: ErpView["alt"], section?: string): ErpView => ({ key, label, ...(alt ? { alt } : {}), ...(section ? { section } : {}) });
@@ -100,14 +112,15 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Masters",
     icon: "db",
     screens: [
+      /* Masters are lists, not a flow: grouped under what they serve (Nov 2026, as Purchase's Tools). */
       s("rawMaterials", "raw-materials", "Raw materials", "Everything the business buys, with density and required tests for chemicals, and photos for cans.", true, [
         v("rawMaterials", "All materials"),
         v("canGroups", "Can groups"),
-      ]),
+      ], { heading: "Buying" }),
       s("suppliers", "suppliers", "Purchase parties", "Suppliers, grouped by state.", true),
-      s("products", "products", "Products", "Finished goods: what each is made of and how it is packed.", true),
+      s("products", "products", "Products", "Finished goods: what each is made of and how it is packed.", true, undefined, { heading: "Selling" }),
       s("customers", "customers", "Sales parties", "Customers. A Pending party must be activated before its orders move.", true),
-      s("godowns", "godowns", "Godowns", "Godowns by region.", true),
+      s("godowns", "godowns", "Godowns", "Godowns by region.", true, undefined, { heading: "Setup" }),
       s("refLists", "reference-lists", "Reference lists", "The value lists every form picks from, and the units a quantity may be typed in.", true, [
         v("refLists", "Value lists"),
         v("uoms", "Units"),
@@ -119,15 +132,16 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Purchase",
     icon: "cart",
     screens: [
-      s("requisitions", "requisitions", "Requirements", "What each department needs bought, from its purchase method through the PO to the goods.", true),
-      s("purchaseOrders", "purchase-orders", "Purchase orders", "Created from requirements or linked from the Quotation manager, shared and received against.", true),
-      s("register", "register", "Purchases", "Goods received against a PO, and the lots they become.", true, [
-        v("inward", "Goods receipt (GRN)"),
-        v("register", "Register"),
-        v("barcode", "Drum labels"),
-      ]),
-      s("testing", "testing", "Lot testing", "Test evidence for each chemical lot, for the verifier to verify.", true),
-      s("quoteManager", "quotation-manager", "Quotation manager", "Supplier rates by date, party and material, kept like the desk's sheet: every row, column and cell editable.", true),
+      /* The purchase flow in the order the work happens, numbered in the sidebar,
+         then the two tools that serve it. Goods in, Bills and Drum labels were
+         tabs of one "Purchases" screen until Nov 2026 (0372 split the grant). */
+      s("requisitions", "requisitions", "Requirements", "What each department needs bought, from its purchase method through the PO to the goods.", true, undefined, { step: 1 }),
+      s("purchaseOrders", "purchase-orders", "Purchase orders", "Created from requirements or linked from the Quotation manager, shared and received against.", true, undefined, { step: 2 }),
+      s("inward", "goods-in", "Goods in", "Goods received against a PO at the gate, line by line.", true, undefined, { step: 3 }),
+      s("testing", "testing", "Lot testing", "Test evidence for each chemical lot, for the verifier to verify.", true, undefined, { step: 4 }),
+      s("register", "bills", "Bills", "The lots goods became, with their rates and the supplier's bill.", true, undefined, { step: 5 }),
+      s("quoteManager", "quotation-manager", "Quotation manager", "Supplier rates by date, party and material, kept like the desk's sheet: every row, column and cell editable.", true, undefined, { heading: "Tools" }),
+      s("barcode", "drum-labels", "Drum labels", "Labels for the drums goods arrived in, to print and reprint.", true),
     ],
   },
   {
@@ -135,9 +149,13 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Production",
     icon: "beaker",
     screens: [
-      s("sfgBatches", "sfg-batches", "SFG batches", "Liquid made from raw-material lots.", true),
-      s("fgFill", "fg-fill", "FG filling", "SFG filled into cans or drums.", true),
-      s("packBatches", "pack-batches", "Packing batches", "Loose cans packed into boxes.", true),
+      /* The making in the order it happens, numbered as Purchase's flow is, then
+         its tools. Under Process — the day's plan printed for the floor — was a
+         Sales page until Nov 2026; it is the production plan, so it sits here. */
+      s("sfgBatches", "sfg-batches", "SFG batches", "Liquid made from raw-material lots.", true, undefined, { step: 1 }),
+      s("fgFill", "fg-fill", "FG filling", "SFG filled into cans or drums.", true, undefined, { step: 2 }),
+      s("packBatches", "pack-batches", "Packing batches", "Loose cans packed into boxes.", true, undefined, { step: 3 }),
+      s("underProcess", "under-process", "Under Process", "The day's production plan — mixing, loose cans and packing — printed for the floor.", true, undefined, { heading: "Tools" }),
       s("recipes", "recipes", "Recipes", "What one batch of each SFG product takes, in litres.", true),
     ],
   },
@@ -151,6 +169,10 @@ export const ERP_GROUPS: ErpGroup[] = [
         v("sfgStock", "Semi-finished", { key: "sfgLog", label: "Show every entry", back: "Show available stock" }),
         v("fgStock", "Finished goods", { key: "fgLog", label: "Show every entry", back: "Show available stock" }),
         v("packStock", "Packed", { key: "packLog", label: "Show every entry", back: "Show available stock" }),
+      ], { heading: "On hand" }),
+      s("units", "boxes", "Boxes & labels", "Every labelled box and loose can: where it is and its label.", true, [
+        v("units", "In stock & at dispatch"),
+        v("allUnits", "Every box"),
       ]),
       s("stockCheck", "stock-check", "Stock accuracy", "Blind counts, floor checks, red flags and approved adjustments.", true, [
         v("countTasks", "To count"),
@@ -159,16 +181,12 @@ export const ERP_GROUPS: ErpGroup[] = [
         v("stockAdjustments", "Adjustments"),
         v("missingRecords", "Missing records"),
         v("stockCounts", "Every count"),
-      ]),
-      s("units", "boxes", "Boxes & labels", "Every labelled box and loose can: where it is and its label.", true, [
-        v("units", "In stock & at dispatch"),
-        v("allUnits", "Every box"),
-      ]),
+      ], { heading: "Control" }),
       s("transfers", "transfers", "Item transfers", "Stock moved between godowns, including write-offs.", true),
       s("rmLevels", "rm-levels", "Raw-material levels", "Minimum and maximum per godown, and what is below it.", true, [
         v("reorderRm", "Below minimum"),
         v("rmLevels", "All levels"),
-      ]),
+      ], { heading: "Levels" }),
       s("fgLevels", "fg-levels", "Finished-goods levels", "Minimum per SKU, and what is below it.", true, [
         v("reorderFg", "Below minimum"),
         v("fgLevels", "All levels"),
@@ -184,12 +202,11 @@ export const ERP_GROUPS: ErpGroup[] = [
         v("orderHub", "Waiting for Accounts"),
         v("hubCorrection", "Sent back"),
         v("hubDone", "Decided recently"),
-      ]),
+      ], { step: 1 }),
       s("mrpCheck", "mrp-check", "MRP check", "Orders Accounts approved, checked against materials and capacity before production.", true, [
         v("mrpCheck", "Pending checks"),
         v("mrpHold", "On hold"),
-      ]),
-      s("toHold", "to-hold", "To Hold", "Every held TO and order, from every desk, and where releasing sends it.", true),
+      ], { step: 2 }),
       s("orders", "orders", "Orders", "From the order to the bill leaving the godown, one step per tab.", true, [
         v("verifyOrders", "Older orders to verify"),
         v("readyOrders", "Production"),
@@ -201,10 +218,10 @@ export const ERP_GROUPS: ErpGroup[] = [
         v("batchCodes", "Batch codes"),
         v("orders", "All lines"),
         v("orderInbox", "WhatsApp inbox"),
-      ]),
-      s("underProcess", "under-process", "Under Process", "The day's production plan — mixing, loose cans and packing — printed for the floor.", true),
-      s("dispatch", "dispatch", "Dispatch desk", "Pick an order and scan every box onto it before the lorry leaves.", true),
-      s("dispatchRegister", "dispatch-register", "Dispatch register", "Every order still to go out — who it is for, what is in it, what it weighs and who carries it.", true),
+      ], { step: 3 }),
+      s("dispatch", "dispatch", "Dispatch desk", "Pick an order and scan every box onto it before the lorry leaves.", true, undefined, { step: 4 }),
+      s("dispatchRegister", "dispatch-register", "Dispatch register", "Every order still to go out — who it is for, what is in it, what it weighs and who carries it.", true, undefined, { step: 5 }),
+      s("toHold", "to-hold", "To Hold", "Every held TO and order, from every desk, and where releasing sends it.", true, undefined, { heading: "Tools" }),
     ],
   },
   {
@@ -409,6 +426,27 @@ export function erpKeysOf(screen: ErpScreen): string[] {
 
 export function erpGroupOf(key: string): ErpGroup | undefined {
   return ERP_GROUPS.find((g) => g.screens.some((x) => x.key === key));
+}
+
+/**
+ * Whether a list key is drawn in the Purchase group — its own screen or a tab
+ * of one. The shared list draws Purchase's sub-tabs as a segmented control and
+ * its rows' actions as a primary button and a ⋯ menu in blocks; every other
+ * screen keeps its own look.
+ */
+export function isPurchaseScreen(key: string): boolean {
+  return erpGroupOf(erpScreen(key)?.key ?? key)?.id === "purchase";
+}
+
+/**
+ * Whether a list key is drawn in the ERP's Nov 2026 layout — every ERP screen
+ * now, Purchase first and the rest after it: tabs and sub-tabs as a segmented
+ * control, a row's actions as its next-step button and a ⋯ menu in blocks (no
+ * pencil), and the record as one view (facts down the left, the flow, the Next
+ * step card, the history). Keyed here, never per screen.
+ */
+export function isFlowLayout(key: string): boolean {
+  return !!erpGroupOf(erpScreen(key)?.key ?? key);
 }
 
 /**

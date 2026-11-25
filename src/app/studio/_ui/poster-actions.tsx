@@ -1,11 +1,13 @@
 "use client";
 
-import { useState, useSyncExternalStore } from "react";
+import { useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
-import { Button, Card, Textarea } from "@/components/ui/primitives";
+import Link from "next/link";
+import { Button, Card, Textarea, buttonClass } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
 import { ConfirmDialog } from "@/components/ui/overlays";
 import { recordShare, removePoster } from "@/lib/actions/studio";
+import { sendPosterTemplate } from "@/lib/actions/studio-inbox";
 
 /* ---------------------------------------------------------------------------
  * GETTING A POSTER OUT OF THE STUDIO, which is the whole point of it.
@@ -27,6 +29,9 @@ export function PosterActions(props: {
   caption: string | null;
   whatsappHref: string | null;
   whatsappBlocked: string | null;
+  inboxHref?: string | null;
+  inboxNote?: string | null;
+  templateSend?: boolean;
   canRemove: boolean;
 }) {
   const router = useRouter();
@@ -71,6 +76,26 @@ export function PosterActions(props: {
     }
   };
 
+  const templateKey = useRef(`k${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`);
+  const sendAsTemplate = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const r = await sendPosterTemplate({ posterId: props.posterId, clientKey: templateKey.current });
+      if (!r.ok) {
+        toast.push(r.error, "error");
+        return;
+      }
+      templateKey.current = `k${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`;
+      router.push(`/studio/inbox?c=${encodeURIComponent(r.data.conversationId)}`);
+    } catch {
+      /* No answer came back: the key is kept, so pressing again cannot send it twice. */
+      toast.push("No answer came back, so it is not known whether this went. Check the Inbox before sending it again.", "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const openWhatsapp = async () => {
     if (!props.whatsappHref) return;
     await recordShare(props.posterId, "whatsapp");
@@ -99,10 +124,28 @@ export function PosterActions(props: {
           <Textarea rows={4} value={caption} onChange={(e) => setCaption(e.target.value)} />
         </label>
       ) : null}
+      {props.inboxHref ? (
+        <div>
+          <Link href={props.inboxHref} className={buttonClass({ variant: "whatsapp" })}>
+            Send in Inbox
+          </Link>
+          <p className="mt-1.5 text-[12.5px] text-muted">Opens their chat in the WhatsApp Inbox with this poster and message ready. It is sent through Kapso, and you can see when it is delivered and read.</p>
+        </div>
+      ) : null}
+      {props.templateSend ? (
+        <div>
+          <Button variant="whatsapp" onClick={() => void sendAsTemplate()} disabled={busy}>
+            {busy ? "Sending…" : "Send in Inbox"}
+          </Button>
+          <p className="mt-1.5 text-[12.5px] text-muted">{props.inboxNote}</p>
+        </div>
+      ) : props.inboxNote ? (
+        <p className="text-[12.5px] text-muted">{props.inboxNote}</p>
+      ) : null}
       {props.whatsappHref ? (
         <div>
-          <Button variant="whatsapp" onClick={openWhatsapp}>
-            Open WhatsApp chat
+          <Button variant={props.inboxHref || props.templateSend ? "secondary" : "whatsapp"} onClick={openWhatsapp}>
+            {props.inboxHref || props.templateSend ? "Open in the WhatsApp app instead" : "Open WhatsApp chat"}
           </Button>
           <p className="mt-1.5 text-[12.5px] text-muted">Opens their chat with the message written. Attach the poster you downloaded, then send — MahekOne sends nothing itself.</p>
         </div>

@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { erpTransportMessages } from "@/db/schema";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
-import { ErpNotPermitted, requireErpForm, requireErpWrite } from "@/lib/erp/access";
+import { ErpNotPermitted, requireErpForm, requireErpTickWrite, requireErpWrite } from "@/lib/erp/access";
 import { isErpManager } from "@/lib/erp/screens/common";
 
 /* ---------------------------------------------------------------------------
@@ -36,7 +36,7 @@ export async function erpOrderTrackingPanel(no: number) {
 
 export async function erpRegenerateTrackingLink(no: number) {
   try {
-    const ctx = await requireErpWrite("orders");
+    const ctx = await requireErpTickWrite("orders", "edit");
     if (!isErpManager(ctx)) return err("An ERP manager makes a new tracking link — the old one stops working for the customer.", "not_permitted");
     const n = orderNo(no);
     if (!n) return err("That is not an order number.", "validation");

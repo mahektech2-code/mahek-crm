@@ -24,7 +24,7 @@ import { openMismatches } from "./floor-checks";
 import { adjustmentReasonLabel } from "./engines/stock-check";
 import type { Tone } from "./ui";
 import { fd, nf } from "./ui";
-import { moneyOverview } from "./money";
+import { moneyOverview, seesBalances } from "./money";
 
 /* ---------------------------------------------------------------------------
  * The ERP dashboard (PRD §6, spec §13.6): what needs attention now, from data
@@ -524,7 +524,9 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
   if (has("expenses")) {
     /* The same reads the module's own overview draws, so a tile and the board cannot disagree. */
     const o = await moneyOverview(today());
-    const tiles: Tile[] = o.accounts.map((a) => ({ l: a.name, v: rupees(a.balance), sub: a.kind === "bank" && a.unmatched ? `${a.unmatched} bank lines not matched` : "balance", tone: a.balance < 0 && a.kind !== "bank" ? ("danger" as Tone) : undefined, href: tileHref(a.kind === "bank" ? (a.id === "macc_icici" ? "stmtIcici" : "stmtKotak") : a.kind === "petty" ? "stmtPetty" : "stmtCash", null, "") }));
+    /* Balances are the accountant's and an administrator's only (`seesBalances`). */
+    const sees = seesBalances({ approver: ctx.powers.has("approveMoney"), administrator: ctx.administrator });
+    const tiles: Tile[] = (sees ? o.accounts : []).map((a) => ({ l: a.name, v: rupees(a.balance), sub: a.kind === "bank" && a.unmatched ? `${a.unmatched} bank lines not matched` : "balance", tone: a.balance < 0 && a.kind !== "bank" ? ("danger" as Tone) : undefined, href: tileHref(a.kind === "bank" ? (a.id === "macc_icici" ? "stmtIcici" : "stmtKotak") : a.kind === "petty" ? "stmtPetty" : "stmtCash", null, "") }));
     if (ctx.powers.has("approveMoney")) tiles.push({ l: "Waiting for review", v: nf(o.review.n + o.pettyReview.n), sub: rupees(o.review.paise + o.pettyReview.paise), tone: o.review.n + o.pettyReview.n ? ("warn" as Tone) : undefined, href: tileHref("moneyReview", null, "") });
     if (o.advancesOpen.n) tiles.push({ l: "Advances open", v: nf(o.advancesOpen.n), sub: `${rupees(o.advancesOpen.withThem)} with employees${o.advancesOpen.late ? ` · ${o.advancesOpen.late} late` : ""}`, tone: o.advancesOpen.late ? ("danger" as Tone) : undefined, href: tileHref("advances", null, "") });
     push("Petty Cash", tiles);

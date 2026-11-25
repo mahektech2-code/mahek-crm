@@ -80,9 +80,17 @@ A requirement's stage is worked out from its own record each time it is read: it
 
 Requirements raised before purchase orders existed show their old status with "(before POs)" and are flagged "Before POs"; nothing back-fills a PO for them.
 
-## Present quantity
+## In stock
 
-Each requirement shows the **present quantity** the godown's re-order level counts as available for the item. Where no level is set at that godown it is blank — said in words on the record rather than shown as zero.
+Each requirement shows what is **in stock** — what the godown's re-order level counts as available for the item — and its record adds the level's minimum. Where no level is set at that godown it says "no level set" rather than showing zero.
+
+## Where a requirement is: four sub-tabs
+
+The list reads every requirement under one of four sub-tabs, from its stage: **To order** (owed a PO), **On order** (on a PO, goods still to come — a PO still waiting on an old approval, and anything ordered before POs, count here), **Received** (in full, or closed short) and **Cancelled**. It opens on To order, because that is the work waiting.
+
+## The history is read, never kept
+
+A requirement's History is put together each time it is opened, from what happened: the requirement's own row (raised, by whom), the audit log (linked, unlinked, edited, cancelled with the reason), every PO it has been on — a cancelled one included — with that PO's approvals, cancellations and shares, and what arrived at the gate on its line. Nothing is stored for it, so it cannot disagree with the records it describes.
 
 ## Settings
 

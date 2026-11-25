@@ -55,6 +55,14 @@ const files = [
   "src/lib/studio/forward.integration.test.ts",
   // The WhatsApp Inbox on a fake Kapso: the company number judged from Kapso, signed webhooks stored once, CRM names, window/DND refusals, one press of Send = one message.
   "src/lib/studio/inbox.integration.test.ts",
+  // The Studio Timeline: one permanent row per recipient per act, provider status only from Kapso, scoped reads and history API.
+  "src/lib/studio/timeline.integration.test.ts",
+  // The Inbox scoped to the CRM's ownership, explicit-only, bulk-forward outcomes, and the (off) Org Chart approval routing.
+  "src/lib/studio/inbox-scope.integration.test.ts",
+  // Direct action calls, the weekly limit across the CRM and the Studio, and the manual refresh's neutral answer and minimum interval.
+  "src/lib/studio/inbox-audit.integration.test.ts",
+  // A poster sent as the approved template where WhatsApp takes nothing else: no chat yet, a closed window, the placeholder chat folding into Kapso's, every other safeguard.
+  "src/lib/studio/inbox-template.integration.test.ts",
   // The Locker: register scope, renewals that supersede, one reminder digest;
   // the vault's dual control, audit-before-plaintext, tamper and break-glass rules.
   "src/lib/locker/register.integration.test.ts",
@@ -221,6 +229,14 @@ const files = [
   "src/lib/access-leftovers.test.ts",
   "src/lib/access/access-screens-backfill.test.ts",
   "src/lib/access/screen-access-switch.test.ts",
+  "src/lib/access/tab-grants.integration.test.ts",
+  // 0372: Purchases' three tabs become three pages and nobody's access moves.
+  "src/lib/access/erp-purchases-split.integration.test.ts",
+  "src/lib/access/erp-ticks-everywhere.integration.test.ts",
+  // Purchase actions need the page's Edit or Delete tick, on the list and at the server.
+  "src/lib/erp/erp-purchase-ticks.integration.test.ts",
+  // Lot testing, Bills and Drum labels as desks: buckets, waiting, the group bill, the label print log.
+  "src/lib/erp/erp-purchase-desks.integration.test.ts",
   "src/lib/storage-fallback.test.ts",
   "src/lib/relationship-handover.test.ts",
   "src/lib/seat-mirrors.test.ts",

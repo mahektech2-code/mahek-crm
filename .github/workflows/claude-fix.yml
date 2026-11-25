@@ -1,9 +1,10 @@
 # CLAUDE WRITES A FIX FOR A FEEDBACK REPORT, AND A PERSON MERGES IT.
 #
-# MahekOne's Admin Console turns a report that needs a code change into an
-# issue here, and "Ask Claude to fix" — a platform administrator's button —
-# puts the `ai-fix` label on it (the label is the `feedbackFix.aiFixLabel`
-# setting; the two must match). This workflow starts on that label, or on a
+# MahekOne turns a report that needs a code change into an issue here and puts
+# the `ai-fix` label on it BY ITSELF (`feedbackFix.autoFix`, on by default) —
+# or, for a report the AI was unsure of, when a platform administrator presses
+# "Ask Claude to fix". The label is the `feedbackFix.aiFixLabel` setting; the
+# two must match. This workflow starts on that label, or on a
 # comment mentioning @claude from somebody with write access, and runs Claude
 # Code on the issue: it reads AGENTS.md, makes the change with a test, and
 # opens a pull request against main whose description says `Fixes #<issue>`
@@ -14,7 +15,21 @@
 # step sees the commit in the serving build and closes the report.
 #
 # Needs the ANTHROPIC_API_KEY repository secret, and the Claude GitHub App on
-# the repository (it is what lets the pull request run CI).
+# the repository (it is what lets the pull request run CI). The first step
+# checks the key and says in words why it was refused: FB-14's run ended in
+# under a second with nothing spent, and the action's hidden output said only
+# "is_error: true".
+#
+# AND IT CHECKS THE MODEL THAT RUNS. The check used to ask Haiku while the
+# action ran Opus, so every run from 2026-11-19 to 2026-11-24 passed the check
+# and then died in 0.6 s with $0 spent: a key Haiku accepts is not a key Opus
+# accepts. `CLAUDE_MODEL` is the one place the model is named, and a failed
+# run prints Claude's own messages, which is where the refusal is written.
+#
+# CONCURRENCY IS ON THE JOB, NOT THE WORKFLOW. At the workflow level it was
+# applied before the job's `if`, so Claude's own "I'll analyze this" comment
+# started a run that was going to be skipped — and that run, queued in the
+# same group, cancelled the real one waiting behind the first.
 name: Claude fix
 
 on:
@@ -23,17 +38,20 @@ on:
   issue_comment:
     types: [created]
 
-concurrency:
-  group: claude-fix-${{ github.event.issue.number }}
-  cancel-in-progress: false
-
 jobs:
   fix:
     if: >-
       (github.event_name == 'issues' && github.event.label.name == 'ai-fix') ||
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude'))
+      (github.event_name == 'issue_comment' &&
+        github.event.comment.user.type != 'Bot' &&
+        contains(github.event.comment.body, '@claude'))
+    concurrency:
+      group: claude-fix-${{ github.event.issue.number }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      CLAUDE_MODEL: claude-opus-5-5
     permissions:
       contents: write
       pull-requests: write
@@ -41,6 +59,27 @@ jobs:
       id-token: write
       actions: read
     steps:
+      - name: Check the Anthropic key
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::The ANTHROPIC_API_KEY repository secret is not set (Settings → Secrets and variables → Actions)."
+            exit 1
+          fi
+          code=$(curl -sS -o /tmp/anthropic.json -w '%{http_code}' https://api.anthropic.com/v1/messages \
+            -H "x-api-key: $ANTHROPIC_API_KEY" -H "anthropic-version: 2023-06-01" -H "content-type: application/json" \
+            -d "{\"model\":\"$CLAUDE_MODEL\",\"max_tokens\":1,\"messages\":[{\"role\":\"user\",\"content\":\"ok\"}]}")
+          if [ "$code" != "200" ]; then
+            msg=$(jq -r '.error.message // "no message"' /tmp/anthropic.json 2>/dev/null)
+            echo "::error::Anthropic refused the ANTHROPIC_API_KEY secret for $CLAUDE_MODEL ($code): $msg — a revoked key, a workspace without that model, or an account with no credit left."
+            exit 1
+          fi
+          # A short hash, so whoever set the secret can tell WHICH key a run
+          # got (the old and new keys both pass the check above) without the
+          # log ever holding the key: printf '%s' "$KEY" | shasum -a 256 | cut -c1-12
+          echo "Key accepted for $CLAUDE_MODEL (sha256 $(printf '%s' "$ANTHROPIC_API_KEY" | sha256sum | cut -c1-12))."
+
       - uses: actions/checkout@v7
         with:
           fetch-depth: 1
@@ -53,12 +92,47 @@ jobs:
       - run: npm ci
 
       - uses: anthropics/claude-code-action@v1
+        id: claude
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           label_trigger: ai-fix
           trigger_phrase: "@claude"
           branch_prefix: claude/fb-
           claude_args: >-
+            --model ${{ env.CLAUDE_MODEL }}
             --max-turns 80
             --allowedTools "Edit,Write,Read,Glob,Grep,Bash(npm run test*),Bash(npx tsc*),Bash(npx eslint*),Bash(git status*),Bash(git diff*),Bash(git log*),Bash(gh pr create*),Bash(gh pr view*)"
-            --append-system-prompt "This issue was opened by MahekOne from a staff feedback report. Follow AGENTS.md. Make the smallest change that fixes what the reporter saw and add a test. Run npm run test and npx tsc --noEmit (with NODE_OPTIONS=--max-old-space-size=7000). Then open a pull request against main with gh pr create whose body contains 'Fixes #<this issue number>' and the 'Feedback: FB-<n>' line from the issue. If the report does not say enough, comment with your question instead of guessing. Never merge."
+            --append-system-prompt "This issue was opened by MahekOne from a staff feedback report. Follow AGENTS.md. Make the smallest change that fixes what the reporter saw and add a test. Run npm run test and npx tsc --noEmit (with NODE_OPTIONS=--max-old-space-size=7000). Then open a pull request against main whose body contains 'Fixes #<this issue number>' and the 'Feedback: FB-<n>' line from the issue. OPENING THE PULL REQUEST IS PART OF THE TASK: do not stop at a Create-a-PR link. Commit and push with the provided git scripts, then run gh pr create --base main --head <your branch> yourself, as ready for review, never --draft. Before opening it, npm run test, npx tsc --noEmit and npx eslint on the files you changed must all pass; the pull request should be ready to merge as it stands. If the report does not say enough, comment with your question instead of guessing. Never merge."
+
+      # The action keeps Claude's messages in a file and logs only the verdict,
+      # so a refusal reads as a bare "is_error: true". Print everything but the
+      # long init message, which is where the reason actually is.
+      - name: Say why Claude stopped
+        if: failure() && steps.claude.outputs.execution_file != ''
+        env:
+          OUT: ${{ steps.claude.outputs.execution_file }}
+        run: |
+          jq -c 'if type == "array" then .[] else . end | select(.type != "system")' "$OUT" | cut -c1-2000
+
+      # If Claude pushed a branch but did not open the pull request itself,
+      # open it here, so a fix never sits on a branch nobody knows about.
+      # GitHub only allows this with Settings → Actions → General → "Allow
+      # GitHub Actions to create and approve pull requests"; without it this
+      # step says so and the run still passes. A pull request opened with this
+      # token does not start CI by itself — push to it, or close and reopen it.
+      - name: Open the pull request if Claude did not
+        if: success() && steps.claude.outputs.branch_name != ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.claude.outputs.branch_name }}
+          ISSUE: ${{ github.event.issue.number }}
+          TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          git fetch origin main "$BRANCH" 2>/dev/null || { echo "Claude pushed nothing."; exit 0; }
+          if [ "$(git rev-list --count "origin/main..origin/$BRANCH")" = "0" ]; then echo "No commits on $BRANCH."; exit 0; fi
+          if [ -n "$(gh pr list --head "$BRANCH" --state all --json number -q '.[0].number')" ]; then echo "Claude opened it."; exit 0; fi
+          ref=$(printf '%s' "$ISSUE_BODY" | grep -oE 'mahekone-feedback:FB-[0-9]+' | head -1 | cut -d: -f2)
+          printf 'Fixes #%s\n\nFeedback: %s\n\nWritten by Claude from the feedback report. A person reviews and merges it.\n' "$ISSUE" "${ref:-unknown}" > /tmp/pr-body.md
+          gh pr create --base main --head "$BRANCH" --title "$TITLE" --body-file /tmp/pr-body.md

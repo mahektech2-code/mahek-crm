@@ -89,13 +89,13 @@ test("money somebody may not see is not built at all", () => {
   assert.equal(none.rows[0].rate, null);
   assert.equal(none.rows[0].discount, null);
   assert.equal(none.rows[0].amount, null);
-  assert.deepEqual(none.totals, []);
+  assert.deepEqual(none.totals.map((t) => t.l), ["Total can qty", "Total box qty"], "no money lines, only the can and box counts");
   assert.equal(none.rows[0].cans.copy, "10");
   assert.equal(none.rows[0].weight, null);
   assert.ok(!JSON.stringify(none).includes("1000.50"));
   const [rateOnly] = billingSheets([line()], { rates: true, amounts: false });
   assert.equal(rateOnly.rows[0].rate?.copy, "1000.50");
-  assert.deepEqual(rateOnly.totals, []);
+  assert.deepEqual(rateOnly.totals.map((t) => t.l), ["Total can qty", "Total box qty"]);
 });
 
 test("a line with no rate is said, and left out of the total", () => {
@@ -236,4 +236,30 @@ test("product identity and pack count even where the wording is identical: a dif
   assert.equal(billingSheets([a, line({ orderNo: 2, skuId: "sku-other" })], all)[0].rows.length, 2, "same wording, different SKU");
   assert.equal(billingSheets([a, line({ orderNo: 2, litresPerCan: 10 })], all)[0].rows.length, 2, "same wording, different litres per can");
   assert.equal(billingSheets([a, line({ orderNo: 2, boxes: 2 })], all)[0].rows.length, 2, "loose versus boxed");
+});
+
+test("total box qty adds the boxes of every boxed line, and a loose line adds none", () => {
+  const [s] = billingSheets([line({ orderNo: 1, description: "A", boxes: 2 }), line({ orderNo: 2, description: "B", boxes: 3 }), line({ orderNo: 3, description: "C", boxes: null })], { rates: false, amounts: false });
+  assert.equal(total(s, "Total box qty"), "5");
+  assert.equal(total(s, "Total can qty"), "10", "only the loose line's cans; the boxed lines are in boxes");
+  assert.equal(s.rows.find((r) => r.description.copy === "C")?.boxes, null);
+  const [loose] = billingSheets([line()], { rates: false, amounts: false });
+  assert.equal(total(loose, "Total box qty"), "0");
+});
+
+test("totals across several orders: loose cans, boxes and weight add up over every unbilled line, and a billed line adds nothing", () => {
+  const [s] = billingSheets(
+    [
+      line({ orderNo: 1, description: "Loose A", skuId: "a", qtyCans: 20, boxes: null, weightKg: 14 }),
+      line({ orderNo: 1, description: "Boxed B", skuId: "b", qtyCans: 88, boxes: 2, weightKg: 54 }),
+      line({ orderNo: 2, description: "Loose A", skuId: "a", qtyCans: 5, boxes: null, weightKg: 3.5 }),
+      line({ orderNo: 2, description: "Boxed B", skuId: "b", qtyCans: 44, boxes: 1, weightKg: 27 }),
+      line({ orderNo: 3, description: "Boxed C", skuId: "c", qtyCans: 12, boxes: 3, weightKg: 9 }),
+      line({ orderNo: 4, description: "Billed", skuId: "d", qtyCans: 999, boxes: 99, weightKg: 999, billed: true }),
+    ],
+    { rates: false, amounts: false },
+  );
+  assert.equal(total(s, "Total can qty"), "25", "loose cans only: 20 + 5");
+  assert.equal(total(s, "Total box qty"), "6", "2 + 1 + 3");
+  assert.equal(total(s, "Total weight"), "107.5");
 });

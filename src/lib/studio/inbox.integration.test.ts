@@ -12,7 +12,7 @@ import { eq, sql } from "drizzle-orm";
 import sharp from "sharp";
 
 import { db } from "@/db";
-import { appAccess, appModuleAccess, customers, studioWaConversations, studioWaMessages, users } from "@/db/schema";
+import { appAccess, appModuleAccess, auditLog, customers, studioWaConversations, studioWaMessages, users, whatsappServiceEvents } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { refreshFromKapso, sendForward, sendPoster, sendText } from "@/lib/actions/studio-inbox";
@@ -21,7 +21,7 @@ import { GET as previewAssetRoute } from "@/app/api/studio/inbox/preview-asset/r
 import { POST as uploadRoute } from "@/app/api/studio/forwards/upload/route";
 import { POST as webhook } from "@/app/api/studio/whatsapp/webhook/route";
 import { signBody } from "./domain/inbox-signature";
-import { applyWebhook, connection, getConversation, listConversationRows, resetConnectionCache, threadMessages } from "./inbox-service";
+import { applyWebhook, connection, getConversation, listConversationRows, resetConnectionCache, resetRefreshThrottle, threadMessages } from "./inbox-service";
 import { setKapsoFetch } from "./kapso";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
@@ -105,12 +105,13 @@ before(() => {
 beforeEach(async () => {
   await db.execute(sql`
     truncate table studio_wa_messages, studio_wa_conversations, studio_wa_events, studio_forward_recipients, studio_forwards, studio_poster_shares, studio_posters,
-      customer_contacts, customers, attachment_bytes, audit_log, app_module_access, app_access, users, app_settings
+      customer_contacts, customers, attachment_bytes, audit_log, whatsapp_service_events, app_module_access, app_access, users, app_settings
     restart identity cascade
   `);
   invalidateConfig();
   await seedConfig();
   resetConnectionCache();
+  resetRefreshThrottle();
   calls = [];
   numbers = [live()];
   kapsoConversations = [];
@@ -120,6 +121,8 @@ beforeEach(async () => {
   nextWamid = "wamid.SENT1";
   installFake();
   priya = await makeUser("Priya Sharma", ["studio.inbox", "studio.forward"]);
+  /* The founder has WhatsApp sending switched on - every Inbox send now asks. */
+  await db.insert(whatsappServiceEvents).values({ id: id("wse"), active: true, changedByName: "Founder" });
   setTestUser(priya);
 });
 
@@ -135,7 +138,7 @@ describe("the connection is judged from Kapso's own list", () => {
     const c = await connection({ force: true });
     assert.equal(c.state, "not_connected");
     if (c.state === "not_connected") assert.equal(c.reason, "sandbox_only");
-    const page = await listConversationRows();
+    const page = await listConversationRows({ scopeIds: null });
     assert.equal(page.rows.length, 0);
   });
   test("a live number that is not the company's is 'number missing', and the company number is connected when present", async () => {
@@ -168,7 +171,7 @@ describe("the webhook", () => {
     const r2 = await post("whatsapp.message.received", inboundBody("wamid.IN1"), "key-1");
     assert.equal(((await r2.json()) as { result: string }).result, "duplicate");
     assert.equal(await count(), 1);
-    const conv = await getConversation("conv-1");
+    const conv = await getConversation("conv-1", null);
     assert.equal(conv?.unread, 1);
     assert.equal(conv?.windowOpen, true);
   });
@@ -178,7 +181,7 @@ describe("the webhook", () => {
     await post("whatsapp.message.sent", outboundBody("wamid.OUT1", "sent"), "k-s");
     await post("whatsapp.message.read", outboundBody("wamid.OUT1", "read"), "k-r");
     await post("whatsapp.message.delivered", outboundBody("wamid.OUT1", "delivered"), "k-d");
-    const msgs = await threadMessages("conv-1");
+    const msgs = await threadMessages("conv-1", null);
     const out = msgs.filter((m) => m.direction === "outbound");
     assert.equal(out.length, 1);
     assert.equal(out[0].status, "read");
@@ -203,22 +206,24 @@ describe("names come from the CRM where the number is a customer's", () => {
     await post("whatsapp.message.received", inboundBody("wamid.1", { conv: "c-crm", phone: "919820011111", name: "Shree WA" }), "m1");
     await post("whatsapp.message.received", inboundBody("wamid.2", { conv: "c-wa", phone: "919811122233", name: "Walk-in Buyer" }), "m2");
     await post("whatsapp.message.received", inboundBody("wamid.3", { conv: "c-num", phone: "919833344455", name: null }), "m3");
-    const { rows } = await listConversationRows();
+    const { rows } = await listConversationRows({ scopeIds: null });
     const by = Object.fromEntries(rows.map((r) => [r.id, r]));
     assert.equal(by["c-crm"].title, "Shree Paints (CRM)");
     assert.equal(by["c-crm"].nameSource, "crm");
     assert.equal(by["c-wa"].title, "Walk-in Buyer");
     assert.equal(by["c-wa"].nameSource, "whatsapp");
     assert.equal(by["c-num"].title, "+919833344455");
-    const found = await listConversationRows({ q: "walk" });
+    const found = await listConversationRows({ q: "walk", scopeIds: null });
     assert.deepEqual(found.rows.map((r) => r.id), ["c-wa"]);
-    const byCrm = await listConversationRows({ q: "shree" });
+    const byCrm = await listConversationRows({ q: "shree", scopeIds: null });
     assert.deepEqual(byCrm.rows.map((r) => r.id), ["c-crm"]);
   });
 });
 
 describe("sending", () => {
   beforeEach(async () => {
+    /* A conversation is answered only by somebody who may see its customer: this shop is Priya's. */
+    await db.insert(customers).values({ id: id("cus"), name: "Shree Paints", phone: "9820011111", city: "Nagpur", kind: "customer", ownerId: priya.id, salesAmId: priya.id } as never);
     await post("whatsapp.message.received", inboundBody("wamid.IN0"), "seed-in");
     calls = [];
   });
@@ -230,7 +235,7 @@ describe("sending", () => {
     assert.ok(b.ok);
     assert.equal(sends().length, 1);
     assert.deepEqual((sends()[0].body as { to: string; text: { body: string } }).to, "919820011111");
-    const out = (await threadMessages("conv-1")).filter((m) => m.direction === "outbound");
+    const out = (await threadMessages("conv-1", null)).filter((m) => m.direction === "outbound");
     assert.equal(out.length, 1);
     assert.equal(out[0].status, "sent");
     assert.equal(out[0].sentByName, "Priya Sharma");
@@ -244,7 +249,7 @@ describe("sending", () => {
     };
     const r = await sendText({ conversationId: "conv-1", body: "Race", clientKey: "clientkey-0002" });
     assert.ok(r.ok, r.ok ? "" : r.error);
-    const out = (await threadMessages("conv-1")).filter((m) => m.direction === "outbound");
+    const out = (await threadMessages("conv-1", null)).filter((m) => m.direction === "outbound");
     assert.equal(out.length, 1);
     assert.equal(out[0].status, "delivered");
     assert.equal(out[0].sentByName, "Priya Sharma");
@@ -276,7 +281,7 @@ describe("sending", () => {
     sendAnswer = { status: 422, body: { error: { message: "Template required", code: 131047 } } };
     const r = await sendText({ conversationId: "conv-1", body: "Hi", clientKey: "clientkey-0006" });
     assert.equal(r.ok, false);
-    const out = (await threadMessages("conv-1")).filter((m) => m.direction === "outbound");
+    const out = (await threadMessages("conv-1", null)).filter((m) => m.direction === "outbound");
     assert.equal(out[0].status, "failed");
     assert.match(out[0].errorText ?? "", /Template required/);
     assert.equal(sends().length, 1);
@@ -286,7 +291,7 @@ describe("sending", () => {
     sendAnswer = "throw";
     const r = await sendText({ conversationId: "conv-1", body: "Hi", clientKey: "clientkey-0007" });
     assert.equal(r.ok, false);
-    const out = (await threadMessages("conv-1")).filter((m) => m.direction === "outbound");
+    const out = (await threadMessages("conv-1", null)).filter((m) => m.direction === "outbound");
     assert.equal(out[0].status, "failed");
     assert.match(out[0].errorText ?? "", /not known whether/);
   });
@@ -313,7 +318,7 @@ describe("sending", () => {
     assert.equal(body.type, "image");
     assert.equal(body.image.id, "MEDIA1");
     assert.equal(body.image.caption, "Happy Diwali from Mahek");
-    const out = (await threadMessages("conv-1")).filter((m) => m.direction === "outbound");
+    const out = (await threadMessages("conv-1", null)).filter((m) => m.direction === "outbound");
     assert.equal(out.length, 1);
     assert.equal(out[0].hasMedia, true);
     assert.equal(out[0].caption, "Happy Diwali from Mahek");
@@ -333,11 +338,14 @@ describe("refresh from Kapso", () => {
     const r = await refreshFromKapso();
     assert.ok(r.ok, r.ok ? "" : r.error);
     assert.equal(await count(), 2);
-    const msgs = await threadMessages("sync-1");
+    const msgs = await threadMessages("sync-1", null);
     assert.deepEqual(msgs.map((m) => m.body), ["Sent from the phone", "Thanks"]);
     assert.equal(msgs[0].origin, "business_app");
-    const conv = await getConversation("sync-1");
+    const conv = await getConversation("sync-1", null);
     assert.equal(conv?.unread, 0, "a first fill does not make every old message unread");
+    /* The minimum interval is real, so a second refresh is one made later. */
+    resetRefreshThrottle();
+    await db.delete(auditLog).where(eq(auditLog.action, "studio.inbox.synced"));
     const again = await refreshFromKapso();
     assert.ok(again.ok);
     assert.equal(await count(), 2);
@@ -368,7 +376,7 @@ describe("the local preview (sample data) is in memory only, and switching it of
   test("with the switch on it lists labelled sample conversations, sends nothing to Kapso and writes nothing to the database", async () => {
     process.env.STUDIO_INBOX_PREVIEW = "1";
     calls = [];
-    const page = await listConversationRows();
+    const page = await listConversationRows({ scopeIds: null });
     assert.equal(page.connection.state, "preview");
     assert.ok(page.rows.length >= 6);
     const open = page.rows.find((r) => r.windowOpen && !r.blocked);
@@ -377,7 +385,7 @@ describe("the local preview (sample data) is in memory only, and switching it of
     assert.ok(r.ok, r.ok ? "" : r.error);
     const again = await sendText({ conversationId: open.id, body: "Preview only", clientKey: "clientkey-pv01" });
     assert.ok(again.ok);
-    const thread = await threadMessages(open.id);
+    const thread = await threadMessages(open.id, null);
     assert.equal(thread.filter((m) => m.body === "Preview only").length, 1);
     assert.equal(calls.length, 0, "no call reached Kapso");
     assert.equal(await count(), 0, "no message row was stored");
@@ -395,7 +403,7 @@ describe("the local preview (sample data) is in memory only, and switching it of
     delete process.env.STUDIO_INBOX_PREVIEW;
     numbers = [sandbox];
     resetConnectionCache();
-    const page = await listConversationRows();
+    const page = await listConversationRows({ scopeIds: null });
     assert.equal(page.connection.state, "not_connected");
     assert.equal(page.rows.length, 0);
   });
@@ -418,14 +426,14 @@ describe("the preview's pictures are generic and local-only", () => {
     const png = await previewAssetRoute(new Request("http://x/api/studio/inbox/preview-asset?id=pvp-1"));
     assert.equal(png.status, 200);
     assert.equal((await previewAssetRoute(new Request("http://x/api/studio/inbox/preview-asset?id=not-an-asset"))).status, 404);
-    const { rows } = await listConversationRows();
+    const { rows } = await listConversationRows({ scopeIds: null });
     const open = rows.find((r) => r.windowOpen && !r.blocked);
     assert.ok(open);
     const r = await sendPoster({ conversationId: open.id, posterId: "pvp-2", caption: "Sample caption", clientKey: "clientkey-pv11" });
     assert.ok(r.ok, r.ok ? "" : r.error);
     const f = await sendForward({ conversationId: open.id, forwardId: "pvf-1", caption: "", clientKey: "clientkey-pv12" });
     assert.ok(f.ok, f.ok ? "" : f.error);
-    const sent = (await threadMessages(open.id)).filter((m) => m.hasMedia && m.sentByName === "Priya Sharma" && m.posterId?.startsWith("pv"));
+    const sent = (await threadMessages(open.id, null)).filter((m) => m.hasMedia && m.sentByName === "Priya Sharma" && m.posterId?.startsWith("pv"));
     assert.ok(sent.length >= 2);
     assert.equal(calls.length, 0);
     assert.equal(await count(), 0);
@@ -433,7 +441,7 @@ describe("the preview's pictures are generic and local-only", () => {
 
   test("a DND sample conversation refuses a poster too, and with the preview off the pictures route does not exist", async () => {
     process.env.STUDIO_INBOX_PREVIEW = "1";
-    const { rows } = await listConversationRows();
+    const { rows } = await listConversationRows({ scopeIds: null });
     const dnd = rows.find((r) => r.blocked === "whatsapp_dnd");
     assert.ok(dnd);
     const refused = await sendPoster({ conversationId: dnd.id, posterId: "pvp-1", caption: "", clientKey: "clientkey-pv13" });

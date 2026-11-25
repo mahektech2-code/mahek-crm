@@ -32,7 +32,7 @@ Most reports do not need a developer. The console reads every new report and say
 
 | It needs | Who fixes it |
 |---|---|
-| A change to the code | A developer — or Claude, asked from the console |
+| A change to the code | Claude, asked automatically — or a developer |
 | A record to correct | The team, on the record's own screen |
 | A setting to change | An administrator, on a settings page |
 | Somebody's access | Admin Console → Access |
@@ -45,8 +45,8 @@ Anybody triaging can change the answer, and a person's answer is never written o
 flowchart LR
   A["Report"] --> B{"What it needs"}
   B -- "anything but code" --> T["The team fixes it, replies, marks Done"]
-  B -- "a code change" --> I["Send to developer: a GitHub issue"]
-  I -- "platform administrator" --> C["Ask Claude to fix: Claude opens a pull request"]
+  B -- "a code change" --> I["A GitHub issue, opened by itself"]
+  I -- "automatically" --> C["Claude writes the fix and opens a pull request"]
   I --> P["A developer opens a pull request"]
   C --> M["A person reviews and merges"]
   P --> M
@@ -54,7 +54,7 @@ flowchart LR
   L --> D["Report closed, everybody who reported it told"]
 `} />
 
-- **Ask Claude to fix** is a platform administrator's alone. It labels the issue, which starts the repository's Claude workflow; Claude's pull request is reviewed and merged by a person like any other.
+- **Claude is asked by itself.** Every report that needs a code change — as the AI reads it, however sure, or as a person marks it — becomes a GitHub issue labelled for Claude with nobody pressing anything, and Claude opens a pull request ready to merge. Anything the first try missed is sent by the hourly check. Turn it off with <Setting k="feedbackFix.autoFix"/>; then **Ask Claude to fix** is a platform administrator's button. Claude's pull request is still reviewed and merged by a person like any other.
 - What goes to GitHub carries **no phone number, email, GSTIN, PAN or Aadhaar**. Customer and shop names stay, so the fix can be checked against the right account.
 - The report closes itself only when the merged commit is in the build **now serving** — not at the merge.
 

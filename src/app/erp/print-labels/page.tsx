@@ -26,6 +26,8 @@ import { LabelPrinter } from "./printer";
  *   ?ids=BX-…,BX-…    box labels for a selection
  *   ?sfg=12ASTOL1     the SFG lot's label, 80 × 80 mm (&godown= picks the godown)
  *   ?purchase=<id>    the purchased lot's label, 80 × 80 mm, one per drum
+ *   ?purchases=a,b    several lots' drum labels in one print, each one a drum
+ *                     — what Drum labels' "Print n labels" opens
  *   ?order=1256       dispatch labels, 80 × 80 mm — one per box or can on
  *                     every line of the order
  *   ?orders=1256,1260 the same for several orders, one after another — what
@@ -42,7 +44,8 @@ export const dynamic = "force-dynamic";
 const SCREENS: Record<LabelKind, string[]> = {
   box: ["units", "dispatch", "packBatches", "stock", "orders"],
   sfg: ["sfgBatches", "stock"],
-  purchase: ["barcode", "register", "stock"],
+  /* Goods in too: the GRN's What's next prints a lot's drum labels the moment it is in the register. */
+  purchase: ["barcode", "register", "stock", "inward"],
   dispatch: ["orders", "dispatch"],
 };
 
@@ -55,11 +58,12 @@ export default async function ErpLabels({ searchParams }: { searchParams: Promis
   const ids = one("ids").split(",").map((x) => x.trim()).filter(Boolean);
   const sfg = one("sfg");
   const purchase = one("purchase");
+  const purchases = [...new Set(one("purchases").split(",").map((x) => x.trim()).filter(Boolean))].slice(0, 200);
   const order = /^\d+$/.test(one("order")) ? Number(one("order")) : null;
   /* The order list, or the one order: each printed whole, in the order named. */
   const orders = order != null ? [order] : [...new Set(one("orders").split(",").map((x) => x.trim()).filter((x) => /^\d+$/.test(x)).map(Number))];
 
-  const kind: LabelKind = orders.length ? "dispatch" : sfg ? "sfg" : purchase ? "purchase" : "box";
+  const kind: LabelKind = orders.length ? "dispatch" : sfg ? "sfg" : purchase || purchases.length ? "purchase" : "box";
   if (!SCREENS[kind].some((s) => ctx.screens.has(s))) redirect("/erp");
 
   const config = await getConfig();
@@ -77,6 +81,8 @@ export default async function ErpLabels({ searchParams }: { searchParams: Promis
   let unitIds: string[] = [];
   let copiesShown: number | null = null;
   let unlabelled: Unlabelled[] = [];
+  /* Purchased lots printed here, with the labels each takes: every print of them is recorded (`erp_label_prints`). */
+  let lots: { id: string; copies: number }[] = [];
   const views: React.ReactNode[] = [];
 
   if (kind === "dispatch") {
@@ -102,6 +108,17 @@ export default async function ErpLabels({ searchParams }: { searchParams: Promis
       copiesShown = copiesOf(one("copies"), 1);
       for (let i = 0; i < copiesShown; i++) views.push(<SfgLabelView key={i} l={r.label} qr={r.qr} copy={i + 1} />);
     }
+  } else if (kind === "purchase" && purchases.length) {
+    title = `Drum labels · ${purchases.length} lot${purchases.length === 1 ? "" : "s"}`;
+    empty = "None of those lots was found. Open them from Purchase → Drum labels.";
+    fileName = `drum-labels-${purchases.length}-lots.prn`;
+    for (const id of purchases) {
+      const r = await purchaseLabel(id);
+      if (!r) continue;
+      const copies = copiesOf(null, r.label.drums ?? 1);
+      lots.push({ id, copies });
+      for (let i = 0; i < copies; i++) views.push(<PurchaseLabelView key={`${id}:${i}`} l={r.label} qr={r.qr} copy={i + 1} />);
+    }
   } else if (kind === "purchase") {
     title = "Purchase label";
     empty = "That purchase was not found. Open it from Purchases → Drum labels.";
@@ -111,6 +128,7 @@ export default async function ErpLabels({ searchParams }: { searchParams: Promis
       fileName = `purchase-${r.label.lot}.prn`;
       /* A label goes on a drum, so a lot of four drums starts at four. */
       copiesShown = copiesOf(one("copies"), r.label.drums ?? 1);
+      lots = [{ id: purchase, copies: copiesShown }];
       for (let i = 0; i < copiesShown; i++) views.push(<PurchaseLabelView key={i} l={r.label} qr={r.qr} copy={i + 1} />);
     }
   } else {
@@ -158,7 +176,7 @@ export default async function ErpLabels({ searchParams }: { searchParams: Promis
               <Button type="submit">Set</Button>
             </form>
           ) : null}
-          {n ? <LabelPrinter ids={unitIds} count={n} what={what} mm={mm} setup={setup} fileName={fileName} /> : null}
+          {n ? <LabelPrinter ids={unitIds} lots={ctx.viewingAs ? [] : lots} count={n} what={what} mm={mm} setup={setup} fileName={fileName} /> : null}
         </div>
       }
     >

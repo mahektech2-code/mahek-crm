@@ -2554,7 +2554,56 @@
       "idx": 365,
       "version": "7",
       "when": 1794948728699,
-      "tag": "0372_factory_only_sessions",
+      "tag": "0372_erp_purchases_split",
+      "breakpoints": true
+    },
+    {
+      "idx": 366,
+      "version": "7",
+      "when": 1794948768699,
+      "tag": "0373_erp_label_prints",
+      "breakpoints": true
+    },
+    {
+      "idx": 367,
+      "version": "7",
+      "when": 1795400000000,
+      "tag": "0374_erp_ticks_everywhere",
+      "breakpoints": true
+    },
+    {
+      "idx": 368,
+      "version": "7",
+      "when": 1795486400000,
+      "tag": "0375_studio_timeline",
+      "breakpoints": true
+    },
+    {
+      "idx": 369,
+      "version": "7",
+      "when": 1795572800000,
+      "tag": "0376_studio_timeline_bulk",
+      "breakpoints": true
+    },
+    {
+      "idx": 370,
+      "version": "7",
+      "when": 1795600000000,
+      "tag": "0377_geo_master",
+      "breakpoints": true
+    },
+    {
+      "idx": 371,
+      "version": "7",
+      "when": 1795700000000,
+      "tag": "0378_ai_read_trials",
+      "breakpoints": true
+    },
+    {
+      "idx": 372,
+      "version": "7",
+      "when": 1795700040000,
+      "tag": "0379_factory_only_sessions",
       "breakpoints": true
     }
   ]

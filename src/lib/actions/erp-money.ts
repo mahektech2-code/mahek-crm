@@ -4,7 +4,8 @@ import { revalidatePath } from "next/cache";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
-import { ErpNotPermitted, requireErpWrite, erpContext, type ErpContext } from "@/lib/erp/access";
+import { ErpNotPermitted, requireErpTickWrite, requireErpWrite, erpContext, type ErpContext } from "@/lib/erp/access";
+import type { Tick } from "@/lib/erp/action-ticks";
 import * as M from "@/lib/erp/money";
 import { duplicateOf, invoiceKey } from "@/lib/erp/engines/money";
 import { confirmImpact } from "@/lib/impact/registry";
@@ -36,12 +37,37 @@ async function run<T>(fn: (actor: M.Actor, ctx: ErpContext) => Promise<Result<T>
   }
 }
 
+/**
+ * A save's message names the account's balance after it ("Kotak Bank now
+ * ₹5,51,550"). Only somebody who sees balances (`M.seesBalances`) is told it;
+ * for everybody else the message stops at what was saved.
+ */
+async function runSave<T>(fn: (actor: M.Actor, ctx: ErpContext) => Promise<Result<T>>): Promise<Result<T>> {
+  let sees = false;
+  const res = await run((a, ctx) => {
+    sees = M.seesBalances(a);
+    return fn(a, ctx);
+  });
+  if (res.ok && !sees && res.message) return { ...res, message: res.message.split(" · ")[0] };
+  return res;
+}
+
+/** `run`, refused first without the page's Edit or Delete tick (`requireErpTickWrite`). */
+async function runTick<T>(tick: Tick, fn: (actor: M.Actor, ctx: ErpContext) => Promise<Result<T>>): Promise<Result<T>> {
+  try {
+    await requireErpTickWrite("expenses", tick);
+  } catch (e) {
+    return refused(e);
+  }
+  return run(fn);
+}
+
 const s = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
 const n = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? Math.round(v) : null);
 const list = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.length > 0).slice(0, 20) : []);
 
 export async function erpMoneyExpense(x: M.ExpenseInput) {
-  return run((a) =>
+  return runSave((a) =>
     M.saveExpense(a, {
       petty: !!x.petty,
       date: s(x.date) ?? "",
@@ -62,7 +88,7 @@ export async function erpMoneyExpense(x: M.ExpenseInput) {
 }
 
 export async function erpMoneyReceipt(x: M.ReceiptInput) {
-  return run((a) =>
+  return runSave((a) =>
     M.saveReceipt(a, {
       date: s(x.date) ?? "",
       into: s(x.into),
@@ -79,7 +105,7 @@ export async function erpMoneyReceipt(x: M.ReceiptInput) {
 }
 
 export async function erpMoneyTransfer(x: M.TransferInput) {
-  return run((a) =>
+  return runSave((a) =>
     M.saveTransfer(a, {
       date: s(x.date) ?? "",
       from: s(x.from),
@@ -95,7 +121,7 @@ export async function erpMoneyTransfer(x: M.TransferInput) {
 }
 
 export async function erpMoneyAdvance(x: M.AdvanceInput) {
-  return run((a) =>
+  return runSave((a) =>
     M.giveAdvance(a, {
       userId: s(x.userId),
       amountPaise: n(x.amountPaise),
@@ -126,12 +152,12 @@ export async function erpMoneyBills(advanceId: string, bills: M.BillInput[]) {
 
 export async function erpMoneyReview(ids: string[], decision: "approved" | "sent_back", note?: string | null) {
   if (decision !== "approved" && decision !== "sent_back") return err("Approve or send back.");
-  return run((a) => M.reviewTxns(a, list(ids), decision, s(note)));
+  return runTick("edit", (a) => M.reviewTxns(a, list(ids), decision, s(note)));
 }
 
 /** Cancels a transaction once the impact modal has been confirmed — the same check the screen's own Cancel makes. */
 export async function erpMoneyCancel(id: string, reason: string, confirmation?: ImpactConfirmation | null) {
-  return run(async (a) => {
+  return runTick("delete", async (a) => {
     const refusal = await confirmImpact("erp-money-txn", String(id), confirmation);
     if (refusal) return refusal;
     return M.cancelTxn(a, String(id), typeof reason === "string" ? reason : "");
@@ -139,11 +165,11 @@ export async function erpMoneyCancel(id: string, reason: string, confirmation?: 
 }
 
 export async function erpMoneySettle(advanceId: string, account: string) {
-  return run((a) => M.settleAdvance(a, String(advanceId), s(account), null));
+  return runTick("edit", (a) => M.settleAdvance(a, String(advanceId), s(account), null));
 }
 
 export async function erpMoneyMatch(lineId: string, txnIds: string[]) {
-  return run((a) => M.matchBankLine(a, String(lineId), list(txnIds)));
+  return runTick("edit", (a) => M.matchBankLine(a, String(lineId), list(txnIds)));
 }
 
 export async function erpMoneyCreateFromLine(lineId: string, v: { category: string | null; party: string | null; description: string | null; counter: string | null }) {

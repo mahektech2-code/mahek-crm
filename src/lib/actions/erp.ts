@@ -20,6 +20,7 @@ import { withReadMemo } from "@/lib/erp/read-memo";
 import { scopeFor, unscoped } from "@/lib/erp/window";
 import { erpAudit } from "@/lib/erp/server";
 import { lazyForm } from "@/lib/erp/lazy-forms";
+import { holdsTick, tickFor, tickWhy, type Tick } from "@/lib/erp/action-ticks";
 
 /* ---------------------------------------------------------------------------
  * The ERP's writes, all through five doors.
@@ -41,6 +42,11 @@ function revalidate(screen: string) {
   revalidatePath("/erp");
 }
 
+/** Refuses an act the person's Edit or Delete tick on the page does not cover (`action-ticks.ts`). */
+function needTick(ctx: Parameters<typeof holdsTick>[0], screen: string, tick: Tick | undefined): Result<never> | null {
+  return holdsTick(ctx, screen, tick) ? null : err(tickWhy(screen, tick!), "not_permitted");
+}
+
 export async function erpRunAction(
   screen: string,
   action: string,
@@ -51,6 +57,8 @@ export async function erpRunAction(
     const ctx = await requireErpWrite(screen);
     const handler = screenModule(screen)?.actions?.[action];
     if (!handler) return err("That action is not available.", "not_found");
+    const refusedTick = needTick(ctx, screen, tickFor(screen, "actions", action));
+    if (refusedTick) return refusedTick;
     const res = await handler(ctx, id, values);
     if (res.ok) revalidate(screen);
     return res;
@@ -64,6 +72,8 @@ export async function erpRunBulk(screen: string, action: string, ids: string[], 
     const ctx = await requireErpWrite(screen);
     const handler = screenModule(screen)?.bulk?.[action];
     if (!handler) return err("That action is not available.", "not_found");
+    const refusedTick = needTick(ctx, screen, tickFor(screen, "bulk", action));
+    if (refusedTick) return refusedTick;
     if (!ids.length) return err("Nothing selected.");
     const res = await handler(ctx, ids, values);
     if (res.ok) revalidate(screen);
@@ -98,6 +108,8 @@ export async function erpSubmitForm(
     const ctx = await requireErpWrite(screen);
     const handler = screenModule(screen)?.forms?.[form];
     if (!handler) return err("That form is not available.", "not_found");
+    const refusedTick = needTick(ctx, screen, tickFor(screen, "forms", form));
+    if (refusedTick) return refusedTick;
     const res = await handler(ctx, header, lines, recordId);
     if (res.ok) revalidate(screen);
     return res;
@@ -112,6 +124,11 @@ export async function erpLoadForm(screen: string, action: string, id: string): P
     const mod = screenModule(screen);
     if (!mod) return err("That form is not available.", "not_found");
     const loader = mod.formLoaders?.[action];
+    /* An Edit form is not opened for somebody who could not save it. A preview may (it writes nothing and shows the fields). */
+    if (!ctx.viewingAs) {
+      const refusedTick = needTick(ctx, screen, tickFor(screen, "forms", action) ?? tickFor(screen, "actions", action));
+      if (refusedTick) return refusedTick;
+    }
     /* No loader of its own: a form the list left on the server because it was heavy (`lazy-forms.ts`). */
     /* Opening a form writes nothing, so it may share reads the way a page does: this form asks for the SKU book three times. */
     const spec = await withReadMemo(() => (loader ? loader(ctx, id) : lazyForm(ctx, mod, action, id)));

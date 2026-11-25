@@ -107,9 +107,9 @@ never remembered, so the next request tries again.
 ## The WhatsApp Inbox
 
 **THE INBOX SHOWS WHAT KAPSO SAID ABOUT THE COMPANY NUMBER, AND NOTHING ELSE.**
-`/studio/inbox` (module `studio.inbox`, everybody holding it sees every
-conversation) is a shared inbox for the company WhatsApp number, read and
-answered inside the Studio — text replies, and a poster or an uploaded picture
+`/studio/inbox` (module `studio.inbox`, EXPLICIT ONLY — ticked for named people,
+never carried by a whole-app grant or by being a Studio manager or admin) is
+the inbox for the company WhatsApp number, read and answered inside the Studio — text replies, and a poster or an uploaded picture
 sent with its caption. It replaces opening a chat in WhatsApp Web for normal
 chat work, but the existing "Open WhatsApp" buttons are untouched until it has
 been verified on real conversations. `kapso.ts` is the one place Kapso is
@@ -117,6 +117,26 @@ called; the project key (`kapso.apiKey`) and the webhook secret
 (`kapso.webhookSecret`) are Admin Console credentials read on the server for
 the request that spends them, and never reach a page. The company number is the
 setting `studio.whatsapp.number`.
+
+**A CONVERSATION IS SEEN ONLY BY SOMEBODY WHO MAY SEE ITS LEAD OR CUSTOMER.**
+Every read (list, search, a thread, mark-read) and every send (text, poster,
+forward, bulk) takes the viewer's reach (`resolveStudioScope().scope.userIds`,
+`lib/studio/scope.ts`) and matches the conversation's number to a customer through
+`scopedToUsers` — the CRM's own ownership and sharing rule. A number that matches
+no record in reach is "not there" to the viewer; only the whole-book reader (a
+platform administrator) sees an unmatched number. Admin or manager of the Studio
+alone is read as a manager, never as the company. The scope rule is the Studio's
+own resolver; `scopeForUser` and the other Studio screens are unchanged.
+Every send also meets the CRM's contact safeguards in `gate()`: the founder's
+WhatsApp switch, a staff-number refusal, `whatsapp.contactsPerWeekLimit` counted
+across the CRM's `wa_messages` and the Studio's own sends, any record's do-not-contact
+or WhatsApp-DND on the number (in reach or not), and the 24-hour window. Outside
+the window a poster is refused — template sending is NOT built, and no template
+name is assumed. A bulk send of an uploaded poster answers every recipient (sent,
+skipped, failed) live on screen and stores nothing per recipient. "Refresh from Kapso"
+answers only whether it ran, and runs at most once per `REFRESH_MIN_SECONDS`.
+The Org Chart design-approval routing (`approval-routing.ts`, setting
+`studio.approvalByOrgChart`, default OFF) is built but called by nothing.
 
 **IS IT CONNECTED IS ANSWERED FROM KAPSO'S OWN LIST OF NUMBERS.** `connection()`
 (`inbox-service.ts`) lists the project's numbers and finds the company number as

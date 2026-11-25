@@ -3,7 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
-import { ErpNotPermitted, erpContext, previewRefusal, requireErpForm, requireErpWrite, type ErpContext } from "@/lib/erp/access";
+import { ErpNotPermitted, erpContext, previewRefusal, requireErpForm, requireErpTickWrite, requireErpWrite, type ErpContext } from "@/lib/erp/access";
+import type { Tick } from "@/lib/erp/action-ticks";
 import * as L from "@/lib/erp/logistics";
 import * as F from "@/lib/erp/freight-bills";
 import * as C from "@/lib/erp/transporter-calls";
@@ -35,6 +36,16 @@ async function run<T>(fn: (ctx: ErpContext) => Promise<Result<T>>): Promise<Resu
   } catch (e) {
     return refused(e);
   }
+}
+
+/** `run`, refused first without the page's Edit or Delete tick (`requireErpTickWrite`). */
+async function runTick<T>(tick: Tick, fn: (ctx: ErpContext) => Promise<Result<T>>): Promise<Result<T>> {
+  try {
+    await requireErpTickWrite("transport", tick);
+  } catch (e) {
+    return refused(e);
+  }
+  return run(fn);
 }
 
 const ids = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.length > 0).slice(0, 500) : []);
@@ -99,7 +110,7 @@ export async function erpLogisticsReadLr(fileId: string) {
 }
 
 export async function erpLogisticsEditLr(lrId: string, input: L.LrInput, opts?: { notify?: boolean }) {
-  return run((ctx) => L.editLr(ctx, lrId, input, { notify: opts?.notify === true }));
+  return runTick("edit", (ctx) => L.editLr(ctx, lrId, input, { notify: opts?.notify === true }));
 }
 
 /** The LR behind an On the road card, for its Edit dialog. A read, so nothing is revalidated. */
@@ -115,7 +126,7 @@ export async function erpLogisticsLrForEdit(lrId: string): Promise<Result<L.Uplo
 }
 
 export async function erpLogisticsVoidLr(lrId: string, reason: string, confirmation?: ImpactConfirmation) {
-  return run((ctx) => L.voidLr(ctx, lrId, reason, confirmation));
+  return runTick("delete", (ctx) => L.voidLr(ctx, lrId, reason, confirmation));
 }
 
 export async function erpLogisticsAttach(lrId: string, transportIds: string[], opts: { expectedOn?: string | null; notify?: boolean; nextCallOn?: string | null }) {
@@ -123,11 +134,11 @@ export async function erpLogisticsAttach(lrId: string, transportIds: string[], o
 }
 
 export async function erpLogisticsDetach(transportId: string, reason: string) {
-  return run((ctx) => L.detachLr(ctx, transportId, reason));
+  return runTick("delete", (ctx) => L.detachLr(ctx, transportId, reason));
 }
 
 export async function erpLogisticsUpdate(transportIds: string[], input: L.ConsignmentUpdate) {
-  return run((ctx) => L.updateConsignment(ctx, ids(transportIds), input ?? {}));
+  return runTick("edit", (ctx) => L.updateConsignment(ctx, ids(transportIds), input ?? {}));
 }
 
 export async function erpLogisticsIssue(transportIds: string[], input: { issue: string; note?: string | null; expectedOn?: string | null; notify?: boolean; customerReason?: string | null }) {
@@ -135,7 +146,7 @@ export async function erpLogisticsIssue(transportIds: string[], input: { issue: 
 }
 
 export async function erpLogisticsClearIssue(transportIds: string[], note: string) {
-  return run((ctx) => L.clearIssue(ctx, ids(transportIds), note ?? ""));
+  return runTick("edit", (ctx) => L.clearIssue(ctx, ids(transportIds), note ?? ""));
 }
 
 export async function erpLogisticsDelivered(transportIds: string[], input: { date: string; receivedBy?: string | null; proof?: string | null; note?: string | null; notify?: boolean; signedCopyId?: string | null }) {
@@ -145,19 +156,19 @@ export async function erpLogisticsDelivered(transportIds: string[], input: { dat
 /* ---- delivery proof on the Documents desk (0301) ---- */
 
 export async function erpLogisticsSetKind(lrId: string, kind: "lr" | "signed_copy") {
-  return run((ctx) => L.setLrKind(ctx, String(lrId ?? ""), kind));
+  return runTick("edit", (ctx) => L.setLrKind(ctx, String(lrId ?? ""), kind));
 }
 
 export async function erpLogisticsReplaceFile(lrId: string, fileId: string) {
-  return run((ctx) => L.replaceLrFile(ctx, String(lrId ?? ""), String(fileId ?? "")));
+  return runTick("edit", (ctx) => L.replaceLrFile(ctx, String(lrId ?? ""), String(fileId ?? "")));
 }
 
 export async function erpLogisticsClearDuplicate(lrId: string) {
-  return run((ctx) => L.clearDuplicate(ctx, String(lrId ?? "")));
+  return runTick("edit", (ctx) => L.clearDuplicate(ctx, String(lrId ?? "")));
 }
 
 export async function erpLogisticsDiscardDuplicate(lrId: string) {
-  return run((ctx) => L.discardDuplicate(ctx, String(lrId ?? "")));
+  return runTick("delete", (ctx) => L.discardDuplicate(ctx, String(lrId ?? "")));
 }
 
 export async function erpLogisticsAttachReady(pairs: { lrId: string; transportIds: string[]; kind?: "lr" | "signed_copy"; date?: string | null; receivedBy?: string | null }[], opts: { notify?: boolean } = {}) {
@@ -170,7 +181,7 @@ export async function erpLogisticsDeliveredBy(transportIds: string[], transporte
 }
 
 export async function erpLogisticsReopen(transportId: string, reason: string, confirmation?: ImpactConfirmation) {
-  return run((ctx) => L.reopen(ctx, transportId, reason ?? "", confirmation));
+  return runTick("delete", (ctx) => L.reopen(ctx, transportId, reason ?? "", confirmation));
 }
 
 export async function erpLogisticsTransporter(input: Parameters<typeof L.saveTransporter>[1]) {
@@ -222,29 +233,29 @@ export async function erpFreightBillsSave(inputs: F.FreightBillInput[]) {
 }
 
 export async function erpFreightBillResplit(billId: string) {
-  return run((ctx) => F.resplitFreightBill(ctx, String(billId ?? "")));
+  return runTick("edit", (ctx) => F.resplitFreightBill(ctx, String(billId ?? "")));
 }
 
 export async function erpFreightBillPay(billId: string, payment: F.PaymentFields) {
-  return run((ctx) => F.markFreightBillPaid(ctx, String(billId ?? ""), payment ?? { paidOn: "", mode: "" }));
+  return runTick("edit", (ctx) => F.markFreightBillPaid(ctx, String(billId ?? ""), payment ?? { paidOn: "", mode: "" }));
 }
 
 /** A manager moves a paid bill back to pending, with a reason. */
 /** Several bills paid in one go — one payment per transporter. */
 export async function erpFreightBillsPay(payments: F.BatchPayment[]) {
-  return run((ctx) => F.markFreightBillsPaid(ctx, (Array.isArray(payments) ? payments : []).map((p) => ({ ...p, billIds: ids(p?.billIds) }))));
+  return runTick("edit", (ctx) => F.markFreightBillsPaid(ctx, (Array.isArray(payments) ? payments : []).map((p) => ({ ...p, billIds: ids(p?.billIds) }))));
 }
 
 export async function erpFreightBillUnpay(billId: string, reason: string) {
-  return run((ctx) => F.undoFreightBillPayment(ctx, String(billId ?? ""), String(reason ?? "")));
+  return runTick("delete", (ctx) => F.undoFreightBillPayment(ctx, String(billId ?? ""), String(reason ?? "")));
 }
 
 export async function erpFreightBillDelete(billId: string, reason: string) {
-  return run((ctx) => F.deleteFreightBill(ctx, String(billId ?? ""), String(reason ?? "")));
+  return runTick("delete", (ctx) => F.deleteFreightBill(ctx, String(billId ?? ""), String(reason ?? "")));
 }
 
 export async function erpLogisticsMergeTransporter(fromId: string, intoId: string, confirmation?: ImpactConfirmation) {
-  return run((ctx) => L.mergeTransporter(ctx, String(fromId ?? ""), String(intoId ?? ""), confirmation));
+  return runTick("edit", (ctx) => L.mergeTransporter(ctx, String(fromId ?? ""), String(intoId ?? ""), confirmation));
 }
 
 /** One call to a transporter, covering every LR it carries for us — the calling window's save. */

@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appAccess, appSecrets, feedback, feedbackFixes, feedbackMessages, notifications, users } from "@/db/schema";
+import { appAccess, appSecrets, appSettings, feedback, feedbackFixes, feedbackMessages, notifications, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { submitFeedback } from "@/lib/actions/feedback";
@@ -102,11 +102,46 @@ async function report() {
   return r.ok ? r.data.id : "";
 }
 
+/** The manual path: nobody is asked automatically until a person presses. */
+async function manualOnly() {
+  await db.update(appSettings).set({ value: false }).where(eq(appSettings.key, "feedbackFix.autoFix"));
+  invalidateConfig();
+}
+
 async function connect() {
   await db.insert(appSecrets).values({ name: "github.token", value: "github_pat_test_0000", last4: "0000" });
 }
 
 describe("fixing feedback", () => {
+  test("a code change goes to Claude by itself, with nobody pressing a button", async () => {
+    await connect();
+    const fb = await report();
+    setTestUser(manager); // not a platform administrator — and does not need to be
+    assert.equal((await chooseWhatItNeeds(fb, "code_change")).ok, true);
+    assert.ok(calls.some((c) => c.method === "POST" && c.url.endsWith("/issues")), "the issue is opened");
+    assert.ok(calls.some((c) => c.url.endsWith("/issues/77/labels")), "and Claude is asked");
+    const fix = await getFix(fb);
+    assert.ok(fix?.aiFixRequestedAt);
+    assert.equal(fix?.issueNumber, 77);
+    const notes = await db.select().from(feedbackMessages).where(eq(feedbackMessages.feedbackId, fb));
+    assert.ok(notes.some((n) => n.internal && /Automatically asked Claude/.test(n.body ?? "")));
+    assert.equal((await askClaudeToFix(fb)).ok, false, "and not twice");
+  });
+
+  test("the hourly check sends any code change still waiting", async () => {
+    await manualOnly();
+    await connect();
+    const fb = await report();
+    setTestUser(manager);
+    await chooseWhatItNeeds(fb, "code_change");
+    assert.equal(calls.length, 0, "off: nothing sent");
+    await db.update(appSettings).set({ value: true }).where(eq(appSettings.key, "feedbackFix.autoFix"));
+    invalidateConfig();
+    const r = await syncFeedbackFixes();
+    assert.equal(r.asked, 1);
+    assert.ok((await getFix(fb))?.aiFixRequestedAt);
+  });
+
   test("a report the team can fix never reaches GitHub", async () => {
     await connect();
     const fb = await report();
@@ -118,6 +153,7 @@ describe("fixing feedback", () => {
   });
 
   test("only a platform administrator may ask Claude", async () => {
+    await manualOnly();
     await connect();
     const fb = await report();
     setTestUser(manager);
@@ -128,6 +164,7 @@ describe("fixing feedback", () => {
   });
 
   test("the issue carries no phone number, Claude is labelled, and the report closes only once live", async () => {
+    await manualOnly();
     await connect();
     const fb = await report();
     setTestUser(admin);

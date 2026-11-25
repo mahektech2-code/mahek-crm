@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Badge, Button, Card, Callout } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
 import { markRecipient, openRecipientChat } from "@/lib/actions/studio-forward";
+import { ForwardSend } from "./forward-send";
 import { STATUS_LABEL, tally, type ForwardStatus } from "@/lib/studio/domain/forward";
 
 /* ---------------------------------------------------------------------------
@@ -17,7 +18,7 @@ export type RunRow = { id: string; company: string; place: string; status: Forwa
 
 const TONE: Record<ForwardStatus, "neutral" | "brand" | "success" | "warn"> = { pending: "neutral", opened: "brand", sent: "success", skipped: "warn" };
 
-export function ForwardRun({ title, imageUrl, rows, cancelled = false }: { title: string; imageUrl: string; rows: RunRow[]; cancelled?: boolean }) {
+export function ForwardRun({ title, imageUrl, rows, cancelled = false, forwardId, inbox = false }: { title: string; imageUrl: string; rows: RunRow[]; cancelled?: boolean; forwardId?: string; inbox?: boolean }) {
   const router = useRouter();
   const toast = useToast();
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -47,6 +48,7 @@ export function ForwardRun({ title, imageUrl, rows, cancelled = false }: { title
         <a href={`${imageUrl}?download=1`} className="text-sm font-medium">
           Download the poster to attach
         </a>
+        {inbox && forwardId ? <ForwardSend forwardId={forwardId} /> : null}
         <div className="text-[13px] text-muted" data-testid="tally">
           {t.sent} marked sent · {t.opened} chat opened · {t.skipped} skipped · {t.pending} not done yet · {t.total} in all
         </div>

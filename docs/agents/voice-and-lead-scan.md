@@ -103,11 +103,37 @@ comes back is a review list, every value editable and ticked where found, and
 "Fill the form" moves only the ticked ones; "Add lead" is still the only thing
 that saves. A value about to overwrite something he typed says so.
 
-**OpenAI only, and the photographs are never stored.** Sarvam's chat endpoint
-cannot see, so there is no fallback to fall to, and without an OpenAI key
-`mbos.ai.leadScan` says unavailable and no icon is drawn. The bytes are read
-from the request and dropped, exactly as dictation's audio is — the form's Shop
-photo is the deliberate photograph and goes through the media queue as before.
+**OpenAI first by default, and the photographs are never stored by us.**
+Sarvam's chat endpoint cannot see, but its Document Intelligence Extract can
+(`lib/sarvam-extract.ts`: a JOB — create, poll, fetch — not a call), so
+`leadScan.provider` may put Sarvam first. That is a ladder, not a swap:
+whatever Sarvam fails on or finds nothing in goes to OpenAI inside the same
+75-second budget (Sarvam gets the first 35), and an Indian-script field it
+returns goes through OpenAI's English pass. The GSTIN second look exists only
+on the OpenAI path. With neither reader available `mbos.ai.leadScan` says
+unavailable and no icon is drawn. The bytes are read from the request and
+dropped, exactly as dictation's audio is — the form's Shop photo is the
+deliberate photograph and goes through the media queue as before. SARVAM KEEPS
+what it is sent for its account's retention (eight days, not settable per
+job); OpenAI is asked to keep nothing. Every setting that sends a card to
+Sarvam says so.
+
+**WHO READS FIRST IS DECIDED BY THE READING TRIAL, NOT BY "BUILT FOR INDIA".**
+The owner's instinct (2026-11-25) was Sarvam first everywhere; the agreed
+rule is per feature, and only where the trial shows Sarvam winning.
+`read-trial-service.ts` reads the same photographs with both and keeps
+per-field VERDICTS in `ai_read_trials` — never a value read, because a card is
+a person's name and number. Expense bills are SCORED against what the salesman
+typed (Admin Console → Integrations → "Read bills with both",
+`readTrial.expenseBills` at a time, a bill never read twice); lead scans are
+COMPARED, field by field, after the handset has its answer (`after()` in the
+route, `leadScan.trial`, OFF by default since it sends every card to a second
+company). A scan has no truth on file, so its evidence is agreement plus the
+GSTIN checksum. The typed expense amount is the CLAIM, which may be less than
+the bill — both readers carry that noise, so compare them, not each to 100%.
+Speech is already Sarvam first (`complaints-and-dictation.md`); writing stays
+OpenAI first (`writing-model.ts`); LR reads stay OpenAI, because the reader is
+given each transporter's past LR numbers and Extract takes only a schema.
 
 **What the model read is CHECKED, not trusted, in `engines/lead-scan.ts`.** A
 landline with its STD zero stripped is ten digits that look like a mobile, so

@@ -8,7 +8,8 @@ import type { ListRow } from "@/lib/erp/ui";
  * packing batch, the trace of a bill. Each phase registers its own.
  * ------------------------------------------------------------------------- */
 
-export type PanelProps = { data: unknown; row: ListRow; screen: string };
+/** `start`: an act to begin on opening (`ActionSpec.opens`) — Create PO's pages, the PO number box — with other rows chosen for it. */
+export type PanelProps = { data: unknown; row: ListRow; screen: string; start?: { act: string; with?: string[] } };
 type PanelComponent = (p: PanelProps) => React.ReactNode;
 
 const PANELS: Record<string, PanelComponent> = {};

@@ -1,8 +1,11 @@
 import "server-only";
 import { cache } from "react";
-import { and, eq, inArray } from "drizzle-orm";
+import { holdsTick, tickWhy, type Tick } from "./action-ticks";
+import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import { db } from "@/db";
 import {
+  appAccess,
+  appScreenAccess,
   erpDesignationModules,
   erpDesignationPowers,
   erpDesignations,
@@ -18,6 +21,7 @@ import { requireUser } from "@/lib/auth";
 import { levelInApp } from "@/lib/access-control";
 import { listUserApps, listUserModules } from "@/lib/access";
 import { ERP_ALWAYS_OPEN, ERP_SCREENS, erpKeysOf } from "./registry";
+import { PAGE_TABS, withheldViews } from "@/lib/access/tab-grants";
 import { ERP_POWERS, type ErpPower } from "./powers";
 import { isDepartmentSeat, type ErpDepartmentSeat } from "./departments";
 
@@ -51,6 +55,21 @@ export type ErpContext = {
   powers: ReadonlySet<ErpPower>;
   /** Screen keys (not module keys) this person may open, and the keys of those screens' tabs. */
   screens: ReadonlySet<string>;
+  /**
+   * Tab keys withheld under a page that IS held (`lib/access/tab-grants.ts`).
+   * A page's own key stays in `screens` even where it doubles as a withheld
+   * tab's key (Purchases is `register`, and so is its Register tab), because a
+   * hundred checks ask `screens` "may they open this page"; the tab strip, the
+   * tab a page opens on and every write ask this set as well. Absent: nothing
+   * withheld.
+   */
+  withheld?: ReadonlySet<string>;
+  /**
+   * The Edit and Delete ticks per page (key without `erp.`), for a grant
+   * converted to the screen model. Undefined — an unconverted grant, an
+   * administrator, a preview — holds every tick (`action-ticks.ts`).
+   */
+  ticks?: ReadonlyMap<string, { edit: boolean; delete: boolean }>;
   /** Godowns the person is assigned to and may work at. */
   assignedGodowns: ErpGodownRef[];
   /** The working location, or the first assigned godown, or null. */
@@ -67,11 +86,35 @@ export type ErpContext = {
 
 type Resolved = Omit<ErpContext, "actor" | "viewingAs">;
 
-/** A screen's tabs come with the screen: see the comment in `resolveFor`. */
-function screensFrom(held: Set<string>): Set<string> {
+/** A screen's tabs come with the screen, less any tab withheld — but never the page's own key. */
+function screensFrom(held: Set<string>, withheld: ReadonlySet<string> = new Set()): Set<string> {
   const screens = new Set<string>();
-  for (const sc of ERP_SCREENS) if (held.has(sc.key)) erpKeysOf(sc).forEach((k) => screens.add(k));
+  for (const sc of ERP_SCREENS) if (held.has(sc.key)) erpKeysOf(sc).forEach((k) => (k === sc.key || !withheld.has(k)) && screens.add(k));
   return screens;
+}
+
+const TAB_KEYS = [...PAGE_TABS.values()].flatMap((tabs) => tabs.map((t) => t.key));
+
+/** The tab rows of a CONVERTED ERP grant (one with a position) — an unconverted grant has none to read. */
+async function tabRowsOf(userId: string): Promise<Set<string>> {
+  const rows = await db
+    .select({ screen: appScreenAccess.screen })
+    .from(appScreenAccess)
+    .innerJoin(appAccess, and(eq(appAccess.userId, appScreenAccess.userId), eq(appAccess.app, appScreenAccess.app)))
+    .where(and(eq(appScreenAccess.userId, userId), eq(appScreenAccess.app, "erp"), isNotNull(appAccess.position), inArray(appScreenAccess.screen, TAB_KEYS)));
+  return new Set(rows.map((r) => r.screen));
+}
+
+/** Edit and Delete per page for a converted grant; null where the grant is not converted (it holds every tick). */
+async function ticksOf(userId: string): Promise<Map<string, { edit: boolean; delete: boolean }> | null> {
+  const rows = await db
+    .select({ screen: appScreenAccess.screen, edit: appScreenAccess.canEdit, del: appScreenAccess.canDelete })
+    .from(appScreenAccess)
+    .innerJoin(appAccess, and(eq(appAccess.userId, appScreenAccess.userId), eq(appAccess.app, appScreenAccess.app)))
+    .where(and(eq(appScreenAccess.userId, userId), eq(appScreenAccess.app, "erp"), isNotNull(appAccess.position)));
+  const [grant] = await db.select({ position: appAccess.position }).from(appAccess).where(and(eq(appAccess.userId, userId), eq(appAccess.app, "erp"))).limit(1);
+  if (!grant?.position) return null;
+  return new Map(rows.filter((r) => !TAB_KEYS.includes(r.screen)).map((r) => [r.screen.replace(/^erp\./, ""), { edit: r.edit, delete: r.del }]));
 }
 
 async function allActiveGodowns(): Promise<ErpGodownRef[]> {
@@ -86,7 +129,7 @@ async function resolveFor(user: User): Promise<Resolved> {
   const level = (await levelInApp(user, "erp")) as ErpContext["level"];
   const administrator = level === "admin" || user.role === "admin";
 
-  const [powerRows, modules, staffRows, setting, designationRow] = await Promise.all([
+  const [powerRows, modules, staffRows, setting, designationRow, tabRows] = await Promise.all([
     db.select({ power: erpUserPowers.power }).from(erpUserPowers).where(eq(erpUserPowers.userId, user.id)),
     level ? listUserModules(user.id, "erp") : Promise.resolve([]),
     db
@@ -101,7 +144,9 @@ async function resolveFor(user: User): Promise<Resolved> {
       .innerJoin(erpDesignations, eq(erpDesignations.id, erpUserDesignations.designationId))
       .where(eq(erpUserDesignations.userId, user.id))
       .limit(1),
+    level ? tabRowsOf(user.id) : Promise.resolve(new Set<string>()),
   ]);
+  const ticks = level && !administrator ? await ticksOf(user.id) : null;
 
   const powers = new Set<ErpPower>(
     administrator ? ERP_POWERS : powerRows.map((r) => r.power).filter((p): p is ErpPower => (ERP_POWERS as readonly string[]).includes(p)),
@@ -112,7 +157,9 @@ async function resolveFor(user: User): Promise<Resolved> {
   /* A screen's tabs come with the screen: they are not modules, so nothing
      could grant them on their own, and every check below that names a tab's
      key (a dashboard tile, a sidebar count, an action) answers as the screen. */
-  const screens = screensFrom(held);
+  /* A page narrowed to some of its tabs (Manage access › a page › its tabs). */
+  const withheld = withheldViews(held, tabRows);
+  const screens = screensFrom(held, withheld);
 
   /*
    * AN ADMINISTRATOR IS ASSIGNED EVERYWHERE. The source's CEO picks any godown;
@@ -134,6 +181,8 @@ async function resolveFor(user: User): Promise<Resolved> {
     administrator,
     powers,
     screens,
+    withheld,
+    ...(ticks ? { ticks } : {}),
     assignedGodowns: assigned,
     workingGodown,
     designation: designationRow[0]?.name ?? null,
@@ -256,6 +305,18 @@ export class ErpNotPermitted extends Error {
  * screen the write belongs to (a storekeeper may not post an order because a
  * button is hidden) and, where the act needs one, the power.
  */
+/**
+ * A write on a desk of its own (Logistics, Petty Cash, the dispatch desk, the
+ * production plan) that changes or takes back something: refused without the
+ * page's Edit or Delete tick, as `erpRunAction` refuses the lists' acts — one
+ * rule (`action-ticks.ts`) for every ERP page.
+ */
+export async function requireErpTickWrite(screen: string, tick: Tick, power?: ErpPower): Promise<ErpContext> {
+  const ctx = await requireErpWrite(screen, power);
+  if (!holdsTick(ctx, screen, tick)) throw new ErpNotPermitted(tickWhy(screen, tick));
+  return ctx;
+}
+
 export async function requireErpWrite(screen: string, power?: ErpPower): Promise<ErpContext> {
   const ctx = await erpContext();
   if (ctx.viewingAs) throw new ErpNotPermitted(previewRefusal(ctx.viewingAs));
@@ -279,7 +340,7 @@ export async function requireErpForm(screen: string): Promise<ErpContext> {
 async function requireErpScreen(ctx: ErpContext, screen: string, power?: ErpPower): Promise<ErpContext> {
   const apps = await listUserApps(ctx.actor.id);
   if (!apps.includes("erp") || !ctx.level) throw new ErpNotPermitted("The ERP is not on your account.");
-  if (!ctx.screens.has(screen)) throw new ErpNotPermitted("That screen is not on your account.");
+  if (!ctx.screens.has(screen) || ctx.withheld?.has(screen)) throw new ErpNotPermitted("That screen is not on your account.");
   if (power && !ctx.powers.has(power)) throw new ErpNotPermitted(powerRefusal(power));
   return ctx;
 }

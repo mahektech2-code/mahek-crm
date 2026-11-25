@@ -2,29 +2,44 @@ A purchase requirement is a department saying "we need this bought". It is the f
 
 ## The screen at a glance
 
-<Wireframe url="/erp/requisitions" nav={["Dashboard", "#Purchase", "Requirements", "Purchase orders", "Purchases", "Lot testing", "Quotation manager"]} active="Requirements" caption="Requirements, one group per requirement number, filtered by stage">
+<Wireframe url="/erp/requisitions" nav={["Dashboard", "#Purchase", "Requirements", "Purchase orders", "Goods in", "Lot testing", "Bills", "#Tools", "Quotation manager", "Drum labels"]} active="Requirements" caption="Requirements, opening on To order: one group per requirement number, each row's next step on its button">
   <WfBar>
-    <WfTitle sub="What each department needs bought, through the PO to the goods.">Requirements</WfTitle>
+    <WfTitle>Requirements</WfTitle>
     <WfSpacer /><WfButton primary>New requirement</WfButton><Hotspot n={1} />
   </WfBar>
-  <WfBar><WfInput placeholder="Search" /><WfPill tone="brand">Create PO 3</WfPill><WfPill>Waiting for PO number 2</WfPill><WfPill>Waiting for goods 4</WfPill><Hotspot n={2} /></WfBar>
+  <WfBar><WfPill tone="brand">To order 6</WfPill><WfPill>On order 8</WfPill><WfPill>Received 14</WfPill><WfPill>Cancelled 0</WfPill><Hotspot n={2} /></WfBar>
+  <WfBar><WfInput placeholder="Search" /><WfButton>Filters</WfButton></WfBar>
   <WfTable
     highlight={0}
-    columns={["Requirement", "Item", "Quantity", "Required by", "Department", "Priority", "Method", "Stage", "Vendor", "PO"]}
+    columns={["Item", "Category", "Quantity", "In stock", "Required by", "Method", "Supplier", ""]}
     rows={[
-      ["REQ-412", <b key="a">Tin can 5 L</b>, "1,200 Pcs", "12 Oct", "Refilling", <WfPill key="b" tone="danger">Urgent</WfPill>, "Direct purchase", <span key="c">Create PO <Hotspot n={3} /></span>, "—", "—"],
-      ["REQ-411", <b key="d">Solvent A</b>, "800 Kg", "15 Oct", "Mixing & Blending", "Medium", "Quotation", "Waiting for PO number", "—", "—"],
-      ["REQ-409", <b key="e">Empty Box 5 Liter</b>, "500 Pcs", "20 Oct", "Packing", "For Stock", "Direct purchase", "Waiting for goods", "Supplier C", <span key="f">PO-88 <Hotspot n={4} /></span>],
+      [<b key="a">Tin can 5 L</b>, "Can", "1,200 Pcs", "220 Pcs", <span key="l"><WfPill tone="danger">12 Oct · 2 days late</WfPill> <Hotspot n={4} /></span>, "Direct purchase", "Supplier C", <span key="c"><WfButton primary>Create PO</WfButton> ⋯ <Hotspot n={3} /></span>],
+      [<b key="d">Solvent A</b>, "Chemical", "800 Kg", "no level set", "15 Oct", "Quotation", "on Quotation manager", <span key="e"><WfButton>Link PO no.</WfButton> ⋯</span>],
     ]}
   />
 </Wireframe>
 
 <Hotspots items={[
   <span key="1"><b>New requirement.</b> Raise one requirement for every item your department needs — add items one by one or paste a list.</span>,
-  <span key="2"><b>Stage chips.</b> Each chip counts the items waiting at that stage and filters the list to them. The list itself is grouped by requirement number, with the date, department and godown in the group's heading.</span>,
-  <span key="3"><b>Stage.</b> Worked out from the requirement itself — nobody types it. The record says what happens next in a sentence.</span>,
-  <span key="4"><b>The PO.</b> Once a requirement is on a purchase order, its number appears here and opens it.</span>,
+  <span key="2"><b>To order · On order · Received · Cancelled.</b> The list opens on <b>To order</b> — the items still owed a PO. <b>On order</b> is on a PO and waiting for the goods, <b>Received</b> is done (closed short included). Each says how many it holds. Team, method, supplier and godown are in <b>Filters</b>. The list is grouped by requirement number, with the date, team and godown in the group's heading.</span>,
+  <span key="3"><b>The next step.</b> Each row has one button — <b>Create PO</b> for a direct purchase, <b>Link PO no.</b> for a quotation item, <b>Receive goods</b> once it is on a PO — and a ⋯ menu with everything else: open it, then changes (Edit, Link or Create PO), then <b>Cancel requirement</b>, last and in red. What your access does not let you do is not offered.</span>,
+  <span key="4"><b>Required by</b> turns red and says how many days late once the date has passed and the goods have not come.</span>,
 ]} />
+
+### One PO for several requirements
+
+Tick the requirements that go to one supplier and press **Create one PO** in the bar at the foot of the list. It opens Create PO on the first of them with the others already on it — one PO, a line each, every line at its own item's price. It is offered only while every ticked row has the same supplier, and only to somebody with Edit on Requirements and Purchase orders on their account.
+
+## The requirement's record
+
+Click a row to open it. Down the left is everything about it: quantity, what is in stock now (with the re-order minimum where the item has one), required by, team, deliver to, priority, purchase method, who raised it and when, and the remarks. On the right:
+
+- the four steps — Requirement, Purchase method, PO number, Receipt;
+- **Next step**: what to do now, in a sentence, with its one button;
+- the **purchase order** once there is one — supplier, rate (only with purchase money on your account), where it was shared, and how much has arrived;
+- **History**: raised, PO created or linked, shared, goods received, cancelled with the reason — read from what actually happened, never typed — and, last, what it is still waiting for.
+
+The foot has **Edit**, **Cancel requirement**, **Open** its PO and the next step. One your access does not allow is shown with a lock; pressing it says why.
 
 ## Raising a requirement
 
@@ -119,6 +134,6 @@ The item has no price in Masters → Raw materials. Add one there to order it at
 A requirement keeps the rule it was raised with, so a change to the item never re-routes work already in progress. Cancel it and raise a new one if it must change.
 </Faq>
 
-<Faq q="The 'Present qty' column is blank.">
+<Faq q="The 'In stock' column says no level set.">
 It shows what the godown's re-order level counts as available. Without a level for that item at that godown there is nothing to show — set one on [Minimum levels](/docs/erp/stock-levels).
 </Faq>

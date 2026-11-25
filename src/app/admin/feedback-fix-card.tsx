@@ -177,7 +177,7 @@ export function FixCard({
           <a href={fix.issueUrl} target="_blank" rel="noreferrer" className="font-medium">
             Issue #{fix.issueNumber} ↗
           </a>
-          {fix.aiFixRequestedAt ? <span>Claude asked{fix.aiFixRequestedByName ? ` by ${fix.aiFixRequestedByName}` : ""}</span> : null}
+          {fix.aiFixRequestedAt ? <span>Claude asked{fix.aiFixRequestedByName ? ` by ${fix.aiFixRequestedByName}` : " automatically"}</span> : null}
           {fix.prUrl ? (
             <span>
               <a href={fix.prUrl} target="_blank" rel="noreferrer" className="font-medium">

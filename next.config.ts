@@ -282,9 +282,14 @@ const nextConfig: NextConfig = {
       { source: "/erp/issue-cn", destination: "/erp/requests?view=issueCn", permanent: true },
       { source: "/erp/complaints", destination: "/erp/requests?view=complaints", permanent: true },
       { source: "/erp/pending-cn", destination: "/erp/requests?view=issueCn", permanent: true },
-      /* Inward, the register and drum labels are tabs of one Purchases screen. */
-      { source: "/erp/inward", destination: "/erp/register", permanent: true },
-      { source: "/erp/barcode", destination: "/erp/register?view=barcode", permanent: true },
+      /* Goods in, Bills and Drum labels were the three tabs of one Purchases
+         screen (/erp/register) until Nov 2026; each is its own page now. The
+         query-matched rules come first so a tab link lands on its page. */
+      { source: "/erp/register", has: [{ type: "query", key: "view", value: "inward" }], destination: "/erp/goods-in", permanent: true },
+      { source: "/erp/register", has: [{ type: "query", key: "view", value: "barcode" }], destination: "/erp/drum-labels", permanent: true },
+      { source: "/erp/register", destination: "/erp/bills", permanent: true },
+      { source: "/erp/inward", destination: "/erp/goods-in", permanent: true },
+      { source: "/erp/barcode", destination: "/erp/drum-labels", permanent: true },
       { source: "/erp/followup", destination: "/erp", permanent: true },
       { source: "/erp/pivot", destination: "/erp", permanent: true },
 

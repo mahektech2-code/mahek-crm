@@ -36,6 +36,12 @@ export const alertsScreen: ScreenModule = {
     return {
       spec: {
         screen: "alerts",
+        subtabs: [
+          { id: "open", l: "Open", k: "status", in: ["Open"], hint: "Raised and not yet looked at" },
+          { id: "acknowledged", l: "Acknowledged", k: "status", in: ["Acknowledged"], hint: "Seen, with a note, still to resolve" },
+          { id: "resolved", l: "Resolved", k: "status", in: ["Resolved"] },
+          { id: "all", l: "All alerts" },
+        ],
         cols,
         hidden: [],
         groups: ["status"],

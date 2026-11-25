@@ -2,26 +2,29 @@ Nothing is bought without a purchase order. A PO comes from a requirement by the
 
 ## The screen at a glance
 
-<Wireframe url="/erp/purchase-orders" nav={["Dashboard", "#Purchase", "Requirements", "Purchase orders", "Purchases", "Lot testing", "Quotation manager"]} active="Purchase orders" caption="Purchase orders">
+<Wireframe url="/erp/purchase-orders" nav={["Dashboard", "#Purchase", "Requirements", "Purchase orders", "Goods in", "Lot testing", "Bills", "#Tools", "Quotation manager", "Drum labels"]} active="Purchase orders" caption="Purchase orders, on Waiting for goods: each row's next step on its button, everything else in ⋯">
   <WfBar>
-    <WfTitle sub="Raised from requirements, approved, sent and received against.">Purchase orders</WfTitle>
+    <WfTitle>Purchase orders</WfTitle>
     <WfSpacer /><WfButton primary>New PO</WfButton><Hotspot n={1} />
   </WfBar>
+  <WfBar><WfPill>To send 3</WfPill><WfPill tone="brand">Waiting for goods 8</WfPill><WfPill>Part received 2</WfPill><WfPill>Done 14</WfPill><WfPill>Cancelled 0</WfPill><Hotspot n={2} /></WfBar>
+  <WfBar><WfCard title="Waiting for goods"><WfText>8</WfText></WfCard><WfCard title="Value on order"><WfText>₹6.2L</WfText></WfCard><WfCard title="Delivery late"><WfText>2</WfText></WfCard><WfCard title="Due in 3 days"><WfText>4</WfText></WfCard></WfBar>
   <WfTable
     highlight={0}
-    columns={["PO no", "PO date", "Vendor", "Items", "Deliver to", "Delivery date", "PO value", "Received", "Status", "Last shared", "Flags"]}
+    columns={["PO no", "Supplier", "Items", "Deliver to", "Delivery", "Received", "PO value", "Last shared", ""]}
     rows={[
-      ["PO-91", "6 Oct", <b key="a">Supplier B</b>, "Tin can 5 L", "Godown A", "12 Oct", "₹54,000", "—", <span key="b"><WfPill tone="info">Approved</WfPill> <Hotspot n={2} /></span>, "—", "—"],
-      ["PO-90", "4 Oct", <b key="c">Supplier D</b>, "Solvent A, Solvent C", "Godown A", "9 Oct", "₹2,10,400", "1 of 2 items in full", "Partly received", "WhatsApp · 4 Oct", <span key="d"><WfPill tone="danger">Delivery overdue</WfPill> <Hotspot n={3} /></span>],
-      ["PO-88", "1 Oct", <b key="e">Supplier C</b>, "Empty Box 5 Liter", "Godown B", "8 Oct", "₹18,880", "500 of 500 Pcs", "Received", "Email · 1 Oct", "—"],
+      ["PO-18", <b key="a">Supplier A</b>, "Empty 5 L can", "Godown A", <span key="b"><WfPill tone="danger">17 Nov · 2 days late</WfPill> <Hotspot n={3} /></span>, "▱▱▱ 0 of 260", "₹30,680", "WhatsApp · 15 Nov", <span key="c"><WfButton primary>Receive</WfButton> ⋯ <Hotspot n={4} /></span>],
+      ["PO-17", <b key="d">Supplier A</b>, "Solvent C", "Godown B", "21 Nov · in 2 days", <span key="e">▰▰▱ 450 of 900 <Hotspot n={5} /></span>, "₹1,06,200", "Email · 14 Nov", <span key="f"><WfButton primary>Receive</WfButton> ⋯</span>],
     ]}
   />
 </Wireframe>
 
 <Hotspots items={[
-  <span key="1"><b>New PO.</b> Only offers vendors that have a requirement ready for a PO with that vendor already on it. Needs the purchase-money power. The subtitle above it still says "approved" from before approval was dropped.</span>,
-  <span key="2"><b>Status.</b> Approved (created here or on a requirement) or Sent (from the Quotation manager) → Partly received → Received, or Closed short, Cancelled.</span>,
-  <span key="3"><b>Flags.</b> "Delivery overdue" once the delivery date has passed and goods are still due.</span>,
+  <span key="1"><b>New PO.</b> Only offers vendors that have a requirement ready for a PO with that vendor already on it. Needs the purchase-money power.</span>,
+  <span key="2"><b>To send · Waiting for goods · Part received · Done · Cancelled.</b> The list opens on <b>To send</b> — created and not yet shared with the supplier (and any old PO still waiting for an approver). <b>Waiting for goods</b> is with the supplier with nothing received; <b>Part received</b> has had some goods and expects more; <b>Done</b> is received in full or closed short. Each says how many it holds, and the four cards above the list are worked out over the open sub-tab. Supplier, godown and value are in <b>Filters</b>.</span>,
+  <span key="3"><b>Delivery.</b> The date the goods are due, and how far off that is from today — "today", "in 2 days" — or, in red, "2 days late". Late POs are listed first.</span>,
+  <span key="4"><b>The next step.</b> <b>Share…</b> while nobody has the PO, <b>Receive</b> while goods are owed (it needs Goods in on your account), nothing once it is done. Everything else is in <b>⋯</b>: open and print it, receive; then edit, share, close short; then, last and in red, cancel the PO or a correction made at the gate.</span>,
+  <span key="5"><b>Received.</b> What has come in against what the PO now expects — read from the gate every time, never typed. A PO of items in different units counts the items received in full.</span>,
 ]} />
 
 ## Where a PO comes from
@@ -48,7 +51,7 @@ A PO is ready to send and receive against the moment it is created or linked. PO
 
 ## Sharing it with the vendor
 
-Every PO row ends in a **⋯** menu. **Share…** is the first item, and it is on the PO's own record too.
+A PO not yet shared carries **Share…** as its button; on any PO it is also in the **⋯** menu and on the PO's own record.
 
 <Wireframe url="/erp/purchaseOrders" caption="Share… on a PO: how, who, and the message">
   <WfBar>
@@ -129,5 +132,5 @@ Create PO always takes the item's price in Masters → Raw materials, so the rig
 </Faq>
 
 <Faq q="Goods arrived but Receive goods is greyed out.">
-Goods receipt is a separate screen ("Purchases"). If it is not on your account, ask the store to receive it.
+Goods receipt is a separate screen (Purchase › Goods in). If it is not on your account, ask the store to receive it.
 </Faq>
