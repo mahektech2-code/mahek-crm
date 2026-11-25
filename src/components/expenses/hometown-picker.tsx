@@ -157,7 +157,7 @@ export function HometownPicker({
       <span
         className={
           compact
-            ? "flex min-w-0 items-center gap-2"
+            ? "flex min-w-0 items-center gap-2 whitespace-nowrap"
             : "flex flex-wrap items-center gap-2"
         }
       >
@@ -166,7 +166,9 @@ export function HometownPicker({
             /* The first town gives way to the ellipsis; the count of the rest
                never does, or a second hometown is invisible on the list. */
             <span className="flex min-w-0 items-center gap-1" title={hometowns.map(said).join("; ")}>
-              <span className="min-w-0 truncate text-ink">{hometowns[0].city}</span>
+              {/* whitespace-nowrap, not truncate: inside a table cell globals.css
+                  turns truncate into wrapping, which split "Ashtapur" mid-word. */}
+              <span className="min-w-0 whitespace-nowrap text-ink">{hometowns[0].city}</span>
               {hometowns.length > 1 ? (
                 <span className="shrink-0 text-muted">+{hometowns.length - 1}</span>
               ) : null}
