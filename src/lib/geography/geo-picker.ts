@@ -16,7 +16,7 @@
  * ------------------------------------------------------------------------- */
 
 export type GeoUnit = { id: string; level: "state" | "district" | "subdistrict"; name: string; parentId: string | null };
-export type GeoUlb = { id: string; name: string; lgdCode: string; stateUnitId: string };
+export type GeoUlb = { id: string; name: string; lgdCode: string; stateUnitId: string; typeCode?: string | null; typeName?: string | null };
 export type GeoData = {
   units: GeoUnit[];
   ulbs: GeoUlb[];
@@ -24,6 +24,17 @@ export type GeoData = {
   ulbSubdistricts: Array<{ ulbId: string; subdistrictId: string }>;
   /** ULB ↔ district, for every district the source puts it in. */
   ulbDistricts: Array<{ ulbId: string; districtId: string }>;
+  /** The review flags the source file carried, as written — never resolved or hidden. */
+  ulbFlags?: Array<{ ulbId: string; flag: GeoReviewFlag }>;
+};
+
+export type GeoReviewFlag = "unresolved" | "several_districts" | "cantonment_not_in_first_master";
+
+/** What a flag is called on screen. The wording says what the SOURCE said and claims nothing more. */
+export const REVIEW_FLAG_LABEL: Readonly<Record<GeoReviewFlag, { short: string; long: string }>> = {
+  unresolved: { short: "Unresolved", long: "Unresolved — the official list gives this city/town no district." },
+  several_districts: { short: "Several districts", long: "Several districts — the official list puts it in more than one district; not confirmed which is right." },
+  cantonment_not_in_first_master: { short: "Cantonment Board", long: "Cantonment Board — in the district list only, not in the first local-body list." },
 };
 
 const byName = <T extends { name: string }>(a: T, b: T) => a.name.localeCompare(b.name);
@@ -35,6 +46,11 @@ export type GeoIndex = {
   ulbsBySub: Map<string, GeoUlb[]>;
   subsByUlb: Map<string, string[]>;
   ulbsByDistrict: Map<string, GeoUlb[]>;
+  flagsByUlb: Map<string, GeoReviewFlag[]>;
+  /** Every district the source puts a ULB in — by its district links and by the district of any taluka it is in. */
+  districtsByUlb: Map<string, string[]>;
+  /** ULBs linked to some district or taluka. The rest are the ones the source could not place. */
+  placed: Set<string>;
 };
 
 export function indexGeo(data: GeoData): GeoIndex {
@@ -59,7 +75,21 @@ export function indexGeo(data: GeoData): GeoIndex {
     if (!u) continue;
     ulbsByDistrict.set(l.districtId, [...(ulbsByDistrict.get(l.districtId) ?? []), u]);
   }
-  return { unit, ulb, children, ulbsBySub, subsByUlb, ulbsByDistrict };
+  const flagsByUlb = new Map<string, GeoReviewFlag[]>();
+  for (const f of data.ulbFlags ?? []) {
+    const have = flagsByUlb.get(f.ulbId) ?? [];
+    if (!have.includes(f.flag)) flagsByUlb.set(f.ulbId, [...have, f.flag]);
+  }
+  const placed = new Set<string>([...data.ulbDistricts.map((l) => l.ulbId), ...data.ulbSubdistricts.map((l) => l.ulbId)]);
+  const districtsByUlb = new Map<string, string[]>();
+  const noteDistrict = (ulbId: string, districtId: string | null | undefined) => {
+    if (!districtId) return;
+    const have = districtsByUlb.get(ulbId) ?? [];
+    if (!have.includes(districtId)) districtsByUlb.set(ulbId, [...have, districtId]);
+  };
+  for (const l of data.ulbDistricts) noteDistrict(l.ulbId, l.districtId);
+  for (const l of data.ulbSubdistricts) noteDistrict(l.ulbId, unit.get(l.subdistrictId)?.parentId);
+  return { unit, ulb, children, ulbsBySub, subsByUlb, ulbsByDistrict, flagsByUlb, districtsByUlb, placed };
 }
 
 export const statesOf = (ix: GeoIndex): GeoUnit[] => [...ix.unit.values()].filter((u) => u.level === "state").sort(byName);
@@ -95,15 +125,111 @@ export function ulbsUnder(ix: GeoIndex, subdistrictIds: Iterable<string>): UlbOp
   return [...found.values()].sort((a, b) => byName(a.ulb, b.ulb));
 }
 
-/** ULBs the source puts in these districts and in NO taluka — shown apart, never under a taluka. */
+/**
+ * Does the source put this ULB in a taluka OF THIS DISTRICT? A ULB can be linked to a
+ * district by one report and to talukas of ANOTHER district by a second (Greater Mumbai:
+ * the city district in one, suburban talukas in the other). Under the first district it
+ * has no taluka, and must still be offered there.
+ */
+export const hasTalukaIn = (ix: GeoIndex, ulbId: string, districtId: string): boolean =>
+  (ix.subsByUlb.get(ulbId) ?? []).some((s) => ix.unit.get(s)?.parentId === districtId);
+
+/** ULBs the source puts in these districts and in NO taluka of that district — shown apart, never under a taluka. */
 export function unmappedUlbsIn(ix: GeoIndex, districtIds: Iterable<string>): GeoUlb[] {
   const out = new Map<string, GeoUlb>();
   for (const did of districtIds) {
     for (const ulb of ix.ulbsByDistrict.get(did) ?? []) {
-      if (!(ix.subsByUlb.get(ulb.id) ?? []).length) out.set(ulb.id, ulb);
+      if (!hasTalukaIn(ix, ulb.id, did)) out.set(ulb.id, ulb);
     }
   }
   return [...out.values()].sort(byName);
+}
+
+/**
+ * HOW A PICKED CITY IS NAMED ON ITS CHIP — a display label only, never stored and never used to
+ * match. Two towns can share a name (Karjat in Raigad and in Ahilyanagar), so the chip says where.
+ * One in several districts is NOT given one of them: that would be choosing for the source.
+ */
+export function ulbChipLabel(ix: GeoIndex, ulbId: string): string {
+  const u = ix.ulb.get(ulbId);
+  if (!u) return ulbId;
+  const districts = ix.districtsByUlb.get(ulbId) ?? [];
+  if (districts.length === 1) return `${u.name} · ${ix.unit.get(districts[0])?.name ?? "district"}`;
+  if (districts.length > 1) return `${u.name} · several districts`;
+  return `${u.name} · no district`;
+}
+
+/** ULBs of these states the source places in NO district and no taluka — listed apart, never under a district. */
+export function unplacedUlbsIn(ix: GeoIndex, stateIds: Iterable<string>): GeoUlb[] {
+  const states = new Set(stateIds);
+  return [...ix.ulb.values()].filter((u) => states.has(u.stateUnitId) && !ix.placed.has(u.id)).sort(byName);
+}
+
+/**
+ * WHERE TO HANG A SAVED ULB'S TICK WHEN THE DIALOG IS REOPENED. A saved allocation does not
+ * record which place a ULB was ticked under, and the place matters: ticking a ULB narrows
+ * whatever it was ticked under, so choosing wrongly would make a re-save DROP a whole
+ * district that was saved beside it (a town in Haridwar and Bageshwar, with Bageshwar
+ * allocated whole, was restored under Bageshwar and the next save lost Bageshwar).
+ *
+ * The first place that is safe wins: a taluka, then a district, then (for a ULB the source
+ * places in no district) its state — where "safe" means neither it nor anything above it is
+ * itself a saved allocation. With no safe place the first one is used, as before.
+ */
+export function restoreVia(ix: GeoIndex, ulbId: string, savedUnits: ReadonlySet<string>): string | undefined {
+  const chainSaved = (id: string) => {
+    for (let u = ix.unit.get(id); u; u = u.parentId ? ix.unit.get(u.parentId) : undefined) if (savedUnits.has(u.id)) return true;
+    return false;
+  };
+  const districts = [...ix.ulbsByDistrict].filter(([, list]) => list.some((u) => u.id === ulbId)).map(([d]) => d);
+  const options = [...(ix.subsByUlb.get(ulbId) ?? []), ...districts];
+  if (!ix.placed.has(ulbId)) {
+    const state = ix.ulb.get(ulbId)?.stateUnitId;
+    if (state) options.push(state);
+  }
+  return options.find((o) => !chainSaved(o)) ?? options[0];
+}
+
+export type CityOption = {
+  ulb: GeoUlb;
+  /** Names of the ticked places it is in. A ULB in several districts lists each — it is still ONE option. */
+  places: string[];
+  /** The place a tick of it is recorded under (a district, or the state for one with no district). */
+  viaId: string;
+};
+
+/**
+ * THE CITIES AND TOWNS OFFERED IN ONE DROPDOWN: every ULB the source puts in a ticked
+ * district (whether or not it has a taluka there), those under a ticked taluka, and those
+ * the source places in no district at all (listed under their ticked state). EACH ONCE,
+ * however many districts link to it — all its district links stay in the master and are
+ * never collapsed, and no district is chosen for it.
+ */
+export function cityOptions(
+  ix: GeoIndex,
+  ticked: { states: Iterable<string>; districts: Iterable<string>; subs: Iterable<string> },
+): CityOption[] {
+  const found = new Map<string, { ulb: GeoUlb; districts: Set<string>; via: string }>();
+  const add = (ulb: GeoUlb, districtId: string | null | undefined) => {
+    if (!districtId) return;
+    const e = found.get(ulb.id) ?? { ulb, districts: new Set<string>(), via: districtId };
+    e.districts.add(districtId);
+    found.set(ulb.id, e);
+  };
+  for (const d of ticked.districts) for (const u of ix.ulbsByDistrict.get(d) ?? []) add(u, d);
+  for (const s of ticked.subs) {
+    const d = ix.unit.get(s)?.parentId;
+    for (const u of ix.ulbsBySub.get(s) ?? []) add(u, d);
+  }
+  const out: CityOption[] = [...found.values()].map((e) => ({
+    ulb: e.ulb,
+    places: [...e.districts].map((id) => ix.unit.get(id)?.name ?? id).sort((a, b) => a.localeCompare(b)),
+    viaId: e.via,
+  }));
+  for (const u of unplacedUlbsIn(ix, ticked.states)) {
+    out.push({ ulb: u, places: [`${ix.unit.get(u.stateUnitId)?.name ?? ""} · no district listed`], viaId: u.stateUnitId });
+  }
+  return out.sort((a, b) => byName(a.ulb, b.ulb));
 }
 
 /* ------------------------------------------------------------ what is saved */

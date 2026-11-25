@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { stamp } from "@/lib/format";
 import { fieldTeam, knownRegions, managers, territoryPlaces } from "@/lib/services/sales-service";
-import { geoAllocationsByUser, loadGeoData } from "@/lib/services/geo-service";
+import { geoAllocationsByUser, hasGeoMaster } from "@/lib/services/geo-service";
 import { getCurrentUser } from "@/lib/auth";
 import { isPlatformAdmin } from "@/lib/access-control";
 import { Credentials } from "./credentials";
@@ -45,14 +45,14 @@ export default async function Page({
   searchParams: Promise<{ sort?: string; dir?: string; hometown?: string }>;
 }) {
   const params = await searchParams;
-  const [team, managerRows, regions, places, towns, me, geo, geoSaved] = await Promise.all([
+  const [team, managerRows, regions, places, towns, me, geoAvailable, geoSaved] = await Promise.all([
     fieldTeam(),
     managers(),
     knownRegions(),
     territoryPlaces(),
     hometownTree(),
     getCurrentUser(),
-    loadGeoData(),
+    hasGeoMaster(),
     geoAllocationsByUser(),
   ]);
 
@@ -250,7 +250,7 @@ export default async function Page({
               </Cell>
               <Cell align="right">
                 <span className="inline-flex items-center gap-3 whitespace-nowrap">
-                  <Territories salesman={t} places={places} geo={geo} geoSaved={geoSaved[t.id] ?? []} />
+                  <Territories salesman={t} places={places} geoAvailable={geoAvailable} geoSaved={geoSaved[t.id] ?? []} />
                   <Link
                     href={`/sales/journeys?salesman=${t.id}`}
                     className="text-[13px] text-brand-hover no-underline"

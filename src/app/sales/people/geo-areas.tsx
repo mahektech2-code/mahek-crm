@@ -18,8 +18,14 @@ import {
   type GeoIndex,
   type GeoPick,
   type GeoUlb,
+  REVIEW_FLAG_LABEL,
+  cityOptions,
+  restoreVia,
+  ulbChipLabel,
+  unplacedUlbsIn,
 } from "@/lib/geography/geo-picker";
 import { Button, Pill } from "@/components/console/parts";
+import { ulbTypeName } from "@/lib/geography/lgd-ulb-types";
 
 /**
  * THE OFFICIAL AREAS, beneath the dialog's existing steps: state, district,
@@ -60,19 +66,14 @@ function ticksFrom(ix: GeoIndex, saved: GeoAllocation[]): Ticks {
       (u.level === "state" ? t.states : u.level === "district" ? t.districts : t.subs).add(u.id);
     }
   };
+  const savedUnits = new Set(saved.flatMap((a) => (a.unitId ? [a.unitId] : [])));
+  for (const a of saved) if (a.unitId) tickUp(a.unitId);
   for (const a of saved) {
-    if (a.unitId) tickUp(a.unitId);
-    if (a.ulbId) {
-      const sub = (ix.subsByUlb.get(a.ulbId) ?? [])[0];
-      if (sub) {
-        tickUp(sub);
-        t.ulbs.set(a.ulbId, sub);
-      } else {
-        const district = [...ix.ulbsByDistrict].find(([, list]) => list.some((u) => u.id === a.ulbId))?.[0];
-        tickUp(district);
-        t.ulbs.set(a.ulbId, district);
-      }
-    }
+    if (!a.ulbId) continue;
+    // Which place it was ticked under is chosen so that a re-save cannot drop a unit saved beside it.
+    const via = restoreVia(ix, a.ulbId, savedUnits);
+    tickUp(via);
+    t.ulbs.set(a.ulbId, via);
   }
   return t;
 }
@@ -84,11 +85,14 @@ function reconcile(ix: GeoIndex, t: Ticks): Ticks {
   const ulbs = new Map<string, string | undefined>();
   for (const [id, via] of t.ulbs) {
     const inTicked = (ix.subsByUlb.get(id) ?? []).filter((s) => subs.has(s));
-    if (inTicked.length) ulbs.set(id, via && inTicked.includes(via) ? via : inTicked[0]);
-    else {
-      const d = [...districts].find((dd) => (ix.ulbsByDistrict.get(dd) ?? []).some((u) => u.id === id) && !(ix.subsByUlb.get(id) ?? []).length);
-      if (d) ulbs.set(id, d);
+    if (inTicked.length) {
+      ulbs.set(id, via && inTicked.includes(via) ? via : inTicked[0]);
+      continue;
     }
+    // Ticked in the cities dropdown: it stays while a district it is linked to is ticked.
+    const linked = [...districts].filter((dd) => (ix.ulbsByDistrict.get(dd) ?? []).some((u) => u.id === id));
+    if (linked.length) ulbs.set(id, via && linked.includes(via) ? via : linked[0]);
+    else if (!ix.placed.has(id) && t.states.has(ix.ulb.get(id)?.stateUnitId ?? "")) ulbs.set(id, ix.ulb.get(id)!.stateUnitId);
   }
   return { states: t.states, districts, subs, ulbs };
 }
@@ -154,6 +158,7 @@ function UlbCard({
   linkedIn,
   emptyText,
   chips,
+  flagsOf,
 }: {
   title: string;
   place: string;
@@ -165,6 +170,8 @@ function UlbCard({
   linkedIn?: (id: string) => number;
   emptyText: string;
   chips?: React.ReactNode;
+  /** Review flags the source file carried for a ULB — drawn beside it, never hidden. */
+  flagsOf?: (id: string) => Array<keyof typeof REVIEW_FLAG_LABEL>;
 }) {
   const [query, setQuery] = React.useState("");
   const shown = React.useMemo(() => {
@@ -210,8 +217,23 @@ function UlbCard({
                         onChange={() => onToggle(u)}
                         className="mt-[3px] size-3.5 shrink-0 accent-[#5223E0]"
                       />
-                      <span className="min-w-0 flex-1 text-[13px] text-pretty text-body">{u.name}</span>
+                      <span className="min-w-0 flex-1 text-[13px] text-pretty text-body">
+                        {u.name}
+                        {(u.typeName ?? ulbTypeName(u.typeCode)) ? (
+                          <span className="block text-[11px] font-normal text-muted">{u.typeName ?? ulbTypeName(u.typeCode)}</span>
+                        ) : null}
+                      </span>
                       {several > 1 ? <span className="shrink-0 text-[12px] text-muted">{several} talukas</span> : null}
+                      {(flagsOf ? flagsOf(u.id) : []).map((f) => (
+                        <span
+                          key={f}
+                          title={REVIEW_FLAG_LABEL[f].long}
+                          data-review-flag={f}
+                          className="shrink-0 rounded-[3px] border border-[#D9A441] bg-[#FFF6E0] px-1.5 text-[11px] font-medium text-[#7A5200]"
+                        >
+                          {REVIEW_FLAG_LABEL[f].short}
+                        </span>
+                      ))}
                     </label>
                   );
                 })
@@ -224,7 +246,84 @@ function UlbCard({
   );
 }
 
+/** The master, fetched once per page visit and only when somebody opens the dialog. */
+let geoRequest: Promise<GeoData | null> | null = null;
+function fetchGeoMaster(): Promise<GeoData | null> {
+  geoRequest ??= fetch("/api/sales/geo-master", { credentials: "same-origin" })
+    .then(async (r) => {
+      if (!r.ok) throw new Error(`geo master ${r.status}`);
+      return ((await r.json()) as { geo: GeoData | null }).geo;
+    })
+    .catch((e) => {
+      geoRequest = null; // a failure is not remembered: the next try asks again
+      throw e;
+    });
+  return geoRequest;
+}
+
+type MasterState = { status: "loading" } | { status: "ready"; geo: GeoData | null } | { status: "error" };
+
 export function GeoAreas({
+  salesmanId,
+  salesmanName,
+  available,
+  saved,
+}: {
+  salesmanId: string;
+  salesmanName: string;
+  /** Whether a master has been loaded at all — decided by the page, which does not carry the master. */
+  available: boolean;
+  saved: GeoAllocation[];
+}) {
+  const [state, setState] = React.useState<MasterState>({ status: "loading" });
+  const [attempt, setAttempt] = React.useState(0);
+
+  React.useEffect(() => {
+    if (!available) return;
+    let alive = true;
+    fetchGeoMaster().then(
+      (geo) => alive && setState({ status: "ready", geo }),
+      () => alive && setState({ status: "error" }),
+    );
+    return () => {
+      alive = false;
+    };
+  }, [available, attempt]);
+
+  const note = (body: React.ReactNode) => (
+    <section className="mt-6 rounded-[4px] border border-line bg-canvas px-3 py-2.5 text-[12px] text-pretty text-muted">
+      <p className="font-medium text-ink">Official areas — talukas and cities/towns</p>
+      <p className="mt-1">{body}</p>
+    </section>
+  );
+
+  if (!available || (state.status === "ready" && !state.geo)) {
+    return note(
+      "The official geography (states, districts, talukas and urban local bodies) has not been loaded yet, so there is nothing to pick here. Nothing above is affected.",
+    );
+  }
+  if (state.status === "loading") return note("Loading the official areas…");
+  if (state.status === "error") {
+    return note(
+      <>
+        The official areas could not be loaded. Nothing above is affected.{" "}
+        <button
+          type="button"
+          className="cursor-pointer text-brand underline"
+          onClick={() => {
+            setState({ status: "loading" });
+            setAttempt((n) => n + 1);
+          }}
+        >
+          Try again
+        </button>
+      </>,
+    );
+  }
+  return <GeoAreasLoaded salesmanId={salesmanId} salesmanName={salesmanName} geo={state.geo!} saved={saved} />;
+}
+
+function GeoAreasLoaded({
   salesmanId,
   salesmanName,
   geo,
@@ -232,26 +331,14 @@ export function GeoAreas({
 }: {
   salesmanId: string;
   salesmanName: string;
-  geo: GeoData | null;
+  geo: GeoData;
   saved: GeoAllocation[];
 }) {
   const router = useRouter();
   const toast = useToast();
-  const ix = React.useMemo(() => (geo ? indexGeo(geo) : null), [geo]);
-  const [ticks, setTicks] = React.useState<Ticks | null>(() => (ix ? ticksFrom(ix, saved) : null));
+  const ix = React.useMemo(() => indexGeo(geo), [geo]);
+  const [ticks, setTicks] = React.useState<Ticks>(() => ticksFrom(ix, saved));
   const [busy, setBusy] = React.useState(false);
-
-  if (!ix || !ticks) {
-    return (
-      <section className="mt-6 rounded-[4px] border border-line bg-canvas px-3 py-2.5 text-[12px] text-pretty text-muted">
-        <p className="font-medium text-ink">Official areas — talukas and cities/towns</p>
-        <p className="mt-1">
-          The official geography (states, districts, talukas and urban local bodies) has not been loaded yet, so there is
-          nothing to pick here. Nothing above is affected.
-        </p>
-      </section>
-    );
-  }
 
   const set = (next: Ticks) => setTicks(reconcile(ix, next));
   const name = (id: string) => ix.unit.get(id)?.name ?? id;
@@ -260,6 +347,9 @@ export function GeoAreas({
   const subs = subdistrictsIn(ix, ticks.districts);
   const severalStates = ticks.states.size > 1;
   const severalDistricts = ticks.districts.size > 1;
+  const cities = cityOptions(ix, ticks);
+  const cityScope = new Set(cities.map((c) => c.ulb.id));
+  const viaOf = new Map(cities.map((c) => [c.ulb.id, c.viaId]));
 
   /* One tick of one city, wherever its checkbox is. It records the place it was ticked
      under (`via`), and only that city can change — `applyUlbPick` keeps every other tick. */
@@ -333,7 +423,48 @@ export function GeoAreas({
         </div>
       )}
 
-      <Step n={6} title="Narrow to talukas, if you want to" hint="A district with no taluka picked means the whole district." />
+      <Step
+        n={6}
+        title="Narrow to cities and towns, if you want to"
+        hint="The cities and towns of the districts above. One in several districts is listed once."
+      />
+      {cities.length === 0 ? (
+        <Empty>
+          {ticks.districts.size === 0
+            ? "Pick a district above and its cities and towns appear here."
+            : "The official list has no city or town for the districts above."}
+        </Empty>
+      ) : (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <MultiSelect
+            label="Cities and towns"
+            triggerLabel={ticks.ulbs.size ? "Add cities and towns" : "Pick cities and towns"}
+            everythingIsAll={false}
+            options={cities.map((c) => ({
+              value: c.ulb.id,
+              label: c.ulb.name,
+              sub: [c.ulb.typeName ?? ulbTypeName(c.ulb.typeCode), c.places.join(", ")].filter(Boolean).join(" · "),
+              badges: (ix.flagsByUlb.get(c.ulb.id) ?? []).map((f) => ({ key: f, text: REVIEW_FLAG_LABEL[f].short, title: REVIEW_FLAG_LABEL[f].long })),
+            }))}
+            selected={cities.filter((c) => ticks.ulbs.has(c.ulb.id)).map((c) => c.ulb.id)}
+            onChange={(ids) => set({ ...ticks, ulbs: applyUlbPick(ticks.ulbs, ids, cityScope, (id) => viaOf.get(id)) })}
+          />
+          {[...ticks.ulbs.keys()].map((id) => {
+            const u = ix.ulb.get(id);
+            if (!u) return null;
+            return (
+              <Chip
+                key={id}
+                label={ulbChipLabel(ix, id)}
+                unmapped={!ix.placed.has(id)}
+                onRemove={() => set({ ...ticks, ulbs: new Map([...ticks.ulbs].filter(([k]) => k !== id)) })}
+              />
+            );
+          })}
+        </div>
+      )}
+
+      <Step n={7} title="Narrow to talukas, if you want to" hint="A district with no taluka picked means the whole district." />
       {ticks.districts.size === 0 ? (
         <Empty>Pick a district above and its talukas and tehsils appear here.</Empty>
       ) : subs.length === 0 ? (
@@ -359,12 +490,12 @@ export function GeoAreas({
       )}
 
       <Step
-        n={7}
-        title="Narrow to cities and towns, if you want to"
-        hint="Urban local bodies. A taluka with nothing ticked under it means the whole taluka."
+        n={8}
+        title="Cities and towns by taluka"
+        hint="The same cities and towns, listed under their taluka. A taluka with nothing ticked under it means the whole taluka."
       />
-      {ticks.subs.size === 0 && ticks.districts.size === 0 ? (
-        <Empty>Pick a taluka above and its cities and towns appear here.</Empty>
+      {ticks.subs.size === 0 && ticks.districts.size === 0 && unplacedUlbsIn(ix, ticks.states).length === 0 ? (
+        <Empty>Pick a district above and its cities and towns appear here, by taluka.</Empty>
       ) : (
         <div className="mt-2 flex flex-col gap-3">
           {subs
@@ -382,6 +513,7 @@ export function GeoAreas({
                   ticked={(id) => ticks.ulbs.has(id)}
                   onToggle={(u) => toggleUlb(u, s.id)}
                   linkedIn={(id) => (ix.subsByUlb.get(id) ?? []).length}
+                  flagsOf={(id) => ix.flagsByUlb.get(id) ?? []}
                   emptyText={`No urban local body is linked to ${s.name}, so the whole taluka is the only thing to allocate.`}
                 />
               );
@@ -402,8 +534,32 @@ export function GeoAreas({
                 ticked={(id) => ticks.ulbs.has(id)}
                 onToggle={(u) => toggleUlb(u, did)}
                 emptyText=""
+                flagsOf={(id) => ix.flagsByUlb.get(id) ?? []}
                 chips={on.map((u) => (
-                  <Chip key={u.id} label={u.name} unmapped onRemove={() => toggleUlb(u, did)} />
+                  <Chip key={u.id} label={ulbChipLabel(ix, u.id)} unmapped onRemove={() => toggleUlb(u, did)} />
+                ))}
+              />
+            );
+          })}
+
+          {/* The ones the source could not place in ANY district: apart, per state, flagged "Unresolved". */}
+          {[...ticks.states].map((sid) => {
+            const list = unplacedUlbsIn(ix, [sid]);
+            if (!list.length) return null;
+            const on = list.filter((u) => ticks.ulbs.has(u.id));
+            return (
+              <UlbCard
+                key={`unplaced:${sid}`}
+                title="No district in the official list"
+                place={name(sid)}
+                pill={<Pill>{on.length} of {list.length} cities</Pill>}
+                ulbs={list}
+                ticked={(id) => ticks.ulbs.has(id)}
+                onToggle={(u) => toggleUlb(u, sid)}
+                emptyText=""
+                flagsOf={(id) => ix.flagsByUlb.get(id) ?? []}
+                chips={on.map((u) => (
+                  <Chip key={u.id} label={ulbChipLabel(ix, u.id)} unmapped onRemove={() => toggleUlb(u, sid)} />
                 ))}
               />
             );

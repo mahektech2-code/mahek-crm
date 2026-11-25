@@ -28,6 +28,8 @@ export type RawUlb = {
   name: string;
   stateCode: string;
   typeCode?: string | null;
+  /** The type as the source names it, where the source does. */
+  typeName?: string | null;
   version?: number | null;
   nameLocal?: string | null;
   census2011Code?: string | null;
@@ -68,6 +70,7 @@ export type UlbRow = {
   nameKey: string;
   nameLocal: string | null;
   typeCode: string | null;
+  typeName: string | null;
   stateUnitId: string;
   version: number | null;
   census2011Code: string | null;
@@ -217,6 +220,7 @@ export function buildGeoSnapshot(input: GeoSnapshotInput): GeoValidation {
       nameKey: cityKey(u.name),
       nameLocal: text(u.nameLocal) || null,
       typeCode: text(u.typeCode) || null,
+      typeName: text(u.typeName) || null,
       stateUnitId,
       version: u.version ?? null,
       census2011Code: orNull(u.census2011Code),
