@@ -1,7 +1,7 @@
 import "server-only";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
-import { allocationRows, scrapStock } from "@/lib/erp/drums";
+import { allocationRows, scrapLeft, scrapStock } from "@/lib/erp/drums";
 import {
   DRUM_CATEGORY,
   DRUM_STATUS_LABEL,
@@ -221,7 +221,7 @@ export const scrapEntryImpact: ImpactSource = {
     if (e.status !== "active") blockers.push("Already cancelled.");
     else {
       /* The same reading of stock the act takes, less this entry. */
-      const now = (await scrapStock(db)).find((s) => s.category === e.category && s.unit === e.unit && s.godownId === e.godownId)?.available ?? 0;
+      const now = scrapLeft(await scrapStock(db), e.category, e.unit, e.godownId);
       left = qty(now - Number(e.quantity));
       if (left < 0) blockers.push(`Cancelling this would leave ${left} ${e.unit} of ${e.category} — more has been sold than was recorded without it.`);
     }

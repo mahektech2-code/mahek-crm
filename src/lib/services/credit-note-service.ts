@@ -14,13 +14,8 @@ import {
 } from "@/db/schema";
 import { requireCapability } from "../access-control";
 import { categoryLabel } from "../complaint-labels";
-import {
-  recomputeBillPaid,
-  recomputeBillStatuses,
-  recomputeFollowUpState,
-  recomputeOutstanding,
-  today,
-} from "../recompute";
+import { today } from "../recompute";
+import { applyToLedger } from "./receipt-service";
 import { err, ok, okVoid, type Result } from "../result";
 
 /* ---------------------------------------------------------------------------
@@ -369,13 +364,10 @@ export async function refuseCreditNote(
   return okVoid("Request refused");
 }
 
-/** The same order the receipt path uses — each step reads what the last wrote. */
-async function applyToLedger(customerId: string): Promise<void> {
-  await recomputeBillPaid(customerId);
-  await recomputeBillStatuses();
-  await recomputeOutstanding(customerId);
-  await recomputeFollowUpState(customerId);
-}
+/* The receipt path's own rebuild, not a copy of it: the copy skipped marking
+   the settled bill `stated`, so the credit counted nowhere until some later,
+   unrelated receipt marked it — and outstanding then jumped by the whole bill.
+   The same credit taken through Record receipt counted at once. */
 
 /* ---------------------------------------------------------------------------
  * TAKING AN ISSUED CREDIT NOTE BACK.

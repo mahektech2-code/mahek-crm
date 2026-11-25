@@ -59,7 +59,7 @@ import {
   transportModeByLabel,
   transportModeLabel,
 } from "../engines/purchase";
-import { lockLot, lotLandings, rmLots, type LotLanding } from "../stock";
+import { lockLot, lotLandings, packingUse, rmLots, type LotLanding } from "../stock";
 import { foldRmLots, lotRowId } from "../engines/stock-fold";
 import { bindErpFiles } from "../attachments";
 import { type Col, godownField, godownIdByName, godownOptions, has, inTx, refuse, today, type Tx } from "./common";
@@ -764,7 +764,21 @@ export async function lotUseBlocker(
         select 7, ${item} || ' was stock-checked at ' || ${godown} || ' after this delivery, against a book that includes it.'
           from erp_floor_checks f where f.stage = 'rm' and f.item_id = ${l.rawMaterialId} and f.godown_id = ${l.godownId} and f.counted_at > ${l.createdAt.toISOString()}::timestamptz and ${withCounts}
       ) u order by o limit 1`)) as unknown as { why: string }[];
-  return use?.why ?? null;
+  if (use) return use.why;
+  /* Empty cans and boxes are used by filling and packing, which name no lot: they are drawn from the item's lots oldest first.
+     Nothing above sees that, so a delivery already filled from could be voided and its cans came out of the other lots or
+     left the newest one negative. Refused when what is left at the godown without this delivery would go below zero. */
+  if (withCounts) {
+    const used = (await packingUse(ex)).get(`${l.rawMaterialId}|${l.godownId}`) ?? 0;
+    if (used > 0) {
+      const [inn] = (await ex.execute(sql`
+        select coalesce(sum(quantity), 0)::float8 as q from erp_rm_entries
+         where raw_material_id = ${l.rawMaterialId} and lot_no = ${l.lotNo} and godown_id = ${l.godownId}`)) as unknown as { q: number }[];
+      const total = (await rmLots(ex)).filter((x) => x.rawMaterialId === l.rawMaterialId && x.godownId === l.godownId).reduce((a, x) => a + x.stock, 0);
+      if (total - Number(inn?.q ?? 0) < -1e-9) return `${item} at ${godown} has been used by filling or packing since this delivery, and the other lots do not cover it.`;
+    }
+  }
+  return null;
 }
 
 export async function inwardVoidPicture(ex: Tx | typeof db, id: string): Promise<InwardVoidPicture | null> {

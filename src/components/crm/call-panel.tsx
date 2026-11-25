@@ -1,5 +1,6 @@
 "use client";
 
+import { calendarDate } from "@/lib/business-date";
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -32,7 +33,7 @@ import {
   OUTCOMES_BY_TYPE,
   OUTCOME_LABEL as CATALOGUE_OUTCOME_LABEL,
 } from "@/db/catalogue";
-import { addDays, cleanDecimal, cleanWhole, daysBetween, money, parseDecimal, phoneDisplay, shortDate, today } from "@/lib/format";
+import { addDays, cleanDecimal, cleanWhole, daysBetween, money, parseDecimal, parseRupees, phoneDisplay, shortDate, today } from "@/lib/format";
 import { describeQuantity, productLines } from "@/lib/catalogue";
 import {
   discountAuthority as discountAuthorityOf,
@@ -1972,7 +1973,7 @@ function CallPanelForm({
           label: "Opportunity",
           value:
             hasOpportunity === true
-              ? [oppProduct.trim(), oppQuantity.trim(), oppValue.trim() ? `₹${oppValue.trim()}` : "", oppDate ? shortDate(oppDate) : ""]
+              ? [oppProduct.trim(), oppQuantity.trim(), parseRupees(oppValue) != null ? money(parseRupees(oppValue)) : "", oppDate ? shortDate(oppDate) : ""]
                   .filter(Boolean)
                   .join(" · ")
               : hasOpportunity === false
@@ -2410,7 +2411,7 @@ function CallPanelForm({
                               className="flex gap-3 border-t border-canvas py-2 first:border-0"
                             >
                               <span className="w-[58px] flex-none text-[13px] font-medium text-ink">
-                                {shortDate(c.at.slice(0, 10))}
+                                {shortDate(calendarDate(new Date(c.at)))}
                               </span>
                               <span className="min-w-0 flex-1">
                                 <Badge tone={outcomeTone(c.outcome)}>

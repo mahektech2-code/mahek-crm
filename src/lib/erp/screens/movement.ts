@@ -168,6 +168,27 @@ export async function postWriteOff(
 
 /** The stock-stage key each transfer type is kept under — the spelling consumers lock and adjustments record. */
 const STAGE_OF: Record<ItemType, "rm" | "sfg" | "fg" | "pack"> = { Purchase: "rm", "Semi Finished": "sfg", "Finish Goods": "fg", "FG Packing": "pack" };
+/** Labelled cans and packed boxes move whole: the box-id register moves one id per unit and floors a fraction, so 2.5 boxes moved in the ledger was 2 ids moved. */
+const WHOLE_TYPES = new Set<ItemType>(["Finish Goods", "FG Packing"]);
+const wholeRefusal = (type: ItemType, qty: number) => (WHOLE_TYPES.has(type) && !Number.isInteger(qty) ? fieldErr("qty", `Move whole ${type === "FG Packing" ? "boxes" : "cans"}.`) : null);
+
+/**
+ * A fill draws empty cans and drums by ITEM, not by lot, and locks them as
+ * "packing" + item + godown (a drum company-wide, "all"). A transfer of an
+ * empty-can lot locked only the lot, so a fill and a transfer of the last cans
+ * at the same moment never waited for each other and both spent them. Taken
+ * after the lot locks, the order every fill takes them in (its SFG lot first,
+ * then the packing), so the two never wait on each other crosswise.
+ */
+async function lockPackingOf(tx: Tx, type: ItemType, item: { id?: string; name?: string }, godownIds: string[]): Promise<void> {
+  if (type !== "Purchase") return;
+  const [m] = await tx
+    .select({ id: erpRawMaterials.id, type: erpRawMaterials.materialType })
+    .from(erpRawMaterials)
+    .where(item.id ? eq(erpRawMaterials.id, item.id) : eq(erpRawMaterials.name, item.name ?? ""));
+  if (!m || (m.type !== "Can" && m.type !== "Drum")) return;
+  for (const g of m.type === "Drum" ? ["all"] : [...new Set(godownIds)].sort()) await lockLot(tx, "packing", m.id, g);
+}
 
 type TransferRow = typeof erpTransfers.$inferSelect;
 
@@ -293,6 +314,8 @@ async function editTransfer(ctx: ErpContext, h: Record<string, string>, id: stri
     seen.before = b;
     const type = b.itemType as ItemType;
     if (!TYPES.includes(type)) return refuse(err("This transfer is of a kind that cannot be edited.", "rule_violation"));
+    const notWhole = wholeRefusal(type, qty);
+    if (notWhole) return refuse(notWhole);
     if (toId === b.fromGodownId) return refuse(fieldErr("to", "Pick a different godown to move it to."));
     const gds = await tx.select().from(erpGodowns);
     const oldTo = gds.find((g) => g.id === b.toGodownId);
@@ -302,6 +325,7 @@ async function editTransfer(ctx: ErpContext, h: Record<string, string>, id: stri
     /* Every end the edit touches, under both spellings of the stage, in one order — two edits never wait on each other crosswise. */
     const ends = [...new Set([b.fromGodownId, b.toGodownId, toId])].sort();
     for (const g of ends) for (const st of [STAGE_OF[type], type].sort()) await lockLot(tx, st, b.lotNo, g);
+    await lockPackingOf(tx, type, { id: b.itemId }, ends);
     const hold = (await transferHolds(tx, [id], toId === b.toGodownId ? null : toId)).get(id);
     if (hold) return refuse(err(hold, "rule_violation"));
     /* What it delivered must all still be there: Item Lost Record never gives stock out, anywhere else the ledger says. */
@@ -410,6 +434,7 @@ async function cancelTransfer(ctx: ErpContext, id: string, values: Record<string
     const [to] = await tx.select({ reserved: erpGodowns.reserved }).from(erpGodowns).where(eq(erpGodowns.id, b.toGodownId));
     if (to?.reserved && !ctx.powers.has("lostStock")) return refuse(err(LOST_CANCEL_WHY, "not_permitted"));
     for (const g of [b.fromGodownId, b.toGodownId].sort()) for (const st of [STAGE_OF[type] ?? type, type].sort()) await lockLot(tx, st, b.lotNo, g);
+    await lockPackingOf(tx, type, { id: b.itemId }, [b.fromGodownId, b.toGodownId]);
     const p = await transferCancelPicture(tx, id);
     if (!p) return refuse(err("That transfer no longer exists.", "not_found"));
     if (p.blocker) return refuse(err(p.blocker, "rule_violation"));
@@ -535,9 +560,14 @@ const transfers: ScreenModule = {
       if (!lot) return fieldErr("lot", "Pick the lot.");
       const qty = num(h.qty);
       if (qty == null || qty <= 0) return fieldErr("qty", "Enter a quantity above 0 and no more than the lot holds.");
+      const notWhole = wholeRefusal(type, qty);
+      if (notWhole) return notWhole;
       let id = "";
       const res = await inTx(async (tx) => {
-        await lockLot(tx, type, lot, fromId);
+        /* Both spellings, as the edit and the cancel take them: a batch, fill, pack, allocation or scan of this lot locks the stage
+           ("rm"/"sfg"/"fg"/"pack"), and a transfer locking only the item type never waited for them, so both could spend the same stock. */
+        for (const st of [STAGE_OF[type], type].sort()) await lockLot(tx, st, lot, fromId);
+        await lockPackingOf(tx, type, { name: item }, [fromId]);
         const src = (await transferable(tx))[type].find((l) => l.lot === lot && l.godownId === fromId && l.item === item);
         if (!src) return refuse(fieldErr("lot", "Pick a lot of this item with stock at this godown."));
         if (qty > src.stock + 1e-9) return refuse(fieldErr("qty", "Enter a quantity above 0 and no more than the lot holds."));

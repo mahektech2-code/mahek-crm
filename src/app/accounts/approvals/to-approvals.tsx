@@ -209,7 +209,7 @@ export function ToApprovals({
                   </Cell>
                   <Cell>
                     <span className="flex justify-end">
-                      <Button size="sm" disabled={!canDecide} onClick={() => setReleaseFor(r)}>
+                      <Button size="sm" disabled={!canDecide} title={canDecide ? undefined : "Only an Accounts manager releases an order"} onClick={() => setReleaseFor(r)}>
                         Release
                       </Button>
                     </span>
@@ -328,19 +328,19 @@ function ReviewDialog({ id, canDecide, onClose, onDone }: { id: string; canDecid
             <span className="min-w-0 flex-1 text-[12.5px] text-muted">
               {open ? 'Approve makes the order number · the customer gets "Confirmed" · the Production Head gets it in MRP check' : r.status === "correction" ? "Sent back - waiting for whoever took it to correct it." : "On hold with Accounts."}
             </span>
-            <Button className="text-danger" disabled={!canDecide || busy} onClick={() => setSub("decline")}>
+            <Button className="text-danger" disabled={!canDecide || busy} title={canDecide ? undefined : "Only an Accounts manager declines an order"} onClick={() => setSub("decline")}>
               Decline
             </Button>
-            <Button disabled={!canDecide || busy || !open} onClick={() => setSub("hold")}>
+            <Button disabled={!canDecide || busy || !open} title={!canDecide ? "Only an Accounts manager holds an order" : !open ? "It is not waiting for a decision" : undefined} onClick={() => setSub("hold")}>
               Hold
             </Button>
-            <Button disabled={!canDecide || busy || !open} onClick={() => setSub("sendBack")}>
+            <Button disabled={!canDecide || busy || !open} title={!canDecide ? "Only an Accounts manager sends an order back" : !open ? "It is not waiting for a decision" : undefined} onClick={() => setSub("sendBack")}>
               Send back
             </Button>
             <Button disabled={!canDecide || busy || !open || !edited} title={!canDecide ? "Only an Accounts manager edits an order" : !edited ? "Change a line first" : "Keep the changes without approving it yet"} onClick={() => void save()}>
               Save changes
             </Button>
-            <Button variant="primary" disabled={!canDecide || busy || !open} title={canDecide ? undefined : "Only an Accounts manager approves an order"} onClick={() => void approve()}>
+            <Button variant="primary" disabled={!canDecide || busy || !open} title={!canDecide ? "Only an Accounts manager approves an order" : !open ? "It is not waiting for a decision" : undefined} onClick={() => void approve()}>
               Approve
             </Button>
           </div>

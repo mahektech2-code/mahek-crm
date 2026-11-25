@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { addMonths } from "@/lib/business-date";
 import { creditedToSql } from "@/lib/sales-attribution";
 import { orderCountsSql } from "@/lib/order-status";
+import { moneyArrivingSql } from "@/lib/money-arriving";
 
 /* ---------------------------------------------------------------------------
  * Reads behind the target-setting screen.
@@ -284,7 +285,7 @@ export async function baselineFor(
       select coalesce(sum(r.amount), 0) as total
         from payment_receipts r
         join customers c on c.id = r.customer_id
-       where r.status = 'confirmed'
+       where ${moneyArrivingSql("r")}
          and ${creditedToSql("c")} = ${userId}
          and r.received_at >= ${sql.raw(`'${from}'::date`)}
          and r.received_at < ${sql.raw(`'${to}'::date`)}

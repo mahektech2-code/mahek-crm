@@ -6,6 +6,8 @@ import { appAccess, auditLog, users } from "@/db/schema";
 import { APP_IDS, getApp, type AppId } from "@/lib/apps";
 import type { Role } from "@/lib/role-levels";
 import {
+  CONVERTED_GRANT_HINT,
+  convertedGrants,
   grantAppWithDefaultModules,
   rederiveAccountLevel,
   revokeApps,
@@ -188,6 +190,13 @@ export async function provisionUser(input: ProvisionInput): Promise<ProvisionRes
   const relevel = requested
     ? [...requested.entries()].filter(([a, l]) => heldBefore.has(a) && heldBefore.get(a) !== l)
     : [];
+
+  /* A converted grant's level is derived from its screen ticks; writing it
+     here would report a change that `can()` never reads. */
+  const converted = relevel.length ? await convertedGrants(db, [user.id], relevel.map(([a]) => a)) : [];
+  if (converted.length) {
+    throw new Error(`${user.name}'s ${converted.map((c) => c.app).join(", ")} ${CONVERTED_GRANT_HINT}.`);
+  }
 
   /* A retired app is never given out again — the Access screen refuses it,
      and a shared secret is not a reason to be more generous than a person. */

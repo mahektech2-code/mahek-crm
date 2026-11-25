@@ -156,7 +156,9 @@ export async function factoryFindBadge(code: string): Promise<{ ok: true; who: W
 async function enter(user: User, how: string): Promise<SignedIn | Fail> {
   const fc = await contextFor(user);
   if (!fc) return { ok: false, error: INACTIVE };
-  await createSession(user.id, true, true);
+  /* Factory-only and never password-confirmed: four digits open the floor,
+     not every other app the person holds, and never the Admin Console. */
+  await createSession(user.id, true, false, true);
   await recordSignIn(user.id, erpId("att"));
   await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id));
   await factoryAudit(fc, "factory.sign-in", null, "Signed in · " + how);
@@ -199,6 +201,12 @@ export async function factorySignInPin(userId: string, pin: string): Promise<Sig
 export async function factorySendCode(userId: string): Promise<{ ok: true; sentTo: string } | Fail> {
   const [user] = await db.select().from(users).where(eq(users.id, String(userId)));
   if (!user || !user.active) return { ok: false, error: INACTIVE };
+  /* Only for somebody who holds the Factory app, and behind the same sign-in
+     throttle as the PIN: an open door here texted any active account a code on
+     demand, given nothing but its id. */
+  if (!(await listUserApps(user.id)).includes("factory")) return { ok: false, error: INACTIVE };
+  const refused = await signInRefusal(accountKey(user.id, user.id), await clientAddress());
+  if (refused) return { ok: false, error: refused };
   const sent = await sendOtp(user.id, "login", { surface: "web", requestedWith: "factory" });
   if (!sent.ok) return { ok: false, error: sent.error };
   return { ok: true, sentTo: sent.sentTo };

@@ -49,6 +49,9 @@ import {
   RequestDialog,
 } from "./dialogs";
 
+/** Why a button on a lead you cannot work is dead — said on the button, not only felt. */
+const READ_ONLY = "This lead is not yours to work, so it is read-only here.";
+
 type Coded = { code: string; label: string };
 type Tab = "overview" | "calls" | "comms" | "timeline";
 type DialogState = {
@@ -220,7 +223,7 @@ export function RecordScreen({
               Converting to Prospect moves this lead now — no Sales Manager verification call is needed.
             </div>
           </div>
-          <Button variant="primary" disabled={!canConvert} onClick={() => open("convert")}>
+          <Button variant="primary" disabled={!canConvert} title={!canWork ? READ_ONLY : !canConvert ? "Converting unlocks once the lead is ready." : undefined} onClick={() => open("convert")}>
             Convert to Prospect
           </Button>
         </Card>
@@ -299,13 +302,13 @@ export function RecordScreen({
           </div>
           <div className="flex flex-none gap-2">
             {working && next ? (
-              <Button size="sm" variant="primary" disabled={!canCall} onClick={() => open("call")}>
+              <Button size="sm" variant="primary" disabled={!canCall} title={!canWork ? READ_ONLY : !canCall ? "Every call this lead is due has been made." : undefined} onClick={() => open("call")}>
                 <DeskIcon name="phone" size={14} />
                 Start call {next}
               </Button>
             ) : null}
             {working || phase === "ready" ? (
-              <Button size="sm" variant="secondary" disabled={!canWork} onClick={() => open("message")}>
+              <Button size="sm" variant="secondary" disabled={!canWork} title={!canWork ? READ_ONLY : undefined} onClick={() => open("message")}>
                 <DeskIcon name="chat" size={14} />
                 Message
               </Button>
@@ -613,7 +616,7 @@ function NextActionPanel({
           <div className="text-sm font-medium text-ink">This active lead has nothing scheduled</div>
           <div className="text-[12.5px] text-muted">Every active lead needs a next action — this is a gap.</div>
         </div>
-        <Button size="sm" variant="primary" disabled={!canWork} onClick={onEdit}>
+        <Button size="sm" variant="primary" disabled={!canWork} title={!canWork ? READ_ONLY : undefined} onClick={onEdit}>
           Set next action
         </Button>
       </Card>
@@ -635,7 +638,7 @@ function NextActionPanel({
       <MetaItem label="Expected outcome" value={na.outcome} />
       <MetaItem label="Type" value={type} />
       {canEdit ? (
-        <Button size="sm" variant="secondary" className="ml-auto" disabled={!canWork} onClick={onEdit}>
+        <Button size="sm" variant="secondary" className="ml-auto" disabled={!canWork} title={!canWork ? READ_ONLY : undefined} onClick={onEdit}>
           Update
         </Button>
       ) : (
@@ -841,10 +844,10 @@ function SuspectCallsTracker({
       </div>
       {showButtons ? (
         <div className="mt-3.5 flex flex-wrap items-center gap-2">
-          <Button variant="primary" disabled={!canDecide || !canWork} onClick={onConvert}>
+          <Button variant="primary" disabled={!canDecide || !canWork} title={!canWork ? READ_ONLY : !canDecide ? `Unlocks when what a Prospect needs is in (${req.done} of ${req.total}).` : undefined} onClick={onConvert}>
             Convert to Prospect
           </Button>
-          <Button variant="secondary" disabled={!canWork} onClick={onLost}>
+          <Button variant="secondary" disabled={!canWork} title={!canWork ? READ_ONLY : undefined} onClick={onLost}>
             Not a Prospect
           </Button>
           {!canDecide ? (
@@ -1136,7 +1139,7 @@ function GateActionCard({
   if (p === "ready")
     return box(
       "Everything a Prospect needs is in. Pick the reason it is worth pursuing and convert it — this moves the lead to Prospect at once, with no Sales Manager verification call needed.",
-      <Button variant="primary" disabled={!canWork} onClick={onConvert}>
+      <Button variant="primary" disabled={!canWork} title={!canWork ? READ_ONLY : undefined} onClick={onConvert}>
         Convert to Prospect
       </Button>,
     );
@@ -1154,10 +1157,10 @@ function GateActionCard({
     return box(
       "The Sales Manager could not verify this lead and has returned it. Read their note on the Manager verification card, correct what is wrong by logging a call, then resubmit — or close the lead.",
       <>
-        <Button variant="primary" disabled={!canWork} onClick={onRequest}>
+        <Button variant="primary" disabled={!canWork} title={!canWork ? READ_ONLY : undefined} onClick={onRequest}>
           Resubmit for verification
         </Button>
-        <Button variant="secondary" className="text-danger" disabled={!canWork} onClick={onLost}>
+        <Button variant="secondary" className="text-danger" disabled={!canWork} title={!canWork ? READ_ONLY : undefined} onClick={onLost}>
           Mark Lost
         </Button>
       </>,
@@ -1167,7 +1170,7 @@ function GateActionCard({
       `Three calls have been made and ${prospectProgress(lead.values)
         .missing.map((f) => f.label)
         .join(" and ")} ${prospectProgress(lead.values).missing.length === 1 ? "is" : "are"} not yet captured. There is no Call 4 — the lead is not lost: log a call with them when they come in, or close the lead.`,
-      <Button variant="secondary" className="text-danger" disabled={!canWork} onClick={onLost}>
+      <Button variant="secondary" className="text-danger" disabled={!canWork} title={!canWork ? READ_ONLY : undefined} onClick={onLost}>
         Mark Lost
       </Button>,
     );
@@ -1199,11 +1202,11 @@ function GateActionCard({
           Anything already answered is not asked again.
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="primary" disabled={!canWork} onClick={onCall}>
+          <Button variant="primary" disabled={!canWork} title={!canWork ? READ_ONLY : undefined} onClick={onCall}>
             <DeskIcon name="phone" size={14} />
             Start call {next}
           </Button>
-          <Button variant="secondary" disabled={!canWork} onClick={onMessage}>
+          <Button variant="secondary" disabled={!canWork} title={!canWork ? READ_ONLY : undefined} onClick={onMessage}>
             Send a message first
           </Button>
         </div>
@@ -1360,6 +1363,7 @@ function CommsTab({
             key={a.code}
             type="button"
             disabled={a.disabled}
+            title={a.disabled ? (!canWork ? READ_ONLY : a.code === "call" ? "Every call this lead is due has been made." : "Messages go out only while the lead is being worked or is ready.") : undefined}
             onClick={a.run}
             className={cx(
               "flex flex-col items-start gap-1.5 rounded-[7px] border px-3 py-3 text-left text-[12.5px] font-medium disabled:cursor-not-allowed disabled:opacity-60",

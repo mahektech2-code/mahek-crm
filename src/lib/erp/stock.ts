@@ -301,7 +301,7 @@ export async function rmLots(ex: Ex = db, pick: LotPick = {}): Promise<RmLot[]> 
  * type, named in the raw-material master, once per packing BATCH (every line
  * of a batch carries the whole batch's boxes).
  */
-async function packingUse(ex: Ex = db): Promise<Map<string, number>> {
+export async function packingUse(ex: Ex = db): Promise<Map<string, number>> {
   const [cans, boxes] = await Promise.all([
     rows<{ item: string; godown: string; n: number }>(
       sql`select can_use_id as item, godown_id as godown, sum(cans)::float8 as n from erp_fg_fills where packing_type = 'Can' and can_use_id is not null group by 1, 2`,

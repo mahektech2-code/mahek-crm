@@ -1,4 +1,4 @@
-import type { WorkingDayConfig } from "@/lib/business-date";
+import { calendarDate, type WorkingDayConfig } from "@/lib/business-date";
 import {
   CALL_INTENT_LABEL,
   INTENT_CALL_REASON,
@@ -1016,7 +1016,7 @@ function buildPrimary(
         base.duplicateOf = {
           kind: "complaint",
           id: open.id,
-          label: `An open complaint of this kind from ${dayLabel(open.createdAt.slice(0, 10))}: ${open.description}. Saving adds this call to it rather than raising a second.`,
+          label: `An open complaint of this kind from ${dayLabel(calendarDate(new Date(open.createdAt)))}: ${open.description}. Saving adds this call to it rather than raising a second.`,
         };
       }
       break;
@@ -1174,7 +1174,7 @@ function buildPrimary(
           base.duplicateOf = {
             kind: "opportunity",
             id: dupOpp.id,
-            label: `An opportunity for ${dupOpp.product} was recorded ${dayLabel(dupOpp.createdAt.slice(0, 10))}. Saving without it keeps one record.`,
+            label: `An opportunity for ${dupOpp.product} was recorded ${dayLabel(calendarDate(new Date(dupOpp.createdAt)))}. Saving without it keeps one record.`,
           };
         }
       }
@@ -1311,7 +1311,7 @@ function buildComplaintExtra(
       ? {
           kind: "complaint",
           id: open.id,
-          label: `Already open since ${dayLabel(open.createdAt.slice(0, 10))}: ${open.description}`,
+          label: `Already open since ${dayLabel(calendarDate(new Date(open.createdAt)))}: ${open.description}`,
         }
       : null,
     date: null,

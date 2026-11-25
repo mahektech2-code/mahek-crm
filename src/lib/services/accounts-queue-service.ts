@@ -19,7 +19,7 @@ export type QueueUrgency = {
 export async function queueUrgency(): Promise<QueueUrgency> {
   const [row] = await db.execute<{ orders: number; receipts: number }>(sql`
     select
-      (select coalesce(max(extract(epoch from (now() - ordered_at)) / 3600), 0)::int
+      (select coalesce(max(extract(epoch from (now() - created_at)) / 3600), 0)::int
          from orders where ${awaitingAccountsSql("orders")}) as orders,
       (select coalesce(max(extract(epoch from (now() - created_at)) / 3600), 0)::int
          from payment_receipts where status in ('reported','held')) as receipts

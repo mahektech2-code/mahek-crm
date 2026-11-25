@@ -1099,6 +1099,12 @@ export const sessions = pgTable(
      * session that has to confirm first. See `lib/console-confirm.ts`.
      */
     confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+    /**
+     * Opened on the factory floor with a PIN or its SMS code: good for /factory
+     * and /api/factory only. `getCurrentUser` answers nobody for it anywhere
+     * else, and it is never password-confirmed. See 0379_factory_only_sessions.
+     */
+    factoryOnly: boolean("factory_only").notNull().default(false),
   },
   (t) => [index("sessions_user_idx").on(t.userId)],
 );

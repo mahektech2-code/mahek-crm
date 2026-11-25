@@ -1,7 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { APP_TIMEZONE, calendarDate } from "@/lib/business-date";
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import {
   customers,
@@ -1537,13 +1537,33 @@ async function lines(ids: string[]): Promise<OrderLine[]> {
   return (await orderLines({ ids })).filter((l) => set.has(l.o.id));
 }
 
-async function setMany(ctx: ErpContext, ids: string[], values: Partial<typeof erpOrders.$inferInsert>, action: string, msg: (n: number) => string): Promise<Result<unknown>> {
+/**
+ * `guard` is the refusal, said again in the UPDATE itself. The checks callers
+ * make are read before the write, so a Cancel racing Bill-it or Do-Verified
+ * could cancel a line billed or dispatched a moment earlier; with the guard in
+ * the WHERE such a line is skipped and said so.
+ */
+async function setMany(ctx: ErpContext, ids: string[], values: Partial<typeof erpOrders.$inferInsert>, action: string, msg: (n: number) => string, guard?: SQL): Promise<Result<unknown>> {
   if (!ids.length) return err("Nothing selected.");
-  await db.update(erpOrders).set({ ...values, updatedAt: new Date(), updatedById: ctx.user.id }).where(inArray(erpOrders.id, ids));
-  await erpAudit(ctx, action, "erp_order", ids.join(","), null, values);
-  await syncBookOrders(await orderNosOf(ids));
-  return okVoid(msg(ids.length));
+  const done = (
+    await db
+      .update(erpOrders)
+      .set({ ...values, updatedAt: new Date(), updatedById: ctx.user.id })
+      .where(guard ? and(inArray(erpOrders.id, ids), guard) : inArray(erpOrders.id, ids))
+      .returning({ id: erpOrders.id })
+  ).map((r) => r.id);
+  if (!done.length) return err("Not changed: those lines were billed, allocated or dispatched a moment ago. Refresh and look again.", "conflict");
+  await erpAudit(ctx, action, "erp_order", done.join(","), null, values);
+  await syncBookOrders(await orderNosOf(done));
+  const missed = ids.length - done.length;
+  return okVoid(msg(done.length) + (missed ? `. ${plural(missed)} not changed — billed, allocated or dispatched a moment ago` : ""));
 }
+
+/** A line nobody has dispatch-verified, and — for a Cancel — not billed and holding no batch codes. Mirrors `doStatus`'s refusals. */
+const statusGuard = (status: string): SQL =>
+  status === "Cancel"
+    ? sql`not exists (select 1 from erp_order_details d where d.order_id = ${erpOrders.id}) and not exists (select 1 from erp_batch_codes b where b.order_id = ${erpOrders.id})`
+    : sql`not exists (select 1 from erp_order_details d where d.order_id = ${erpOrders.id} and d.verification = 'Verified')`;
 
 const plural = (n: number) => `${n} line${n === 1 ? "" : "s"}`;
 
@@ -1662,7 +1682,7 @@ async function doStatus(ctx: ErpContext, ids: string[], status: string) {
   }
   if (!ok.length) return err(`Not changed: ${refused.join("; ")}.`, "rule_violation");
   const action = `erp.order.${STATUS_ACTION[status] ?? "status"}`;
-  const res = await setMany(ctx, ok, { status }, action, (n) => `${plural(n)} ${status}`);
+  const res = await setMany(ctx, ok, { status }, action, (n) => `${plural(n)} ${status}`, statusGuard(status));
   /* Lines moved off Hold From Office by hand: once none of an order's live lines
      is held, its hold is over — closed in the history, so the customer's page
      never says "on hold" about an order being worked. */
@@ -2761,11 +2781,19 @@ async function saveAllocation(ctx: ErpContext, h: Record<string, string>, id?: s
   if (!lot) return fieldErr("lot", "Lot code is required");
   const qty = num(h.qty);
   if (qty == null || qty <= 0) return fieldErr("qty", "Invalid Quantity Or Wait For Synchronization");
+  /* Allocations are cans or boxes, never a fraction: 2.5 boxes allocated is a target no scan of whole boxes ever reaches. */
+  if (!Number.isInteger(qty)) return fieldErr("qty", "Allocate whole cans or boxes.");
   const [l] = await lines([id]);
   if (!l) return err("That line no longer exists.", "not_found");
   if (l.o.status !== "Ready") return err("Lots are allocated once the line is Ready.", "rule_violation");
   if (l.boxed && !l.boxesValid) return err("The box quantity is not whole; fix the order quantity first.", "rule_violation");
   return inTx(async (tx) => {
+    /* The LINE as well as the lot: two allocations to one line from two lots held different lot locks, both summed the line's
+       allocations before either wrote, and the line ended above its target. Only allocations take this lock, so it waits on
+       nothing else. The status is read again under it, since it was read before the transaction. */
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`erp:alloc:${id}`}))`);
+    const [now] = (await tx.execute(sql`select status from erp_orders where id = ${id}`)) as unknown as { status: string }[];
+    if (now?.status !== "Ready") return refuse(err("Lots are allocated once the line is Ready.", "rule_violation"));
     await lockLot(tx, l.boxed ? "pack" : "fg", lot, l.o.godownId);
     const src = l.boxed
       ? (await packLots(tx, { rates: false })).find((x) => x.batchNo === lot && x.godownId === l.o.godownId && x.skuId === l.sku.id)
@@ -2871,6 +2899,7 @@ const batchCodes: ScreenModule = {
     async qty(ctx, id, values) {
       const qty = num(values.qty);
       if (qty == null || qty <= 0) return fieldErr("qty", "Invalid Quantity Or Wait For Synchronization");
+      if (!Number.isInteger(qty)) return fieldErr("qty", "Allocate whole cans or boxes.");
       const [b] = await db.select().from(erpBatchCodes).where(eq(erpBatchCodes.id, id));
       if (!b) return err("That allocation no longer exists.", "not_found");
       const [l] = await lines([b.orderId]);

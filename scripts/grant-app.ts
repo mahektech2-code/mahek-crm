@@ -32,6 +32,8 @@ import { appAccess, auditLog, users } from "../src/db/schema";
 import { APP_IDS, getApp, type AppId } from "../src/lib/apps";
 import type { Role } from "../src/lib/role-levels";
 import {
+  CONVERTED_GRANT_HINT,
+  convertedGrants,
   grantAppWithDefaultModules,
   rederiveAccountLevel,
 } from "../src/lib/services/app-provisioning";
@@ -93,6 +95,10 @@ async function main() {
     .limit(1);
 
   const was = (existing?.role ?? "associate") as Role;
+  if (existing && (await convertedGrants(db, [user.id], [app as AppId])).length) {
+    console.error(`${user.name}'s ${app} ${CONVERTED_GRANT_HINT}. Nothing changed.`);
+    process.exit(1);
+  }
   if (existing && was === level) {
     console.log(`${user.name} already has ${app} as ${level}. Nothing changed.`);
     return;

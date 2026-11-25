@@ -171,3 +171,11 @@ export const CN_STATUS_LABEL: Record<string, string> = {
   issued: "Issued",
   cancelled: "Cancelled",
 };
+
+/**
+ * The desks a complaint can be handed to. One list, read by the reassign
+ * picker and checked by the action — the action used to store whatever text
+ * it was posted, so a stale screen or a hand-made request could file a
+ * complaint under a desk nobody watches.
+ */
+export const COMPLAINT_DESKS = ["Operations", "Accounts", "Dispatch", "Quality", "Management"] as const;

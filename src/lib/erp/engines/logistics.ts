@@ -11,6 +11,7 @@
  * disagree about where a bill is.
  * ------------------------------------------------------------------------- */
 
+import { calendarDate } from "@/lib/business-date";
 import { similarity } from "./match";
 import { billKey, partyWords, sameParty } from "./delivery-proof";
 
@@ -254,6 +255,15 @@ export type PendingFacts = {
  * bill, and drawn quietly below the late ones — the two late kinds are still
  * the ones in red and amber, and still the only ones the alert raises.
  */
+/**
+ * The Kolkata date a consignment reached the transporter. `atTransportAt` is a
+ * UTC ISO instant, so slicing its first ten characters dated a hand-over made
+ * between midnight and 05:30 IST on the previous day, one day older than it is.
+ */
+export function atTransportDay(atTransportAt: string): string {
+  return calendarDate(new Date(atTransportAt));
+}
+
 export function pendingOf(c: PendingFacts, today: string, stuckLrDays: number): { kind: PendingKind; days: number } | null {
   if (c.phase === "delivered") return null;
   const out = c.billDate ? daysBetween(c.billDate, today) : null;
@@ -261,7 +271,7 @@ export function pendingOf(c: PendingFacts, today: string, stuckLrDays: number): 
   if (c.lrId) return null;
   if (out != null && out > stuckLrDays) return { kind: "noLr", days: out };
   if (c.phase === "lrPending" && c.atTransportAt) {
-    const at = daysBetween(c.atTransportAt.slice(0, 10), today);
+    const at = daysBetween(atTransportDay(c.atTransportAt), today);
     if (at >= AT_TRANSPORT_STUCK_DAYS) return { kind: "atTransport", days: at };
   }
   if (c.phase === "lrPending" || c.phase === "toTransport") return { kind: "awaitingLr", days: Math.max(0, out ?? 0) };

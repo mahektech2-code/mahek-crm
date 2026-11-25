@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import { db } from "@/db";
 import { appAccess, appModuleAccess, users } from "@/db/schema";
 import type { AppId } from "@/lib/apps";
@@ -116,3 +116,38 @@ export async function rederiveAccountLevel(client: Client, userId: string): Prom
   await client.update(users).set({ role: level }).where(eq(users.id, userId));
   return level;
 }
+
+/**
+ * THE GRANTS A LEVEL NO LONGER SPEAKS FOR.
+ *
+ * Once `app_access.position` is set the grant is on the screen model: `can()`
+ * answers from its screen ticks and `scopeForUser` from the position, and the
+ * level is derived from the ticks by `setAccess` (`legacyFromScreens`). A
+ * writer that changes only the level or the module rows — `app:grant`, the
+ * provisioning endpoint, an ERP designation save — reported success while
+ * nothing the person could do changed, and left the level disagreeing with
+ * the ticks it is supposed to be derived from. Those writers ask this first and
+ * refuse (or leave the person alone) for the apps it names; the Manage access
+ * dialog is the one door for a converted grant.
+ */
+export async function convertedGrants(
+  client: Pick<typeof db, "select">,
+  userIds: string[],
+  apps?: AppId[],
+): Promise<Array<{ userId: string; app: AppId }>> {
+  if (!userIds.length) return [];
+  const rows = await client
+    .select({ userId: appAccess.userId, app: appAccess.app })
+    .from(appAccess)
+    .where(
+      and(
+        inArray(appAccess.userId, userIds),
+        isNotNull(appAccess.position),
+        apps?.length ? inArray(appAccess.app, apps) : undefined,
+      ),
+    );
+  return rows.map((r) => ({ userId: r.userId, app: r.app as AppId }));
+}
+
+export const CONVERTED_GRANT_HINT =
+  "is on position and screen ticks, so its level is derived from them — change it in Admin → Manage access";

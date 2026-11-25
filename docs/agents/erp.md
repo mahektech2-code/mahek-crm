@@ -365,7 +365,11 @@ orders), so deleting a consuming document gives the stock back on its own.
 Every consuming save takes `lockLot` — an advisory lock on (stage, lot,
 godown) — and reads the lot's stock INSIDE the same transaction before
 refusing in the source's words. Reading it with the pool, outside the
-transaction, is how two saves both spend the last litre.
+transaction, is how two saves both spend the last litre. A transfer takes the
+lot under BOTH spellings of its stage (`rm` and `Purchase`, `fg` and `Finish
+Goods`…), because consumers lock the stage name; and a transfer of an empty
+can or drum lot also takes the fill's `packing` lock on the item (a drum's
+company-wide, `all`), because a fill draws cans by item and never names a lot.
 
 **Automations run in the save that qualifies them** (spec §18): a rated
 purchase posts to RM stock, a complete packing batch posts its one entry, a

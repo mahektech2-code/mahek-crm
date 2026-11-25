@@ -2598,6 +2598,13 @@
       "when": 1795700000000,
       "tag": "0378_ai_read_trials",
       "breakpoints": true
+    },
+    {
+      "idx": 372,
+      "version": "7",
+      "when": 1795700040000,
+      "tag": "0379_factory_only_sessions",
+      "breakpoints": true
     }
   ]
 }

@@ -381,7 +381,7 @@ export function CallTransporterDialog({
       <DialogFooter left={blocked && outcome ? blocked : footNote}>
         <Button onClick={onClose}>Cancel</Button>
         {canWrite ? (
-          <Button variant="primary" disabled={pending || !!blocked} onClick={save}>
+          <Button variant="primary" disabled={pending || !!blocked} title={blocked ?? undefined} onClick={save}>
             {outcome === "update" ? "Save update" : outcome === "no_change" ? "Save — nothing new" : outcome ? "Save attempt" : "Save"}
           </Button>
         ) : null}
