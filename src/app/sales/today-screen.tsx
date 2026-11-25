@@ -382,8 +382,8 @@ function TeamTable({ people, day, isToday }: { people: SalesmanDay[]; day: strin
           <table className="w-full table-fixed border-collapse text-[13px]">
             <colgroup>
               <col />
-              <col className="w-[146px]" />
-              <col className="w-[88px]" />
+              <col className="w-[176px]" />
+              <col className="w-[120px]" />
               <col className="w-[88px]" />
               <col className="w-[112px]" />
               <col className="w-[112px]" />
@@ -502,7 +502,7 @@ function PersonRow({ p, href }: { p: SalesmanDay; href: string }) {
       <td className="px-4 py-2.5">
         <span
           className={cx(
-            "inline-flex max-w-full items-center gap-1.5 rounded-full px-2 py-0.5 text-[12px] font-medium",
+            "inline-flex max-w-full items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] leading-4 font-medium whitespace-nowrap",
             status.pill,
           )}
         >
@@ -510,7 +510,7 @@ function PersonRow({ p, href }: { p: SalesmanDay; href: string }) {
           <span className="truncate">{status.word}</span>
         </span>
         {p.withinGeofence === false ? (
-          <span className="mt-0.5 block text-[11px] text-warn-ink" title="Punched in outside the permitted radius">
+          <span className="mt-1 block truncate text-[11px] text-warn-ink" title="Punched in outside the permitted radius">
             Punched in off site
           </span>
         ) : null}
@@ -518,7 +518,7 @@ function PersonRow({ p, href }: { p: SalesmanDay; href: string }) {
       <td className="px-4 py-2.5 text-right tabular-nums">
         <span className={p.visits ? "font-medium text-ink" : "text-faint"}>{p.visits}</span>
         {unverified ? (
-          <span className="block text-[11px] text-warn-ink" title="Visits saved without the checks passing">
+          <span className="mt-0.5 block text-[11px] whitespace-nowrap text-warn-ink" title="Visits saved without the checks passing">
             {unverified} unverified
           </span>
         ) : null}
