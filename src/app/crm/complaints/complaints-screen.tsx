@@ -39,6 +39,7 @@ import {
   categoryLabel,
   isEscalatedPriority,
   priorityLabel,
+  COMPLAINT_DESKS,
 } from "@/lib/complaint-labels";
 
 type Status =
@@ -97,7 +98,7 @@ function statusTone(s: Status) {
 type Event = { at: string; note: string };
 type Tab = "open" | "progress" | "resolved" | "all";
 
-const RESOLVERS = ["Operations", "Accounts", "Dispatch", "Quality", "Management"];
+const RESOLVERS = COMPLAINT_DESKS;
 
 /** One line of the drawer's detail grid. A blank reads as a gap, not a zero. */
 function Detail({ label, children }: { label: string; children: React.ReactNode }) {

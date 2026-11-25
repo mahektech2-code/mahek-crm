@@ -1,6 +1,6 @@
 import type { BusinessDate } from "../business-date";
 import { money, shortDateWithYear } from "../format";
-import { addDays, daysBetween } from "../business-date";
+import { addDays, calendarDate, daysBetween } from "../business-date";
 import { DEFAULT_TIER_WEIGHTS, type Config, type QueueReasonKind } from "../config/registry";
 import { salesTypeLabel, type LeadSalesType } from "../lead-labels";
 
@@ -844,7 +844,10 @@ export function noAnswerState(
   // the attempt limit stops it.
   const ladder = config["queue.noAnswerRetryDays"];
   const step = ladder[Math.min(c.noAnswerCount - 2, ladder.length - 1)] ?? 1;
-  const lastDay = c.lastNoAnswerAt.slice(0, 10);
+  /* The Kolkata day of the attempt, not the first ten characters of a UTC
+     instant: a no-answer at 00:30 IST was dated the day before, and the
+     customer came back the same night instead of the next working day. */
+  const lastDay: string = calendarDate(new Date(lastMs));
   return daysBetween(lastDay, today) >= step ? "due" : "waiting";
 }
 

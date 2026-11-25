@@ -20,7 +20,7 @@ import {
   type BypassStep,
 } from "@/lib/lead-bypass";
 import { INDIA_STATES } from "@/lib/india-states";
-import { cleanWhole, parseRupees } from "@/lib/format";
+import { cleanWhole, money, parseRupees } from "@/lib/format";
 import { seatFromPick } from "@/lib/new-customer";
 
 /* ---------------------------------------------------------------------------
@@ -561,7 +561,7 @@ function Body({ onClose, onConverted, people, salesManagerPeople, canAssignSales
                 {values.salesManager ? ` · ${salesManagerPeople.find((p) => p.id === values.salesManager)?.name ?? ""}` : ""}
               </Line>
               <Line icon="wallet">
-                {values.creditTermDays} days{values.creditLimit ? ` · ₹${values.creditLimit}` : ""}
+                {values.creditTermDays} days{values.creditLimit && parseRupees(values.creditLimit) != null ? ` · ${money(parseRupees(values.creditLimit))}` : ""}
               </Line>
               <Line icon="rupee">{values.priceTag}</Line>
               <Line icon="arrowRight">

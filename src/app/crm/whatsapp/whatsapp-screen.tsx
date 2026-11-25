@@ -1064,6 +1064,7 @@ function SendComposer({
                       variant={isCopied ? "secondary" : "primary"}
                       className="w-full"
                       disabled={specBlocked}
+                      title={specBlocked ? "This message cannot go to this customer — the reasons are listed above" : undefined}
                       onClick={() => copy(leg)}
                     >
                       {isCopied ? "Copied ✓" : "Copy the message"}
@@ -2166,6 +2167,7 @@ function TemplateDrawerBody({
             <Button
               variant="primary"
               disabled={!isManager}
+              title={!isManager ? "Only a manager can change templates." : undefined}
               onClick={() =>
                 onSave({ id: template.id, name, category, body, appliesTo })
               }
@@ -2175,6 +2177,7 @@ function TemplateDrawerBody({
             <Button
               variant="secondary"
               disabled={!isManager}
+              title={!isManager ? "Only a manager can change templates." : undefined}
               onClick={() => onArchive(template.id, !template.archived)}
             >
               {template.archived ? "Restore" : "Archive"}

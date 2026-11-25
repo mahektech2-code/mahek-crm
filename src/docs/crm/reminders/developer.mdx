@@ -100,7 +100,7 @@ Pass the **transaction**, never `db`. `closeRemindersOnEvidence` takes `Pick<typ
 
 - **Module:** <ModuleRef k="crm.reminders" />.
 - **Scope:** `listReminders` filters by `assigned_user_id in scopedUserIds(scope)`, and hides reminders whose customer is in the lead trash.
-- **Writes:** `createReminder` runs `assertCustomerInScope`; `completeReminder` and `dismissReminder` run `requireCapability("reminder.close")`.
+- **Writes:** `createReminder` runs `assertCustomerInScope`; `completeReminder` and `dismissReminder` run `requireCapability("reminder.close")` and then `assertReminderInScope` (your own promise, or a customer in your book), as do `rescheduleReminder`, the edit and `holdOtherReasonsUntilReminder`. A dismiss only moves a reminder that is still pending.
 
 ## Tests that pin this
 
@@ -120,7 +120,7 @@ Add a `ClosureEvent` kind and its `closes` arm and `closureNoteFor` sentence, an
 Stamp `call_id` on reminders a call writes, or pass `exclude`.
 </Step>
 <Step title="Keep hand-closing behind the capability">
-Any new "close" or "dismiss" path must call `requireCapability("reminder.close")` and write an audit row.
+Any new "close" or "dismiss" path must call `requireCapability("reminder.close")` and `assertReminderInScope`, and write an audit row.
 </Step>
 <Step title="Keep the badge and Needs action the same count">
 Both are pending and `due_date` on or before today. Change one, change the other.
@@ -131,7 +131,7 @@ Both are pending and `due_date` on or before today. Change one, change the other
 
 | Gap | Where |
 |---|---|
-| `rescheduleReminder` and `holdOtherReasonsUntilReminder` look the reminder up by id with no scope check and no audit row | `worklist-services.ts` |
+| `rescheduleReminder` and `holdOtherReasonsUntilReminder` are scope-checked but write no audit row | `worklist-services.ts` |
 | The badge counts all pending reminders when `getScope === "team"` (`${teamWide} or …`), the list narrows to the team's ids | `queries.ts` `crmBadgeCounts` vs `listReminders` |
 | `hasConflictToday` runs `nextStepForCustomer` once per future reminder on every page load | `worklist-services.ts` `listReminders` |
 | Confirmed money closes payment promises outside the confirming transaction (`closeRemindersOnEvidence(db, …)`) | `receipt-service.ts` `closePaymentPromises` |

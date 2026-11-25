@@ -932,7 +932,14 @@ function coerce(spec: FieldSpec, raw: string | boolean | null): unknown {
      would leave a competitor named in error on the record for ever. */
   if (!text) return null;
   if (spec.kind === "money") return parseRupees(text);
-  if (spec.kind === "int" || spec.kind === "litres") {
+  /* Litres take a fraction (`litresSchema` keeps two places, the column is
+     double precision); only a count is whole. Rounding here saved 1500.5 L
+     as 1501. */
+  if (spec.kind === "litres") {
+    const n = Number(text);
+    return Number.isFinite(n) ? n : null;
+  }
+  if (spec.kind === "int") {
     const n = Number(text);
     return Number.isFinite(n) ? Math.round(n) : null;
   }
@@ -1082,11 +1089,15 @@ function FieldControl({
           }
           min={spec.kind === "int" || spec.kind === "litres" ? 0 : undefined}
           max={spec.max}
-          step={spec.kind === "int" || spec.kind === "litres" ? 1 : undefined}
+          step={spec.kind === "int" ? 1 : spec.kind === "litres" ? "any" : undefined}
+          /* A rupee or a litre can carry a point, and "numeric" is a phone
+             keypad without one; only a count is whole. */
           inputMode={
-            spec.kind === "int" || spec.kind === "litres" || spec.kind === "money"
+            spec.kind === "int"
               ? "numeric"
-              : undefined
+              : spec.kind === "litres" || spec.kind === "money"
+                ? "decimal"
+                : undefined
           }
           disabled={disabled}
           value={text}

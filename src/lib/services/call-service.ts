@@ -1,4 +1,5 @@
 import "server-only";
+import { calendarDate } from "@/lib/business-date";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
@@ -120,7 +121,7 @@ export async function handoverSummary(customerId: string): Promise<Handover | nu
     `${customer.contactPerson ?? "No contact person"} · ${customer.phone}`,
     "",
     "Last three interactions:",
-    ...history.map((h) => `· ${h.at.slice(0, 10)} ${h.summary}: ${h.detail ?? "no note"}`),
+    ...history.map((h) => `· ${calendarDate(new Date(h.at))} ${h.summary}: ${h.detail ?? "no note"}`),
     "",
     `Last thing promised: ${lastNote?.notes ?? "nothing recorded"}`,
     "",
