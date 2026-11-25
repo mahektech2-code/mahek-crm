@@ -1,6 +1,7 @@
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "./schema";
+import { APP_TIMEZONE } from "@/lib/business-date";
 
 const connectionString = process.env.DATABASE_URL;
 
@@ -92,6 +93,17 @@ const sql =
      * Tunable rather than fixed, because the right answer moves with the box.
      */
     max: Number(process.env.DATABASE_POOL_MAX ?? 10),
+
+    /*
+     * EVERY CONNECTION RUNS IN THE BUSINESS ZONE. `current_date`, `now()::date`
+     * and `_at::text` follow the SESSION zone, and nothing used to set it: they
+     * were right only because the droplet's Postgres happens to be configured
+     * for Asia/Kolkata. Moved to a server left at GMT, overdue bills and
+     * collections would have been a day off between 00:00 and 05:30 IST.
+     * Named once, here, so the server's own setting no longer decides it. A
+     * test that wants GMT still says `set time zone` for its own session.
+     */
+    connection: { TimeZone: APP_TIMEZONE },
 
     /*
      * FALSE WAS A NUMBER ABOUT NEON, like the pool size above it. Neon's

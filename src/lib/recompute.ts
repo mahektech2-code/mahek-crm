@@ -409,7 +409,13 @@ export async function recomputeAllBillPaid(): Promise<number> {
 export async function recomputeOutstanding(customerId: string): Promise<void> {
   const [row] = await db
     .select({
-      total: sql<number>`coalesce(sum(${bills.amount} - ${bills.paidAmount}), 0)::bigint`,
+      /* An OVERPAID bill counts as nothing, not as a negative: a rate edit
+         that lowers a paid bill leaves its excess as credit, and credit is
+         never netted off what else is owed — money on account does not reduce
+         outstanding either. Every other screen (Outstanding, aging, the
+         dashboard, the handset) already drops a balance at or below zero, so
+         netting here alone made the customer record disagree with them. */
+      total: sql<number>`coalesce(sum(greatest(${bills.amount} - ${bills.paidAmount}, 0)), 0)::bigint`,
     })
     .from(bills)
     .where(
@@ -447,7 +453,7 @@ export async function recomputeAllOutstanding(): Promise<number> {
     update customers c set outstanding = t.total, updated_at = now()
       from (
         select c2.id, coalesce((
-          select sum(b.amount - b.paid_amount) from bills b
+          select sum(greatest(b.amount - b.paid_amount, 0)) from bills b
            where b.customer_id = c2.id and b.payment_position = 'stated'
         ), 0) as total
         from customers c2

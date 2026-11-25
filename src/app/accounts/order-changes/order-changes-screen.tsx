@@ -174,7 +174,7 @@ function ChangeCard({ row, canDecide }: { row: OrderChangeRow; canDecide: boolea
                 rows={2}
               />
               <div className="mt-2 flex gap-2">
-                <Button variant="primary" disabled={!canDecide || busy || !reason.trim()} onClick={() => void decide("decline")}>
+                <Button variant="primary" disabled={!canDecide || busy || !reason.trim()} title={!canDecide ? "Deciding an order change needs order approval rights." : !reason.trim() ? "Say why it is declined" : undefined} onClick={() => void decide("decline")}>
                   Decline
                 </Button>
                 <Button onClick={() => setDeclining(false)} disabled={busy}>
@@ -187,7 +187,7 @@ function ChangeCard({ row, canDecide }: { row: OrderChangeRow; canDecide: boolea
               <Button
                 variant="primary"
                 disabled={!canDecide || busy || row.orderStatus !== "confirmed"}
-                title={!canDecide ? "Deciding an order change needs order approval rights." : undefined}
+                title={!canDecide ? "Deciding an order change needs order approval rights." : row.orderStatus !== "confirmed" ? "The order is no longer confirmed, so it cannot be changed here." : undefined}
                 onClick={() => void decide("accept")}
               >
                 Accept and update the order

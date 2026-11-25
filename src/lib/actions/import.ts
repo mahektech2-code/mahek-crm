@@ -7,7 +7,7 @@ import { canOpen } from "@/lib/access";
 import { NotPermittedError, requireCapability } from "@/lib/access-control";
 import { randomUUID } from "node:crypto";
 import { auditLog } from "@/db/schema";
-import { recomputeOutstanding } from "@/lib/recompute";
+import { recomputeBillStatuses, recomputeFollowUpState, recomputeOutstanding } from "@/lib/recompute";
 import { err as fail, fromThrown, ok, type Result as ActionResult } from "@/lib/result";
 import { today } from "@/lib/recompute";
 
@@ -224,9 +224,13 @@ async function importBillsInner(
   const byPhone = new Map(existingCustomers.map((c) => [c.phone, c.id]));
 
   const existingBills = await db.query.bills.findMany({
-    columns: { id: true, billNo: true },
+    columns: { id: true, billNo: true, customerId: true },
   });
   const byNo = new Map(existingBills.map((b) => [b.billNo, b.id]));
+  /* Whose a bill was before this file, so a bill the file moves to another
+     customer is taken off the old one's outstanding too, not left there until
+     the nightly job. */
+  const ownerOf = new Map(existingBills.map((b) => [b.id, b.customerId]));
 
   const summary: ImportSummary = { created: 0, updated: 0, skipped: [], notes: [] };
   const touched = new Set<string>();
@@ -281,6 +285,9 @@ async function importBillsInner(
     const found = byNo.get(d.billNo);
     if (found) {
       await db.update(bills).set(values).where(eqBillId(found));
+      const before = ownerOf.get(found);
+      if (before && before !== customerId) touched.add(before);
+      ownerOf.set(found, customerId);
       summary.updated += 1;
     } else {
       const id = newId("bil");
@@ -293,7 +300,14 @@ async function importBillsInner(
     touched.add(customerId);
   }
 
-  for (const customerId of touched) await recomputeOutstanding(customerId);
+  // An amount the file changed can move a bill between open and paid, so the
+  // statuses are rebuilt before the balances that read them — the order every
+  // other money path keeps.
+  if (touched.size) await recomputeBillStatuses();
+  for (const customerId of touched) {
+    await recomputeOutstanding(customerId);
+    await recomputeFollowUpState(customerId);
+  }
 
   if (paidIgnored) {
     summary.notes.push(

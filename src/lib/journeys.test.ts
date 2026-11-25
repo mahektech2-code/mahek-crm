@@ -3634,9 +3634,12 @@ describe("The business day is Asia/Kolkata, whatever the database thinks", () =>
     // the SESSION zone, so a bare `started_at::date` puts a 1am IST call on the
     // previous day — and local Postgres runs in Asia/Kolkata, which hides it
     // perfectly. This test forces the session to GMT so it cannot hide.
-    await db.execute(sql`set time zone 'GMT'`);
-    try {
-      const [row] = await db.execute<{ bare: string; zoned: string }>(sql`
+    // One connection, in a transaction: every pooled connection now starts in
+    // the business zone (src/db/index.ts), so a `set` on one connection and a
+    // select that lands on another would compare two different sessions.
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`set local time zone 'GMT'`);
+      const [row] = await tx.execute<{ bare: string; zoned: string }>(sql`
         select (timestamptz '2026-08-07 20:00:00+00')::date::text as bare,
                ((timestamptz '2026-08-07 20:00:00+00')
                  at time zone 'Asia/Kolkata')::date::text as zoned
@@ -3649,9 +3652,7 @@ describe("The business day is Asia/Kolkata, whatever the database thinks", () =>
         "2026-08-08",
         "every timestamp-to-date cast in the app must look like this one",
       );
-    } finally {
-      await db.execute(sql`set time zone 'Asia/Kolkata'`);
-    }
+    });
   });
 
   test("no query turns a stored timestamp into a date without saying which zone", async () => {

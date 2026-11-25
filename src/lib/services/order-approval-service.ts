@@ -93,9 +93,16 @@ export async function pendingOrders(): Promise<PendingOrder[]> {
              case when jsonb_typeof(o.line_items) = 'array' then jsonb_array_length(o.line_items) else 0 end) as line_count,
            (select count(*)::int from bills b
              where b.customer_id = c.id
+               -- Only bills somebody has spoken for: the same set the overdue
+               -- amount on the order's panel adds up, so a count and the figure
+               -- beside it describe the same bills.
+               and b.payment_position = 'stated'
                and b.amount > b.paid_amount
                and b.due_date < current_date) as overdue_bills,
-           extract(epoch from (now() - o.ordered_at)) / 3600 as waiting_hours
+           -- From when the order was LOGGED. ordered_at is the date it is for,
+           -- which a telecaller can set days back, so an order logged a minute
+           -- ago read as three days late and red.
+           extract(epoch from (now() - o.created_at)) / 3600 as waiting_hours
       from orders o
       join customers c on c.id = o.customer_id
       left join users u on u.id = o.user_id

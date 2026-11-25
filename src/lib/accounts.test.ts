@@ -236,12 +236,39 @@ describe("Order approvals", () => {
         customerId,
         userId: priya.id,
         orderedAt: new Date(Date.now() - 30 * 3600_000),
+        // Waiting is measured from when it was logged, not the date it is for.
+        createdAt: new Date(Date.now() - 30 * 3600_000),
         totalAmount: amount,
         status: "pending_approval",
       })
       .returning();
     return row;
   }
+
+  test("waiting starts when the order was logged, not the date it is for", async () => {
+    const customer = await makeCustomer();
+    await db.insert(orders).values({
+      id: id("ord"),
+      customerId: customer.id,
+      userId: priya.id,
+      // Logged now for an order taken three days ago.
+      orderedAt: new Date(Date.now() - 72 * 3600_000),
+      totalAmount: 1_000_00,
+      status: "pending_approval",
+    });
+    const [row] = await pendingOrders();
+    assert.equal(row.waitingHours, 0);
+    assert.equal((await queueUrgency()).oldestOrderHours, 0);
+  });
+
+  test("the overdue count counts only bills somebody has spoken for", async () => {
+    const customer = await makeCustomer();
+    await makeBill(customer.id, 5_000_00, { dueDate: addDays(TODAY, -20) });
+    await makeBill(customer.id, 7_000_00, { dueDate: addDays(TODAY, -20), paymentPosition: "unstated" });
+    await pendingOrder(customer.id, 1_000_00);
+    const [row] = await pendingOrders();
+    assert.equal(row.overdueBills, 1);
+  });
 
   test("the queue carries the credit picture accounts decide on", async () => {
     const customer = await makeCustomer({ name: "Shree Paints", slowPayer: true });
@@ -1164,6 +1191,40 @@ describe("On account", () => {
     assert.equal(lines.reduce((a, l) => a + l.amount, 0), 12_000_00);
   });
 
+  test("applying twice at once moves the credit once", async () => {
+    const customer = await makeCustomer();
+    await overpay(customer.id, 10_000_00, 0);
+    await makeBill(customer.id, 6_000_00, { billDate: TODAY });
+
+    const both = await Promise.all([applyOnAccount(customer.id), applyOnAccount(customer.id)]);
+    assert.equal(both.filter((r) => r.ok).length, 1, "one apply, one refusal");
+    const lines = await db.select().from(payments).where(eq(payments.customerId, customer.id));
+    assert.equal(lines.reduce((a, l) => a + l.amount, 0), 10_000_00, "no money made");
+    const held = await onAccountHolders();
+    assert.equal(held[0].amount, 4_000_00);
+  });
+
+  test("an overpaid bill counts as nothing owed, not as a credit netted off", async () => {
+    const customer = await makeCustomer();
+    const paid = await makeBill(customer.id, 10_000_00);
+    await makeBill(customer.id, 20_000_00);
+    await recordReceipt({
+      customerId: customer.id,
+      amount: 10_000_00,
+      receivedAt: TODAY,
+      mode: "Cash",
+      allocation: "settle",
+      selectedBillIds: [paid.id],
+      source: "accounts",
+      idempotencyKey: randomUUID(),
+    });
+    // A rate edit lowers the paid bill after the money arrived.
+    await db.update(bills).set({ amount: 8_000_00 }).where(eq(bills.id, paid.id));
+    await recomputeOutstanding(customer.id);
+    const [c] = await db.select().from(customers).where(eq(customers.id, customer.id));
+    assert.equal(c.outstanding, 20_000_00);
+  });
+
   test("with nothing open it says so rather than doing nothing", async () => {
     const customer = await makeCustomer();
     await overpay(customer.id, 12_000_00, 10_000_00);
@@ -1602,6 +1663,7 @@ describe("The sidebar", () => {
       customerId: customer.id,
       userId: priya.id,
       orderedAt: new Date(Date.now() - 50 * 3600_000),
+      createdAt: new Date(Date.now() - 50 * 3600_000),
       totalAmount: 1_000_00,
       status: "pending_approval",
     });
