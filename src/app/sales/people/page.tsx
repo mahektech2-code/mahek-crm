@@ -173,7 +173,7 @@ export default async function Page({
         />
       ) : (
         <Table
-          minWidth={1460}
+          minWidth={1510}
           head={
             <>
               {head("name", "Name", 180)}
