@@ -10,6 +10,8 @@ import { stamp } from "@/lib/format";
 import { downloadFilename } from "@/lib/studio/domain/caption";
 import { LANGUAGE_NAMES, type Language } from "@/lib/studio/domain/language";
 import { DNC_WARNING, getRecipient } from "@/lib/studio/recipients";
+import { conversationForNumber, posterTemplateConfig } from "@/lib/studio/inbox-service";
+import { resolveStudioScope } from "@/lib/studio/scope";
 import { getStudioRegistry } from "@/lib/studio/registry-service";
 import { captionFor, getPoster, posterShares } from "@/lib/studio/service";
 import { PosterActions } from "../../_ui/poster-actions";
@@ -43,6 +45,29 @@ export default async function PosterPage({ params }: { params: Promise<{ id: str
         : !whatsappHref
           ? "There is no usable phone number on their record."
           : null;
+  /* Where the person holds the Inbox, sending belongs there: the poster goes through Kapso and its ticks are tracked. It only
+     works inside the customer's 24-hour reply window, so the button is offered only then, and the reason is said otherwise. */
+  let inboxHref: string | null = null;
+  let inboxNote: string | null = null;
+  let templateSend = false;
+  if (recipient && !recipient.doNotContact && !recipient.whatsappDnd && (await canOpenModule(user.id, "studio.inbox"))) {
+    const studio = await resolveStudioScope();
+    const conv = await conversationForNumber(recipient.whatsappPhone, studio.scope.userIds);
+    const template = await posterTemplateConfig();
+    if (conv?.blocked) {
+      inboxNote = null;
+    } else if (conv?.windowOpen) {
+      inboxHref = `/studio/inbox?c=${encodeURIComponent(conv.id)}&poster=${encodeURIComponent(id)}`;
+    } else if (template) {
+      /* Outside the 24-hour window WhatsApp takes only an approved template, and that is what the button sends. */
+      templateSend = true;
+      inboxNote = conv
+        ? "Their 24-hour reply window is closed, so the poster goes as the approved template message instead of a free message."
+        : "They have not messaged the company number yet, so the poster goes as the approved template message and the chat then opens in the Inbox.";
+    } else {
+      inboxNote = (conv ? "Their 24-hour reply window is closed" : "They have not messaged the company number yet") + ", and no approved WhatsApp template is set up for posters, so the Inbox cannot send this. An administrator can set one up in Settings.";
+    }
+  }
   const imageUrl = `/api/studio/posters/${encodeURIComponent(id)}/image`;
   const fileName = downloadFilename(poster.templateId, poster.recipient.company, poster.language, "png");
 
@@ -71,7 +96,7 @@ export default async function PosterPage({ params }: { params: Promise<{ id: str
           <img src={imageUrl} alt={`Poster for ${poster.recipient.company}`} className="mx-auto block max-h-[78vh] w-auto rounded-control" />
         </Card>
         <div className="flex flex-col gap-3">
-          <PosterActions posterId={id} imageUrl={imageUrl} fileName={fileName} caption={caption} whatsappHref={whatsappHref} whatsappBlocked={whatsappBlocked} canRemove={poster.mine} />
+          <PosterActions posterId={id} imageUrl={imageUrl} fileName={fileName} caption={caption} whatsappHref={whatsappHref} whatsappBlocked={whatsappBlocked} inboxHref={inboxHref} inboxNote={inboxNote} templateSend={templateSend} canRemove={poster.mine} />
           <Card>
             <CardHeader title="Sent" hint={shares.length ? undefined : "Nothing recorded yet."} />
             {shares.length ? (

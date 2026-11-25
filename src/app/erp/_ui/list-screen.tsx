@@ -5,10 +5,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from
 import { bulkOffers } from "@/lib/erp/bulk-fit";
 import { NavLink } from "@/components/shell/nav-link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import type { ColSpec, FormSpec, ListRow, ListSpec, Tone } from "@/lib/erp/ui";
+import type { ActionSpec, ColSpec, FormSpec, ListRow, ListSpec, Tone } from "@/lib/erp/ui";
+import { isNextStep, menuBlock } from "@/lib/erp/action-ticks";
+import { isFlowLayout } from "@/lib/erp/registry";
 import type { Result } from "@/lib/result";
 import { aggsOf, cellText, moneyText, nf, NEW_FORM_ACTION } from "@/lib/erp/ui";
-import { colOf as colIn, listCsv, listQueryParams, LIST_QUERY_KEYS, pageOf, queryRows, SEARCH_PAUSE_MS, searchWorthAsking, selectionTotals, selectionTotalText, subMatches, type ColFilter, type ListPage, type ListQuery, type SelectionTotal, type StatPick } from "@/lib/erp/list-query";
+import { colOf as colIn, listCsv, listQueryParams, LIST_QUERY_KEYS, pageOf, queryRows, SEARCH_PAUSE_MS, searchWorthAsking, selectionTotals, specForSubtab, subtabOf, selectionTotalText, subMatches, type ColFilter, type ListPage, type ListQuery, type SelectionTotal, type StatPick } from "@/lib/erp/list-query";
 import { Icon as ShellIcon } from "@/components/shell/icons";
 import { Button, Card, checkboxClass, cx, EmptyState, Input, Select, SortableTh, Td, Th, Tr } from "@/components/ui/primitives";
 import { eyebrowClass, IconButton, LinkButton, linkClass } from "./look";
@@ -66,11 +68,101 @@ export type ListTab = {
 };
 
 /**
+ * A list's SUB-TABS (`ListSpec.subtabs`): a segmented row of named views over
+ * its status, each with its count, the first being what the list opens on.
+ */
+function SubtabRow({ tabs, counts, value, onPick, segmented }: { tabs: { id: string; l: string; hint?: string }[]; counts: { id: string; n: number }[]; value: string; onPick: (id: string) => void; segmented?: boolean }) {
+  const n = new Map(counts.map((c) => [c.id, c.n]));
+  /* PURCHASE draws them as the design's segmented control: a grey track, the
+     open one a raised white pill with its count in brand purple. Keyed off the
+     screen's layout (`isFlowLayout`), never per screen. */
+  if (segmented)
+    return (
+      <div role="tablist" aria-label="Views" className="mb-3 flex max-w-full flex-wrap gap-1 self-start rounded-card bg-line/70 p-1" style={{ width: "fit-content" }}>
+        {tabs.map((t) => {
+          const on = t.id === value;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={on}
+              title={t.hint}
+              onClick={() => onPick(t.id)}
+              className={cx(
+                "flex h-[34px] cursor-pointer items-center gap-2 rounded-control px-3.5 text-sm whitespace-nowrap",
+                on ? "bg-surface font-semibold text-ink shadow-sm" : "font-medium text-muted hover:text-body",
+              )}
+            >
+              {t.l}
+              <span className={cx("font-semibold tabular-nums", on ? "text-brand-hover" : "text-faint")}>{nf(n.get(t.id) ?? 0)}</span>
+            </button>
+          );
+        })}
+      </div>
+    );
+  return (
+    <div role="tablist" aria-label="Views" className="mb-3 inline-flex max-w-full flex-wrap gap-0.5 rounded-control bg-line/60 p-1">
+      {tabs.map((t) => {
+        const on = t.id === value;
+        return (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={on}
+            title={t.hint}
+            onClick={() => onPick(t.id)}
+            className={cx(
+              "flex h-8 cursor-pointer items-center gap-1.5 rounded-[7px] px-3.5 text-sm whitespace-nowrap",
+              on ? "bg-surface font-semibold text-ink shadow-sm" : "font-medium text-muted hover:text-body",
+            )}
+          >
+            {t.l}
+            <span className={cx("text-meta tabular-nums", on ? "text-brand-hover" : "text-faint")}>{nf(n.get(t.id) ?? 0)}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
  * A screen's tabs. Exported because a screen can have a tab that is not a
  * list (HRMS Settings' rules), and that page draws the same strip so moving
  * between the two does not change the furniture under somebody's thumb.
  */
-export function ListTabs({ label, tabs, toggle }: { label: string; tabs: ListTab[]; toggle?: { label: string; href: string } | null }) {
+export function ListTabs({ label, tabs, toggle, segmented }: { label: string; tabs: ListTab[]; toggle?: { label: string; href: string } | null; segmented?: boolean }) {
+  /* The ERP's layout (`isFlowLayout`) draws a screen's tabs as the segmented
+     control Purchase's sub-tabs are: a grey track, the open tab a raised white
+     pill. Still links — each tab is its own server read — and still wrapping. */
+  if (segmented)
+    return (
+      <nav aria-label={`${label} lists`} className="mb-4 flex flex-wrap items-center gap-3">
+        <div className="flex max-w-full flex-wrap gap-1 rounded-card bg-line/70 p-1" style={{ width: "fit-content" }}>
+          {tabs.map((t) => (
+            <NavLink
+              key={t.key}
+              href={t.href}
+              aria-current={t.active ? "page" : undefined}
+              className={cx(
+                "flex h-[34px] items-center gap-2 rounded-control px-3.5 text-sm whitespace-nowrap no-underline",
+                t.active ? "bg-surface font-semibold text-ink shadow-sm" : "font-medium text-muted hover:text-body",
+              )}
+            >
+              {t.label}
+              {t.count ? <span className={cx("font-semibold tabular-nums", t.active ? "text-brand-hover" : "text-warn-ink")}>{t.count}</span> : null}
+            </NavLink>
+          ))}
+        </div>
+        <span className="flex-1" />
+        {toggle ? (
+          <NavLink href={toggle.href} className={linkClass("brand", "px-2 py-2 text-meta")}>
+            {toggle.label}
+          </NavLink>
+        ) : null}
+      </nav>
+    );
   return (
     /* Tabs WRAP rather than scroll: on a tablet Orders and Logistics have more
        tabs than fit, and a tab scrolled out of sight is one nobody finds.
@@ -283,7 +375,7 @@ const EDGE: Partial<Record<Tone, string>> = {
 };
 
 export function ListScreen({
-  spec,
+  spec: specIn,
   rows,
   label,
   sub,
@@ -355,8 +447,6 @@ export function ListScreen({
   const { flags: FLAG, place, exportList, listIds, listCount, listTotals, loadForm, tones, look } = useKit();
   const v4 = look === "v4";
   const [asTable, setAsTable] = useState(false);
-  const showCards = !!spec.cards && !(spec.cards.toggle && asTable);
-  const showChat = v4 && !!spec.chat && !asTable;
   const router = useRouter();
   const path = usePathname();
   const params = useSearchParams();
@@ -366,6 +456,11 @@ export function ListScreen({
   /* The search box answers as it is typed; the server is asked once the typing pauses, and never for one character (`searchWorthAsking`). */
   const [qInput, setQInput] = useState(server?.query.q ?? "");
   const query: ListQuery = server ? { ...server.query, q: qInput } : local;
+  /* The spec as the open sub-tab reads it (`ListSubtab.view`): the same merge the server paged by. */
+  const st = query.st;
+  const spec = useMemo(() => specForSubtab(specIn, { st }), [specIn, st]);
+  const showCards = !!spec.cards && !(spec.cards.toggle && asTable);
+  const showChat = v4 && !!spec.chat && !asTable;
   const go = (next: ListQuery, extra?: (p: URLSearchParams) => void) => {
     const p = new URLSearchParams(params.toString());
     for (const k of LIST_QUERY_KEYS) p.delete(k);
@@ -393,6 +488,16 @@ export function ListScreen({
   const [sel, setSel] = useState<Record<string, boolean>>({});
   const [openId, setOpenIdState] = useState<string | null>(initialOpen ?? null);
   const setOpenId = (id: string | null) => (id != null && onOpen ? onOpen(id) : setOpenIdState(id));
+  /* An act started INSIDE a record (`ActionSpec.opens`): the row's Create PO
+     opens the requirement with Create PO already under way, and the bulk
+     Create one PO the same with the other ticked rows chosen. */
+  const [start, setStart] = useState<{ id: string; act: string; with?: string[]; n: number } | null>(null);
+  const startIn = (id: string, act: string, withIds?: string[]) => {
+    setStart((x) => ({ id, act, with: withIds, n: (x?.n ?? 0) + 1 }));
+    setOpenId(id);
+  };
+  /* Purchase draws its rows' actions as one next-step button and a ⋯ menu in blocks, and its sub-tabs segmented. */
+  const flow = isFlowLayout(spec.screen);
   /* Totals opened onto their folded rows, by hand. Unset follows the search: a lot number typed opens the total it is under. */
   const [unfolded, setUnfolded] = useState<Record<string, boolean>>({});
   /* A New form too heavy to send with the list is asked for when it is wanted
@@ -467,7 +572,7 @@ export function ListScreen({
   const lp: ListPage = useMemo(() => server ?? pageOf(spec, rows, local, FLAG), [server, spec, rows, local, FLAG]);
   const chips = lp.chips;
   const view = { srt: lp.sort };
-  const gk = spec.groups && query.grp ? spec.groups : null;
+  const gk = spec.groups?.length && query.grp ? spec.groups : null;
   const total = lp.total;
   const pg = lp.page;
   const pageRows = lp.rows;
@@ -492,17 +597,21 @@ export function ListScreen({
   /* The group's own key is the header's first word, so while grouped its rows
      do not repeat it — a godown column reading "Bhiwandi" fourteen times under
      a header that says Bhiwandi is noise. */
-  const lineCols = gk ? cols.filter((c) => !headCols.includes(c) && !gk.includes(c.k)) : cols;
+  /* A sub-tab may leave out columns that say nothing on it (`ListSubtab.hide`) — they stay in the record and the export. */
+  const stHide = subtabOf(spec, query)?.hide;
+  const lineCols = (gk ? cols.filter((c) => !headCols.includes(c) && !gk.includes(c.k)) : cols).filter((c) => !stHide?.includes(c.k));
   /* The longest badge each status and flags column will draw, over every row rather than this page, so widths hold still from page to page. */
   const badgeChars = lp.badgeChars;
   /* A row's actions take a narrow column of their own at the end. A screen
      that names its ⋯ menu (`rowMenu`) gets exactly that; every other list
      offers the record's own actions there, with its Edit drawn as a button,
      so an edit is never only inside the record. */
-  const menuIds: string[] | null = spec.rowMenu ?? null;
+  const menuIds: string[] | null = flow ? null : (spec.rowMenu ?? null);
   const menuOn = menuIds ? menuIds.length > 0 : pageRows.some((r) => !!r.actions?.length || !!r.sub?.some((x) => !!x.actions?.length));
-  const editOn = !menuIds && pageRows.some((r) => rowEdit(r) || !!r.sub?.some((x) => rowEdit(x)));
-  const menuCol = editOn ? MENU_COL + EDIT_COL : MENU_COL;
+  /* Purchase rows carry no pencil Edit: their next step is the button, and Edit is in the menu's middle block. */
+  const editOn = !flow && !menuIds && pageRows.some((r) => rowEdit(r) || !!r.sub?.some((x) => rowEdit(x)));
+  const primaryOn = flow && pageRows.some((r) => !!rowPrimary(r) || !!r.sub?.some((x) => !!rowPrimary(x)));
+  const menuCol = MENU_COL + (editOn ? EDIT_COL : 0) + (primaryOn ? PRIMARY_COL : 0);
   const fit = fitColumns({ cols: lineCols, avail: menuOn ? Math.max(0, avail - menuCol) : avail, check: selectOn, chosen: chosenCols, badgeChars, headExtra: 0 });
   const shownCols = fit.shown;
 
@@ -582,6 +691,7 @@ export function ListScreen({
     (server ? null : withSubs(rows).find((r) => r.id === openId) ?? null);
   const closeRec = () => {
     setOpenId(null);
+    setStart(null);
     if (params.get("open")) {
       const p = new URLSearchParams(params.toString());
       p.delete("open");
@@ -602,6 +712,8 @@ export function ListScreen({
   const [emptyTitle] = splitFirstSentence(spec.noDataLine ?? "Nothing here yet.");
   /* A register read through a window: the period picker, and what to say when the period is empty or too long. */
   const win = server?.window ?? null;
+  /* The sub-tab open now: a queue (`allTime`) is read whole, so it draws no period picker and says so. */
+  const stNow = subtabOf(spec, query);
   const pickCf = (k: string, f: ColFilter | null) => {
     const cf = { ...(query.cf ?? {}) };
     if (f) cf[k] = f;
@@ -702,7 +814,7 @@ export function ListScreen({
               </button>
             ) : null}
           </div>
-          {win ? <PeriodPicker key={win.pd} pd={win.pd} label={win.label} dateLabel={win.dateLabel} onPick={(pd) => setQuery({ pd, page: 1 })} /> : null}
+          {win && !subtabOf(spec, query)?.unwindowed && !stNow?.allTime ? <PeriodPicker key={win.pd} pd={win.pd} label={win.label} dateLabel={win.dateLabel} onPick={(pd) => setQuery({ pd, page: 1 })} /> : null}
           {chips.length > MAX_TABS ? (
             <Select value={chip} onChange={(e) => pickChip(e.target.value)} aria-label={colOf(spec.chips!).l} className="cursor-pointer">
               <option value="">All {colOf(spec.chips!).l.toLowerCase()} · {nf(lp.beforeChip)}</option>
@@ -755,6 +867,7 @@ export function ListScreen({
             </span>
           ) : null}
           <span className="flex-1" />
+          {stNow?.note ? <span className="text-meta text-muted">{stNow.note}</span> : null}
           {spec.cards?.toggle || (v4 && spec.chat) ? (
             <span role="group" aria-label="Show as" className="flex gap-0.5 rounded-[7px] bg-divider p-0.5">
               {[
@@ -773,7 +886,7 @@ export function ListScreen({
               ))}
             </span>
           ) : null}
-          {spec.groups ? (
+          {spec.groups?.length ? (
             <button
               type="button"
               onClick={() => setQuery({ grp: !query.grp, page: 1 })}
@@ -834,7 +947,7 @@ export function ListScreen({
     >
 
       {sections?.length ? <SectionTabs label={label} sections={sections} /> : null}
-      {tabs && (tabs.length > 1 || (sections?.length && tabs.length)) ? <ListTabs label={label} tabs={tabs} toggle={toggle} /> : null}
+      {tabs && (tabs.length > 1 || (sections?.length && tabs.length)) ? <ListTabs label={label} tabs={tabs} toggle={toggle} segmented={flow} /> : null}
 
       {above}
 
@@ -844,7 +957,28 @@ export function ListScreen({
           the page above the table rather than inside its card. */}
       {/* The figure cards: the server's, over every row the filters reach, and
           the status values — where there are a handful — as one Breakdown card. */}
+      {spec.subtabs?.length && lp.all > 0 ? (
+        <SubtabRow
+          segmented={flow}
+          tabs={spec.subtabs}
+          counts={lp.subtabs ?? []}
+          value={subtabOf(spec, query)?.id ?? ""}
+          onPick={(id) => setQuery({ st: id === spec.subtabs![0].id ? "" : id, chip: "", page: 1 })}
+        />
+      ) : null}
       {(() => {
+        /* The open sub-tab's one line on how to work it (Goods in: "A truck arrived? …"). */
+        const line = spec.subtabs?.length && lp.all > 0 ? subtabOf(spec, query)?.line : undefined;
+        return line ? (
+          <div className="mb-3 flex items-center gap-2.5 rounded-card border border-line bg-surface px-3.5 py-2.5 text-meta text-body">
+            <Icon n="truck" s={16} />
+            <span>{line}</span>
+          </div>
+        ) : null;
+      })()}
+      {/* The ERP draws no figure cards (Nov 2026): the sub-tabs and their counts
+          say what waits, and the Filters dialog narrows. Other apps keep them. */}
+      {flow ? null : (() => {
         const stats = lp.stats ?? [];
         const breakdown = v4 && chips.length >= 2 && chips.length <= MAX_TABS ? { total: lp.beforeChip, chips, value: chip, tones, onPick: pickChip } : null;
         /* A lone Total is the pager's number again, not a figure worth a card. */
@@ -896,6 +1030,9 @@ export function ListScreen({
               ) : undefined
             }
           />
+        ) : total === 0 && spec.subtabs?.length && !lp.filtered && !q.trim() ? (
+          /* An empty sub-tab with nothing narrowing it is not a search that failed: it says what would be here. */
+          <EmptyState icon={v4 ? <EmptyTile tone="muted" icon="file" /> : undefined} title={subtabOf(spec, query)?.view?.noDataLine ?? `Nothing in ${lowerFirst(subtabOf(spec, query)?.l ?? "this view")}`} />
         ) : total === 0 ? (
           <EmptyState
             icon={v4 ? <EmptyTile tone="muted" icon="search" /> : undefined}
@@ -1006,7 +1143,8 @@ export function ListScreen({
                         const g = lp.groupOf[r.id] ?? "";
                         if (g !== lastG) {
                           const grp = lp.groups[g] ?? { n: 0, agg: [], ids: [], head: {} };
-                          let aggText = `${nf(grp.n)} ${grp.n === 1 ? "row" : "rows"}`;
+                          const [one, many] = spec.groupNoun ?? ["row", "rows"];
+                          let aggText = `${nf(grp.n)} ${grp.n === 1 ? one : many}`;
                           aggsOf(spec.agg).forEach((a, i) => {
                             const got = grp.agg[i];
                             if (got == null) return;
@@ -1025,8 +1163,9 @@ export function ListScreen({
                                     if (same && grp.head[c.k] != null && String(grp.head[c.k]) === String(grp.head[same] ?? "")) return null;
                                     return <GroupFact key={c.k} c={c} v={grp.head[c.k]} strong={spec.groupHeadStrong?.includes(c.k)} />;
                                   })}
-                                  <span className={cx("text-xs text-muted", headShown.length > 0 && "ml-auto")}>{aggText}</span>
+                                  {spec.groupNoCount ? (headShown.length > 0 ? <span className="ml-auto" /> : null) : <span className={cx("text-xs text-muted", headShown.length > 0 && "ml-auto")}>{aggText}</span>}
                                   {spec.groupInvoice ? <InvoiceButtons v={grp.head[spec.groupInvoice]} row={r} screen={spec.screen} /> : null}
+                                  {spec.groupAction ? <GroupAct row={r} id={spec.groupAction} screen={spec.screen} /> : null}
                                   {spec.groupPrint && grp.print ? (
                                     <NavLink
                                       href={grp.print}
@@ -1040,6 +1179,22 @@ export function ListScreen({
                                       <Icon n="print" s={15} />
                                       {spec.groupPrint.l}
                                     </NavLink>
+                                  ) : null}
+                                  {spec.groupBulk && grp.bulkIds?.length ? (
+                                    <Button
+                                      size="sm"
+                                      variant="primary"
+                                      className={cx("whitespace-nowrap", headShown.length === 0 && !spec.groupPrint && "ml-auto")}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        const b = spec.bulk?.find((x) => x.id === spec.groupBulk!.id);
+                                        if (!b) return;
+                                        if (onBulk) return onBulk(b.id, grp.bulkIds!, () => setSel({}));
+                                        ui.bulk(spec.screen, b, grp.bulkIds!, () => setSel({}));
+                                      }}
+                                    >
+                                      {spec.groupBulk.l.replace("{n}", nf(grp.bulkIds.length)).replace("{noun}", grp.bulkIds.length === 1 ? one : many)}
+                                    </Button>
                                   ) : null}
                                   {spec.groupSel && selectOn ? (
                                     <LinkButton
@@ -1091,7 +1246,7 @@ export function ListScreen({
                               }
                             />
                           ))}
-                          {menuOn ? <MenuCell row={r} ids={menuIds} screen={spec.screen} onRowAct={onRowAct} /> : null}
+                          {menuOn ? <MenuCell row={r} ids={menuIds} screen={spec.screen} onRowAct={onRowAct} purchase={flow} onOpenRow={setOpenId} onStart={startIn} /> : null}
                         </Tr>,
                       );
                       /* Its folded rows, under it: indented, and blank where they only repeat their total. */
@@ -1111,7 +1266,7 @@ export function ListScreen({
                                   <Cell key={c.k} c={c} r={x} cols={cols} small />
                                 ),
                               )}
-                              {menuOn ? <MenuCell row={x} ids={menuIds} screen={spec.screen} onRowAct={onRowAct} /> : null}
+                              {menuOn ? <MenuCell row={x} ids={menuIds} screen={spec.screen} onRowAct={onRowAct} purchase={flow} onOpenRow={setOpenId} onStart={startIn} /> : null}
                             </Tr>,
                           );
                         }
@@ -1163,12 +1318,22 @@ export function ListScreen({
           {offers.map(({ b, label, row }) => (
             <Button
               key={b.id}
-              variant="dark"
+              variant={b.href ? "primary" : "dark"}
               size="sm"
               onClick={() => {
+                /* A link over the ticked rows (Print labels): the page it opens does the work. */
+                if (b.href) return router.push(`${b.href}${encodeURIComponent(chosen.join(","))}`);
                 if (b.client === "printInvoices") return setPrinting(chosen);
                 if (b.client === "billingView") return setBillingView(chosen);
                 if (b.client === "combinedView") return setCombinedView(chosen);
+                if (b.client === "startInRecord") {
+                  /* The first ticked row that can take it carries the act; the rest are chosen on it. */
+                  const key = b.fits || b.id;
+                  const can = chosen.map((id) => heldRows.find((r) => r.id === id)).filter((r): r is ListRow => !!r?.actions?.some((a) => a.id === key && !a.why && !a.tickHidden));
+                  if (!can.length) return ui.toast(`${b.l} · none of the ticked rows can take it`, "error");
+                  setSel({});
+                  return startIn(can[0].id, key, can.slice(1).map((r) => r.id));
+                }
                 if (onBulk) return onBulk(b.id, chosen, () => setSel({}));
                 /* The selection is one record (one PR): its own action, run once. */
                 if (row) {
@@ -1178,7 +1343,7 @@ export function ListScreen({
                 ui.bulk(spec.screen, b, chosen, () => setSel({}));
               }}
             >
-              {label}
+              {b.countK ? label.replace("{n}", nf(chosen.reduce((t, id) => t + (Number(heldRows.find((r) => r.id === id)?.v[b.countK!]) || 0), 0))) : label}
             </Button>
           ))}
           {bulkOn && chosen.length > 0 && !offers.length ? (
@@ -1190,14 +1355,15 @@ export function ListScreen({
       {printing ? <PrintInvoicesModal lineIds={printing} onClose={() => setPrinting(null)} /> : null}
       {combinedView ? <CombinedViewModal screen={spec.screen} ids={combinedView} onClose={() => setCombinedView(null)} /> : null}
       {billingView ? <BillingViewModal screen={spec.screen} lineIds={billingView} onClose={() => setBillingView(null)} /> : null}
-      {open ? <RecordDialog key={open.id} screen={spec} kind={label} row={open} onClose={closeRec} stages={v4 ? stages : undefined} /> : null}
+      {open ? <RecordDialog key={`${open.id}:${start?.n ?? 0}`} screen={spec} kind={label} row={open} onClose={closeRec} stages={v4 ? stages : undefined} start={start && start.id === open.id ? { act: start.act, with: start.with } : undefined} /> : null}
     </Frame>
   );
 }
 
-/** The width of a row's ⋯ menu column, and what its Edit button adds to it. */
+/** The width of a row's ⋯ menu column, and what its Edit button — or a Purchase row's next-step button — adds to it. */
 const MENU_COL = 52;
 const EDIT_COL = 64;
+const PRIMARY_COL = 136;
 
 /**
  * An action that changes the record itself: "Edit", "Edit order", "Edit TO",
@@ -1209,7 +1375,35 @@ export function isEditAction(a: { id: string; l: string; ai?: boolean }): boolea
 
 /** The record's first edit action, the one its row draws as a button. */
 function rowEdit(row: ListRow) {
-  return row.actions?.find(isEditAction);
+  return row.actions?.find((a) => isEditAction(a) && !a.tickHidden);
+}
+
+/** A Purchase row's one next step, drawn as a button beside its ⋯ menu. */
+function rowPrimary(row: ListRow) {
+  return row.actions?.find((a) => isNextStep(a) && !a.tickHidden);
+}
+
+/** What a Purchase row's menu calls opening the record. */
+const OPEN_WORDS: Record<string, string> = {
+  requisitions: "Open the requirement",
+  purchaseOrders: "Open the PO",
+  inward: "Open the receipt",
+  testing: "Open the test",
+  register: "Open the lot",
+  barcode: "Open the lot",
+};
+
+/**
+ * A Purchase row's ⋯ menu, in three blocks read off `action-ticks.ts`:
+ * opening it and its ordinary work, then the changes (Edit), then the
+ * take-backs (Delete), last and in red. No tick is named in the menu.
+ */
+export function purchaseMenu(screen: string, acts: ActionSpec[]): { a: ActionSpec; block: 0 | 1 | 2 }[] {
+  return acts
+    .filter((a) => !a.tickHidden)
+    .map((a, i) => ({ a, i, block: menuBlock(screen, a) }))
+    .sort((x, y) => x.block - y.block || x.i - y.i)
+    .map(({ a, block }) => ({ a, block }));
 }
 
 /**
@@ -1218,10 +1412,56 @@ function rowEdit(row: ListRow) {
  * actions in a ⋯ menu — run exactly as the record dialog runs them. A held-back
  * Edit is drawn locked and says why. A click inside never opens the record.
  */
-function MenuCell({ row, ids, screen, onRowAct }: { row: ListRow; ids: string[] | null; screen: string; onRowAct?: (actionId: string, rowId: string) => void }) {
+function MenuCell({
+  row,
+  ids,
+  screen,
+  onRowAct,
+  purchase,
+  onOpenRow,
+  onStart,
+}: {
+  row: ListRow;
+  ids: string[] | null;
+  screen: string;
+  onRowAct?: (actionId: string, rowId: string) => void;
+  purchase?: boolean;
+  onOpenRow?: (id: string) => void;
+  onStart?: (id: string, act: string) => void;
+}) {
   const ui = useErpUi();
-  const run = (a: NonNullable<ListRow["actions"]>[number]) => (onRowAct ? onRowAct(a.id, row.id) : ui.act(screen, a, row.id));
-  const picked = ids ? ids.map((id) => row.actions?.find((a) => a.id === id)).filter((a): a is NonNullable<typeof a> => !!a) : (row.actions ?? []);
+  const run = (a: NonNullable<ListRow["actions"]>[number]) =>
+    a.opens && onStart ? onStart(row.id, a.id) : onRowAct ? onRowAct(a.id, row.id) : ui.act(screen, a, row.id);
+  if (purchase) {
+    const blocks = purchaseMenu(screen, row.actions ?? []);
+    const next = rowPrimary(row);
+    const items = [
+      ...(onOpenRow ? [{ label: OPEN_WORDS[screen] ?? "Open", onSelect: () => onOpenRow(row.id), block: 0 as const }] : []),
+      ...blocks.map(({ a, block }) => ({ label: a.l, disabled: !!a.why, title: a.why || undefined, onSelect: () => run(a), block, destructive: block === 2 })),
+    ].map((x, i, xs) => ({ ...x, divider: i > 0 && xs[i - 1].block !== x.block }));
+    return (
+      <Td className="text-right" onClick={(e) => e.stopPropagation()}>
+        <span className="inline-flex items-center justify-end gap-1.5">
+          {next ? (
+            <Button
+              size="sm"
+              variant={next.soft ? "secondary" : "primary"}
+              aria-disabled={!!next.why}
+              title={next.why || next.l}
+              className={cx("whitespace-nowrap", next.why && "cursor-help opacity-50")}
+              onClick={() => (next.why ? ui.toast(`${next.l} · ${next.why}`, "error") : run(next))}
+            >
+              {next.why ? <Icon n="lock" s={13} /> : null}
+              {next.short ?? next.l}
+            </Button>
+          ) : null}
+          {items.length ? <RowMenu items={items} heading={row.title ? { title: row.title, sub: row.ref } : undefined} /> : null}
+        </span>
+      </Td>
+    );
+  }
+  /* An act held back for a missing Edit or Delete tick is not offered in a list at all; the opened record shows it locked. */
+  const picked = (ids ? ids.map((id) => row.actions?.find((a) => a.id === id)).filter((a): a is NonNullable<typeof a> => !!a) : (row.actions ?? [])).filter((a) => !a.tickHidden);
   const items = picked.map((a) => ({ label: a.l, disabled: !!a.why, title: a.why || undefined, onSelect: () => run(a) }));
   const edit = ids ? undefined : rowEdit(row);
   return (
@@ -1260,6 +1500,8 @@ function GroupFact({ c, v, strong }: { c: ColSpec; v: ListRow["v"][string] | und
   if (v == null || text === "" || text === "—") return null;
   if (c.t === "s") return <StatusBadge value={String(v)} />;
   if (c.t === "b") return <span className="text-meta font-semibold text-ink">{text}</span>;
+  /* A fact with no name is a sentence about the group ("4 open lines · 2 late"). */
+  if (!c.l) return <span className="text-xs text-muted">{text}</span>;
   return (
     <span className="text-xs text-muted">
       {c.l} <span className={cx(strong ? "text-meta font-semibold text-ink" : "text-body", c.t === "mono" && "font-mono")}>{text}</span>
@@ -1321,17 +1563,52 @@ function Cell({ c, r, edge, cols, lead, small }: { c: ColSpec; r: ListRow; edge?
       </Td>
     );
   }
-  const txt = cellText(c, r.v[c.k]);
+  const base = cellText(c, r.v[c.k]);
+  const unit = c.uk && typeof r.v[c.k] === "number" ? r.v[c.uk] : null;
+  const late = c.late && base !== "—" ? r.v[c.late] : null;
+  const after = !late && c.after && base !== "—" ? r.v[c.after] : null;
+  const txt = `${base}${unit ? ` ${unit}` : ""}${late ? ` · ${late}` : ""}${after ? ` · ${after}` : ""}`;
+  if (c.bar) {
+    /* How much has arrived: a bar, then the figure it shows. */
+    const v = Math.max(0, Math.min(1, Number(r.v[c.bar]) || 0));
+    return (
+      <Td className={cx(edge, "truncate tabular-nums")} title={txt}>
+        <span className="flex items-center gap-2.5">
+          <span aria-hidden className="h-1.5 w-14 flex-none overflow-hidden rounded-full bg-line">
+            <span className="block h-full rounded-full bg-brand" style={{ width: `${Math.round(v * 100)}%` }} />
+          </span>
+          <span className={cx("truncate whitespace-nowrap", small ? "text-meta" : "text-meta text-body")}>{txt}</span>
+        </span>
+      </Td>
+    );
+  }
   const num = c.t === "n" || c.t === "m";
-  const empty = txt === "—";
+  const empty = base === "—";
+  /* A list of short words (`tags`) is a row of small chips, clipped at the column's edge. */
+  if (c.tags && !empty) {
+    const words = txt.split(",").map((w) => w.trim()).filter(Boolean);
+    return (
+      <Td className={cx(edge, "overflow-hidden")} title={txt}>
+        <span className="flex flex-nowrap gap-1 overflow-hidden py-0.5">
+          {words.map((w) => (
+            <span key={w} className="inline-flex h-[22px] items-center rounded-control bg-line/70 px-2 text-xs font-medium whitespace-nowrap text-body">
+              {w}
+            </span>
+          ))}
+        </span>
+      </Td>
+    );
+  }
+  const subText = c.sub ? r.v[c.sub] : null;
+  const alert = !empty && c.alert ? !!r.v[c.alert] : false;
   return (
     <Td
       align={num ? "right" : "left"}
-      title={empty ? undefined : txt}
+      title={empty ? undefined : subText ? `${txt} · ${subText}` : txt}
       className={cx(
         edge,
         "truncate tabular-nums",
-        c.t === "b" ? "font-medium text-ink" : empty ? "text-line-strong" : undefined,
+        c.t === "b" ? "font-medium text-ink" : empty ? "text-line-strong" : late || alert ? "font-semibold text-danger" : c.quiet ? "text-muted" : undefined,
         !empty && (c.t === "ph" || c.t === "em" || c.t === "map") && "text-brand",
         c.t === "mono" && "font-mono text-meta",
         small && "text-meta",
@@ -1339,7 +1616,32 @@ function Cell({ c, r, edge, cols, lead, small }: { c: ColSpec; r: ListRow; edge?
     >
       {lead}
       {txt}
+      {subText != null && subText !== "" ? <span className="block overflow-hidden text-xs font-normal whitespace-nowrap text-muted" style={{ textOverflow: "ellipsis" }}>
+          {String(subText)}
+        </span> : null}
     </Td>
+  );
+}
+
+/** A group heading's button (`ListSpec.groupAction`): the group's first row's act, run on that row. */
+function GroupAct({ row, id, screen }: { row: ListRow; id: string; screen: string }) {
+  const ui = useErpUi();
+  const a = row.actions?.find((x) => x.id === id && !x.tickHidden);
+  if (!a) return null;
+  return (
+    <span onClick={(e) => e.stopPropagation()}>
+      <Button
+        size="sm"
+        variant="primary"
+        aria-disabled={!!a.why}
+        title={a.why || a.l}
+        className={cx("whitespace-nowrap", a.why && "cursor-help opacity-50")}
+        onClick={() => (a.why ? ui.toast(`${a.l} · ${a.why}`, "error") : ui.act(screen, a, row.id))}
+      >
+        {a.why ? <Icon n="lock" s={13} /> : null}
+        {a.l}
+      </Button>
+    </span>
   );
 }
 

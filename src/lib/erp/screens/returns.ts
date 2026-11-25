@@ -24,7 +24,7 @@ import { createComplaint } from "@/lib/services/complaint-create";
 import type { ErpContext } from "../access";
 import { bindErpFiles } from "../attachments";
 import { bookBillRef } from "../book";
-import { scrapStock } from "../drums";
+import { scrapLeft, scrapStock } from "../drums";
 import { confirmImpact } from "@/lib/impact/registry";
 import { readConfirmation } from "@/lib/impact/types";
 import {
@@ -1326,7 +1326,7 @@ async function reverseDecision(ctx: ErpContext, dispId: string, reason: string):
         const [e] = await tx.select().from(erpScrapEntries).where(eq(erpScrapEntries.id, d.scrapEntryId));
         await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"erp:scrap:" + CHEMICAL_SCRAP + ":Kg"}))`);
         await tx.update(erpScrapEntries).set({ status: "cancelled", cancelReason: reason, cancelledById: ctx.actor.id, cancelledAt: new Date() }).where(eq(erpScrapEntries.id, d.scrapEntryId));
-        const left = (await scrapStock(tx)).find((s) => s.category === CHEMICAL_SCRAP && s.unit === "Kg" && s.godownId === e?.godownId)?.available ?? 0;
+        const left = scrapLeft(await scrapStock(tx), CHEMICAL_SCRAP, "Kg", e?.godownId);
         if (left < 0) return refuse(err("That chemical scrap has been sold since, so the decision cannot be reversed.", "rule_violation"));
       }
       if (d.kind === "rework") {
@@ -1476,7 +1476,14 @@ const customerActionHandlers: ScreenModule["actions"] = {
       const [r] = await customerRows(sql`r.id = ${id}`, tx);
       if (!r || r.status !== "open" || r.received != null) return err("That return is not waiting to be received.", "conflict");
       if (qty == null || !(qty > 0) || !Number.isInteger(qty) || qty > r.qty) return err(`Enter the whole ${r.unit.toLowerCase()} received, up to ${nf(r.qty)}.`, "validation");
-      await tx.update(erpCustomerReturns).set({ receivedQty: qty, receivedGodownId: godownId, receivedById: ctx.actor.id, receivedAt: new Date(), decisionNote: text(v.note), updatedAt: new Date() }).where(eq(erpCustomerReturns.id, id));
+      /* The guard is in the WHERE, not only in the read above: a second click reads the row before the first commits, and without
+         it both went on to move the boxes into quarantine. The update waits for the first, then finds nothing left to receive. */
+      const took = await tx
+        .update(erpCustomerReturns)
+        .set({ receivedQty: qty, receivedGodownId: godownId, receivedById: ctx.actor.id, receivedAt: new Date(), decisionNote: text(v.note), updatedAt: new Date() })
+        .where(and(eq(erpCustomerReturns.id, id), eq(erpCustomerReturns.status, "open"), sql`${erpCustomerReturns.receivedQty} is null`))
+        .returning({ id: erpCustomerReturns.id });
+      if (!took.length) return err("That return is not waiting to be received.", "conflict");
       await moveReturnUnits(tx, { orderId: r.orderId, lotFrom: r.lotFrom, lotCode: r.lot, qty, from: "dispatched", to: "returned", godownId, note: `Customer return ${customerReturnLabel(r.no)} — in quarantine`, byId: ctx.actor.id });
       return okVoid(`${nf(qty)} ${r.unit.toLowerCase()} received into quarantine. Not saleable until QC decides.`);
     });

@@ -7,7 +7,7 @@ import { Card, cx, buttonClass, Input } from "@/components/ui/primitives";
 import { Badge } from "../../_ui/badge";
 import { gridHeadClass, LinkButton, SubTitle } from "../../_ui/look";
 import { erpLogisticsReopen } from "@/lib/actions/erp-logistics";
-import { AT_TRANSPORT_STUCK_DAYS, callDue, daysBetween, runningLate, shortDay } from "@/lib/erp/engines/logistics";
+import { AT_TRANSPORT_STUCK_DAYS, atTransportDay, callDue, daysBetween, runningLate, shortDay } from "@/lib/erp/engines/logistics";
 import type { Consignment } from "@/lib/erp/logistics";
 import { BillRef, byLr, CallLink, DuePill, Empty, plural, ReasonDialog, StageStrip, sumPackages, useAct, lrLabel } from "./common";
 import { useState } from "react";
@@ -40,7 +40,7 @@ export function Overview({
   const calls = roadGroups.filter((g) => g.bills.some((c) => callDue({ reminderDate: c.nextCallOn, materialStage: c.stage }, today)));
   const issues = roadGroups.filter((g) => g.bills.some((c) => c.issue));
   const late = roadGroups.filter((g) => !g.bills.some((c) => c.issue) && g.bills.some((c) => runningLate({ expectedDeliveryOn: c.expectedDeliveryOn, billDate: c.billDate, materialStage: c.stage }, today, lateAfterDays)));
-  const stuck = lrP.filter((c) => c.atTransportAt && daysBetween(c.atTransportAt.slice(0, 10), today) >= AT_TRANSPORT_STUCK_DAYS);
+  const stuck = lrP.filter((c) => c.atTransportAt && daysBetween(atTransportDay(c.atTransportAt), today) >= AT_TRANSPORT_STUCK_DAYS);
   /* The PRD asks for the vehicle at dispatch; a recent bill without one cannot go on a trip or carry its share of the transport cost. */
   const noVehicle = rows.filter((c) => c.phase !== "delivered" && !c.vehicleNo && c.billDate && daysBetween(c.billDate, today) <= 3);
   const dueToday = toT.filter((c) => c.transportDueOn && c.transportDueOn <= today);
@@ -109,7 +109,7 @@ export function Overview({
           </div>
           <Attention label="Problems on the road" tone="danger" href={erpLink("trackLr", { filter: "issue" })} items={issues.map((g) => ({ key: g.key, main: `${lrLabel(g.bills[0].lrNo)} · ${g.bills[0].party}`, sub: `${g.bills.find((b) => b.issue)?.issue}${g.bills.find((b) => b.issue)?.issueNote ? ` — ${g.bills.find((b) => b.issue)?.issueNote}` : ""}` }))} />
           <Attention label="Running late" tone="warn" href={erpLink("trackLr", { filter: "late" })} items={late.map((g) => ({ key: g.key, main: `${lrLabel(g.bills[0].lrNo)} · ${g.bills[0].party}`, sub: g.bills[0].expectedDeliveryOn ? `Expected ${shortDay(g.bills[0].expectedDeliveryOn)}` : `${daysBetween(g.bills[0].billDate ?? today, today)} days since dispatch` }))} />
-          <Attention label={`At the transporter ${AT_TRANSPORT_STUCK_DAYS}+ days with no LR`} tone="warn" href={erpLink("pendingLr")} items={stuck.map((c) => ({ key: c.id, main: `${c.billNo ?? `Order ${c.orderNo}`} · ${c.party}`, sub: `${c.transporter ?? "—"} since ${shortDay(c.atTransportAt!.slice(0, 10))}` }))} />
+          <Attention label={`At the transporter ${AT_TRANSPORT_STUCK_DAYS}+ days with no LR`} tone="warn" href={erpLink("pendingLr")} items={stuck.map((c) => ({ key: c.id, main: `${c.billNo ?? `Order ${c.orderNo}`} · ${c.party}`, sub: `${c.transporter ?? "—"} since ${shortDay(atTransportDay(c.atTransportAt!))}` }))} />
           <Attention
             label="Left in the last 3 days with no vehicle recorded"
             tone="warn"

@@ -23,6 +23,8 @@ import { SecretCredentialRow } from "../secret-credential-row";
 import { requirePlatformAdmin } from "../_shell/context";
 import { MapsSection } from "../maps-section";
 import { VoiceSection } from "../voice-section";
+import { readTrialSummary } from "@/lib/queries";
+import { ReadTrialSection } from "./read-trial-section";
 
 /**
  * Everything MahekOne calls out to, and the keys it calls with — on one page,
@@ -48,7 +50,7 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
   const ctx = await requirePlatformAdmin();
   const { tab: rawTab } = await searchParams;
   const tab: Cat = CATS.some((c) => c.slug === rawTab) ? (rawTab as Cat) : "all";
-  const [config, secrets, olaPool, integrations, usage, wa, [tpl], [lastReply]] = await Promise.all([
+  const [config, secrets, olaPool, integrations, usage, wa, [tpl], [lastReply], trial] = await Promise.all([
     getConfig(),
     secretStatuses(),
     olaPoolStatus(),
@@ -60,6 +62,7 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
       .from(waTemplates)
       .where(and(eq(waTemplates.active, true), isNotNull(waTemplates.watiSpec))),
     db.select({ at: waReplies.receivedAt }).from(waReplies).orderBy(desc(waReplies.receivedAt)).limit(1),
+    readTrialSummary(),
   ]);
   const sec = (name: string) => secrets.find((s) => s.name === name);
   const held = (name: string) => (sec(name)?.source ?? "unset") !== "unset";
@@ -345,6 +348,19 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
       </Section>
 
       <Section
+        id="read-trial"
+        title="Reading trial: Sarvam beside OpenAI"
+        hint="Sarvam is built for Indian languages. Before any feature asks it first, both read the same photos here and the results say who reads our bills and cards better. Only how they compared is kept, never what was read. Who reads a visiting card first is a setting under Settings → Voice & AI."
+      >
+        <ReadTrialSection
+          summary={trial}
+          billsPerRun={config["readTrial.expenseBills"]}
+          keys={{ openai: held("openai.apiKey"), sarvam: held("sarvam.apiKey") }}
+          leadScan={{ provider: config["leadScan.provider"], trial: config["leadScan.trial"] }}
+        />
+      </Section>
+
+      <Section
         id="enquiries"
         title="Website enquiries"
         hint="What the website's own backend proves it holds when it forwards a submitted enquiry. Server to server only — it never reaches a browser on either side."
@@ -456,6 +472,47 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
                     env: "MINIMOTH_API_KEY",
                     what: "Sends every OTP to the personal mobile in HRMS (through the account's HRMS link), on WhatsApp first and by SMS when WhatsApp does not deliver. No DLT registration of ours is involved.",
                     where: "app.minimoth.dev → your project → API keys. Use the live key (mm_live_…) here; a test key sends nothing and is ignored in production.",
+                  }}
+                />
+              ))}
+          </div>
+        </Card>
+      </Section>
+
+      <Section
+        id="whatsapp-inbox"
+        title="WhatsApp Inbox (Kapso)"
+        hint="What the Studio's WhatsApp Inbox reaches the company number through. Server to server only — neither value ever reaches a browser. Which number the Inbox is for is a setting, under Settings → Platform → Attachments (Studio)."
+      >
+        <Card>
+          <div className="divide-y divide-divider">
+            {secrets
+              .filter((s) => s.name === "kapso.apiKey")
+              .map((s) => (
+                <SecretCredentialRow
+                  key={s.name}
+                  row={row(s)}
+                  canWrite={canWrite}
+                  meta={{
+                    label: "Kapso API key",
+                    env: "KAPSO_API_KEY",
+                    what: "Lets the Inbox check the connection, load conversations and send messages and posters from the company WhatsApp number. Without it the Inbox says the key is not set.",
+                    where: "your Kapso project's API keys. Paste it on its own — it is shown back as the last four characters only",
+                  }}
+                />
+              ))}
+            {secrets
+              .filter((s) => s.name === "kapso.webhookSecret")
+              .map((s) => (
+                <SecretCredentialRow
+                  key={s.name}
+                  row={row(s)}
+                  canWrite={canWrite}
+                  meta={{
+                    label: "Kapso webhook secret",
+                    env: "KAPSO_WEBHOOK_SECRET",
+                    what: "Checked on every webhook Kapso sends to /api/studio/whatsapp/webhook. A webhook that does not carry a matching signature is refused, so new messages and delivery ticks stop arriving live (Refresh from Kapso still works).",
+                    where: "a long random string you make up here — then set the same value as the secret on the Kapso webhook for the company number",
                   }}
                 />
               ))}

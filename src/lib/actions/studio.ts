@@ -23,6 +23,7 @@ import { newDesignId, previewDraft, stageDraftBackground } from "@/lib/studio/de
 import { audienceOf, getRecipient, recipientsByIds, type RecipientList, isRecipientList } from "@/lib/studio/recipients";
 import { prepareRecipe, renderRecipe, type PosterRecipe } from "@/lib/studio/render-service";
 import { getStudioRegistry, validateCandidate } from "@/lib/studio/registry-service";
+import { recordActivity, recordBatchGenerated } from "@/lib/studio/timeline-service";
 import { getDesignRow, reminderState } from "@/lib/studio/service";
 import { BULK_MAX } from "@/lib/studio/limits";
 
@@ -144,6 +145,21 @@ export async function recordShare(posterId: string, channel: "download" | "whats
     await tx.insert(studioPosterShares).values({ id: newId("shr"), posterId, userId: user.id, channel, format: format ?? null });
     await tx.update(studioPosters).set({ shareCount: sql`${studioPosters.shareCount} + 1`, lastSharedAt: new Date() }).where(eq(studioPosters.id, posterId));
   });
+  const [p] = await db.select({ templateName: studioPosters.templateName, customerId: studioPosters.customerId, recipient: studioPosters.recipient }).from(studioPosters).where(eq(studioPosters.id, posterId)).limit(1);
+  if (p) {
+    await recordActivity({
+      kind: "poster",
+      contentName: `${p.templateName} - ${p.recipient.company}`,
+      contentRefType: "poster",
+      contentRefId: posterId,
+      senderId: user.id,
+      customerId: p.customerId,
+      recipientName: p.recipient.company,
+      mode: "individual",
+      channel: channel === "download" ? "download" : channel === "device" ? "device" : "whatsapp_chat",
+      action: channel === "download" ? "downloaded" : channel === "device" ? "shared_device" : "chat_opened",
+    });
+  }
   return ok(undefined);
 }
 
@@ -249,6 +265,7 @@ export async function makeBatch(input: MakeBatchInput): Promise<Result<{ id: str
     });
     await tx.insert(studioPosters).values(posters);
   });
+  await recordBatchGenerated({ senderId: user.id, batchId, templateName: template.manifest.name, made: posters.length, skipped: skipped.length });
   refresh("/studio/bulk");
   return ok({ id: batchId, made: posters.length, skipped: skipped.length });
 }

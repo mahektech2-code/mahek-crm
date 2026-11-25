@@ -38,6 +38,7 @@ import { setTestUser } from "@/lib/auth";
 import { erpContext } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
 import { bulkOffers } from "@/lib/erp/bulk-fit";
+import { subtabCounts } from "@/lib/erp/list-query";
 import { purchaseStage } from "@/lib/erp/screens/purchase";
 import { postsToStock } from "@/lib/erp/engines/purchase";
 import { publicPoPdf } from "@/lib/erp/po-share";
@@ -47,7 +48,11 @@ import { invalidateConfig } from "@/lib/config/store";
 import { approvedPo } from "@/lib/erp/po-fixture";
 import { applyQuoteOps } from "@/lib/erp/quotes";
 import { lookupRequirementPo, purchaseChoices } from "@/lib/erp/screens/requirement-po";
+import { waitingBadge, waitingByColumn } from "@/lib/erp/engines/quote-panel";
+import { getConfig } from "@/lib/config/store";
 import type { GrnItem } from "@/lib/erp/engines/grn-pick";
+import type { GrnNext } from "@/lib/erp/engines/goods-in";
+import { calendarDate } from "@/lib/business-date";
 import type { ShareOutcome } from "@/lib/erp/ui";
 import { impactReport } from "@/lib/impact/registry";
 import { IMPACT_FIELD } from "@/lib/impact/types";
@@ -594,7 +599,8 @@ describe("register and stock", () => {
       const c = all.spec.combined!;
       const have = new Set(all.spec.cols.map((x) => x.k));
       for (const key of [...c.cols, ...c.facts, ...c.totals.flatMap((t) => (t.k ? [t.k] : [])), ...(c.sumBy ? [c.sumBy.k, c.sumBy.by] : [])]) assert.ok(have.has(key), `${k}: ${key} is a column`);
-      const two = all.rows.slice(0, 2).map((r) => r.id);
+      /* Goods in also lists what is expected at the gate (PO lines); the Combined view is over receipts. */
+      const two = all.rows.filter((r) => r.v.kind !== "expected").slice(0, 2).map((r) => r.id);
       const picked = await mod(k).load(ctx, { pd: "all", window: { from: null, to: null }, ids: two, open: null, forms: "defer" });
       assert.deepEqual(picked.rows.map((r) => r.id).sort(), [...two].sort());
     }
@@ -992,6 +998,29 @@ describe("Purchase it on the Quotation manager writes the purchase order", () =>
     assert.ok((await applyQuoteOps(a, [{ op: "cell", rowId: "eqr_bharat9", columnId: "eqc_mekdrum", status: "ready", poNo: null, impact: undoing.confirmation }])).ok);
     const [back] = await db.select().from(erpRequisitions).where(eq(erpRequisitions.id, mek.id));
     assert.equal(back.status, "Pending", "a requirement somebody raised is never cancelled by an undo");
+  });
+
+  test("the table reads what is waiting: each requirement by number on the columns of its raw material, and the PO's GST", async () => {
+    const a = await as(admin);
+    assert.ok((await mod("requisitions").forms!.new(a, { date: TODAY, requiredBy: "2099-12-07", department: "Production Head", godown: "Bhiwandi", type: "Chemical", item: "MEK", required: "640", priority: "Medium" }, [])).ok);
+    const [mek] = await db.select().from(erpRequisitions).where(sql`raw_material_id = 'rm_mek' and required_by = '2099-12-07'`);
+    const choices = await purchaseChoices(a);
+    const offered = choices.openRequirements.find((r) => r.id === mek.id);
+    assert.ok(offered, "a quotation requirement waiting for a PO is offered");
+    assert.deepEqual([offered.reqNo, offered.department, offered.materialId, offered.qty, offered.unit], [mek.reqNo, "Production Head", "rm_mek", 640, mek.unit]);
+    assert.equal(choices.gstPercent, (await getConfig())["erp.purchase.poGstPercent"]);
+    /* The heading's badge: every column linked to MEK shows it; a column of another material does not. */
+    const cols = await db.select({ id: erpQuoteColumns.id, rawMaterialId: erpQuoteColumns.rawMaterialId }).from(erpQuoteColumns);
+    const waiting = waitingByColumn(cols, choices.openRequirements);
+    assert.ok(waiting.get("eqc_mekdrum")?.some((r) => r.id === mek.id));
+    assert.ok(!waiting.get("eqc_toluene")?.some((r) => r.id === mek.id));
+    assert.match(waitingBadge(waiting.get("eqc_mekdrum")!.filter((r) => r.id === mek.id))!, new RegExp(`^REQ-${mek.reqNo} waiting$`));
+    /* Bought against it, it is no longer waiting. */
+    await db.insert(erpQuoteRows).values({ id: "eqr_bharatw", quoteDate: "2026-10-20", party: "Bharat Chemicals", supplierId: "sup_b" });
+    await db.insert(erpQuoteCells).values({ rowId: "eqr_bharatw", columnId: "eqc_mekdrum", value: "90", status: "ready" });
+    const bought = await applyQuoteOps(a, [{ op: "cell", rowId: "eqr_bharatw", columnId: "eqc_mekdrum", status: "po", drums: 4, order: order({ requisitionId: mek.id, qty: 640 }) }]);
+    assert.ok(bought.ok, JSON.stringify(bought));
+    assert.ok(!(await purchaseChoices(a)).openRequirements.some((r) => r.id === mek.id));
   });
 
   test("a second material from the same party goes on the same PO, and undoing one keeps the other", async () => {
@@ -1588,5 +1617,271 @@ describe("full edit across purchase", () => {
     assert.equal(line.rawMaterialId, "rm_box");
     const [lot] = await db.select().from(erpPurchases).where(eq(erpPurchases.inwardId, line.id));
     assert.match(lot.lotNo, /^ASBOX12/);
+  });
+});
+
+describe("the Requirements list: sub-tabs, Create one PO, and the record's history", () => {
+  type Panel = { whole?: boolean; data: { history: { at: string; text: string; open?: boolean }[]; summary: { qty: string; team: string | null; late: string | null }; po: { shared: string | null; progress: number } | null } };
+  const grn = (ctx: Awaited<ReturnType<typeof as>>, po: string, line: Record<string, string>) =>
+    mod("inward").forms!.new(ctx, { date: TODAY, po, godown: "Bhiwandi", transportMode: NONE }, [line]);
+
+  test("each requirement is read under To order, On order, Received or Cancelled, and the counts are those rows", async () => {
+    await db.insert(erpRawMaterials).values([
+      { id: "rm_pail", serialNo: 95, name: "Steel Pail", code: "PAIL", unit: "Unit", materialType: "Box", testingList: [], purchaseMethod: "direct", preferredSupplierId: "sup_a", pricePaise: 500 },
+      { id: "rm_cap", serialNo: 96, name: "Pail Cap", code: "CAP", unit: "Unit", materialType: "Box", testingList: [], purchaseMethod: "direct", preferredSupplierId: "sup_a" },
+      { id: "rm_xyl", serialNo: 97, name: "Xylene", code: "XYL", unit: "Litre", materialType: "Chemical", testingList: [], purchaseMethod: "quotation" },
+    ]);
+    const raised = await mod("requisitions").forms!.new(await as(clerk), { date: TODAY, requiredBy: "2099-12-15", department: "Production Head", godown: "Bhiwandi", priority: "Medium", remarks: "For the pail line" }, [
+      { item: "Steel Pail", required: "60" },
+      { item: "Pail Cap", required: "60" },
+      { item: "Xylene", required: "400" },
+    ]);
+    assert.ok(raised.ok, JSON.stringify(raised));
+    const mine = await db.select().from(erpRequisitions).where(sql`required_by = '2099-12-15'`);
+    const of = (rm: string) => mine.find((r) => r.rawMaterialId === rm)!;
+
+    const a = await as(admin);
+    let read = await mod("requisitions").load(a);
+    const row = (rm: string) => read.rows.find((r) => r.id === of(rm).id)!;
+    assert.deepEqual(read.spec.subtabs!.map((t) => t.l), ["To order", "On order", "Received", "Cancelled"], "the four sub-tabs, To order first — what the list opens on");
+    const counts = () => Object.fromEntries(subtabCounts(read.spec, read.rows).map((c) => [c.id, c.n]));
+    const bucketed = (b: string) => read.rows.filter((r) => r.v.bucket === b).length;
+    assert.deepEqual(counts(), { toOrder: bucketed("toOrder"), onOrder: bucketed("onOrder"), received: bucketed("received"), cancelled: bucketed("cancelled") });
+    assert.equal(read.rows.length, Object.values(counts()).reduce((x, y) => x + y, 0), "every requirement is under exactly one sub-tab");
+    for (const rm of ["rm_pail", "rm_cap", "rm_xyl"]) assert.equal(row(rm).v.bucket, "toOrder");
+    const before = counts();
+
+    /* The row's next step: Create PO for a direct item, Link PO number for a quotation one — both started in the record. */
+    const next = (rm: string) => row(rm).actions!.find((x) => x.primary)!;
+    assert.deepEqual([next("rm_pail").id, next("rm_pail").opens], ["createPo", true]);
+    assert.deepEqual([next("rm_xyl").id, next("rm_xyl").opens, next("rm_xyl").short], ["linkPo", true, "Link PO no."]);
+    assert.equal(row("rm_pail").v.vendor, "Asian Solvents", "a direct item's supplier is the item's default until it has one");
+    assert.equal(row("rm_xyl").v.vendor, "on Quotation manager");
+
+    /* Create one PO: offered over requirements of one supplier, never across suppliers. */
+    const bulk = read.spec.bulk!.find((b) => b.id === "createOnePo")!;
+    assert.deepEqual([bulk.client, bulk.fits, bulk.same], ["startInRecord", "createPo", ["vendor"]]);
+    assert.ok(bulkOffers([bulk], read.rows, [of("rm_pail").id, of("rm_cap").id]).length === 1, "two requirements of one supplier are offered one PO");
+    assert.equal(bulkOffers([bulk], read.rows, [of("rm_pail").id, of("rm_xyl").id]).length, 0, "not across suppliers");
+
+    /* What the record's Create PO sends with the other ticked requirement on it — one PO, a line each. */
+    const made = await mod("requisitions").actions!.createPo(a, of("rm_pail").id, {
+      vendor: "Asian Solvents",
+      qty: "60",
+      deliverTo: "Bhiwandi",
+      deliveryDate: "2099-12-15",
+      terms: "30 days credit",
+      also: JSON.stringify([{ id: of("rm_cap").id, qty: "60" }]),
+    });
+    assert.ok(made.ok, JSON.stringify(made));
+    const poId = (made.data as { poId: string }).poId;
+    const lines = await db.select().from(erpPoLines).where(eq(erpPoLines.poId, poId)).orderBy(erpPoLines.sortOrder);
+    assert.deepEqual(lines.map((l) => l.rawMaterialId), ["rm_pail", "rm_cap"], "one PO with both requirements as lines");
+
+    /* The Xylene is cancelled, with a reason. */
+    const confirm = await impact("erp-requirement-cancel", of("rm_xyl").id);
+    assert.ok((await mod("requisitions").actions!.cancel(a, of("rm_xyl").id, { reason: "Bought elsewhere", ...confirm.values })).ok);
+
+    read = await mod("requisitions").load(a);
+    assert.equal(row("rm_pail").v.bucket, "onOrder");
+    assert.equal(row("rm_cap").v.bucket, "onOrder");
+    assert.equal(row("rm_xyl").v.bucket, "cancelled");
+    const after = counts();
+    assert.equal(after.toOrder, before.toOrder - 3);
+    assert.equal(after.onOrder, before.onOrder + 2);
+    assert.equal(after.cancelled, before.cancelled + 1);
+    const receive = next("rm_pail");
+    assert.deepEqual([receive.id, receive.on], ["receive", { screen: "purchaseOrders", id: poId }], "on order, the next step is the PO's Receive goods");
+
+    /* Received in full at the gate: Received. */
+    const [po] = await db.select().from(erpPurchaseOrders).where(eq(erpPurchaseOrders.id, poId));
+    const got = await grn(a, `PO-${po.poNumber} · Asian Solvents`, { poLine: "1. Steel Pail", qty: "60" });
+    assert.ok(got.ok, JSON.stringify(got));
+    read = await mod("requisitions").load(a);
+    assert.equal(row("rm_pail").v.bucket, "received");
+    assert.equal(row("rm_cap").v.bucket, "onOrder", "its partner line is still waiting");
+  });
+
+  test("the record is whole: its facts down the side, and a history read from what happened", async () => {
+    const a = await as(admin);
+    const mine = await db.select().from(erpRequisitions).where(sql`required_by = '2099-12-15'`);
+    const of = (rm: string) => mine.find((r) => r.rawMaterialId === rm)!;
+    const { rows } = await mod("requisitions").load(a);
+    const panel = (rm: string) => rows.find((r) => r.id === of(rm).id)!.panel as unknown as Panel;
+    const rec = rows.find((r) => r.id === of("rm_pail").id)!;
+    assert.equal(panel("rm_pail").whole, true, "no Details tab: the panel says every fact");
+    assert.match(rec.ref ?? "", /^REQ-/);
+    assert.equal(panel("rm_pail").data.summary.team, "Production Head");
+    assert.equal(panel("rm_pail").data.summary.qty, "60");
+
+    const said = (rm: string) => panel(rm).data.history.map((h) => h.text);
+    const [po] = await db.select().from(erpPurchaseOrders).innerJoin(erpPoLines, eq(erpPoLines.poId, erpPurchaseOrders.id)).where(eq(erpPoLines.requisitionId, of("rm_pail").id));
+    const name = `PO-${po.erp_purchase_orders.poNumber}`;
+    assert.equal(said("rm_pail")[0], "Raised by Deepa Clerk for Production Head");
+    assert.ok(said("rm_pail").includes(`${name} created with Asian Solvents by Kavita Admin`), said("rm_pail").join(" | "));
+    assert.ok(said("rm_pail").some((t) => /^60 \w+ received at the gate · PR-\d+$/.test(t)), said("rm_pail").join(" | "));
+    assert.ok(!panel("rm_pail").data.history.some((h) => h.open), "received in full: nothing is waiting");
+    assert.equal(panel("rm_pail").data.po?.progress, 1);
+
+    const cap = panel("rm_cap").data.history;
+    assert.ok(cap.some((h) => h.text === `${name} created with Asian Solvents by Kavita Admin`), "the partner line's PO is in its history too");
+    assert.deepEqual(cap[cap.length - 1], { at: "Waiting", text: "Goods at the gate", open: true });
+
+    const xyl = said("rm_xyl");
+    assert.ok(xyl.includes("Cancelled by Kavita Admin · Bought elsewhere"), xyl.join(" | "));
+    assert.ok(!panel("rm_xyl").data.history.some((h) => h.open));
+    /* In time order: raised first, cancelled after. */
+    assert.ok(xyl.indexOf("Cancelled by Kavita Admin · Bought elsewhere") > 0);
+  });
+});
+
+describe("Purchase orders and Goods in: sub-tabs, the gate, and what comes after a GRN", () => {
+  const day = () => calendarDate(new Date());
+  const shift = (n: number) => new Date(Date.parse(`${day()}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+  const set = (poId: string, v: Partial<typeof erpPurchaseOrders.$inferInsert>) => db.update(erpPurchaseOrders).set(v).where(eq(erpPurchaseOrders.id, poId));
+  const lineId = async (poId: string) => (await db.select().from(erpPoLines).where(eq(erpPoLines.poId, poId)))[0].id;
+  const pos: Record<string, Awaited<ReturnType<typeof approvedPo>>> = {};
+  type Start = { po: string; poLine: string; item: string };
+
+  test("Purchase orders: To send · Waiting for goods · Part received · Done · Cancelled, each PO's next step and its delivery in words", async () => {
+    await db.insert(erpSuppliers).values({ id: "sup_g", name: "Gate Traders", partyCode: "GT" });
+    const a = await as(admin);
+    /* Different items, so one GRN over the truck is three lots (a lot is supplier, item and PR). */
+    const itemOf: Record<string, string> = { toSend: "Plain Carton", waiting: "Carton 12", part: "1 L Tin Can", done: "Carton 12", cancelled: "Carton 12" };
+    for (const k of ["toSend", "waiting", "part", "done", "cancelled"]) pos[k] = await approvedPo("Gate Traders", [{ item: itemOf[k], quantity: k === "done" ? 50 : 100, ratePaise: 1000 }]);
+    await set(pos.toSend.poId, { deliveryDate: day() });
+    await set(pos.waiting.poId, { status: "Sent", deliveryDate: shift(-2) });
+    await set(pos.part.poId, { status: "Sent", deliveryDate: shift(3) });
+    await set(pos.cancelled.poId, { status: "Cancelled" });
+    const got = (po: string, poLine: string, qty: string) => mod("inward").forms!.new(a, { date: day(), godown: "Bhiwandi", po, transportMode: NONE }, [{ poLine, qty }]);
+    assert.ok((await got(pos.part.po, pos.part.lines["1 L Tin Can"], "40")).ok);
+    assert.ok((await got(pos.done.po, pos.done.lines["Carton 12"], "50")).ok);
+
+    const read = await mod("purchaseOrders").load(a);
+    assert.deepEqual(read.spec.subtabs!.map((t) => t.l), ["To send", "Waiting for goods", "Part received", "Done", "Cancelled"], "the five sub-tabs, To send first");
+    const counts = Object.fromEntries(subtabCounts(read.spec, read.rows).map((c) => [c.id, c.n]));
+    for (const b of ["toSend", "waiting", "part", "done", "cancelled"]) assert.equal(counts[b], read.rows.filter((r) => r.v.bucket === b).length, b);
+    assert.equal(read.rows.length, Object.values(counts).reduce((x, y) => x + y, 0), "every PO is under exactly one sub-tab");
+    const row = (k: string) => read.rows.find((r) => r.id === pos[k].poId)!;
+    for (const k of ["toSend", "waiting", "part", "done", "cancelled"]) assert.equal(row(k).v.bucket, k, k);
+    const next = (k: string) => row(k).actions!.find((x) => x.primary && !x.tickHidden)?.id ?? null;
+    assert.equal(next("toSend"), "share", "not yet with the supplier: Share…");
+    assert.equal(next("waiting"), "receive", "goods owed: Receive");
+    assert.equal(next("part"), "receive");
+    assert.equal(next("done"), null, "done: no next step");
+    assert.equal(row("waiting").actions!.find((x) => x.id === "receive")?.short, "Receive");
+    /* Delivery is said against the business date. */
+    assert.equal(row("toSend").v.dueWords, "today");
+    assert.equal(row("waiting").v.late, "2 days late");
+    assert.ok(row("waiting").flags.includes("deliveryLate"));
+    assert.equal(row("part").v.dueWords, "in 3 days");
+    assert.ok(row("part").flags.includes("dueSoon"));
+    assert.equal(row("done").v.late, null, "nothing is late once it is done");
+    assert.equal(row("done").v.dueWords, null);
+    /* Received is read from the gate, never stored. */
+    assert.equal(row("part").v.received, "40 of 100");
+    assert.equal(row("part").v.progress, 0.4);
+    assert.equal(row("done").v.progress, 1);
+    /* The cards are the sub-tab's own: its name first, then value, late, due soon. */
+    assert.deepEqual(read.spec.subtabs![1].view!.stats!.map((s) => s.l), ["Waiting for goods", "Value on order", "Delivery late", "Due in 3 days"]);
+    /* The menu reads in blocks: print and receive, then the changes, then the take-backs. */
+    const { menuBlock } = await import("@/lib/erp/action-ticks");
+    const blocks = row("waiting").actions!.map((x) => menuBlock("purchaseOrders", x));
+    assert.deepEqual([...blocks].sort(), blocks, `in block order: ${row("waiting").actions!.map((x) => x.id).join(", ")}`);
+  });
+
+  test("Expected at the gate: every PO line still to come, by supplier and godown, late first", async () => {
+    const a = await as(admin);
+    pos.amb = await approvedPo("Gate Traders", [{ item: "Plain Carton", quantity: 30, ratePaise: 500 }], { godown: "Ambernath" });
+    await set(pos.amb.poId, { status: "Sent", deliveryDate: shift(-5) });
+    const read = await mod("inward").load(a);
+    const tab = read.spec.subtabs![0];
+    assert.deepEqual(read.spec.subtabs!.map((t) => t.l), ["Expected at the gate", "Received today", "All receipts"]);
+    assert.equal(tab.view?.groupAction, "receiveAll");
+    const gate = read.rows.filter((r) => r.v.kind === "expected" && r.v.supplier === "Gate Traders");
+    assert.deepEqual(
+      gate.map((r) => r.id),
+      [await lineId(pos.amb.poId), await lineId(pos.waiting.poId), await lineId(pos.toSend.poId), await lineId(pos.part.poId)],
+      "the group with the most overdue line first; within a group late, then by due date; done and cancelled POs left out",
+    );
+    assert.equal(gate[0].v.group, "Gate Traders → Ambernath");
+    assert.equal(gate[1].v.group, "Gate Traders → Bhiwandi");
+    assert.equal(gate[1].v.late, "2 days late");
+    assert.ok(gate[1].flags.includes("lateLine"));
+    assert.equal(gate[2].v.dueWords, "today");
+    assert.equal(gate[3].v.toCome, 60, "what is still to come, read against what arrived");
+    assert.equal(gate[3].v.receivedQty, 40);
+    assert.match(String(gate[1].v.groupLine), /^3 open lines · 1 late · ₹/);
+    const counts = Object.fromEntries(subtabCounts(read.spec, read.rows).map((c) => [c.id, c.n]));
+    assert.equal(counts.expected, read.rows.filter((r) => r.v.kind === "expected").length);
+    assert.equal(counts.all, read.rows.filter((r) => r.v.kind !== "expected").length);
+    assert.equal(counts.today, read.rows.filter((r) => r.v.kind === "receiptToday").length);
+    assert.ok(counts.today >= 2, "today's two receipts are Received today");
+    /* The row's next step and the group's: one line, or the whole truck. */
+    assert.deepEqual(gate[1].actions!.filter((x) => x.loadsForm).map((x) => [x.id, x.l]), [["receive", "Receive"], ["receiveAll", "Receive from Gate Traders"]]);
+  });
+
+  test("Receive opens one GRN on that PO line; Receive from <supplier> on every open line of that delivery", async () => {
+    const a = await as(admin);
+    const one = await mod("inward").formLoaders!.receive(a, await lineId(pos.waiting.poId));
+    assert.equal(one?.flow, "grn");
+    assert.deepEqual(one!.data!.grnStart, [{ po: pos.waiting.po, poLine: pos.waiting.lines["Carton 12"], item: "Carton 12" }]);
+    const truck = await mod("inward").formLoaders!.receiveAll(a, await lineId(pos.toSend.poId));
+    const start = truck!.data!.grnStart as Start[];
+    assert.deepEqual(start.map((s) => s.po), [pos.waiting.po, pos.toSend.po, pos.part.po], "Bhiwandi's three lines, never Ambernath's");
+    assert.equal(truck!.init!.godown, "Bhiwandi");
+    assert.equal(await mod("inward").formLoaders!.receive(a, await lineId(pos.done.poId)), null, "a line with nothing to come opens nothing");
+    /* The GRN saves those lines as one receipt, and answers with what comes next for each. */
+    const saved = await mod("inward").forms!.new(a, { date: day(), godown: "Bhiwandi", transportMode: NONE }, start.map((s) => ({ po: s.po, poLine: s.poLine, qty: "10" })));
+    assert.ok(saved.ok, JSON.stringify(saved));
+    const next = (saved.data as { next: GrnNext }).next;
+    assert.equal(next.supplier, "Gate Traders");
+    assert.equal(next.godown, "Bhiwandi");
+    assert.deepEqual(next.pos, [pos.waiting.po, pos.toSend.po, pos.part.po].map((p) => p.split(" · ")[0]));
+    assert.equal(next.lines.length, 3);
+    for (const l of next.lines) {
+      assert.deepEqual(l.labels, { kind: "none", label: "Not needed" }, "a carton or a can needs no drum label");
+      assert.deepEqual(l.testing, { kind: "none", label: "Not required" });
+      assert.equal(l.bill.kind, "record");
+      assert.match((l.bill as { href: string }).href, /^\/erp\/bills\?open=/);
+    }
+    const [inward] = await db.select().from(erpInward).where(eq(erpInward.prNumber, next.pr)).limit(1);
+    assert.ok(inward, "the PR the dialog names is the one saved");
+    /* SAME TRUCK, MORE ITEMS keeps to its supplier: another supplier's goods are not added to this PR. */
+    const other = await approvedPo("Bharat Chemicals", [{ item: "Plain Carton", quantity: 5 }]);
+    const wrong = await mod("inward").forms!.new(a, { date: day(), godown: "Bhiwandi", pr: String(next.pr), prFixed: String(next.pr) }, [{ po: other.po, poLine: other.lines["Plain Carton"], qty: "5" }]);
+    assert.ok(!wrong.ok && /another supplier/.test(wrong.error), JSON.stringify(wrong));
+  });
+
+  test("What's next for chemicals: labels wait for the test, or print now from the register; the bill only for who may record it", async () => {
+    const a = await as(admin);
+    const chem = await approvedPo("Gate Traders", [
+      { item: "Toluene", quantity: 400, ratePaise: 9000 },
+      { item: "MEK", quantity: 200, ratePaise: 9000 },
+    ]);
+    const saved = await mod("inward").forms!.new(a, { date: day(), godown: "Bhiwandi", po: chem.po, transportMode: NONE }, [
+      { poLine: chem.lines.Toluene, drums: "2", qty: "400" },
+      { poLine: chem.lines.MEK, drums: "1", weight: "220", emptyDrum: "20" },
+    ]);
+    assert.ok(saved.ok, JSON.stringify(saved));
+    const [tol, mek] = (saved.data as { next: GrnNext }).next.lines;
+    assert.equal(tol.item, "Toluene");
+    assert.deepEqual(tol.testing, { kind: "waiting", label: "Sent to Mixing & Blending", tone: "warn" }, "a chemical with tests goes to the team that tests it");
+    assert.deepEqual(tol.labels, { kind: "waiting", label: "After testing", tone: "neutral" }, "no lot in the register yet, so no label");
+    assert.deepEqual(tol.bill, { kind: "waiting", label: "To come", tone: "neutral" });
+    assert.match(tol.facts, /^400 Litre · 2 drums · lot GTTOL\d+ · PO-\d+$/);
+    assert.equal(mek.labels.kind, "print");
+    assert.equal(mek.labels.label, "Print 1 label");
+    const [lot] = await db.select().from(erpPurchases).where(and(eq(erpPurchases.rawMaterialId, "rm_mek"), eq(erpPurchases.supplierId, "sup_g")));
+    assert.equal((mek.labels as { href: string }).href, `/erp/print-labels?purchase=${lot.id}`, "the real label print for that purchase");
+    assert.deepEqual(mek.testing, { kind: "none", label: "Not required" });
+
+    /* Without purchase money the bill is not offered: Bills would refuse it. */
+    await db.execute(sql`delete from erp_user_powers where user_id = ${clerk.id}`);
+    const c = await as(clerk);
+    const again = await approvedPo("Gate Traders", [{ item: "Carton 12", quantity: 10 }]);
+    const plain = await mod("inward").forms!.new(c, { date: day(), godown: "Bhiwandi", po: again.po, transportMode: NONE }, [{ poLine: again.lines["Carton 12"], qty: "10" }]);
+    assert.ok(plain.ok, JSON.stringify(plain));
+    assert.deepEqual((plain.data as { next: GrnNext }).next.lines[0].bill, { kind: "waiting", label: "To come", tone: "neutral" });
   });
 });

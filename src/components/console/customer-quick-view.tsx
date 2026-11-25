@@ -1,5 +1,6 @@
 "use client";
 
+import { calendarDate } from "@/lib/business-date";
 import * as React from "react";
 import { Badge, Dot } from "@/components/ui/primitives";
 import { Drawer, DrawerHeader } from "@/components/ui/overlays";
@@ -251,7 +252,7 @@ function QuickViewBody({
               {info.recentCalls.map((call) => (
                 <div key={call.id} className="text-[13px]">
                   <div className="text-muted">
-                    {shortDate(call.at)}
+                    {shortDate(calendarDate(new Date(call.at)))}
                     {call.outcome ? ` · ${call.outcome}` : ""}
                   </div>
                   {call.notes ? <div className="text-ink">{call.notes}</div> : null}

@@ -21,6 +21,7 @@ import { matchKey } from "@/lib/catalogue";
 import { billCreditDaysSql } from "@/lib/bill-terms";
 import { creditedToSql } from "@/lib/sales-attribution";
 import { orderCountsSql } from "@/lib/order-status";
+import { moneyArrivingSql } from "@/lib/money-arriving";
 import {
   achievementBp,
   alertsFor,
@@ -573,8 +574,9 @@ export async function actualsForWindow(
           from payments p
           join payment_receipts r on r.id = p.receipt_id
          where p.bill_id = o.id
-           and r.status = 'confirmed'
-           and coalesce(r.idempotency_key, '') not like 'creditnote:%'
+           -- Money that arrived, the one definition Accounts' Collected reads:
+           -- an Adjustment or a claim settled as a Credit note is not collected.
+           and ${moneyArrivingSql("r")}
            and r.received_at >= ${windowStart}
            and r.received_at <= ${windowEnd}
       ) collected on true

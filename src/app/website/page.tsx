@@ -12,6 +12,7 @@ import { CmsEnvProvider } from "./cms-ui/cms-env";
 import { chromeFor } from "./cms-ui/chrome-cache";
 import { ConnectionPanel, ImportPanel, PublishPendingButton } from "./cms-ui/dashboard-panels";
 import { requireWebsiteModule } from "./require-module";
+import { APP_TIMEZONE } from "@/lib/business-date";
 
 /**
  * The Website dashboard: what is stored, what is live, what is waiting, and
@@ -33,7 +34,7 @@ const MODULES: { slug: ModuleSlug; label: string; kind?: KindKey }[] = [
   { slug: "settings", label: "Settings", kind: "settings" },
 ];
 
-const when = (iso: string) => new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+const when = (iso: string) => new Date(iso).toLocaleString("en-IN", { timeZone: APP_TIMEZONE, day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
 export default async function WebsiteDashboard() {
   /* The app root is a module like any other (`website.dashboard`), and it cannot

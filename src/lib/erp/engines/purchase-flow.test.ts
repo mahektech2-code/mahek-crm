@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   FLOW_STEPS,
+  requirementBucket,
   poStatusAfterReceipt,
   poTotals,
   purchaseUnit,
@@ -198,4 +199,125 @@ test("the GRN line asks about the extra only when more arrived, and whether more
   assert.match(runCalc("inward.diff", { h: {}, l: line("1150"), lines: [], i: 0, data }), /^150 Kg more than PO-1243 .*₹89\.50 per kg/);
   /* A kg chemical is read off the scale: 6 drums, 1,247.8 kg with drums, 16.3 kg each. */
   assert.equal(whenHolds({ calc: "inward.isMore" }, { ...line(""), drums: "6", weight: "1247.8", emptyDrum: "16.3" }, data), true);
+});
+
+test("a requirement's stage is read under one of the four sub-tabs of Requirements", () => {
+  for (const st of ["Waiting for PO number", "Create PO", "Create or link PO"]) assert.equal(requirementBucket(st), "toOrder", st);
+  for (const st of ["Waiting for goods", "Partly received", "PO awaiting approval", "Order Placed (before POs)"]) assert.equal(requirementBucket(st), "onOrder", st);
+  for (const st of ["Received", "Closed short", "Closed"]) assert.equal(requirementBucket(st), "received", st);
+  assert.equal(requirementBucket("Cancelled"), "cancelled");
+});
+
+/* ------------------------------------------- Purchase orders and Goods in (Phase 4) */
+import { poBucket, deliveryWords } from "./purchase-flow";
+import { expectedAtGate, gateGroupLine, supplierDelivery, whatsNext, dueWithin, type GateLine, type SavedGrnLine } from "./goods-in";
+
+test("a PO's sub-tab: to send, waiting for goods, part received, done, cancelled", () => {
+  assert.equal(poBucket("Approved", false), "toSend");
+  assert.equal(poBucket("Pending approval", false), "toSend");
+  assert.equal(poBucket("Sent", false), "waiting");
+  /* Received is read from the gate: a Sent PO with goods against it is part received. */
+  assert.equal(poBucket("Sent", true), "part");
+  assert.equal(poBucket("Approved", true), "part");
+  assert.equal(poBucket("Partly received", true), "part");
+  assert.equal(poBucket("Received", true), "done");
+  assert.equal(poBucket("Closed", true), "done");
+  assert.equal(poBucket("Cancelled", false), "cancelled");
+  assert.equal(poBucket("Rejected", false), "cancelled");
+});
+
+test("delivery is said against the business date: today, in n days, n days late", () => {
+  const day = "2026-11-19";
+  assert.deepEqual(deliveryWords("2026-11-19", day, true), { words: "today", late: false });
+  assert.deepEqual(deliveryWords("2026-11-20", day, true), { words: "in 1 day", late: false });
+  assert.deepEqual(deliveryWords("2026-11-22", day, true), { words: "in 3 days", late: false });
+  assert.deepEqual(deliveryWords("2026-11-18", day, true), { words: "1 day late", late: true });
+  assert.deepEqual(deliveryWords("2026-11-17", day, true), { words: "2 days late", late: true });
+  /* Across a month end, as days. */
+  assert.deepEqual(deliveryWords("2026-12-01", "2026-11-30", true), { words: "in 1 day", late: false });
+  assert.equal(deliveryWords("2026-11-17", day, false), null);
+  assert.equal(deliveryWords(null, day, true), null);
+  assert.equal(dueWithin("2026-11-22", day, 3), true);
+  assert.equal(dueWithin("2026-11-23", day, 3), false);
+  assert.equal(dueWithin("2026-11-18", day, 3), false);
+});
+
+const gl = (o: Partial<GateLine> & Pick<GateLine, "lineId" | "po" | "item">): GateLine => ({
+  poId: o.po,
+  supplier: "Asian Solvents",
+  supplierId: "s1",
+  godown: "Bhiwandi",
+  type: "Chemical",
+  unit: "Litre",
+  expected: 100,
+  received: 0,
+  due: "2026-11-19",
+  ratePaise: 10000,
+  gstBp: 1800,
+  ...o,
+});
+
+test("expected at the gate: grouped by supplier and godown, late groups and lines first, done lines left out", () => {
+  const day = "2026-11-19";
+  const rows = expectedAtGate(
+    [
+      gl({ lineId: "a", po: "PO-16", item: "MEK", due: "2026-11-19" }),
+      gl({ lineId: "b", po: "PO-18", item: "Empty 5 L can", due: "2026-11-17" }),
+      gl({ lineId: "c", po: "PO-17", item: "Xylene", godown: "Ambernath", due: "2026-11-19" }),
+      gl({ lineId: "d", po: "PO-20", item: "Carton", due: "2026-11-18", expected: 200, received: 80 }),
+      gl({ lineId: "e", po: "PO-30", item: "Toluene", supplier: "Kaveri", supplierId: "s2", due: "2026-11-25" }),
+      gl({ lineId: "f", po: "PO-31", item: "Done", received: 100 }),
+      gl({ lineId: "g", po: "PO-32", item: "Undated", supplier: "Zed", supplierId: "s3", due: null }),
+    ],
+    day,
+  );
+  assert.deepEqual(rows.map((r) => r.lineId), ["b", "d", "a", "c", "e", "g"]);
+  assert.equal(rows[0].group, "Asian Solvents → Bhiwandi");
+  assert.equal(rows[0].late, true);
+  assert.equal(rows[2].late, false);
+  assert.equal(rows.find((r) => r.lineId === "d")!.toCome, 120);
+  const bh = rows.filter((r) => r.group === "Asian Solvents → Bhiwandi");
+  assert.equal(gateGroupLine(bh, day), "3 open lines · 2 late");
+  assert.equal(gateGroupLine(rows.filter((r) => r.lineId === "c"), day), "1 open line · due today");
+  assert.equal(gateGroupLine(rows.filter((r) => r.lineId === "a"), day, (p) => `₹${p / 100}`), "1 open line · due today · ₹11800 to come");
+  /* Receive from Asian Solvents at Bhiwandi: every open line of that delivery, not Ambernath's. */
+  assert.deepEqual(supplierDelivery(rows, { supplierId: "s1", godown: "Bhiwandi" }).map((r) => r.lineId), ["b", "d", "a"]);
+  /* The same item on two POs: one line on the GRN (the one due first) — the same item twice would be the same lot twice. */
+  const twice = expectedAtGate([gl({ lineId: "x", po: "PO-40", item: "MEK", due: "2026-11-20" }), gl({ lineId: "y", po: "PO-41", item: "MEK", due: "2026-11-18" })], day);
+  assert.deepEqual(supplierDelivery(twice, { supplierId: "s1", godown: "Bhiwandi" }).map((r) => r.lineId), ["y"]);
+});
+
+test("what's next after a GRN: labels, testing and the bill per line", () => {
+  const base: Omit<SavedGrnLine, "item" | "type" | "routed" | "purchaseId" | "drums"> = { quantity: 1500, unit: "Litre", lot: "AST1501", po: "PO-2" };
+  const o = {
+    canLabels: true,
+    canBill: true,
+    testedBy: (t: string) => (t === "Chemical" ? "Mixing & Blending" : null),
+    labelsHref: (id: string) => `/labels/${id}`,
+    billHref: (id: string) => `/bills/${id}`,
+    nf: (n: number) => String(n),
+  };
+  const [tested, inReg, can, stuck] = whatsNext(
+    [
+      { ...base, item: "Toluene", type: "Chemical", drums: 8, routed: "Testing", purchaseId: null },
+      { ...base, item: "MEK", type: "Chemical", drums: 5, routed: "Purchase", purchaseId: "p2" },
+      { ...base, item: "Empty 5 L can", type: "Can", drums: null, unit: "Pcs", quantity: 260, routed: "Purchase", purchaseId: "p3" },
+      { ...base, item: "Xylene", type: "Chemical", drums: 2, routed: null, purchaseId: null },
+    ],
+    o,
+  );
+  assert.equal(tested.facts, "1500 Litre · 8 drums · lot AST1501 · PO-2");
+  assert.deepEqual(tested.labels, { kind: "waiting", label: "After testing", tone: "neutral" });
+  assert.deepEqual(tested.testing, { kind: "waiting", label: "Sent to Mixing & Blending", tone: "warn" });
+  assert.deepEqual(tested.bill, { kind: "waiting", label: "To come", tone: "neutral" });
+  assert.deepEqual(inReg.labels, { kind: "print", label: "Print 5 labels", href: "/labels/p2" });
+  assert.deepEqual(inReg.testing, { kind: "none", label: "Not required" });
+  assert.deepEqual(inReg.bill, { kind: "record", label: "Record bill", href: "/bills/p2" });
+  assert.deepEqual(can.labels, { kind: "none", label: "Not needed" });
+  assert.equal(can.facts, "260 Pcs · lot AST1501 · PO-2");
+  assert.equal(stuck.testing.kind, "waiting");
+  /* Without the bill's tick or the label screens, nothing is offered that the server would refuse. */
+  const [, held] = whatsNext([{ ...base, item: "MEK", type: "Chemical", drums: 5, routed: "Purchase", purchaseId: "p2" }, { ...base, item: "MEK", type: "Chemical", drums: 5, routed: "Purchase", purchaseId: "p2" }], { ...o, canLabels: false, canBill: false });
+  assert.equal(held.labels.kind, "waiting");
+  assert.equal(held.bill.kind, "waiting");
 });

@@ -244,6 +244,28 @@ timeline for the pull request that mentions it and closes the report only
 once GitHub's compare says the merge commit is in `MAHEK_BUILD`, the build
 now serving — never at the merge — and tells everybody who reported it.
 
+**CLAUDE IS ASKED BY ITSELF (Nov 2026).** Waiting for a platform
+administrator to press "Ask Claude to fix" meant a code change sat as an issue
+nobody acted on. `feedbackFix.autoFix` (on) sends it with no button:
+`autoRequestAiFix` runs after every reading, after a person chooses "code
+change", and in the hourly `feedback-fixes` step for anything still waiting
+(`asked` in its result). `shouldAutoFix` (pure) is the rule, and it has NO
+confidence threshold — Mahek's call: fully autonomous up to the pull request,
+a person merges. Every code change goes, however unsure the AI was. An automatic line of the thread has no presser, so it is written
+under `automaticAuthor`: the assignee, else a platform admin, else a triager —
+and closing a live fix falls back to the same. The model sometimes answers
+confidence as 0–1 (FB-14 went to GitHub "1% sure"); `confidencePct` reads a
+fraction as a percentage, on the way in and on old rows.
+
+**The workflow's concurrency is on the JOB.** At the workflow level it was
+taken before the job's `if`, so Claude's own first comment queued a run that
+was going to be skipped and that cancelled the real one queued behind it.
+Bot comments never trigger it now. Its first step checks `ANTHROPIC_API_KEY`
+and says in words why Anthropic refused it — FB-14's run died in under a second
+with nothing spent and the action said only `is_error: true`. Claude is told
+opening the PR is its job (the action's own prompt says to leave a link), and a
+last step opens one from the pushed branch if it did not.
+
 **HQ'S SLUG IS /hq; ITS APP ID IS STILL `founder`.** The Founder Command
 Centre was renamed HQ in every word a person reads (Nov 2026), and then its
 URL moved too: `src/app/hq`, `/hq?s=<section>`, `/hq/price-lists`,

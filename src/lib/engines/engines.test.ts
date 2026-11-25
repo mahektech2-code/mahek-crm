@@ -2697,6 +2697,22 @@ describe("the no-answer ladder", () => {
     );
   });
 
+  test("a no-answer just after midnight IST belongs to that Kolkata day", () => {
+    // 00:30 IST today is 19:00 UTC yesterday. Read as yesterday, attempt 3
+    // came due tonight; it is owed the next day.
+    const late = candidate({
+      lastOrderDate: addDays(TODAY, -40),
+      cycleDays: 22,
+      noAnswerCount: 2,
+      lastNoAnswerAt: `${addDays(TODAY, -1)}T19:00:00Z`,
+    });
+    assert.equal(
+      buildQueue([late], TODAY, C, at(`${TODAY}T06:00:00Z`)).entries.length,
+      0,
+      "not due again the same Kolkata day",
+    );
+  });
+
   test("the ladder ends, and a person decides", () => {
     const spent = candidate({
       lastOrderDate: addDays(TODAY, -40),

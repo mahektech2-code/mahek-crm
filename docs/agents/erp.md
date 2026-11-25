@@ -365,7 +365,11 @@ orders), so deleting a consuming document gives the stock back on its own.
 Every consuming save takes `lockLot` — an advisory lock on (stage, lot,
 godown) — and reads the lot's stock INSIDE the same transaction before
 refusing in the source's words. Reading it with the pool, outside the
-transaction, is how two saves both spend the last litre.
+transaction, is how two saves both spend the last litre. A transfer takes the
+lot under BOTH spellings of its stage (`rm` and `Purchase`, `fg` and `Finish
+Goods`…), because consumers lock the stage name; and a transfer of an empty
+can or drum lot also takes the fill's `packing` lock on the item (a drum's
+company-wide, `all`), because a fill draws cans by item and never names a lot.
 
 **Automations run in the save that qualifies them** (spec §18): a rated
 purchase posts to RM stock, a complete packing batch posts its one entry, a
@@ -806,3 +810,330 @@ order and asked for one in Feedback (2026-11-19). `editOrders` ("Edit orders
 before billing") now opens the same `editsOrders` gate without the MRP check
 that `productionCheck` carries; it maps to `erp.orders` in access-bulk.
 Granted per person on the Admin Console like any ERP power.
+
+**NAVIGATION STAYS IN THE SIDEBAR (owner, Nov 2026, a reversal).** A
+horizontal purchase "stage bar" over every purchase screen, with the sidebar's
+Purchase group folded into one row, was built and taken out the same day: the
+owner wants the sidebar and its sub-navigation as they are, and no tab-like
+bars drawn as navigation. Narrowing a list belongs to its sub-tabs (below).
+
+**EDIT AND DELETE COUNT ON EVERY ERP PAGE (Nov 2026).** Purchase's ticks
+were enforced first; now every page's are. Purchase keeps its own table
+(`PURCHASE_TICKS`); every other page reads the tick off the act's id
+(`idTick`): `cancel…`, `void`, `delete`, `remove`, `retire`, `toggle`,
+`deactivate`, `withdraw`, `reject`, `reverse…`, `unbill`, `unmatch`,
+`reopen` are Delete; `edit…`, `adjust`, `approve`, `verify…`, `confirm…`,
+`post`, `hold`/`release`, `resolve…`, `sendBack`, `accept`, `activate`,
+`review`, `apply`, `restore`, accepting an AI reading are Edit; everything
+else — open, trace, print, scan, start a batch, record an empty, raise,
+count, sell as scrap, add another, asking for or turning down an AI reading
+— is the page's ordinary work and needs Access. ONE rule, read by the
+server (`erpRunAction`/`erpRunBulk`/`erpSubmitForm`/`erpLoadForm`) and by the
+list (`applyTicks` on every module's load, `menuBlock` for the ⋯ blocks), so
+a menu cannot offer what the server refuses. Name a new act with its verb
+first and it is judged right; an act whose id starts with none of them is
+Access. A tab's acts are its page's ticks (`tickPage`: `readyOrders` is
+`orders`). The desks with their own server actions call
+`requireErpTickWrite(screen, tick)` for their changes and take-backs:
+Logistics (edit/void an LR, detach, update, set kind, replace a file,
+duplicates, reopen, merge transporters, re-split/pay/unpay/delete a freight
+bill), Petty Cash (review, settle, match, cancel), the production plan
+(delete a line), tracking (regenerate a link) and the dispatch desk (unscan,
+decide an override). `0374_erp_ticks_everywhere` gave every converted grant
+Edit and Delete on each non-Purchase page it held, so the release took
+nothing from anybody; narrowing is done in Manage access from then on.
+
+**NO FIGURE CARDS ON ERP PAGES (Nov 2026).** The row of stat cards over a
+list (and its status Breakdown card) is not drawn on any ERP screen
+(`isFlowLayout` in `list-screen.tsx`): the sub-tabs and their counts say
+what is waiting, the Filters dialog narrows, the pager counts. A screen's
+`stats` are still computed and still feed the CSV export and other apps'
+lists, which keep their cards. A statement's Opening + In − Out = Closing
+strip (`strip`) is a reconciliation, not a card, and stays.
+
+**SUB-TABS ON THE SINGLE-LIST PAGES, WORK FIRST.** SFG batches To approve ·
+Approved · Rejected · All batches (by QC); Alerts Open · Acknowledged ·
+Resolved · All; Sales parties Active · Pending activation · Deactivated ·
+All (its status breakdown card and status grouping went — the sub-tabs say
+it); Raw materials and Godowns In use · Retired · All. A page that already
+had tabs (`views`) keeps them, drawn as the segmented switch.
+
+**THE WHOLE ERP USES PURCHASE'S LAYOUT (Nov 2026).** What Purchase got in
+the redesign is no longer Purchase's: `isFlowLayout` (registry.ts) is true for
+every ERP screen, and the shared list and record dialog read it, never a
+group. So every screen's tabs (`views`) and sub-tabs draw as the segmented
+switch, a row's actions are its next-step button (the action marked
+`primary`) and a ⋯ menu in three blocks with no pencil column, and the
+record opens as one view — facts down a left rail, the flow, the Next step
+card, the screen's panels, the history. A screen with no `record` of its own
+still gets a flow bar from its list's status `stages`. The menu's blocks come
+from `action-ticks.ts`: Purchase's tick table where there is one, else
+`wordBlock`, the action's own words (Cancel, Void, Delete, Reverse… last and
+red; Edit, Approve, Verify, Mark… in the middle). The sidebar follows the
+same rule as Purchase: a group whose work is a sequence is numbered —
+Production 1 SFG batches · 2 FG filling · 3 Packing batches, Sales 1 Order
+Hub · 2 MRP check · 3 Orders · 4 Dispatch desk · 5 Dispatch register — with
+its side pages under Tools (Under Process moved from Sales to Production's
+Tools: it is the day's production plan; To Hold is Sales' Tool); a group of
+lists gets headings (Masters: Buying, Selling, Setup; Stock: On hand,
+Control, Levels). Moving a page between groups is the sidebar and Manage
+access's grouping only — its module key, URL and grants do not change.
+
+**PURCHASE IS A NUMBERED FLOW, AND GOODS IN, BILLS AND DRUM LABELS ARE PAGES
+(owner, Nov 2026 — a reversal of "a filter is a tab").** The sidebar's
+Purchase group draws 1 Requirements · 2 Purchase orders · 3 Goods in · 4 Lot
+testing · 5 Bills, then a "Tools" heading over Quotation manager and Drum
+labels; there is no Purchase overview page. `ErpScreen.step` and `.heading`
+in the registry say it once, and the shared `CollapsibleNav` draws a step in
+place of the row's icon and a heading above its row (v4 keeps a step's slot
+where it hides nested icons). Goods in (`inward`, /erp/goods-in), Bills
+(`register` — the key the register always had, /erp/bills) and Drum labels
+(`barcode`, /erp/drum-labels) were the three tabs of one Purchases page; they
+are different stages with their own tables and their own people, so each is a
+page, a module and an Access · Edit · Delete of its own. `0372_erp_purchases_split`
+carried every grant: a whole Purchases page became all three with the same
+ticks, a page narrowed to tabs became exactly the pages it held, designations
+the same, and the old tab rows went (`erp-purchases-split.integration.test.ts`).
+Manage access and the sidebar read the registry, so neither needed a change.
+`next.config.ts` redirects /erp/register (and its `?view=`), /erp/inward and
+/erp/barcode. Checks asking `screens.has("register")` still mean the register.
+
+**EVERY PURCHASE POP-UP IS ONE LAYOUT (Nov 2026).** The requirement's record
+shipped first in the redesign — facts down a left rail, the flow's steps, a
+Next step card with the one button the record waits on, its history, the
+actions in the foot — and Purchase orders, Goods in, Lot testing, Bills and
+Drum labels still opened the old tabbed dialog (Details + a panel tab), so
+the same click looked like two different apps. Now `record-dialog.tsx` lays
+out every Purchase screen's record that way (`isPurchaseScreen`), one view,
+no tabs: the left rail is the row's columns and fields (an empty one left
+out), a screen's own panel (the PO's lines, the test evidence) sits under the
+Next step card, and the steps, card and history come from `ListRow.record`
+(`RecordFlow`), filled by `poRecord`, `receiptRecord`, `testRecord`,
+`billRecord` and `labelRecord` from each row's own facts — never typed.
+The card's button is the row's primary action, so its tick and its reason
+are the list's. A record with no `record.next` still gets the card for its
+primary action; a finished or stopped flow gets none. The parts (`SumFact`,
+`NextStep`, `History`, `Stepper`) live once in `panels/parts.tsx` and the
+requirement's own whole panel draws the same ones, so the pop-ups cannot
+drift apart again. Bills' steps need purchase money, as its Stage column
+does; Drum labels' history is the print log, reprints included.
+
+**A PURCHASE ACT NEEDS ITS PAGE'S TICK, AT THE SERVER AND ON THE SCREEN
+(Nov 2026).** Manage access stored Access · Edit · Delete per page, but the
+ERP read only "may they open the page" and a few powers, so Edit, Cancel,
+Void and Delete row were open to anyone with the page. `lib/erp/action-ticks.ts`
+is now ONE table — per Purchase page, which row action, form and bulk act
+needs Edit (change what is there) or Delete (cancel, void, undo, reopen);
+everything else is Access. `erpContext` loads `ticks` for a CONVERTED grant
+(`app_access.position` set); an unconverted grant, an administrator and a
+preview hold every tick, so nothing moves until a grant is saved in Manage
+access. The server refuses in `erpRunAction` / `erpRunBulk` / `erpSubmitForm`
+/ `erpLoadForm` and per op in `erpQuoteApply` (`quoteOpTick`: deleting a
+row, removing a column, undoing a bought rate are Delete). `screenModule()`
+wraps each Purchase page's `load` with `applyTicks`, so every list, export,
+combined view and record reads marked rows: an act without its tick is
+`tickHidden` — left out of the row menu, drawn locked with "Needs Edit on
+Requirements — given in Manage access." in the record. The requirement's
+Purchase-flow panel offers Link / Create / Unlink PO only with Edit on
+Requirements. Adding a Purchase action: name its tick in the table, or it is
+Access. `erp-purchase-ticks.integration.test.ts`.
+
+**A LIST OPENS ON THE WORK WAITING: SUB-TABS (`ListSpec.subtabs`).** A
+sub-tab is a named set of one column's values (`k`, else the chips column),
+or a flag; the first is what the list opens on, `?st=` names another, and one
+with neither is All. Filtering and counts live in `list-query.ts`
+(`subtabOf`, `inSubtab`, `subtabCounts`), so a server-paged register and a
+client list answer alike. A sub-tab over a column a power withholds always
+reads 0 — leave it out for that person (Bills' "Bill to come" needs purchase
+money). `scripts/seed-purchase-demo.ts` seeds a purchase desk locally through
+the real handlers, to look at all of this.
+
+**PURCHASE'S SUB-TABS ARE A SEGMENTED CONTROL, KEYED OFF THE GROUP (Nov 2026).**
+`SubtabRow` in `_ui/list-screen.tsx` draws the design's segmented control
+(grey track, the open one a raised white pill with its count in brand purple)
+for every list `isPurchaseScreen(key)` (registry) says is in the Purchase
+group, its tabs included; any other screen that gains sub-tabs keeps the plain
+row. Never style a screen's sub-tabs per screen.
+
+**A PURCHASE ROW HAS ONE NEXT STEP AND A ⋯ MENU IN THREE BLOCKS (Nov 2026).**
+On the seven Purchase lists there is no pencil Edit. A row's `primary` action
+(the first one not `tickHidden`) is its button — `short` gives it shorter
+words, `soft` draws it outlined — and the ⋯ menu lists every act: "Open the …"
+and the ordinary work, a rule, the changes, a rule, the take-backs last in red,
+and never a tick's name. The block is `menuBlock` in `action-ticks.ts`, read
+off `PURCHASE_TICKS` — Edit is the middle, Delete the last — so it cannot drift
+from what the server refuses; `rowMenu` is ignored on Purchase. The record's
+foot draws a Delete-tick act as a red outlined button. The Quotation manager is
+a hand-built grid and is not a generic list.
+
+**AN ACT CAN BE STARTED IN THE RECORD, OR BELONG TO ANOTHER SCREEN'S RECORD.**
+`ActionSpec.opens`: pressed on a row (or in the record's foot) the record
+opens with its panel already doing it — `PanelProps.start` — and the panel runs
+the real handler (Create PO's three pages, the PO number box). `BulkSpec.client:
+"startInRecord"` does the same over a selection, passing the other ticked ids
+as `start.with`. `ActionSpec.on: { screen, id }` runs the act as that screen's,
+on that record, so its grant and ticks are that screen's: a requirement's
+Receive goods is its PO's. A dialog opened on its parent's first render reaches
+`<body>` before the parent (React commits the child portal first): give it
+`ErpDialog over`, or it sits underneath.
+
+**REQUIREMENTS: TO ORDER · ON ORDER · RECEIVED · CANCELLED, AND CREATE ONE PO
+(Nov 2026).** Each row carries `bucket` = `requirementBucket(stage)` (pure, in
+`engines/purchase-flow.ts`): a PO awaiting an old approval and anything ordered
+before POs are On order, closed short is Received. The list opens on To order
+and has no All. Its next step is Create PO (direct, buyer), Link PO no.
+(quotation) or Receive goods (on a receivable PO). Ticking requirements of one
+supplier (`same: ["vendor"]`; a direct row's supplier is the one it has, else
+the item's default) offers **Create one PO**, which opens Create PO on the
+first with the others ticked under "Also on this PO" — there is no server
+bulk, so every check of `createRequirementPo` holds, and it needs Edit on
+Requirements (`bulk.createOnePo`) and Purchase orders on the account.
+Department, team, method, supplier and godown stay in the Filters dialog.
+
+**A REQUIREMENT'S RECORD IS WHOLE, AND ITS HISTORY IS READ, NEVER KEPT.** The
+`purchaseFlow` panel is `whole`: the record dialog draws no Details tab, puts
+the stage beside the title and `ListRow.ref` after the screen's name. The left
+column is every fact (in stock with the level's minimum, required by with "n
+days late", team, method, raised by); the right is the steps, a Next step card
+whose button is the row's own primary (so its lock and reason are the list's),
+the PO card (rate only with purchase money; first share; received bar) and
+History from `requirementHistory` (`screens/requirement-history.ts`): the row,
+the audit log, every PO line it was ever on with that PO's audit and
+`erp_po_shares`, and the gate's inward lines, with what it still waits for as
+the last, open entry. `audit_log`'s time column is `at`, and raw SQL hands a
+timestamp back as a string — wrap it in `new Date()` before `calendarDate`.
+
+**PURCHASE ORDERS: TO SEND · WAITING FOR GOODS · PART RECEIVED · DONE · CANCELLED
+(Nov 2026).** Each PO row carries `bucket` = `poBucket(status, anyReceived)`
+(pure, `engines/purchase-flow.ts`): Approved and an old Pending approval are To
+send (the first share moves a PO to Sent); Sent with nothing READ at the gate is
+Waiting for goods; anything received and more owed is Part received (a Sent PO
+the status has not caught up with included); Received / Closed are Done;
+Cancelled and an old Rejected are Cancelled. The list opens on To send. The
+status is not a column — the sub-tab says it. Delivery is `deliveryWords(due,
+today(), open)` — "today", "in n days", or "n days late" in red — so dates are
+compared as calendar days, never instants. Received is `ColSpec.bar` (a bar
+off `progress`) with "x of y" read from `receivedByLine` against each line's
+`expected` (mixed units count lines in full). The row's next step is Share…
+(Approved), Receive (Sent / Partly received, needs Goods in) or the old Approve;
+done POs have none. Cards are per sub-tab (`view.stats`): the tab's name, Value
+on order, Delivery late, Due in 3 days (`dueSoon`: today to three days on).
+
+**A SUB-TAB MAY READ ITS OWN ROWS (`ListSubtab.view`, Nov 2026).** Goods in
+lists two things: PO lines still to come and receipt lines. Rather than a
+second module, the `inward` load returns both (`v.kind`: `expected`,
+`receipt`, `receiptToday`) and a sub-tab names its own columns, groups,
+`groupAction`, cards, filters and bulk in `view`. `specForSubtab` (list-query)
+merges it, and `queryRows`, `pageOf` and `listCsv` call it themselves, so the
+page, the export, select-all and the browser cannot read a sub-tab
+differently; facets and the Filters pop-up count only that sub-tab's rows.
+`unwindowed` hides the period picker on a sub-tab that is work waiting now
+(Expected at the gate) or today's (Received today) — the `inward` read always
+includes today's lines and unrouted ones, whatever the period. An empty
+sub-tab with nothing narrowing it says its `view.noDataLine`, not "Nothing
+matches". `groups: []` in a view means flat. `visibleCols` now keeps every
+column property (`late`, `after`, `bar`, `uk`…) and drops only `pw`; it used
+to strip them, so a `late` on a powered screen never reached the browser.
+
+**GOODS IN: EXPECTED AT THE GATE · RECEIVED TODAY · ALL RECEIPTS.** Expected at
+the gate is `gateRows` → `expectedAtGate` (pure, `engines/goods-in.ts`): every
+line of a RECEIVABLE_PO with something still to come, grouped `Supplier →
+godown`, the group with the earliest due line first, then late / due date / PO.
+The group heading is `groupLine` ("4 open lines · 2 late · ₹… to come", money
+only with `viewPurchaseMoney`) and its button is `ListSpec.groupAction`: the
+group's first row's `receiveAll` act. Row Receive and group Receive from
+<supplier> are `loadsForm` acts with `formLoaders.receive` / `receiveAll` →
+`gateReceiptForm`: the ordinary item-first GRN (`flow: "grn"`) with
+`data.grnStart` naming the PO lines, which the dialog lays out and opens on
+Receipt details. `supplierDelivery` takes ONE LINE PER ITEM (the one due
+first) — the lot number is party + item + PR, so the same item twice on one PR
+is a lot clash and the second line would stop unrouted. Both acts are Access.
+Received today is `kind = receiptToday`; receipt rows' menu reads Add another
+item from this truck, Trace this lot (`erpTraceHref(lotNumber(...))`), Edit
+receipt line, Void this line….
+
+**THE GRN HAS A FIFTH STEP, WHAT'S NEXT, READ FROM THE SAVE.** `inward.new`
+answers `ok({ next: GrnNext })`: the PR, supplier, godown, POs, and per line
+`whatsNext(saved, …)` — Drum labels (Print n labels → `erpLabelsHref({ purchase
+})` for a chemical the save put in the register; After testing for one routed
+to Testing, which has no register row yet; Not needed), Testing (Sent to
+`testingTeamFor(type)` — Mixing & Blending for chemicals — or Not required),
+Bill (Record bill → `erpLink("register", { open })` only with Bills, its Edit
+tick and purchase money; else To come). Purchase labels never record a print,
+so "Printed" is never said. The label print now also answers to `inward`.
+"Add another item from this truck" restarts the dialog with `prFixed` and the
+vendor locked; the transport fields are hidden (recorded once per PR) and the
+server refuses another supplier's goods on an existing PR.
+**LOT TESTING IS A QUEUE: TO TEST · TO VERIFY · VERIFIED · FAILED (Nov 2026).**
+`engines/lot-testing.ts` (pure) buckets each lot. A line routed to testing is
+**To test** before any `erp_tests` row exists, so the loader reads two things:
+the tests (undecided ones always, decided ones through the window) and every
+`erp_inward` line with `routed = 'Testing'` and no test — that row's id is the
+inward line's, its one act is **Record test** (`formLoaders.record`, the
+ordinary `new` form with `line` already picked). A stored "Not Verified" is
+also the default before anybody decides, so failed means DECIDED not verified
+(`decidedAt`). To test and To verify are `ListSubtab.allTime` — no period
+picker, a `note` saying "Every lot waiting, oldest first", and their own
+`sort` — because a queue cut by a period hides its oldest lot. Waiting is from
+the inward line's `created_at`; past `erp.purchase.testWaitingHours` (24, a
+setting, 0 never flags) the row carries `late` and `ColSpec.alert` draws the
+cell red. The row's button is Record test, Verify, or Record evidence while
+the item's evidence is incomplete. `testsAwaitingIds` (the badge) counts the
+untested lines too. The design draws no figure cards here (`stats: []`).
+
+**BILLS ARE GROUPED BY PARTY, WITH ONE BUTTON PER PARTY (Nov 2026).** The
+register's sub-tabs are Bill to come · Rate missing · Rate differs · Matched ·
+Every lot; Bill to come and Matched read the money-gated stage and are left
+out without `viewPurchaseMoney`. Matched is a row value (`matched: "yes"`):
+bill in hand, rate entered, not `rateOffPo`. The list is grouped by `party`
+with `groupHead: ["gstin"]` and `groupNoun: ["lot", "lots"]`, and
+`ListSpec.groupBulk` draws **Record bill for n lots** on each heading: it runs
+the bulk `billReceived` (prompt and all, through `ui.bulk`) over
+`ListGroup.bulkIds` — the group's rows, every page of it in the open sub-tab,
+that carry the row act with no `why` and no tick lock (`groupBulkIds`). No
+bulk (no money, or no Edit tick after `applyTicks`), no button. The columns
+lead with the design's (Lot no, PR · PO, Item, Quantity with its unit via
+`uk`, PO rate, Amount, Received, Flags); the rest fold. Rows have no next-step
+button except Enter rate on a lot with no rate; the ⋯ menu leads with Trace
+this lot, Stock inquiry, Print drum label, Read supplier bill. `visibleCols`
+now carries every drawing hint (`uk`, `sub`, `alert`…) and drops only `pw`.
+
+**THE LIST GAINED FIVE GENERIC PIECES FOR THIS, all in `ui.ts`:** `ColType
+"at"` (an ISO timestamp drawn "19 Nov, 9:40 am" in the business zone, sorting
+as stored), `ColSpec.sub` (a muted line under the value — an item's "PR-15 ·
+PO-2 · supplier"), `ColSpec.alert`, `ColSpec.tags` (a comma list drawn as
+chips), `ListSubtab.allTime/note/sort/hide` (`hide`: columns that say nothing
+on that sub-tab, still in the record and the export), and `BulkSpec.href` /
+`countK` (a selection that navigates — "Print {n} labels" — summing a row
+value into its label). `td .truncate` WRAPS by the global rule
+(`globals.css`); the sub-line ellipsises with an inline `textOverflow` instead.
+**THE QUOTATION MANAGER IS A TABLE YOU TYPE INTO, WITH A PANEL BESIDE IT
+(owner, Nov 2026).** It stays a table that works like a spreadsheet — never
+call it a "sheet" or "Google Sheet" on the screen — and it has no group tabs:
+the columns are exactly the desk's. The ERP sidebar starts SHUT on this one
+screen (`WIDE_SCREENS` in `_ui/erp-shell.tsx`, the toggle opens it) to give
+the table room. A toolbar carries Undo, Redo (Ctrl+Y), Mark, Filter (party
+and dates), Sort, Freeze, + Row and + Material; Sort and Freeze are views,
+the stored order is still latest first. Above the table the EDITING BAR says
+what the selected cell is in words — material · party · date · per unit ·
+rate — never a cell code like "C2" or a column letter. A mark is a coloured
+LEFT EDGE of the cell (green Ready to buy, orange bought, red cancelled, blue
+picked up), so the rate stays readable; the cheapest rate of each column over
+the rows shown is green (a lone rate is not). A heading carries "REQ-n
+waiting" when a requirement Purchase it could take (`purchaseChoices`,
+`openRequirements`) is waiting for its linked raw material. The side panel
+reads the selected rate: "cheapest this month", every party's LATEST rate for
+the material, this party's last quotes as bars, and each waiting requirement
+with "Purchase it at ₹x", which opens the real dialog with that requirement
+picked. The footer sums the selection (count, Min, Avg). All of it is the pure
+`engines/quote-panel.ts`, over the rows the screen holds — never rows the
+period hides. The Purchase it dialog's total is `poTotals`/`poLineFigures` at
+the cell's rate with `PurchaseChoices.gstPercent` (the same
+`erp.purchase.poGstPercent` `orderFromQuote` writes), rounded like any PO. A
+rate's unit is the linked raw material's purchase unit; there is no per-column
+"per kg / litre / drum" because nothing stores one. The right-click menu is
+grouped look → change → take back (Undo purchase, Delete row: red, last), and
+leaves out what the person's Edit / Delete ticks do not allow; every write is
+still `erpQuoteApply`, checked per op by `quoteOpTick`. The old "Latest rate /
+Lowest rate" foot rows are gone: the panel and the green say both.
+

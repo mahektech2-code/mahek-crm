@@ -532,6 +532,21 @@ export async function scrapStock(ex: Ex = db): Promise<ScrapStock[]> {
   return rows.map((r) => ({ category: r.category, unit: r.unit, godownId: r.godownId, available: r3(Number(r.inQty) - Number(r.outQty)) }));
 }
 
+/**
+ * What can still be sold of one category, at one godown or anywhere. A sale may
+ * name no godown, and such a sale is its own row with a negative stock and no
+ * godown: a per-godown figure alone never saw it, so 100 kg recorded at A could
+ * be sold once with no godown and again at A. A godown's figure is therefore
+ * never more than what is left across all of them.
+ */
+export function scrapLeft(stock: ScrapStock[], category: string, unit: string, godownId: string | null | undefined): number {
+  const rows = stock.filter((x) => x.category === category && x.unit === unit);
+  const total = rows.reduce((a, x) => a + x.available, 0);
+  if (!godownId) return r3(total);
+  const here = rows.filter((x) => x.godownId === godownId).reduce((a, x) => a + x.available, 0);
+  return r3(Math.min(here, total));
+}
+
 export async function recordScrapEntry(actor: Actor, e: { date: string; category: string; godownId: string; quantity: number; unit: "Kg" | "Pcs"; note: string | null }): Promise<Result> {
   if (e.category === DRUM_CATEGORY) return fieldErr("category", "Empty drums are recorded one at a time from their label, on Empty drum entry.");
   if (!(e.quantity > 0)) return fieldErr("quantity", "Enter the quantity.");
@@ -549,7 +564,7 @@ export async function cancelScrapEntry(actor: Actor, id: string, reason: string)
     if (e.status !== "active") return err("Already cancelled.", "conflict");
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"erp:scrap:" + e.category + ":" + e.unit}))`);
     await tx.update(erpScrapEntries).set({ status: "cancelled", cancelReason: reason.trim(), cancelledById: actor.id, cancelledAt: new Date() }).where(eq(erpScrapEntries.id, id));
-    const left = (await scrapStock(tx)).find((s) => s.category === e.category && s.unit === e.unit && s.godownId === e.godownId)?.available ?? 0;
+    const left = scrapLeft(await scrapStock(tx), e.category, e.unit, e.godownId);
     if (left < 0) return refuse(err(`Cancelling this would leave ${left} ${e.unit} of ${e.category} — more has been sold than was recorded without it.`, "rule_violation"));
     return okVoid("Entry cancelled");
   });
@@ -607,7 +622,7 @@ export async function sellScrap(actor: Actor, s: SaleInput): Promise<Result<{ id
       }
     } else {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"erp:scrap:" + s.category + ":" + s.unit}))`);
-      const have = (await scrapStock(tx)).filter((x) => x.category === s.category && x.unit === s.unit && (!s.godownId || x.godownId === s.godownId)).reduce((a, x) => a + x.available, 0);
+      const have = scrapLeft(await scrapStock(tx), s.category, s.unit, s.godownId);
       if (s.quantity > have + 1e-9) refuse(fieldErr("quantity", `Only ${r3(have)} ${s.unit} of ${s.category} is recorded${s.godownId ? " at this godown" : ""} — you entered ${s.quantity}.`));
     }
     const id = erpId("ssale");
@@ -718,7 +733,7 @@ export async function editScrapSale(actor: Actor, id: string, x: SaleEdit): Prom
     } else if (!isDrum && qty > oldQty) {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"erp:scrap:" + s.category + ":" + s.unit}))`);
       /* What is on hand already has this sale taken off it, so the sale may grow by what is left. */
-      const have = (await scrapStock(tx)).filter((k) => k.category === s.category && k.unit === s.unit && (!s.godownId || k.godownId === s.godownId)).reduce((a, k) => a + k.available, 0);
+      const have = scrapLeft(await scrapStock(tx), s.category, s.unit, s.godownId);
       if (qty > oldQty + have + 1e-9) return fieldErr("quantity", `Only ${r3(oldQty + have)} ${s.unit} of ${s.category} can be on this sale — you entered ${qty}.`);
     }
     const after = {

@@ -350,7 +350,35 @@ export async function recordReceipt(
   const receiptId = id("rcp");
   const now = new Date();
 
-  await db.transaction(async (tx) => {
+  const raced = await db.transaction(async (tx) => {
+    /* MONEY THAT COUNTS AT ONCE IS ALLOCATED ONE ENTRY AT A TIME per customer.
+       The split above was worked out from the cached paid figures; two
+       accounts entries saved together both saw the oldest bill open, both
+       filled it, and it read paid twice while the next stayed open. Under the
+       lock the bills it touches are re-read from their confirmed lines, and a
+       difference refuses the save rather than over-filling a bill. Reported
+       money does not touch a bill's paid figure, so it does not wait. */
+    if (confirms) {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"ledger:" + input.customerId}))`);
+      const billIds = result.lines.map((l) => l.billId).filter((b): b is string => Boolean(b));
+      if (billIds.length) {
+        // The same row locks a confirm takes, so a confirm and an entry
+        // against one bill wait for each other too.
+        await tx.execute(sql`
+          select b.id from bills b where b.id in (${sql.join(billIds.map((b) => sql`${b}`), sql`, `)})
+           order by b.id for update`);
+        const live = (await tx.execute(sql`
+          select p.bill_id, coalesce(sum(p.amount), 0)::bigint as paid
+            from payments p join payment_receipts r on r.id = p.receipt_id
+           where r.status = 'confirmed' and p.bill_id in (${sql.join(billIds.map((b) => sql`${b}`), sql`, `)})
+           group by p.bill_id`)) as unknown as { bill_id: string; paid: number }[];
+        const paidNow = new Map(live.map((r) => [r.bill_id, Number(r.paid)]));
+        if (billIds.some((b) => (paidNow.get(b) ?? 0) !== Number(open.find((o) => o.id === b)?.paid ?? 0))) {
+          return true;
+        }
+      }
+    }
+
     await tx.insert(paymentReceipts).values({
       id: receiptId,
       customerId: input.customerId,
@@ -423,7 +451,13 @@ export async function recordReceipt(
         lines: result.lines,
       } as never,
     });
+    return false;
   });
+  if (raced) {
+    // Rebuilt so the next try reads the bills as they now stand.
+    await recomputeBillPaid(input.customerId);
+    return err("Another payment for this customer was saved a moment ago. Look at the bills again and save.", "conflict");
+  }
 
   // §5.2 — outside the transaction on purpose. A proof photograph that failed
   // to upload is not worth rolling back money that has actually arrived.
@@ -487,7 +521,7 @@ async function closePaymentPromises(
  * Each of these reads what the one before it wrote, so the order is not
  * cosmetic.
  */
-async function applyToLedger(customerId: string): Promise<void> {
+export async function applyToLedger(customerId: string): Promise<void> {
   /*
    * A bill that money recorded in the APP has touched is a bill somebody has
    * spoken for. Two marks, both set here rather than at each call site,
@@ -1036,6 +1070,9 @@ async function confirmReceiptWith(
        * rebuilt only after the commit), and the status only moves from an
        * undecided one.
        */
+      // The receipt first, so a re-point cannot rewrite its lines between the
+      // bill locks below and the status moving.
+      await tx.execute(sql`select id from payment_receipts where id = ${receiptId} for update`);
       await tx.execute(sql`
         select b.id from bills b
          where b.id in (select p.bill_id from payments p where p.receipt_id = ${receiptId} and p.bill_id is not null)
@@ -1538,7 +1575,7 @@ export async function amendConfirmedReceipt(
     return err("This is a credit note. Cancel it on Credit notes and issue the right one.", "rule_violation");
   }
   const [matched] = (await db.execute(sql`
-    select 1 as one from erp_bank_matches where receipt_id = ${receiptId} limit 1`)) as unknown as { one: number }[];
+    select 1 as one from erp_bank_matches where receipt_id = ${receiptId} and voided_at is null limit 1`)) as unknown as { one: number }[];
   if (matched) {
     return err("It is matched to a bank statement line. Undo the match on Bank statement management first.", "rule_violation");
   }
@@ -1821,9 +1858,19 @@ export async function reverseReceipt(
       "validation",
     );
   }
+  /* A bank line matched to this receipt counts the match whatever the
+     receipt's status, so reversing it left the line "matched" with nothing
+     counting the money — it never came back to the to-do list. The same rule
+     amend already keeps: undo the match first, then reverse. */
+  const [matched] = (await db.execute(sql`
+    select 1 as one from erp_bank_matches where receipt_id = ${receiptId} and voided_at is null limit 1`)) as unknown as { one: number }[];
+  if (matched) {
+    return err("It is matched to a bank statement line. Undo the match on Bank statement management first.", "rule_violation");
+  }
 
+  let raced = false;
   await db.transaction(async (tx) => {
-    await tx
+    const flipped = await tx
       .update(paymentReceipts)
       .set({
         status: "reversed",
@@ -1833,7 +1880,14 @@ export async function reverseReceipt(
         updatedById: ctx.user.id,
         updatedAt: new Date(),
       })
-      .where(eq(paymentReceipts.id, receiptId));
+      // Still confirmed: a second click, or an amend landing first, finds
+      // nothing to reverse rather than writing a second audit row.
+      .where(and(eq(paymentReceipts.id, receiptId), eq(paymentReceipts.status, "confirmed")))
+      .returning({ id: paymentReceipts.id });
+    if (flipped.length === 0) {
+      raced = true;
+      return;
+    }
 
     await tx.insert(auditLog).values({
       id: id("aud"),
@@ -1870,6 +1924,8 @@ export async function reverseReceipt(
         );
     }
   });
+
+  if (raced) return err("That payment changed a moment ago. Refresh and look again.", "conflict");
 
   // Giving the money back to the bills it settled is a rebuild, never a
   // subtraction — which is what makes confirming, reversing and re-recording
@@ -1933,7 +1989,15 @@ async function reallocate(
     ]);
   }
 
-  await db.transaction(async (tx) => {
+  const moved = await db.transaction(async (tx) => {
+    /* Only while it is still undecided. A re-point landing just after another
+       accounts user confirmed the receipt used to rewrite the lines of money
+       that already counted — past the confirm's bill locks, so a bill could
+       read paid twice. The confirm takes this same row lock first. */
+    const [still] = (await tx.execute(sql`
+      select status from payment_receipts where id = ${receipt.id} for update`)) as unknown as { status: string }[];
+    if (!still || (still.status !== "reported" && still.status !== "held")) return false;
+
     await tx.delete(payments).where(eq(payments.receiptId, receipt.id));
     for (const line of result.lines) {
       await tx.insert(payments).values({
@@ -1966,7 +2030,9 @@ async function reallocate(
       beforeState: { lines: ownLines } as never,
       afterState: { mode: allocation.mode, lines: result.lines } as never,
     });
+    return true;
   });
+  if (!moved) return err("Somebody has already decided this one. Refresh and look again.", "conflict");
 
   return okVoid();
 }

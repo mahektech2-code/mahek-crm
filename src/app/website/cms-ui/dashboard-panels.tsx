@@ -8,6 +8,7 @@ import { checkConnectionAction, importContentAction, publishPendingAction, refre
 import type { ConnectionCheck } from "@/lib/website-cms/live-site";
 import type { ImportReport } from "@/lib/website-cms/service";
 import { reportPublish } from "./report";
+import { APP_TIMEZONE } from "@/lib/business-date";
 
 /* ---------------------------------------------------------------------------
  * The Dashboard's three working parts: is the live site connected, has the
@@ -17,7 +18,7 @@ import { reportPublish } from "./report";
  * a real call to the public site's own status endpoint, made when asked.
  * ------------------------------------------------------------------------- */
 
-const when = (iso: string) => new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+const when = (iso: string) => new Date(iso).toLocaleString("en-IN", { timeZone: APP_TIMEZONE, day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
 export function ConnectionPanel({
   readSet,

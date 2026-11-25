@@ -1099,6 +1099,12 @@ export const sessions = pgTable(
      * session that has to confirm first. See `lib/console-confirm.ts`.
      */
     confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+    /**
+     * Opened on the factory floor with a PIN or its SMS code: good for /factory
+     * and /api/factory only. `getCurrentUser` answers nobody for it anywhere
+     * else, and it is never password-confirmed. See 0379_factory_only_sessions.
+     */
+    factoryOnly: boolean("factory_only").notNull().default(false),
   },
   (t) => [index("sessions_user_idx").on(t.userId)],
 );
@@ -8845,6 +8851,199 @@ export const mbosUserTerritories = pgTable(
   ],
 );
 
+/* ---------------------------------------------------------------------------
+ * THE OFFICIAL GEOGRAPHY MASTER — state, district, taluka, and the urban local
+ * bodies inside them — and who is allocated which. ADDITIVE: nothing here is
+ * read by `territoryClause`, `places` or any shop match, and `mbos_user_territories`
+ * is untouched. These tables hold an EMPTY master until a reviewed snapshot is
+ * loaded, and the app says so rather than inventing one.
+ *
+ * `geo_sources` records where every row came from, whether that source is the
+ * official LGD or a copy of it, and whether its reuse licence has been verified.
+ * A snapshot whose `licence_status` is not `verified` may be loaded for review
+ * and is not to be treated as an official dataset.
+ *
+ * A ULB IS NOT A TALUKA'S CHILD. One urban local body can cover villages in
+ * several sub-districts, and one sub-district can hold several ULBs, so the link
+ * is `geo_ulb_subdistricts` (many-to-many) and never a parent column.
+ * `geo_ulb_districts` holds every district the source puts a ULB in; a ULB there with
+ * no row in `geo_ulb_subdistricts` is one the source ties to a district only, and one the source
+ * cannot place at all is in `geo_unresolved_records` — nothing is dropped.
+ * ------------------------------------------------------------------------- */
+
+export const geoSources = pgTable("geo_sources", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  /** `official` | `community_mirror` | `derived` — never inferred from the name. */
+  sourceClass: text("source_class").notNull(),
+  url: text("url"),
+  /** The date the source says its data is as of. */
+  observedOn: date("observed_on"),
+  retrievedOn: date("retrieved_on"),
+  checksum: text("checksum"),
+  /** `unverified` | `verified` | `blocked`. A reuse licence is a decision, not a default. */
+  licenceStatus: text("licence_status").notNull().default("unverified"),
+  licenceNote: text("licence_note"),
+  approvedById: text("approved_by_id"),
+  approvedAt: timestamp("approved_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const geoUnits = pgTable(
+  "geo_units",
+  {
+    id: text("id").primaryKey(),
+    /** `state` | `district` | `subdistrict`. Text and not an enum, for the reason `places.kind` is. */
+    level: text("level").notNull(),
+    /** The source's own code, as text — leading zeros and all. */
+    lgdCode: text("lgd_code").notNull(),
+    version: integer("version"),
+    name: text("name").notNull(),
+    nameKey: text("name_key").notNull(),
+    parentId: text("parent_id").references((): AnyPgColumn => geoUnits.id, { onDelete: "restrict" }),
+    census2011Code: text("census_2011_code"),
+    /** `State` | `UT`, on a state row only. */
+    stateOrUt: text("state_or_ut"),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => geoSources.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("geo_units_level_code_key").on(t.level, t.lgdCode),
+    index("geo_units_parent_idx").on(t.parentId),
+    check("geo_units_level_check", sql`${t.level} in ('state', 'district', 'subdistrict')`),
+    check("geo_units_parent_check", sql`(${t.level} = 'state') = (${t.parentId} is null)`),
+  ],
+);
+
+export const geoLocalBodies = pgTable(
+  "geo_local_bodies",
+  {
+    id: text("id").primaryKey(),
+    lgdCode: text("lgd_code").notNull(),
+    version: integer("version"),
+    /** As the source spells it, trailing dots and all. */
+    name: text("name").notNull(),
+    nameKey: text("name_key").notNull(),
+    nameLocal: text("name_local"),
+    /** The source's type code, kept as text and NOT decoded — no legend has been verified. */
+    typeCode: text("type_code"),
+    stateUnitId: text("state_unit_id")
+      .notNull()
+      .references(() => geoUnits.id, { onDelete: "restrict" }),
+    census2011Code: text("census_2011_code"),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => geoSources.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("geo_local_bodies_code_key").on(t.lgdCode),
+    index("geo_local_bodies_state_idx").on(t.stateUnitId),
+  ],
+);
+
+export const geoUlbSubdistricts = pgTable(
+  "geo_ulb_subdistricts",
+  {
+    ulbId: text("ulb_id")
+      .notNull()
+      .references(() => geoLocalBodies.id, { onDelete: "cascade" }),
+    subdistrictId: text("subdistrict_id")
+      .notNull()
+      .references(() => geoUnits.id, { onDelete: "restrict" }),
+    districtId: text("district_id")
+      .notNull()
+      .references(() => geoUnits.id, { onDelete: "restrict" }),
+    /** How many village rows the source ties this ULB to in this sub-district. */
+    villageRows: integer("village_rows").notNull().default(0),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => geoSources.id, { onDelete: "restrict" }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.ulbId, t.subdistrictId] }),
+    index("geo_ulb_subdistricts_sub_idx").on(t.subdistrictId),
+  ],
+);
+
+export const geoUlbDistricts = pgTable(
+  "geo_ulb_districts",
+  {
+    ulbId: text("ulb_id")
+      .notNull()
+      .references(() => geoLocalBodies.id, { onDelete: "cascade" }),
+    districtId: text("district_id")
+      .notNull()
+      .references(() => geoUnits.id, { onDelete: "restrict" }),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => geoSources.id, { onDelete: "restrict" }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.ulbId, t.districtId] }),
+    index("geo_ulb_districts_district_idx").on(t.districtId),
+  ],
+);
+
+/** What the source could not place — kept and shown, never dropped. */
+export const geoUnresolvedRecords = pgTable(
+  "geo_unresolved_records",
+  {
+    id: text("id").primaryKey(),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => geoSources.id, { onDelete: "restrict" }),
+    /** `no_coverage` (a ULB with no coverage row) | `orphan_coverage` (a coverage code with no ULB). */
+    kind: text("kind").notNull(),
+    lgdCode: text("lgd_code").notNull(),
+    name: text("name"),
+    stateName: text("state_name"),
+    note: text("note"),
+  },
+  (t) => [
+    index("geo_unresolved_source_idx").on(t.sourceId, t.kind),
+    check("geo_unresolved_kind_check", sql`${t.kind} in ('no_coverage', 'orphan_coverage')`),
+  ],
+);
+
+/**
+ * WHO WORKS WHERE, in the official geography. A SEPARATE table from
+ * `mbos_user_territories` on purpose: that one's `kind` is read by the holiday
+ * audience, the lead service, the place-tree service and the handset, and a new
+ * value in it would be a value each of them has never heard of.
+ *
+ * A row names exactly one thing: a unit (state, district or sub-district) or a
+ * ULB. The partial unique indexes are what make "the same ULB through two
+ * talukas" ONE allocation.
+ */
+export const mbosUserGeoTerritories = pgTable(
+  "mbos_user_geo_territories",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** `state` | `district` | `subdistrict` | `ulb` */
+    level: text("level").notNull(),
+    unitId: text("unit_id").references(() => geoUnits.id, { onDelete: "restrict" }),
+    ulbId: text("ulb_id").references(() => geoLocalBodies.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id"),
+  },
+  (t) => [
+    uniqueIndex("mbos_user_geo_territories_unit_key").on(t.userId, t.unitId).where(sql`${t.unitId} is not null`),
+    uniqueIndex("mbos_user_geo_territories_ulb_key").on(t.userId, t.ulbId).where(sql`${t.ulbId} is not null`),
+    index("mbos_user_geo_territories_user_idx").on(t.userId),
+    check("mbos_user_geo_territories_level_check", sql`${t.level} in ('state', 'district', 'subdistrict', 'ulb')`),
+    check(
+      "mbos_user_geo_territories_one_target_check",
+      sql`(${t.level} = 'ulb' and ${t.ulbId} is not null and ${t.unitId} is null) or (${t.level} <> 'ulb' and ${t.unitId} is not null and ${t.ulbId} is null)`,
+    ),
+  ],
+);
+
 export const mbosHolidays = pgTable(
   "mbos_holidays",
   {
@@ -11679,6 +11878,40 @@ export const priceAiRuns = pgTable(
 );
 
 /**
+ * A READING TRIAL: the same photograph read by two providers, and how the
+ * answers compared — never the answers themselves. A visiting card is a
+ * person's name and number and the lead scan keeps neither photo nor reading,
+ * so a trial row holds per-field VERDICTS ("same", "differs", "right",
+ * "missed") and timings, which is everything the comparison needs and nothing
+ * worth leaking. See `lib/services/read-trial-service.ts`.
+ *
+ * `subjectId` is the expense line for a bill trial (so a bill is read once),
+ * and a random id shared by the two rows of one lead scan.
+ */
+export const aiReadTrials = pgTable(
+  "ai_read_trials",
+  {
+    id: text("id").primaryKey(),
+    /** `lead_scan` | `expense_bill`. */
+    feature: text("feature").notNull(),
+    /** `openai` | `sarvam`. */
+    provider: text("provider").notNull(),
+    subjectId: text("subject_id"),
+    ok: boolean("ok").notNull().default(false),
+    ms: integer("ms"),
+    /** Why it failed, in the provider's words, cut short. Never a value read. */
+    error: text("error"),
+    /** Field name → verdict. */
+    fields: jsonb("fields").$type<Record<string, string>>().notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("ai_read_trials_feature_idx").on(t.feature, t.createdAt),
+    index("ai_read_trials_subject_idx").on(t.feature, t.subjectId),
+  ],
+);
+
+/**
  * AN OVERRIDE — one shop × one product × dates. Applied through the shop's
  * agreed-prices list (`kind = 'agreed'`), which layers over its book per
  * product; this row says when it starts and ends, and the sync job publishes
@@ -12488,6 +12721,30 @@ export const erpPurchases = pgTable(
     check("erp_purchases_status_check", sql`${t.status} in ('Pending', 'Invoice Received', 'Purchase Matched', 'Purchase Verified')`),
     check("erp_purchases_unit_check", sql`${t.unit} in ('Kg', 'Litre', 'Pcs')`),
   ],
+);
+
+/**
+ * 0373: EVERY TIME A PURCHASED LOT'S DRUM LABELS WENT TO PAPER, reprints
+ * included — one row per lot per print, written where the label page actually
+ * printed (sent to the label printer, saved as a print file, or the print
+ * dialog shown). Drum labels reads it: To print is a chemical lot with no row,
+ * Printed is a lot with one, its last time, who and how many prints. `reprint`
+ * says whether the lot had been printed before this one.
+ */
+export const erpLabelPrints = pgTable(
+  "erp_label_prints",
+  {
+    id: text("id").primaryKey(),
+    purchaseId: text("purchase_id")
+      .notNull()
+      .references(() => erpPurchases.id, { onDelete: "cascade" }),
+    /** Labels printed for the lot this time — one a drum unless the page was asked for another number. */
+    copies: integer("copies").notNull(),
+    reprint: boolean("reprint").notNull().default(false),
+    printedById: text("printed_by_id").references(() => users.id),
+    printedAt: timestamp("printed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("erp_label_prints_purchase_idx").on(t.purchaseId, t.printedAt), check("erp_label_prints_copies_check", sql`${t.copies} > 0`)],
 );
 
 /**
@@ -18893,3 +19150,49 @@ export const integrationUsage = pgTable(
   },
   (t) => [primaryKey({ columns: [t.provider, t.day] })],
 );
+
+/**
+ * THE STUDIO TIMELINE: one permanent row per recipient per act. Append-only — nothing updates or deletes one. Every
+ * name is a SNAPSHOT (content, sender, recipient) so the row reads the same after a poster is changed or removed, a
+ * lead is renamed or an employee leaves; the ids beside them are for linking while the record still exists.
+ *
+ * `action` says what a PERSON or the system did and is never a delivery claim: chat_opened / marked_sent / downloaded
+ * are user-marked; kapso_handed means Kapso accepted the message. What the PROVIDER confirmed — sent, delivered, read,
+ * failed — is not copied here: it is read from `studio_wa_messages` through `wa_message_id`, so it can only ever be
+ * what Kapso reported and cannot drift from it.
+ */
+export const studioActivities = pgTable(
+  "studio_activities",
+  {
+    id: text("id").primaryKey(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
+    kind: text("kind").notNull(),
+    contentName: text("content_name").notNull(),
+    contentRefType: text("content_ref_type"),
+    contentRefId: text("content_ref_id"),
+    caption: text("caption"),
+    senderId: text("sender_id").references(() => users.id, { onDelete: "set null" }),
+    senderName: text("sender_name").notNull(),
+    customerId: text("customer_id").references(() => customers.id, { onDelete: "set null" }),
+    recipientName: text("recipient_name").notNull(),
+    mode: text("mode").notNull(),
+    channel: text("channel").notNull(),
+    action: text("action").notNull(),
+    reason: text("reason"),
+    /** studio_wa_messages.id for a Kapso send. Deliberately not a foreign key: this row outlives the message. */
+    waMessageId: text("wa_message_id"),
+    /** What it was part of: the forward or bulk run, so one bulk send can be read together while every recipient keeps a row of their own. */
+    batchRef: text("batch_ref"),
+  },
+  (t) => [
+    index("studio_activities_customer_idx").on(t.customerId, t.occurredAt),
+    index("studio_activities_sender_idx").on(t.senderId, t.occurredAt),
+    index("studio_activities_at_idx").on(t.occurredAt),
+    index("studio_activities_wa_idx").on(t.waMessageId),
+    check("studio_activities_kind", sql`${t.kind} in ('poster','brochure','price_list','video','image','product_info','message')`),
+    check("studio_activities_mode", sql`${t.mode} in ('individual','bulk','inbox','forward_manual')`),
+    check("studio_activities_channel", sql`${t.channel} in ('kapso','whatsapp_chat','download','device','studio')`),
+    check("studio_activities_action", sql`${t.action} in ('kapso_handed','not_sent','chat_opened','marked_sent','marked_skipped','marked_undone','downloaded','shared_device','batch_generated','zip_downloaded','zip_downloaded_batch')`),
+  ],
+);
+export type StudioActivity = typeof studioActivities.$inferSelect;

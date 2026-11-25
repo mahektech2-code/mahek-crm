@@ -321,7 +321,7 @@ export function PolicyEditor({
           <Button size="sm" onClick={discard}>
             Discard
           </Button>
-          <Button size="sm" variant="primary" disabled={!canWrite || saving} onClick={save}>
+          <Button size="sm" variant="primary" disabled={!canWrite || saving} title={!canWrite ? "Your access to this screen is view only." : undefined} onClick={save}>
             Save
           </Button>
         </div>

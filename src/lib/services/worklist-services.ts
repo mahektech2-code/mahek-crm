@@ -455,6 +455,24 @@ export async function createReminder(
  * audited for the same reason: a closure with no evidence behind it is exactly
  * the one somebody will want to ask about later.
  */
+/**
+ * The rule `rescheduleReminder` and `editReminder` apply, shared so closing a
+ * promise asks the same question as moving it: anybody's own promise is
+ * theirs; anybody else's needs the customer in their book. Complete, dismiss
+ * and hold used to skip it, so a team-scoped manager could clear another
+ * team's promises by id.
+ */
+async function assertReminderInScope(
+  existing: { assignedUserId: string | null; createdByUserId: string | null; customerId: string },
+  userId: string,
+): Promise<Result | null> {
+  if (existing.assignedUserId === userId || existing.createdByUserId === userId) return null;
+  const [customer] = await db.select().from(customers).where(eq(customers.id, existing.customerId));
+  if (!customer) return err("That customer no longer exists.", "not_found");
+  await assertCustomerInScope(customer);
+  return null;
+}
+
 export async function completeReminder(
   reminderId: string,
   closureNote?: string,
@@ -465,6 +483,8 @@ export async function completeReminder(
     .from(reminders)
     .where(eq(reminders.id, reminderId));
   if (!existing) return err("That reminder no longer exists.", "not_found");
+  const outOfScope = await assertReminderInScope(existing, ctx.user.id);
+  if (outOfScope) return outOfScope;
   /* Only a pending reminder is completed. A dismissed one keeps the reason
      somebody gave for it, and a completed one keeps who closed it and how. */
   if (existing.status === "completed") return okVoid("Already completed");
@@ -530,8 +550,13 @@ export async function dismissReminder(
     .from(reminders)
     .where(eq(reminders.id, reminderId));
   if (!existing) return err("That reminder no longer exists.", "not_found");
+  const outOfScope = await assertReminderInScope(existing, ctx.user.id);
+  if (outOfScope) return outOfScope;
+  if (existing.status !== "pending") {
+    return err("That reminder is already closed.", "conflict");
+  }
 
-  await db
+  const moved = await db
     .update(reminders)
     .set({
       status: "dismissed",
@@ -543,7 +568,9 @@ export async function dismissReminder(
       updatedAt: new Date(),
       updatedById: ctx.user.id,
     })
-    .where(eq(reminders.id, reminderId));
+    .where(and(eq(reminders.id, reminderId), eq(reminders.status, "pending")))
+    .returning({ id: reminders.id });
+  if (!moved.length) return err("That reminder is already closed.", "conflict");
 
   await db.insert(auditLog).values({
     id: id("aud"),
@@ -790,6 +817,8 @@ export async function holdOtherReasonsUntilReminder(
 
   const [existing] = await db.select().from(reminders).where(eq(reminders.id, reminderId));
   if (!existing) return err("That reminder no longer exists.", "not_found");
+  const outOfScope = await assertReminderInScope(existing, ctx.user.id);
+  if (outOfScope) return outOfScope;
   if (existing.status !== "pending") {
     return err("That reminder is no longer pending.", "validation");
   }
@@ -991,6 +1020,8 @@ export async function changeComplaintStatus(
   complaintId: string,
   toStatus: "open" | "in_progress" | "awaiting_customer" | "rejected" | "closed",
   note?: string,
+  /** Reassigning moves the desk in the same transaction as the status. */
+  assignedTo?: string,
 ): Promise<Result> {
   const ctx = await resolveScope();
   const [existing] = await db
@@ -1015,7 +1046,12 @@ export async function changeComplaintStatus(
   await db.transaction(async (tx) => {
     await tx
       .update(complaints)
-      .set({ status: toStatus, updatedAt: new Date(), updatedById: ctx.user.id })
+      .set({
+        status: toStatus,
+        ...(assignedTo !== undefined ? { assignedTo } : {}),
+        updatedAt: new Date(),
+        updatedById: ctx.user.id,
+      })
       .where(eq(complaints.id, complaintId));
     await tx.insert(complaintStatusHistory).values({
       id: id("csh"),

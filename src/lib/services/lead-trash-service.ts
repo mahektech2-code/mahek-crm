@@ -161,13 +161,23 @@ export async function restoreLeads(input: { ids: string[] }): Promise<Result<{ r
   if (!ids.length) return err("Pick at least one lead.", "validation");
   if (ids.length > TRASH_BATCH_LIMIT) return err(`Restore at most ${TRASH_BATCH_LIMIT} leads at a time.`, "validation");
 
-  const rows = await db
-    .select({ id: customers.id, name: customers.name, deletedAt: customers.deletedAt, deletedReason: customers.deletedReason })
-    .from(customers)
-    .where(inArray(customers.id, ids));
+  const rows = await db.select().from(customers).where(inArray(customers.id, ids));
   const inTrash = rows.filter((r) => r.deletedAt);
   if (inTrash.length !== ids.length) {
     return err("One of those is no longer in the trash. Refresh and try again.", "conflict");
+  }
+  /* The same book question deleting asked. `lead.restore` can be granted
+     through a CRM screen tick (`crm.lead-dead`), and a team-scoped holder
+     could restore another team's leads by id. Asked of the row as it will be
+     once restored — `assertCustomerInScope` refuses every trashed row
+     outright, which is right for everything except bringing one back. An
+     administrator's scope is everybody, so nothing changes for them. */
+  for (const c of inTrash) {
+    try {
+      await assertCustomerInScope({ ...c, deletedAt: null });
+    } catch {
+      return err(`${c.name} is not in your book, so it is not yours to restore.`, "not_permitted");
+    }
   }
 
   const now = new Date();

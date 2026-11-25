@@ -420,6 +420,17 @@
   display: none;
 }
 
+/* A numbered step (the ERP's Purchase: 1 Requirements … 5 Bills) keeps its
+   slot — the number is the row's mark, not decoration. */
+:root:has([data-v4]) [data-nav-row="nested"] [data-nav-icon]:has([data-nav-step]) {
+  display: flex;
+}
+
+/* A heading inside an open group ("Tools") lines up with the rows it heads. */
+:root:has([data-v4]) [data-nav-heading] {
+  padding-left: 10px;
+}
+
 :root:has([data-v4]) [data-nav-badge] {
   background: #eef2f7;
   color: #33415c;

@@ -1,39 +1,43 @@
-The **Quotation manager** is the purchase desk's rate sheet. Each **row** is one quotation — the date and the party (supplier) who quoted — and each **column** is something quoted for: the pack on top, the material in the middle and the brand underneath, exactly as the sheet heads them. A column can also hold text, such as the broker's name.
+The **Quotation manager** is the purchase desk's table of supplier rates, and it works like a spreadsheet. Each **row** is one quotation — the date and the party (supplier) who quoted — and each **column** is something quoted for: the pack on top, the material in the middle and the brand underneath, exactly as the desk heads them. A column can also hold text, such as the broker's name.
 
-Everything on it can be changed in place: the cells, the date and party of a row, and the columns themselves.
+Everything on it can be changed in place: the cells, the date and party of a row, and the columns themselves. The sidebar starts shut on this screen to give the table room; the button beside the app switcher opens it.
 
-<Wireframe url="/erp/quotation-manager" nav={["Dashboard", "#Purchase", "Requirements", "Purchase orders", "Purchases", "Lot testing", "Quotation manager"]} active="Quotation manager" caption="The Quotation manager">
+<Wireframe url="/erp/quotation-manager" nav={["Dashboard", "#Purchase", "Requirements", "Purchase orders", "Goods in", "Lot testing", "Bills", "#Tools", "Quotation manager", "Drum labels"]} active="Quotation manager" caption="The Quotation manager">
   <WfBar>
-    <WfTitle sub="Supplier rates by date, party and material, kept like the desk's sheet: every row, column and cell editable.">Quotation manager</WfTitle>
-    <WfSpacer /><WfButton>Export CSV</WfButton><WfButton>Add column</WfButton><WfButton primary>Add row</WfButton><Hotspot n={1} />
+    <WfTitle>Quotation manager</WfTitle>
+    <WfSpacer /><WfText muted>All changes saved</WfText><WfText muted>Last 6 months</WfText><WfButton>Export CSV</WfButton><WfButton primary>Purchase it</WfButton><Hotspot n={1} />
   </WfBar>
-  <WfBar><WfInput placeholder="Search party" /><WfText muted>Last 6 months</WfText><WfSpacer /><WfText muted>All changes saved</WfText><WfButton>Undo</WfButton></WfBar>
-  <WfBar><WfText muted>Mark selected</WfText><WfPill>Ready to buy</WfPill><WfButton primary>Purchase it</WfButton><WfPill tone="danger">PO / order cancelled</WfPill><WfPill tone="info">Material picked up by transporter</WfPill><WfText muted>Clear mark</WfText><Hotspot n={2} /></WfBar>
+  <WfBar><WfButton>Undo</WfButton><WfButton>Redo</WfButton><WfPill>Mark</WfPill><WfText muted>Filter</WfText><WfText muted>Sort</WfText><WfText muted>Freeze</WfText><WfText>+ Row</WfText><WfText>+ Material</WfText><Hotspot n={2} /></WfBar>
+  <WfBar><WfText muted>Editing</WfText><WfText>Material A · Supplier A · 1 Oct · per Litre · ₹134.00</WfText><Hotspot n={3} /></WfBar>
   <WfTable
-    columns={["Date", "Party", "Material A", "Material B", "Broker name"]}
+    columns={["Date", "Party", "Material A (REQ-13 waiting)", "Material B", "Broker name"]}
     rows={[
-      ["3-Oct-2026", <b key="b">Supplier B</b>, "", "48.5", "Self"],
-      ["1-Oct-2026", <b key="a">Supplier A</b>, "134", "140", "Self"],
-      ["Latest rate", "", "134", "48.5", ""],
+      ["3 Oct", <b key="b">Supplier B</b>, "—", "₹48.50", "Self"],
+      ["1 Oct", <b key="a">Supplier A</b>, "₹134.00", "₹140.00", "Self"],
     ]}
   />
 </Wireframe>
 
 <Hotspots items={[
-  <span key="1"><b>Rows and columns.</b> Add row adds a quotation dated today; Add column adds something to quote for. Hover a column heading for move left, edit, insert after and move right.</span>,
-  <span key="2"><b>Marks.</b> Select cells, then press a mark. Ready to buy (grey) is shown only to a manager or administrator; Purchase it turns a grey rate yellow. A mark on the date or party marks the whole quotation.</span>,
+  <span key="1"><b>Purchase it</b> buys the selected rate. The period sits beside it; the side panel on the right reads the selected rate.</span>,
+  <span key="2"><b>The toolbar.</b> Undo and Redo, Mark (the four colours), Filter (party and dates), Sort, Freeze, + Row and + Material.</span>,
+  <span key="3"><b>The editing bar</b> says in words which material, party, date and rate the selected cell is.</span>,
 ]} />
 
-## Working the grid
+## Working the table
 
 - **Click a cell and type** to replace it; **double-click** or press **Enter** to change what is there.
 - **Enter** saves and moves down, **Tab** saves and moves right, **Esc** cancels.
-- **Arrow keys** walk the grid; hold **Shift** (or drag) to select a block.
+- **Arrow keys** walk the table; hold **Shift** (or drag) to select a block.
 - **Delete** clears the selected cells.
-- **Ctrl+C** copies the selection and **Ctrl+V** pastes a block copied from Excel or Google Sheets, starting at the selected cell. Rows past the bottom are added. A value that is not a number in a rate column is left out and the sheet says which.
-- **Ctrl+Z** (or **Undo**) takes back the last change.
+- **Ctrl+C** copies the selection and **Ctrl+V** pastes a block copied from Excel or Google Sheets, starting at the selected cell. Rows past the bottom are added. A value that is not a number in a rate column is left out and the screen says which.
+- **Ctrl+Z** (or **Undo**) takes back the last change; **Ctrl+Y** (or **Redo**) puts it back.
 
-Every change is saved as you make it. The words beside Undo say whether everything is saved.
+Every change is saved as you make it. The words beside the period say whether everything is saved.
+
+The **editing bar** above the table says what the selected cell is — the material, the party, the date, what the rate is per (the raw material's own unit) and the rate. The **footer** adds up the selection: how many rates, the lowest and the average.
+
+**Sort** shows the rows latest first (as they are kept), oldest first, by party, or cheapest first in one column. **Freeze** keeps nothing, the date and party, or everything up to the selected column in view while you scroll sideways. Both are only how you look at the table.
 
 ## Choosing a party or a broker
 
@@ -41,26 +45,32 @@ The **Party** column, and any text column such as **Broker name**, open a menu r
 
 ## Buying a rate
 
-1. **Ready to buy (grey).** A manager or administrator selects the rate to buy (one cell or a block) and presses **Ready to buy**. The cell turns grey: the team may now buy it.
-2. **Purchase it.** Anybody on the team selects a grey cell and presses **Purchase it**, or right-clicks it. They enter the **number of drums**, pick the **requirement** it is for (or *None waiting* to raise one with the purchase), check the **quantity**, the godown it is **delivered to** and the **delivery date**, and press **Buy and make the PO**. Where the party already has an open PO from here, the **PO number** box offers **Add to PO-…** beside **New PO number**, the one made today chosen — several materials bought from one party together are one PO, a line each. Otherwise MahekOne makes the **PO number** for them (PO-1243, the next number in the ERP's PO series) and, with it, the **purchase order itself**, under Purchase → Purchase orders: sent, at this rate, ready for goods to be received against it. Nobody types the number and nobody has to link it.
-3. **Bought (yellow).** The cell turns yellow with a small mark in its corner, like a note in Excel. **Hover** over it to read the purchase: the PO number, drums, rate, material, party, quote date, the sheet's row number, and who bought it and when. **Click** it to pin the note, then **Edit** or **Undo purchase**, which puts it back to grey.
+1. **Ready to buy (green edge).** A manager or administrator selects the rate to buy (one cell or a block) and chooses **Mark → Ready to buy**. The cell gets a green edge: the team may now buy it.
+2. **Purchase it.** Anybody on the team selects a green-edged cell and presses **Purchase it**, right-clicks it, or presses **Purchase it at ₹…** on a requirement in the side panel. The dialog shows the rate (and whether it is the cheapest party's), the quote date and the pack. They pick the **requirement** it is for (the one waiting is picked for them, or *None* to raise one with the purchase), enter the **number of drums** (where the pack's net is in the material's unit the dialog says what the drums come to), check the **quantity**, the godown it is **delivered to** and the **delivery date**, read what the **PO comes to** with GST, and press **Purchase it**. Where the party already has an open PO from here, the **PO number** box offers **Add to PO-…** beside **New PO number**, the one made today chosen — several materials bought from one party together are one PO, a line each. Otherwise MahekOne makes the **PO number** for them (PO-1243, the next number in the ERP's PO series) and, with it, the **purchase order itself**, under Purchase → Purchase orders: sent, at this rate, ready for goods to be received against it. Nobody types the number and nobody has to link it.
+3. **Bought (orange edge).** The cell gets an orange edge with a small mark in its corner, like a note in Excel. **Hover** over it to read the purchase: the PO number, drums, rate, material, party, quote date, and who bought it and when. **Click** it to pin the note, then **Edit** or **Undo purchase**, which puts it back to Ready to buy.
 
-Only a manager or an administrator marks a rate Ready to buy or takes the mark off. A rate that isn't grey can't be bought.
+Only a manager or an administrator marks a rate Ready to buy or takes the mark off. A rate that isn't Ready to buy can't be bought, except by a manager.
 
-**Right-click** any cell for everything it offers: edit, Ready to buy, Purchase it, the PO note, cancelled, picked up, clear and copy.
+**Right-click** any cell for everything it offers, in three groups: what to look at (the PO note, compare this material in the side panel, copy), what to change (Purchase it, edit, the marks, add or duplicate a row), and what to take back (undo purchase, delete the row) in red at the end. Only what your access lets you do is listed: changing anything needs **Edit** on the Quotation manager, and taking something back needs **Delete**.
 
-**PO / order cancelled** and **Material picked up by transporter** can be put on by anybody, except over a grey or yellow rate, which only a manager changes. Marking a bought rate cancelled takes its line off the purchase order, as Undo purchase does; marking it picked up keeps the PO.
+## The side panel
+
+The panel beside the table reads the selected rate: the material, the party and the date, the rate in large type with **cheapest this month** where it is, every party's **latest** rate for the same material (cheapest first — click one to go to it), this party's last few quotes as small bars, and every **requirement waiting** for the material with **Purchase it at ₹…**, which opens Purchase it with that requirement picked. The panel button at the right of the toolbar hides it.
+
+A column heading says **REQ-n waiting** when a requirement is waiting for the raw material the column is linked to.
+
+**PO / order cancelled** (red edge) and **Material picked up by transporter** (blue edge) can be put on by anybody, except over a Ready to buy or bought rate, which only a manager changes. Marking a bought rate cancelled takes its line off the purchase order, as Undo purchase does; marking it picked up keeps the PO.
 
 ## Rows
 
 Rows are listed **latest first**: the newest date on top, and within a date the row entered last first.
 
-Use the **⋯** beside a row number to add a row with the same date, duplicate the row, or delete it. A date can be typed as `14-Oct-2026`, `14/10/2026` or `2026-10-14`. The party offers the purchase parties as you type, and a name that matches one exactly is linked to it.
+Use the **⋯** beside a row number, or right-click any cell of the row, to add a row with the same date, duplicate the row, or delete it. A date can be typed as `14-Oct-2026`, `14/10/2026` or `2026-10-14`. The party offers the purchase parties as you type, and a name that matches one exactly is linked to it.
 
 ## Columns
 
-Double-click a heading, or use its **✎**, to change its three lines, whether it holds rates or text, and (optionally) which raw material it is for. **Remove column** hides it; its rates are kept, and **Removed columns** brings it back.
+**+ Material** adds a column: the raw material it is for (what Purchase it puts on the PO), its three heading lines, whether it holds rates or text, and where it goes — with the heading drawn as it will look. Double-click a heading, right-click it, or use its **⋯** to edit it, insert another after it, move it left or right, freeze up to it, sort by it, or remove it. **Remove column** hides it; its rates are kept, and **Removed columns** (in the footer) brings it back.
 
-## The two rows at the foot
+## The cheapest rate
 
-**Latest rate** is the newest rate in each column for the rows shown, and **Lowest rate** the lowest. Cancelled rates count for neither. The lowest rate in a column is also drawn in green where it sits.
+The cheapest rate in each column, among the rows shown, is drawn in **green**. Cancelled rates do not count, and a column with a single rate has no cheapest.

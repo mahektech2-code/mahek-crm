@@ -7,12 +7,7 @@ import { requireCapability } from "../access-control";
 import { getConfig } from "../config/store";
 import { effectiveDueDate } from "../engines/escalation";
 import { billCreditDaysSql } from "../bill-terms";
-import {
-  recomputeBillPaid,
-  recomputeBillStatuses,
-  recomputeFollowUpState,
-  recomputeOutstanding,
-} from "../recompute";
+import { applyToLedger } from "./receipt-service";
 import { err, ok, type Result } from "../result";
 
 /* ---------------------------------------------------------------------------
@@ -101,6 +96,9 @@ export async function onAccountHolders(): Promise<OnAccountHolder[]> {
     oldestOpenBalance: Number(r.bill_balance ?? 0),
   }));
 }
+
+/** Thrown inside the apply's transaction to roll it back when a line moved. */
+class OnAccountRaced extends Error {}
 
 /**
  * Point a customer's credit at their oldest open bill.
@@ -192,21 +190,42 @@ export async function applyOnAccount(
     config,
   );
 
-  await db.transaction(async (tx) => {
+  /* ONE APPLY PER CUSTOMER AT A TIME, and every line moved only if it is
+     still the on-account line that was read. Two clicks used to read the same
+     ₹10,000 line, each point ₹6,000 of it at the bill and each insert a
+     ₹4,000 remainder: ₹14,000 of lines for ₹10,000 received. The bill's
+     balance is re-read from its lines under the lock too, because its cached
+     paid figure is only rebuilt after the first apply commits. */
+  const raced = await db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"ledger:" + customerId}))`);
+    // And the bill's row, the lock a confirm and a direct entry take on it.
+    await tx.execute(sql`select id from bills where id = ${bill.id} for update`);
+    const [live] = (await tx.execute(sql`
+      select (b.amount - coalesce((
+        select sum(p.amount) from payments p
+          join payment_receipts r on r.id = p.receipt_id
+         where p.bill_id = b.id and r.status = 'confirmed'), 0))::bigint as balance
+        from bills b where b.id = ${bill.id}`)) as unknown as { balance: number }[];
+    if (!live || Number(live.balance) !== balance) return true;
+
     let left = applied;
     for (const line of lines) {
       if (left <= 0) break;
       const value = Number(line.amount);
+      const still = and(eq(payments.id, line.id), isNull(payments.billId), eq(payments.amount, value));
       if (value <= left) {
         // The whole line goes against the bill.
-        await tx.update(payments).set({ billId: bill.id }).where(eq(payments.id, line.id));
+        const moved = await tx.update(payments).set({ billId: bill.id }).where(still).returning({ id: payments.id });
+        if (moved.length === 0) throw new OnAccountRaced();
         left -= value;
       } else {
         // Part of it does. The rest stays on account as its own line.
-        await tx
+        const moved = await tx
           .update(payments)
           .set({ amount: left, billId: bill.id })
-          .where(eq(payments.id, line.id));
+          .where(still)
+          .returning({ id: payments.id });
+        if (moved.length === 0) throw new OnAccountRaced();
         await tx.insert(payments).values({
           id: id("pay"),
           // The remainder belongs to the same arrival of money, so it keeps
@@ -242,12 +261,18 @@ export async function applyOnAccount(
         customerId,
       } as never,
     });
+    return false;
+  }).catch((e) => {
+    if (e instanceof OnAccountRaced) return true;
+    throw e;
   });
+  if (raced) {
+    return err(`${customer.name}'s account changed a moment ago. Refresh and apply again.`, "conflict");
+  }
 
-  await recomputeBillPaid(customerId);
-  await recomputeBillStatuses();
-  await recomputeOutstanding(customerId);
-  await recomputeFollowUpState(customerId);
+  // The receipt path's rebuild, which also marks the bill `stated`: money
+  // pointed at a bill in the app is somebody speaking for it.
+  await applyToLedger(customerId);
 
   return ok(
     { applied, billNo: bill.billNo },

@@ -22,6 +22,7 @@ import type { RequestItemView, RequestView } from "@/lib/website-cms/review-serv
 import { STATUS_HELP, STATUS_LABEL, STATUS_TONE, approvalIsLive, isReturned, type RequestStatus } from "@/lib/website-cms/review-status";
 import { MediaThumb } from "./media-picker";
 import { reportPublish, reportResult } from "./report";
+import { APP_TIMEZONE } from "@/lib/business-date";
 
 /* ---------------------------------------------------------------------------
  * THE REVIEW SCREENS' SHARED PARTS — a request's status, what changed in it, the
@@ -36,7 +37,7 @@ import { reportPublish, reportResult } from "./report";
  * and take an approval back. There is no other publish button on these screens.
  * ------------------------------------------------------------------------- */
 
-export const dateTime = (iso: string) => new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+export const dateTime = (iso: string) => new Date(iso).toLocaleString("en-IN", { timeZone: APP_TIMEZONE, day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 
 export function RequestStatusBadge({ status }: { status: RequestStatus }) {
   return <Badge tone={STATUS_TONE[status]}>{STATUS_LABEL[status]}</Badge>;

@@ -1,5 +1,6 @@
 "use client";
 
+import { calendarDate } from "@/lib/business-date";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { NavLink } from "@/components/shell/nav-link";
@@ -475,7 +476,7 @@ function BillDialog({
         <DialogTitle>{bill.name}</DialogTitle>
       </DialogHeader>
       <ol aria-label="Where this bill stands" className="grid grid-cols-3 gap-3 px-6 pt-1 pb-3">
-        <Milestone tone="done" label="✓ Entered" sub={`${fd(bill.createdAt.slice(0, 10))} · ${bill.createdBy ?? "—"}`} />
+        <Milestone tone="done" label="✓ Entered" sub={`${fd(calendarDate(new Date(bill.createdAt)))} · ${bill.createdBy ?? "—"}`} />
         <Milestone tone={stale ? "bad" : "done"} label={stale ? "Split · out of date" : "✓ Split"} sub={stale ? "A dispatch changed since" : `${plural(bill.shares.length, "order line")} · ${nf(bill.litres)} L`} />
         <Milestone
           tone={bill.status === "paid" ? "done" : "todo"}
@@ -560,7 +561,7 @@ function BillDialog({
         {tab === "bill" ? (
           <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
             <Fact label="Bill / LR number" value={bill.lrNo} />
-            <Fact label="Entered" value={`${bill.createdBy ?? "—"} · ${fd(bill.createdAt.slice(0, 10))}`} />
+            <Fact label="Entered" value={`${bill.createdBy ?? "—"} · ${fd(calendarDate(new Date(bill.createdAt)))}`} />
             <Fact label="Remarks" value={bill.remarks ?? "—"} />
             <Fact label="Payment status" value={bill.status === "paid" ? "Paid" : "To pay"} />
             {bill.status === "paid" ? (

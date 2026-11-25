@@ -166,7 +166,12 @@ export function visibleCols(
   const shown = cols.filter((c) => !c.pw || has(c.pw));
   const withheld = cols.filter((c) => c.pw && !has(c.pw));
   return {
-    cols: shown.map((c) => ({ k: c.k, l: c.l, t: c.t, u: c.u, w: c.w, ...(c.whole ? { whole: true } : {}) })),
+    /* Everything a column says about how it is drawn travels; only the power it needs stays on the server. */
+    cols: shown.map((c) => {
+      const out: ListSpec["cols"][number] & { pw?: string } = { ...c };
+      delete out.pw;
+      return out;
+    }),
     hidden: withheld.map((c) => ({ l: c.l, power: c.pw! })),
     hiddenKeys: withheld.map((c) => c.k),
   };

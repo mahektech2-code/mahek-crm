@@ -41,13 +41,15 @@ const r3 = (v: number) => Math.round(v * 1000) / 1000;
  * Reads the prompt's values against the lot's stock now. A removal may take
  * the lot to zero and never below it; an addition has no ceiling.
  */
-export function readAdjust(values: Record<string, string | undefined>, stock: number): AdjustRead {
+export function readAdjust(values: Record<string, string | undefined>, stock: number, whole = false): AdjustRead {
   const dirWord = (values.dir ?? "").trim();
   const dir = dirWord === "Add" ? "add" : dirWord === "Remove" ? "remove" : null;
   if (!dir) return { ok: false, field: "dir", error: "Choose Add or Remove" };
   const raw = (values.qty ?? "").replace(/,/g, "").trim();
   const qty = raw === "" ? NaN : Number(raw);
   if (!Number.isFinite(qty) || qty <= 0) return { ok: false, field: "qty", error: "Type a quantity above zero" };
+  /* Cans, boxes and pieces are counted, never weighed: a fraction of one is a ledger no box-id register can match. */
+  if (whole && !Number.isInteger(qty)) return { ok: false, field: "qty", error: "Type a whole number — this stock is counted in units" };
   if (dir === "remove" && r3(qty) > r3(stock) + 1e-9)
     return { ok: false, field: "qty", error: `Only ${r3(Math.max(0, stock))} is in this lot — stock is never taken below zero` };
   const reason = ADJUST_REASONS.find((r) => r.label === (values.reason ?? "").trim() || r.v === (values.reason ?? "").trim());

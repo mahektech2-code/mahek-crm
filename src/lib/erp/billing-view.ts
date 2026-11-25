@@ -174,6 +174,12 @@ export function billingSheets(all: BillingLine[], sight: BillingSight): BillingS
       });
 
       const totals: BillingField[] = [];
+      /* Loose cans only: a boxed line is counted in boxes, so its cans are not added here too. */
+      const canTotal = group.reduce((n, f) => n + (f.l.boxes == null ? f.l.qtyCans : 0), 0);
+      totals.push({ l: "Total can qty", v: { show: nf(canTotal), copy: String(canTotal) } });
+      /* Boxes only exist on a boxed SKU; a loose line contributes none, so it reads "—" on its row and adds nothing here. */
+      const boxTotal = group.reduce((n, f) => n + (f.l.boxes ?? 0), 0);
+      totals.push({ l: "Total box qty", v: { show: nf(boxTotal), copy: String(boxTotal) } });
       const weighed = group.filter((f) => f.l.weightKg != null);
       /* Summed in grams: kilograms to three places do not add exactly as floats. */
       if (weighed.length) totals.push({ l: "Total weight", v: kg(weighed.reduce((n, f) => n + Math.round(f.l.weightKg! * 1000), 0) / 1000) });

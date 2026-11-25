@@ -9,6 +9,7 @@ import { isPlatformAdmin } from "@/lib/access-control";
 import { canTriageFeedback } from "@/lib/services/feedback-access";
 import { FIX_NEEDS, type FixNeed } from "@/lib/feedback-fix";
 import {
+  autoRequestAiFix,
   createIssue,
   diagnoseFeedback,
   getFix,
@@ -25,7 +26,9 @@ import { err as fail, ok, type Result } from "@/lib/result";
  * sending it to GitHub are triage's — the same people who answer it. Asking
  * Claude to write the fix is a PLATFORM ADMINISTRATOR's alone, checked here
  * and not only by hiding the button: it spends money and opens a pull request
- * on the codebase.
+ * on the codebase. With `feedbackFix.autoFix` on (the default) nobody has to
+ * press it: a report read as a code change is sent to Claude by itself, and
+ * the button is only for a report the AI was unsure of.
  * ------------------------------------------------------------------------- */
 
 async function triager() {
@@ -74,6 +77,7 @@ export async function chooseWhatItNeeds(id: string, need: FixNeed): Promise<Resu
     return fail(`It is already GitHub issue #${fix.issueNumber}. Close the issue there first.`);
   }
   await setNeed(root, need, user.id);
+  if (need === "code_change") await autoRequestAiFix(root);
   refresh();
   return ok(await getFix(root), "Saved.");
 }

@@ -441,7 +441,7 @@ export function DesignEditor({ draftId, initial, occasions, approved, owner, can
                 </select>
               </label>
             )}
-            <Button variant="ghost" size="sm" className="mt-2" disabled={locked} onClick={() => remove(field.key)} data-testid="remove-field">
+            <Button variant="ghost" size="sm" className="mt-2" disabled={locked} title={approved ? "A published design never changes." : !owner ? "Only whoever uploaded this draft can change it." : undefined} onClick={() => remove(field.key)} data-testid="remove-field">
               Remove this field
             </Button>
           </Card>
@@ -470,11 +470,11 @@ export function DesignEditor({ draftId, initial, occasions, approved, owner, can
           ) : null}
           <div className="flex flex-wrap gap-2">
             {owner && !approved ? (
-              <Button onClick={save} disabled={locked || !dirty}>
+              <Button onClick={save} disabled={locked || !dirty} title={!locked && !dirty ? "Nothing has changed since it was saved." : undefined}>
                 {busy === "save" ? "Saving…" : "Save draft"}
               </Button>
             ) : null}
-            <Button onClick={runPreview} disabled={busy !== null || draft.fields.length === 0}>
+            <Button onClick={runPreview} disabled={busy !== null || draft.fields.length === 0} title={draft.fields.length === 0 ? "Add a field to preview." : undefined}>
               {busy === "preview" ? "Drawing…" : "Preview"}
             </Button>
             {showPreview ? (
@@ -483,12 +483,12 @@ export function DesignEditor({ draftId, initial, occasions, approved, owner, can
               </Button>
             ) : null}
             {canPublish && owner && !approved ? (
-              <Button variant="primary" onClick={publish} disabled={busy !== null || blocking || (!preview && local.errors.length > 0)} data-testid="publish">
+              <Button variant="primary" onClick={publish} disabled={busy !== null || blocking || (!preview && local.errors.length > 0)} title={blocking || (!preview && local.errors.length > 0) ? "Fix the problems listed above first." : undefined} data-testid="publish">
                 {busy === "publish" ? "Publishing…" : "Publish to the library"}
               </Button>
             ) : null}
             {canApprove && !approved && !(canPublish && owner) ? (
-              <Button variant="primary" onClick={approve} disabled={busy !== null || blocking || (!preview && local.errors.length > 0)}>
+              <Button variant="primary" onClick={approve} disabled={busy !== null || blocking || (!preview && local.errors.length > 0)} title={blocking || (!preview && local.errors.length > 0) ? "Fix the problems listed above first." : undefined}>
                 {busy === "approve" ? "Approving…" : "Approve and publish"}
               </Button>
             ) : null}
@@ -508,7 +508,7 @@ export function DesignEditor({ draftId, initial, occasions, approved, owner, can
                 Send it back with a note
                 <textarea className={`${inputClass} h-auto py-2`} rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="The phone number overlaps the logo." />
               </label>
-              <Button size="sm" className="mt-2" onClick={sendBack} disabled={busy !== null || !note.trim()}>
+              <Button size="sm" className="mt-2" onClick={sendBack} disabled={busy !== null || !note.trim()} title={!note.trim() ? "Write the note first." : undefined}>
                 {busy === "back" ? "Sending…" : "Send back"}
               </Button>
             </div>

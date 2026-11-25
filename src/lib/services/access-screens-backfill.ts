@@ -5,6 +5,7 @@ import { db } from "@/db";
 import { appAccess, appModuleAccess, appScreenAccess, auditLog, erpUserPowers, hrmsUserPowers, taskUserPowers, users } from "@/db/schema";
 import type { AppId } from "@/lib/apps";
 import type { Role } from "@/lib/role-levels";
+import { isTabKey, pageOfTab } from "@/lib/access/tab-grants";
 import { compareConversion, convertGrant, type ConversionDifference, type GrantToday } from "@/lib/access/convert-grant";
 
 /* ---------------------------------------------------------------------------
@@ -82,8 +83,14 @@ export async function accessScreensBackfill(opts: { dryRun?: boolean } = {}): Pr
     if (opts.dryRun) continue;
 
     await db.transaction(async (tx) => {
+      /* TAB NARROWINGS ARE KEPT. They live only in these rows (no level or
+         module says them), so reconverting from the older tables would
+         otherwise widen every narrowed page back to all its tabs. */
+      const tabs = (await tx.select({ screen: appScreenAccess.screen }).from(appScreenAccess).where(and(eq(appScreenAccess.userId, g.userId), eq(appScreenAccess.app, today.app))))
+        .map((r) => r.screen)
+        .filter((k) => isTabKey(k) && after.screens.has(pageOfTab(k)!));
       await tx.delete(appScreenAccess).where(and(eq(appScreenAccess.userId, g.userId), eq(appScreenAccess.app, today.app)));
-      const rows = [...after.screens].map(([screen, t]) => ({
+      const rows = [...after.screens, ...tabs.map((k) => [k, { edit: false, delete: false, autoEdit: false }] as const)].map(([screen, t]) => ({
         id: `scr_${randomUUID().slice(0, 16)}`,
         userId: g.userId,
         app: today.app,

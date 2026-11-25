@@ -168,6 +168,7 @@ export const AUDIT_GROUPS = [
     prefixes: [
       "config.",
       "secret.",
+      "read_trial.",
       "catalogue.",
       "expense_policy.",
       "whatsapp.service_",
@@ -933,6 +934,7 @@ const DESCRIBE: Record<string, Describer> = {
   }),
   "mbos.journey.period": (c) => ({ says: ["planned the journey of", c.user(c.e.entityId, str(c.a.salesman) ?? "a salesman"), journeyDates(c)], changes: false }),
   "mbos.salesman.territories": (c) => ["changed the area", c.user(c.e.entityId, "a salesman"), "works"],
+  "mbos.salesman.geo_territories": (c) => ["changed the official areas", c.user(c.e.entityId, "a salesman"), "works in"],
   "mbos.manager.territories": (c) => ["changed the regions", c.user(c.e.entityId, "a manager"), "manages"],
   "mbos.device.release": (c) => ({ says: ["released the handset", strong(str(c.b.model) ?? ""), "so it can be signed into again"], changes: false }),
   "mbos.lead.reassign": (c) => ({ says: ["moved the lead", c.subject(), "from", c.user(c.b.assignedToUserId), "to", c.user(c.a.assignedToUserId)], changes: false }),
@@ -1110,6 +1112,7 @@ const DESCRIBE: Record<string, Describer> = {
   "expense_policy.set.assign": () => ({ says: ["changed which expense policy salesmen are on"], changes: false }),
   "job.run": (c) => ({ says: ["ran the job", strong(words(str(c.a.job) ?? str(c.e.entityId) ?? ""))], changes: false }),
   "attachment.restore": () => ({ says: ["restored a removed file from the recycle bin"], changes: false }),
+  "read_trial.expense_bills_started": () => ({ says: ["started the reading trial on the latest expense bills"], changes: false }),
   "job.rebuild": (c) => ({ says: ["rebuilt", strong(words(str(c.e.entityId) ?? "a derived figure"))], changes: false }),
   "job.dry_run": (c) => ({ says: ["tried the job", strong(words(str(c.a.job) ?? str(c.e.entityId) ?? "")), "without saving anything"], changes: false }),
 

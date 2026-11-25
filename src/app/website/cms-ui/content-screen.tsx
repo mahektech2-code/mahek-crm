@@ -32,6 +32,7 @@ import { reportPublish, reportResult, StateBadge } from "./report";
 import { isHeldByRequest } from "@/lib/website-cms/review-status";
 import { LockedFields } from "./locked-fields";
 import { ReviewBadge, ReviewLockNotice, ReviewReturnNotice, SubmitDialog } from "./review-ui";
+import { APP_TIMEZONE } from "@/lib/business-date";
 
 /* ---------------------------------------------------------------------------
  * ONE SCREEN FOR EVERY LIST OF WEBSITE CONTENT — products, industries, gallery,
@@ -65,7 +66,7 @@ const CONFIRM_LABEL: Record<NonNullable<Confirm>["action"], string> = {
   discard: "Discard changes",
 };
 
-const plainDate = (iso: string) => new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+const plainDate = (iso: string) => new Date(iso).toLocaleDateString("en-IN", { timeZone: APP_TIMEZONE, day: "numeric", month: "short", year: "numeric" });
 
 const errorMap = (issues: { field: string; message: string }[] | undefined): Errors =>
   firstPerPath((issues ?? []).map((i) => ({ path: i.field, message: i.message })));
@@ -457,7 +458,7 @@ export function ItemEditor({
           {dirty ? "Save and submit for verification" : "Submit for Verification"}
         </Button>
       ) : null}
-      <Button variant="primary" onClick={onSave} disabled={busy !== null || locked || (!isNew && !dirty)}>
+      <Button variant="primary" onClick={onSave} disabled={busy !== null || locked || (!isNew && !dirty)} title={locked ? "Held by a review request — see the notice above." : !isNew && !dirty ? "Nothing has changed since it was saved." : undefined}>
         {busy === "save" ? "Saving…" : isNew ? `Create ${ui.noun}` : "Save"}
       </Button>
     </>

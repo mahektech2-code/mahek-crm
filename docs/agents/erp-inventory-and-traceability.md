@@ -280,6 +280,23 @@ reads each through the function its own list reads — `sfgLots`,
 `purchaseFigures`, `orderLines` — so a drum and the screen it was printed from
 cannot disagree.
 
+**EVERY DRUM-LABEL PRINT IS A ROW, REPRINTS INCLUDED (0373, Nov 2026).**
+`erp_label_prints` (purchase, copies, reprint, printed by, printed at) is
+written by `recordLabelPrints` (`screens/purchase.ts`) through the server
+action `erpRecordLabelPrints` (`lib/actions/erp-trace.ts`), which
+`LabelPrinter` calls from the same `mark()` the box labels use — after the
+job went to the printer, the print file was saved or the print dialog was
+shown, never on merely opening the page. One row a lot a print; `reprint` is
+whether the lot had a row before. The page knows its lots: `?purchase=<id>`
+(one lot, `&copies=`) or `?purchases=a,b,c` (several, each one a drum —
+what Drum labels' "Print n labels" opens). Lots that are not purchases are
+skipped, a preview records nothing, and recording needs `barcode`, `register`
+or `stock` like the page itself. Drum labels reads it for **To print** (no
+row) and **Printed** (last print, by whom, how many — `labelPrintsOf`); lots
+bought before the log have no row and read as To print, which is why that
+page keeps its period picker. Drum labels lists every godown the person is
+ASSIGNED to (`ctx.assignedGodowns`), not only the working godown.
+
 **A DISPATCH LABEL IS PER PIECE, NOT PER SCANNED BOX, and that is a
 reversal.** It was a sticker for each box already scanned onto the order,
 carrying the box's QR. It is now one label for every `labelCount` of every line

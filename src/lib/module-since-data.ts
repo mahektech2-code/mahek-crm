@@ -240,6 +240,9 @@ export const MODULE_SINCE: Readonly<Record<string, string>> = {
   "erp.requisitions": "2026-09-27",
   "erp.purchaseOrders": "2026-10-07",
   "erp.register": "2026-09-27",
+  /* Tabs of Purchases (erp.register) from that day; their own pages since Nov 2026, every grant carried over by 0372. */
+  "erp.inward": "2026-09-27",
+  "erp.barcode": "2026-09-27",
   "erp.testing": "2026-09-27",
   "erp.quoteManager": "2026-10-16",
   "erp.sfgBatches": "2026-09-27",

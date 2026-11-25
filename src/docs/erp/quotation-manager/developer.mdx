@@ -1,18 +1,22 @@
-The Quotation manager is its own route, `app/erp/quotation-manager`, not a generic list screen: it is a grid in which rows, columns and cells are all edited in place.
+The Quotation manager is its own route, `app/erp/quotation-manager`, not a generic list screen: it is a table you type into, like a spreadsheet, in which rows, columns and cells are all edited in place, with a side panel and a footer reading the selection.
 
 ## Map of the code
 
 | Layer | File | What lives there |
 |---|---|---|
 | Rules (pure) | `src/lib/erp/engines/quotes.ts` | `cleanCell`, `cleanRate`, `parseQuoteDate`, `parseTsv`, `columnStats`, `QUOTE_STATUSES`, `ROW_STATUSES`, `quoteStatusRefusal` (who may mark, buy and unbuy) |
-| Grid state (pure) | `src/lib/erp/engines/quote-sheet.ts` | `applySheetOps`, `invertSheetOps` — optimistic display, roll-back and Undo |
+| Grid state (pure) | `src/lib/erp/engines/quote-sheet.ts` | `applySheetOps`, `invertSheetOps` — optimistic display, roll-back, Undo and Redo |
+| What the table says about a rate (pure) | `src/lib/erp/engines/quote-panel.ts` | `cheapestByColumn` (the green), `cheapestInMonth`, `latestByParty`, `partyHistory`, `waitingByColumn` / `waitingBadge` ("REQ-n waiting"), `selectionFigures` (footer), `packNet` / `packsFor` (drums from the pack line), `sortRows` |
 | Reads and the write | `src/lib/erp/quotes.ts` | `quoteSheet`, `applyQuoteOps`, `quoteManagerOf` (ERP manager or admin level) |
-| The purchase order | `src/lib/erp/screens/requirement-po.ts` | `purchaseChoices` (what the Purchase it dialog offers), `joinablePoNumber` (Add to PO-…), `orderFromQuote` (writes the PO in the sheet's transaction), `syncQuotePoDrums`, `withdrawQuotePo` (undo or cancel) |
-| Action | `src/lib/actions/erp-quotes.ts` | `erpQuoteApply` — `requireErpWrite("quoteManager")` |
-| Page | `src/app/erp/quotation-manager/page.tsx` | the period and search from the URL |
-| Grid | `src/app/erp/quotation-manager/grid.tsx` | selection, editing, paste, marks, column dialog, `PurchaseDialog`, the PO note |
+| The purchase order | `src/lib/erp/screens/requirement-po.ts` | `purchaseChoices` (what the Purchase it dialog offers — and the requirements behind the headings' badges, with `reqNo`, `department` and `gstPercent`), `joinablePoNumber` (Add to PO-…), `orderFromQuote` (writes the PO in the sheet's transaction), `syncQuotePoDrums`, `withdrawQuotePo` (undo or cancel) |
+| Action | `src/lib/actions/erp-quotes.ts` | `erpQuoteApply` — `requireErpWrite("quoteManager")`, then `quoteOpTick` per op (Edit, or Delete for a take-back) |
+| Page | `src/app/erp/quotation-manager/page.tsx` | the period and search from the URL, the person's Edit / Delete ticks |
+| Table | `src/app/erp/quotation-manager/grid.tsx` | toolbar, editing bar, selection, editing, paste, marks, sort and freeze, footer, the right-click menus (data; `runMenu` acts) |
+| Pieces | `src/app/erp/quotation-manager/side-panel.tsx`, `purchase-dialog.tsx`, `column-dialog.tsx`, `menus.tsx`, `words.ts` | the side panel; Purchase it (total from `poTotals`); add / edit a material with a live heading; the context menu, toolbar drop-downs, option picker and PO note; how dates and rates are written |
+| Sidebar | `src/app/erp/_ui/erp-shell.tsx` | `WIDE_SCREENS` — the sidebar starts shut on this screen |
 | Tests | `src/lib/erp/engines/quotes.test.ts` | parsing, stats, latest first, every op undone by its inverse, buying only a Ready to buy rate with drums |
-| Tests | `src/lib/erp/erp-purchase.test.ts` — "Purchase it on the Quotation manager writes the purchase order" | the PO is Sent with a requirement picked or raised, a second material joins the same PO, undo takes one line back, a party that is not a supplier is refused |
+| Tests | `src/lib/erp/engines/quote-panel.test.ts` | cheapest leaves cancelled rates out, latest per party, party history, waiting by column, selection figures, the pack's net, sorting |
+| Tests | `src/lib/erp/erp-purchase.test.ts` — "Purchase it on the Quotation manager writes the purchase order" | the PO is Sent with a requirement picked or raised, a second material joins the same PO, undo takes one line back, a party that is not a supplier is refused; "the table reads what is waiting" — `purchaseChoices` numbers each requirement, the badges follow the column's raw material and the GST is the PO's |
 
 ## Tables
 
@@ -36,4 +40,4 @@ Ids for new rows and columns are minted on the screen (`newQuoteId`) so a paste 
 
 <Code file="src/lib/erp/engines/quote-sheet.ts" symbol="invertSheetOps" />
 
-The inverse is read off the state before the change and every inverse is an op the server accepts — a created row is undone by deleting it, a created column by archiving it — so Undo is just another save.
+The inverse is read off the state before the change and every inverse is an op the server accepts — a created row is undone by deleting it, a created column by archiving it — so Undo is just another save. Redo is the inverse of an undo, kept on its own stack and cleared by any new change.

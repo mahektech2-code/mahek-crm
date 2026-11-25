@@ -15,6 +15,14 @@ describe("adjusting stock by hand", () => {
     assert.equal(!r.ok && r.field, "qty");
   });
 
+  test("cans, boxes and pieces take whole numbers only; litres and kilos take a fraction", () => {
+    const r = readAdjust({ dir: "Add", qty: "2.5", reason: "Counting mistake" }, 10, true);
+    assert.equal(r.ok, false);
+    assert.equal(!r.ok && r.field, "qty");
+    assert.equal(readAdjust({ dir: "Add", qty: "3", reason: "Counting mistake" }, 10, true).ok, true);
+    assert.equal(readAdjust({ dir: "Add", qty: "2.5", reason: "Counting mistake" }, 10).ok, true);
+  });
+
   test("a direction, a quantity above zero and a reason are all asked for", () => {
     assert.equal((readAdjust({ qty: "1", reason: "Damaged" }, 5) as { field: string }).field, "dir");
     assert.equal((readAdjust({ dir: "Add", qty: "0", reason: "Damaged" }, 5) as { field: string }).field, "qty");

@@ -1,5 +1,6 @@
 "use server";
 
+import { COMPLAINT_DESKS } from "@/lib/complaint-labels";
 import { resolveCustomerPick } from "@/lib/customer-place";
 import { placePickSchema } from "@/lib/customer-place-schema";
 import { writeCustomerPlace } from "@/lib/services/customer-form-service";
@@ -1734,23 +1735,19 @@ export async function reassignComplaint(
 ): Promise<Result> {
   try {
     const ctx = await resolveScope();
-    if (!assignedTo.trim()) return err("Pick who this goes to.", "validation");
-    await db
-      .update(customers)
-      .set({ updatedAt: new Date() })
-      .where(sql`false`); // no-op keeps the transaction shape consistent
+    const desk = COMPLAINT_DESKS.find((d) => d === assignedTo.trim());
+    if (!desk) return err("Pick who this goes to.", "validation");
+    /* The desk and the status in one transaction: written after it, a
+       failure between the two left a complaint "reassigned" in its history
+       and still sitting with the old desk. */
     const r = await changeComplaintStatus(
       complaintId,
       "in_progress",
-      `Reassigned to ${assignedTo} by ${ctx.user.name}`,
+      `Reassigned to ${desk} by ${ctx.user.name}`,
+      desk,
     );
-    if (r.ok) {
-      await db.execute(
-        sql`update complaints set assigned_to = ${assignedTo}, updated_at = now() where id = ${complaintId}`,
-      );
-    }
     refreshAll();
-    return r.ok ? okVoid(`Reassigned to ${assignedTo}`) : r;
+    return r.ok ? okVoid(`Reassigned to ${desk}`) : r;
   } catch (e) {
     return fromThrown(e);
   }

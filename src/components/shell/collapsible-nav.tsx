@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { Fragment } from "react";
 import { usePathname } from "next/navigation";
 import { NavLink } from "./nav-link";
 import { SHUT, openGroupFor, packChoice } from "./nav-open";
@@ -51,6 +52,10 @@ export type NavRowItem = {
    * one screen and stands for every lead and sample screen behind it.
    */
   match?: readonly string[];
+  /** A step in a numbered flow (the ERP's Purchase: 1 Requirements … 5 Bills) — drawn in place of the icon. */
+  step?: number;
+  /** A small heading drawn above this row inside an open group ("Tools"). */
+  heading?: string;
 };
 
 export type NavRowGroup = {
@@ -392,8 +397,9 @@ export function CollapsibleNav({
             {isOpen ? (
               <div id={panelId} data-nav-panel className="mb-1">
                 {group.items.map((item) => (
+                  <Fragment key={item.href}>
+                  {item.heading ? <NavHeading label={item.heading} /> : null}
                   <Row
-                    key={item.href}
                     item={item}
                     active={isActive(item)}
                     count={countFor(item)}
@@ -401,6 +407,7 @@ export function CollapsibleNav({
                     badgeToneFor={badgeToneFor}
                     nested
                   />
+                  </Fragment>
                 ))}
               </div>
             ) : null}
@@ -471,6 +478,7 @@ function RailGroup({
             <div className="px-2.5 pt-1.5 pb-1.5 text-[11px] font-semibold tracking-label text-faint uppercase">{group.label}</div>
             {group.items.map((item) => (
               <div key={item.href} onClick={() => setTop(null)}>
+                {item.heading ? <NavHeading label={item.heading} /> : null}
                 <Row item={item} active={isActive(item)} count={countFor(item)} renderIcon={renderIcon} badgeToneFor={badgeToneFor} nested />
               </div>
             ))}
@@ -523,7 +531,19 @@ function Row({
         <span data-nav-fill className="pointer-events-none absolute inset-0 rounded-[4px] bg-brand-soft" />
       ) : null}
       <span data-nav-icon className="relative z-1 flex flex-none">
-        {renderIcon(item.icon, nested ? 16 : 18)}
+        {item.step && !railed ? (
+          <span
+            data-nav-step
+            className={cx(
+              "flex size-4 items-center justify-center rounded-full border text-[10px] leading-none font-semibold tabular-nums",
+              active ? "border-brand bg-brand text-white" : "border-line-strong text-muted",
+            )}
+          >
+            {item.step}
+          </span>
+        ) : (
+          renderIcon(item.icon, nested ? 16 : 18)
+        )}
       </span>
       {railed ? null : (
         <>
@@ -535,6 +555,11 @@ function Row({
       )}
     </NavLink>
   );
+}
+
+/** A small heading inside an open group, above the rows it introduces ("Tools" under the ERP's Purchase steps). */
+function NavHeading({ label }: { label: string }) {
+  return <div data-nav-heading className="pt-2 pr-2.5 pb-1 pl-[25px] text-[11px] font-semibold tracking-label text-faint uppercase">{label}</div>;
 }
 
 /**

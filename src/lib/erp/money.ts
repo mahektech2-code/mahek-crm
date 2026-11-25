@@ -36,6 +36,14 @@ import { erpId, nextNumber } from "./server";
 
 export type Actor = { id: string; name: string; administrator: boolean; approver: boolean };
 
+/**
+ * WHO SEES WHAT THE ACCOUNTS HOLD. A balance — on Home, a statement, a "Paid
+ * from" card, a drawer or a save's message — is for the accountant (the
+ * `approveMoney` power) and an ERP administrator only. The team enters what
+ * they paid and received; how much the bank holds is not theirs to see.
+ */
+export const seesBalances = (a: { approver: boolean; administrator: boolean }): boolean => a.approver || a.administrator;
+
 type Ex = { execute: (q: SQL) => Promise<unknown> };
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 

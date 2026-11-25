@@ -531,10 +531,28 @@ export async function prepareLegs(
 
 /* ------------------------------------------------------------ state changes */
 
+/**
+ * A message is acted on by whoever prepared it, or by somebody with its
+ * customer in their book — the same question `prepareMessage` asked. Copy,
+ * confirm and cancel used to look the message up by id alone, and confirming
+ * another book's message moves its customer's last contact, takes them off the
+ * Call Log and records a collections attempt.
+ */
+async function assertMessageInScope(message: { userId: string | null; customerId: string }): Promise<Result | null> {
+  const { user } = await resolveScope();
+  if (message.userId === user.id) return null;
+  const [customer] = await db.select().from(customers).where(eq(customers.id, message.customerId));
+  if (!customer) return err("That customer no longer exists.", "not_found");
+  await assertCustomerInScope(customer);
+  return null;
+}
+
 /** Records the copy. Deliberately does NOT touch the customer's contact dates. */
 export async function markCopied(messageId: string): Promise<Result> {
   const [message] = await db.select().from(waMessages).where(eq(waMessages.id, messageId));
   if (!message) return err("That message no longer exists.", "not_found");
+  const outOfScope = await assertMessageInScope(message);
+  if (outOfScope) return outOfScope;
   if (message.status !== "prepared" && message.status !== "copied") {
     return err(`A ${message.status} message cannot be marked copied.`, "conflict");
   }
@@ -607,6 +625,8 @@ export async function confirmSent(messageId: string): Promise<Result> {
 
   const [message] = await db.select().from(waMessages).where(eq(waMessages.id, messageId));
   if (!message) return err("That message no longer exists.", "not_found");
+  const outOfScope = await assertMessageInScope(message);
+  if (outOfScope) return outOfScope;
   if (message.status === "cancelled") {
     return err("That message was cancelled.", "conflict");
   }
@@ -653,6 +673,8 @@ export async function confirmSent(messageId: string): Promise<Result> {
 export async function cancelMessage(messageId: string): Promise<Result> {
   const [message] = await db.select().from(waMessages).where(eq(waMessages.id, messageId));
   if (!message) return err("That message no longer exists.", "not_found");
+  const outOfScope = await assertMessageInScope(message);
+  if (outOfScope) return outOfScope;
   if (["sent_manually", "sent", "delivered", "read"].includes(message.status)) {
     return err("A sent message cannot be cancelled.", "conflict");
   }

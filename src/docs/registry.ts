@@ -887,7 +887,7 @@ export const DOC_APPS: DocApp[] = [
         title: "Goods receipt, testing and the register",
         summary: "Receiving at the gate against a PO, lots, drum labels, lab testing and matching the supplier's bill.",
         group: "Purchase",
-        modules: ["erp.register", "erp.testing"],
+        modules: ["erp.inward", "erp.testing", "erp.register", "erp.barcode"],
         written: ALL,
       },
       {

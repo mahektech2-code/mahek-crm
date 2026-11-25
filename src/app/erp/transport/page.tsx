@@ -14,7 +14,7 @@ import { pageOf, parseListQuery } from "@/lib/erp/list-query";
 import { withReadMemo } from "@/lib/erp/read-memo";
 import { scopeFor, windowInfo } from "@/lib/erp/window";
 import { FLAG } from "@/lib/erp/ui";
-import { screenTabs } from "../_ui/screen-tabs";
+import { heldViews, screenTabs } from "../_ui/screen-tabs";
 import { Page } from "../_ui/page-head";
 import { linkClass } from "../_ui/look";
 import { DocumentsDesk } from "./parts/documents-desk";
@@ -64,10 +64,11 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
   const raw = await searchParams;
   const one = (k: string) => (typeof raw[k] === "string" ? (raw[k] as string) : undefined);
   const screen = erpScreenBySlug("transport")!;
-  const views = screen.views ?? [];
+  const views = heldViews(ctx, screen);
+  if (!views.length) redirect("/erp");
   const known = new Set(views.map((v) => v.key));
   if (RETIRED_VIEWS.has(one("view") ?? "")) redirect(`${erpScreenHref()}?view=freight`);
-  const view = one("view") && known.has(one("view")!) ? one("view")! : "transport";
+  const view = one("view") && known.has(one("view")!) ? one("view")! : known.has("transport") ? "transport" : views[0].key;
   const { tabs, at } = await screenTabs(ctx, screen, view);
   const canWrite = !ctx.viewingAs;
 
@@ -129,7 +130,7 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
         kit ? <UploadLrsButton key={one("upload") ?? ""} today={today} transporters={kit.transporters} recent={kit.recent} canRead={kit.canRead} initialOpen={one("upload") === "1"} /> : null
       }
     >
-      <ListTabs label={screen.label} tabs={tabs} />
+      <ListTabs label={screen.label} tabs={tabs} segmented />
       {ids ? (
         <div className="mb-3 flex items-center gap-2 text-meta text-muted">
           Showing {ids.length} bill{ids.length === 1 ? "" : "s"}: {one("fl") ?? "filtered"} · <NavLink href={at(view)} className={linkClass()}>

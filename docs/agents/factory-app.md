@@ -17,6 +17,17 @@ whoever pressed Send), why a machine stopped (`factory_downtime`), and what the
 Production Head still has to look at (`factory_reviews`). Team output is
 counted once, on the task, never once per person.
 
+**A PIN OPENS THE FLOOR AND NOTHING ELSE.** Signing in with the 4-digit PIN,
+or with the SMS code that stands in for a forgotten one, makes a
+`sessions.factory_only` session that is never password-confirmed.
+`getCurrentUser` answers nobody for it outside `/factory` and `/api/factory/`
+(`factorySessionAllows`, reading the path `proxy.ts` writes), so a Production
+Head or an admin who also holds Factory meets the ordinary password sign-in on
+every other app, and the Admin Console's re-check is never skipped. It used to
+be the whole-site session, already confirmed: four digits opened everything.
+"Send code" answers only somebody holding the Factory app, behind the sign-in
+throttle.
+
 **THE FLOOR IS BUILT ONCE PER GODOWN FOR EVERY PHONE ASKING AT ONCE.** Every
 phone asks for the whole floor every 45 seconds and after any scan that moved
 stock, and nearly all of it is the same for everybody at a godown. `bootstrap`

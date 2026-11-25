@@ -172,8 +172,11 @@ export function ErpUiProvider({
   );
 
   const act = useCallback(
-    (screen: string, a: ActionSpec, recordId: string, after?: () => void) => {
+    (screenOf: string, a: ActionSpec, recordOf: string, after?: () => void) => {
       if (a.why) return;
+      /* Another screen's act on another record: a requirement's Receive goods is its PO's. */
+      const screen = a.on?.screen ?? screenOf;
+      const recordId = a.on?.id ?? recordOf;
       if (a.share) {
         setShare({ screen, a, recordId, after, key: Date.now() });
         return;
