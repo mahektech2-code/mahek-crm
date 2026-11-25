@@ -75,7 +75,10 @@ jobs:
             echo "::error::Anthropic refused the ANTHROPIC_API_KEY secret for $CLAUDE_MODEL ($code): $msg — a revoked key, a workspace without that model, or an account with no credit left."
             exit 1
           fi
-          echo "Key accepted for $CLAUDE_MODEL."
+          # A short hash, so whoever set the secret can tell WHICH key a run
+          # got (the old and new keys both pass the check above) without the
+          # log ever holding the key: printf '%s' "$KEY" | shasum -a 256 | cut -c1-12
+          echo "Key accepted for $CLAUDE_MODEL (sha256 $(printf '%s' "$ANTHROPIC_API_KEY" | sha256sum | cut -c1-12))."
 
       - uses: actions/checkout@v7
         with:
