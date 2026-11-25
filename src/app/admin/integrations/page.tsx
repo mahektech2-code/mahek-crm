@@ -23,6 +23,8 @@ import { SecretCredentialRow } from "../secret-credential-row";
 import { requirePlatformAdmin } from "../_shell/context";
 import { MapsSection } from "../maps-section";
 import { VoiceSection } from "../voice-section";
+import { readTrialSummary } from "@/lib/queries";
+import { ReadTrialSection } from "./read-trial-section";
 
 /**
  * Everything MahekOne calls out to, and the keys it calls with — on one page,
@@ -48,7 +50,7 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
   const ctx = await requirePlatformAdmin();
   const { tab: rawTab } = await searchParams;
   const tab: Cat = CATS.some((c) => c.slug === rawTab) ? (rawTab as Cat) : "all";
-  const [config, secrets, olaPool, integrations, usage, wa, [tpl], [lastReply]] = await Promise.all([
+  const [config, secrets, olaPool, integrations, usage, wa, [tpl], [lastReply], trial] = await Promise.all([
     getConfig(),
     secretStatuses(),
     olaPoolStatus(),
@@ -60,6 +62,7 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
       .from(waTemplates)
       .where(and(eq(waTemplates.active, true), isNotNull(waTemplates.watiSpec))),
     db.select({ at: waReplies.receivedAt }).from(waReplies).orderBy(desc(waReplies.receivedAt)).limit(1),
+    readTrialSummary(),
   ]);
   const sec = (name: string) => secrets.find((s) => s.name === name);
   const held = (name: string) => (sec(name)?.source ?? "unset") !== "unset";
@@ -342,6 +345,19 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
               ))}
           </div>
         </Card>
+      </Section>
+
+      <Section
+        id="read-trial"
+        title="Reading trial: Sarvam beside OpenAI"
+        hint="Sarvam is built for Indian languages. Before any feature asks it first, both read the same photos here and the results say who reads our bills and cards better. Only how they compared is kept, never what was read. Who reads a visiting card first is a setting under Settings → Voice & AI."
+      >
+        <ReadTrialSection
+          summary={trial}
+          billsPerRun={config["readTrial.expenseBills"]}
+          keys={{ openai: held("openai.apiKey"), sarvam: held("sarvam.apiKey") }}
+          leadScan={{ provider: config["leadScan.provider"], trial: config["leadScan.trial"] }}
+        />
       </Section>
 
       <Section

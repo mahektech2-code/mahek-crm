@@ -2,6 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { db } from "@/db";
 import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { attachments, auditLog, hrmsNotifications } from "@/db/schema";
@@ -18,6 +19,7 @@ import { fromThrown, ok, type Result } from "@/lib/result";
 import { DERIVED_FIGURES, type DerivedFigure } from "@/lib/admin-derived";
 import { readSecret } from "@/lib/secrets";
 import { watiHealth } from "@/lib/wati";
+import { prepareExpenseBillTrial } from "@/lib/services/read-trial-service";
 import { setDocumentPublished } from "@/lib/actions/sales";
 import { restoreAnnouncement } from "@/lib/services/announcement-service";
 import { hrmsLink } from "@/lib/hrms/registry";
@@ -117,6 +119,34 @@ export async function testConnection(provider: TestableProvider): Promise<Result
             : `The provider answered ${r?.status ?? "nothing"}.`,
       };
     return ok({ ms }, `Connected — answered in ${ms} ms.`);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * THE READING TRIAL — the latest expense bills read by OpenAI and by Sarvam,
+ * each scored against what the salesman typed. Platform administrators only,
+ * audited; the reading runs after the answer, because it is minutes of work.
+ * ------------------------------------------------------------------------- */
+
+export async function startExpenseBillTrial(): Promise<Result<{ bills: number }>> {
+  try {
+    const user = await requirePlatformAdminUser();
+    const prepared = await prepareExpenseBillTrial();
+    if (!prepared.ok) return prepared;
+    const { bills, run } = prepared.data;
+    /* Scheduled before anything else can throw: `prepare` has taken the
+       one-run lock, and only `run` gives it back. */
+    after(async () => {
+      await run();
+      refresh();
+    });
+    await audit(user.id, "read_trial.expense_bills_started", "ai_read_trials", "expense_bill");
+    return ok(
+      { bills },
+      `Reading ${bills} bill${bills === 1 ? "" : "s"} with OpenAI and with Sarvam. It takes a few minutes; reload this page to see the results come in.`,
+    );
   } catch (e) {
     return fromThrown(e);
   }

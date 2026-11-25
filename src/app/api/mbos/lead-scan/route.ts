@@ -1,8 +1,9 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { getConfig } from "@/lib/config/store";
 import { sniffContentType } from "@/lib/file-types";
 import { authenticate } from "@/lib/services/mbos-service";
-import { scanLeadImages, type LeadScanImage } from "@/lib/services/lead-scan-service";
+import { scanLeadImagesDetailed, type LeadScanImage } from "@/lib/services/lead-scan-service";
+import { recordLeadScanTrial } from "@/lib/services/read-trial-service";
 
 /* ---------------------------------------------------------------------------
  * Photographs of a visiting card or a shop board in, the New lead form's
@@ -62,7 +63,12 @@ export async function POST(request: Request) {
     images.push({ bytes, mediaType: type });
   }
 
-  const result = await scanLeadImages(images);
+  const scan = await scanLeadImagesDetailed(images);
+  /* The reading trial, when it is on, reads the same photographs with the
+     other provider AFTER this answer has gone — the salesman waits for
+     nothing extra, and a trial read that fails cannot reach him. */
+  after(() => recordLeadScanTrial(images, scan));
+  const result = scan.result;
   if (!result.ok) {
     return NextResponse.json(
       { ok: false, error: result.error },

@@ -2591,6 +2591,13 @@
       "when": 1795600000000,
       "tag": "0377_geo_master",
       "breakpoints": true
+    },
+    {
+      "idx": 371,
+      "version": "7",
+      "when": 1795700000000,
+      "tag": "0378_ai_read_trials",
+      "breakpoints": true
     }
   ]
 }

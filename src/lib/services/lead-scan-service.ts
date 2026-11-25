@@ -15,6 +15,8 @@ import {
 import { leadScanReadingSchema } from "@/lib/lead-scan-schema";
 import { err, ok, type Result } from "@/lib/result";
 import { readSecret } from "@/lib/secrets";
+import { sarvamExtract } from "@/lib/sarvam-extract";
+import { asText, toSarvamSchema } from "@/lib/engines/read-trial";
 
 /* ---------------------------------------------------------------------------
  * A VISITING CARD IN, THE NEW LEAD FORM'S FIRST SIX ANSWERS OUT.
@@ -28,10 +30,14 @@ import { readSecret } from "@/lib/secrets";
  * lead" is still the only thing that does, so every value passes in front of
  * the person who can see the card.
  *
- * OPENAI ONLY, unlike the visit assistant's OpenAI-then-Sarvam ladder. Sarvam's
- * chat endpoint takes text, and a fallback that cannot see the photograph is
- * not a fallback. Without an OpenAI key the handset simply draws no scan
- * button (`lead-scan-availability.ts`).
+ * OPENAI BY DEFAULT, SARVAM BY CHOICE. Sarvam's chat endpoint takes text, so
+ * it was never a fallback here; its Document Intelligence Extract does read
+ * photographs (`lib/sarvam-extract.ts`), and `leadScan.provider` may put it
+ * first. Sarvam first is still a ladder, not a swap: whatever Sarvam fails on
+ * or finds nothing in goes to OpenAI, and an Indian-script field it returns is
+ * put into English by OpenAI's text pass. Whether Sarvam deserves first place
+ * is what the reading trial measures (`read-trial-service.ts`). With neither
+ * key the handset draws no scan button (`lead-scan-availability.ts`).
  *
  * THE PHOTOGRAPHS ARE NEVER STORED. They are read from the request, handed to
  * the model and dropped — no `attachments` row, no id to fetch them back by —
@@ -57,25 +63,59 @@ Brands the shop STOCKS (Asian Paints, Berger, Nerolac, Dulux and so on, often pr
 
 The GSTIN matters most and is the easiest to miss: it is usually in the smallest type on the card, at the bottom or on the back, after "GSTIN", "GST No", "GST IN" or "GST :". Look for it in every photograph before answering. It is exactly 15 characters in this order: 2 digits (the state code, 27 for Maharashtra, 24 for Gujarat), 5 letters, 4 digits, 1 letter, 1 digit or letter, the letter Z, then 1 digit or letter. Use that shape to tell 0 from O and 1 from I, but copy what is printed — never fill in a character you cannot see.`;
 
+export type ScanProvider = "openai" | "sarvam";
+
+/** What the handset is sent, and — for the reading trial only — who answered and how long it took. */
+export type DetailedScan = { result: Result<LeadScanResult>; servedBy: ScanProvider | null; ms: number };
+
 export async function scanLeadImages(images: LeadScanImage[]): Promise<Result<LeadScanResult>> {
+  return (await scanLeadImagesDetailed(images)).result;
+}
+
+export async function scanLeadImagesDetailed(images: LeadScanImage[]): Promise<DetailedScan> {
+  const startedAt = Date.now();
+  const done = (result: Result<LeadScanResult>, servedBy: ScanProvider | null): DetailedScan => ({
+    result,
+    servedBy,
+    ms: Date.now() - startedAt,
+  });
   const config = await getConfig();
   if (!config["leadScan.enabled"]) {
-    return err("Reading photos is switched off. Type the details instead.", "rule_violation");
+    return done(err("Reading photos is switched off. Type the details instead.", "rule_violation"), null);
   }
-  if (images.length === 0) return err("Take a photo of the card or the shop board first.");
+  if (images.length === 0) return done(err("Take a photo of the card or the shop board first."), null);
   if (images.length > config["leadScan.maxImages"]) {
-    return err(`Up to ${config["leadScan.maxImages"]} photos at a time.`);
+    return done(err(`Up to ${config["leadScan.maxImages"]} photos at a time.`), null);
   }
 
-  const key = await readSecret("openai.apiKey");
-  if (!key) {
-    return err("Reading photos is not set up on this deployment. Type the details instead.", "rule_violation");
+  const [openaiKey, sarvamKey] = await Promise.all([readSecret("openai.apiKey"), readSecret("sarvam.apiKey")]);
+
+  /* Sarvam first only where it is chosen AND held; it gets the front of the
+     budget and leaves OpenAI enough of the rest to answer on its own. */
+  if (config["leadScan.provider"] === "sarvam" && sarvamKey) {
+    const first = await readCardWithSarvam(images, { sarvamKey, openaiKey, model: config["leadScan.model"] }, SARVAM_FIRST_MS);
+    if (first.ok && foundAnything(first.data)) return done(first, "sarvam");
+    if (!first.ok) console.error("Lead scan: Sarvam read failed, asking OpenAI:", first.error);
   }
 
-  const startedAt = Date.now();
+  if (!openaiKey) {
+    return done(err("Reading photos is not set up on this deployment. Type the details instead.", "rule_violation"), null);
+  }
+  return done(await readCardWithOpenai(images, openaiKey, config["leadScan.model"], startedAt), "openai");
+}
+
+/** Of the seventy-five seconds, what Sarvam may spend before OpenAI is asked instead. */
+const SARVAM_FIRST_MS = 35_000;
+
+export async function readCardWithOpenai(
+  images: LeadScanImage[],
+  key: string,
+  modelName: string,
+  startedAt = Date.now(),
+): Promise<Result<LeadScanResult>> {
   try {
     const client = createOpenAI({ apiKey: key });
-    const model = client(config["leadScan.model"]);
+    const model = client(modelName);
     /* HIGH detail, said out loud. Left unset OpenAI picks "auto", which is
        free to read the whole photograph at 512px — enough for the name on a
        board and nowhere near enough for a GSTIN in the card's smallest type,
@@ -239,4 +279,60 @@ async function toEnglish(
     if (reading[f] != null && v != null && !hasIndianScript(v)) out[f] = v;
   }
   return out;
+}
+
+/* ---------------------------------------------------------------- Sarvam */
+
+const SARVAM_SCHEMA = toSarvamSchema(z.toJSONSchema(leadScanReadingSchema) as Record<string, unknown>);
+
+/**
+ * The same photographs read by Sarvam's Extract into the same reading, then
+ * through the same `cleanScan` — so the handset cannot tell who read them.
+ * Sarvam answers in the script it saw; where a field is left in one, OpenAI's
+ * text pass puts it into English if there is an OpenAI key, and otherwise the
+ * field stands as read, as it does on the OpenAI path.
+ */
+export async function readCardWithSarvam(
+  images: LeadScanImage[],
+  keys: { sarvamKey: string; openaiKey: string | null; model: string },
+  timeoutMs: number,
+): Promise<Result<LeadScanResult>> {
+  const r = await sarvamExtract({
+    key: keys.sarvamKey,
+    files: images.map((img, i) => ({
+      bytes: img.bytes,
+      mediaType: img.mediaType,
+      filename: `photo-${i + 1}.${img.mediaType === "image/png" ? "png" : "jpg"}`,
+    })),
+    schema: SARVAM_SCHEMA,
+    timeoutMs,
+  });
+  if (!r.ok) return err(r.error, "rule_violation");
+
+  const v = r.result;
+  const phones = Array.isArray(v.phones) ? v.phones : [];
+  const reading: LeadScanReading = {
+    businessName: asText(v.businessName),
+    contactPerson: asText(v.contactPerson),
+    phones: phones.flatMap((p) => {
+      const number = asText((p as { number?: unknown })?.number);
+      const kind = (p as { kind?: unknown })?.kind;
+      return number ? [{ number, kind: kind === "mobile" || kind === "landline" ? kind : "unknown" }] : [];
+    }),
+    city: asText(v.city),
+    state: asText(v.state),
+    address: asText(v.address),
+    pincode: asText(v.pincode),
+    gstin: asText(v.gstin),
+    note: asText(v.note),
+  };
+  if (needsEnglish(reading) && keys.openaiKey) {
+    const model = createOpenAI({ apiKey: keys.openaiKey })(keys.model);
+    const english = await toEnglish(model, reading, 20_000).catch((e) => {
+      console.error("Lead scan: English pass after Sarvam failed:", e instanceof Error ? e.message : e);
+      return null;
+    });
+    if (english) Object.assign(reading, english);
+  }
+  return ok(cleanScan(reading));
 }
