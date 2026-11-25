@@ -1331,6 +1331,7 @@ function MessagePane({
           size="sm"
           variant={copied || !manualLeads ? "secondary" : "primary"}
           disabled={message.blocked}
+          title={message.blocked ? (message.blockedReason ?? "This message cannot go to this customer") : undefined}
           onClick={onCopy}
         >
           {copied ? "Copied ✓" : "Copy message"}
@@ -1455,6 +1456,7 @@ function MessagePane({
                 type="button"
                 onClick={onSendNow}
                 disabled={message.blocked || confirming}
+                title={message.blocked ? (message.blockedReason ?? "This message cannot go to this customer") : undefined}
                 className="cursor-pointer border-none bg-transparent p-0 text-[12px] text-brand disabled:cursor-not-allowed disabled:text-muted"
               >
                 try the automatic send again

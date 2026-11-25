@@ -120,6 +120,7 @@ export function PolicyPanel({
           type="button"
           className={btnClass("primary")}
           disabled={!canWrite || busy || changed.length === 0}
+          title={!canWrite ? "Your access to this screen is view only." : changed.length === 0 ? "Nothing has changed yet." : undefined}
           onClick={async () => {
             setBusy(true);
             const r = await updateConfigSettings(

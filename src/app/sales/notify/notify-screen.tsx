@@ -201,7 +201,12 @@ export function NotifyScreen({
         </label>
       </div>
 
-      <Button tone="primary" disabled={!canSend} onClick={() => void send()}>
+      <Button
+        tone="primary"
+        disabled={!canSend}
+        title={busy ? undefined : !title.trim() || !body.trim() ? "Write a title and a message first." : recipientCount <= 0 ? "Pick who it goes to — nobody matches yet." : undefined}
+        onClick={() => void send()}
+      >
         {busy ? "Sending…" : `Send to ${recipientCount || 0}`}
       </Button>
     </div>

@@ -28,6 +28,7 @@ import {
 } from "@/lib/erp/designations";
 import { erpHeldBy, getErpDesignation } from "@/lib/services/erp-designation-service";
 import { writeErpPowers, writeModules } from "@/lib/services/access-writes";
+import { convertedGrants } from "@/lib/services/app-provisioning";
 import { notifyUsers } from "@/lib/notify";
 import { err, fieldErr, ok, type Result } from "@/lib/result";
 import { confirmImpact } from "@/lib/impact/registry";
@@ -148,7 +149,16 @@ export async function saveErpDesignation(input: DesignationInput): Promise<Resul
     : [];
   const held = await erpHeldBy(links.map((l) => l.userId));
   const oldShape = before ? designationShape(before, all) : null;
+  /* A holder whose ERP grant is on position and screen ticks is not moved by
+     a designation: the level and module rows written here are what the ticks
+     derive, and `can()` answers from the ticks. Writing them reported "moved
+     with it" while nothing the person could do changed. They are left alone
+     and counted, the same as a customised holder. */
+  const onTicks = new Set(
+    (await convertedGrants(db, links.map((l) => l.userId), ["erp"])).map((c) => c.userId),
+  );
   const moving = links.map((l) => l.userId).filter((u) => {
+    if (onTicks.has(u)) return false;
     const h = held.get(u);
     return !!h && !!oldShape && matchesDesignation(heldShape(h, all), oldShape, all);
   });

@@ -11,6 +11,7 @@ import type { MediaView } from "@/lib/website-cms/media-service";
 import { reportResult } from "./report";
 import { MediaThumb, uploadImage } from "./media-picker";
 import { useCmsEnv } from "./cms-env";
+import { APP_TIMEZONE } from "@/lib/business-date";
 
 /* ---------------------------------------------------------------------------
  * THE MEDIA LIBRARY — every image the website can use.
@@ -92,7 +93,7 @@ export function MediaScreen({ canPublish }: { canPublish: boolean }) {
                 <MediaThumb url={m.url} className="h-14 w-14" />
                 <div className="min-w-[200px] flex-1">
                   <div className="text-sm font-medium text-ink">{m.filename}</div>
-                  <div className="text-xs text-muted">{m.contentType.replace("image/", "").toUpperCase()} · {kb(m.sizeBytes)} · added {new Date(m.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</div>
+                  <div className="text-xs text-muted">{m.contentType.replace("image/", "").toUpperCase()} · {kb(m.sizeBytes)} · added {new Date(m.createdAt).toLocaleDateString("en-IN", { timeZone: APP_TIMEZONE, day: "numeric", month: "short", year: "numeric" })}</div>
                   <div className="mt-1 text-xs">
                     {m.usedBy.length > 0 ? <Badge tone="brand" title={m.usedBy.join(", ")}>Used by {m.usedBy.length}</Badge> : <Badge tone="neutral">Not used</Badge>}
                   </div>

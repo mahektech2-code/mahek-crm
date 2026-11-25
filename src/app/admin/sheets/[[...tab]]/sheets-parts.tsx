@@ -79,7 +79,7 @@ export function ConflictsCard({ rows, total, canResolve }: { rows: ConflictRow[]
         </span>
         <span className="flex-1" />
         {total > 0 ? (
-          <button type="button" disabled={!canResolve || busy !== null} onClick={() => run("all", "all")} className={`${btnClass("plain", "sm")} h-8`}>
+          <button type="button" disabled={!canResolve || busy !== null} title={!canResolve ? "Marking sync problems seen needs edit access to Sheets." : undefined} onClick={() => run("all", "all")} className={`${btnClass("plain", "sm")} h-8`}>
             {busy === "all" ? "Marking…" : "Mark all seen"}
           </button>
         ) : null}

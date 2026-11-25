@@ -650,6 +650,7 @@ function SkuDetailBody({
               <Button
                 variant="secondary"
                 disabled={!canWrite || busy || alias.trim().length < 2}
+                title={!canWrite ? "Your access to this screen is view only." : alias.trim().length < 2 ? "Type a spelling of at least two characters." : undefined}
                 onClick={async () => {
                   const r = await run(() => addAlias(sku.id, alias));
                   if (r.ok) setAlias("");
@@ -1422,6 +1423,7 @@ function DuplicatesTab({
                       <button
                         key={x}
                         disabled={!canWrite}
+                        title={!canWrite ? "Your access to this screen is view only." : undefined}
                         onClick={() => setPicked((p) => ({ ...p, [d.id]: x }))}
                         className={cx(
                           "cursor-pointer rounded-full border px-2.5 py-1 text-[13px]",
@@ -1685,6 +1687,15 @@ function NameHeldRow({
         <Button
           variant="primary"
           disabled={!canWrite || busy || !exceptionId || !goodId || name.trim().length < 3}
+          title={
+            !canWrite
+              ? "Your access to this screen is view only."
+              : !exceptionId || !goodId
+                ? "Pick the held row and the finished good first."
+                : name.trim().length < 3
+                  ? "Give the sellable name at least three characters."
+                  : undefined
+          }
           onClick={async () => {
             const r = await run(() =>
               nameHeldRow(exceptionId, {
