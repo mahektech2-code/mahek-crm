@@ -56,9 +56,31 @@ export function matchesCity(row: Placeable, city: string): boolean {
   });
 }
 
-/** A shop nothing can place: no city, no area, no beat worth the name. */
+/**
+ * The word the server writes into `customers.city` when a lead is raised from
+ * the handset with no town typed (`handleLead`: `p.city ?? p.area ?? "Unknown"`,
+ * because the column is NOT NULL). It is a stand-in for "nobody said", not a
+ * place — treating it as one filed every such lead under "somewhere else",
+ * behind a closed toggle, instead of in the list of shops nothing can place.
+ *
+ * Compared on the WHOLE normalised value, so "Unknown Road, Mahad" is still a
+ * real address and still matches.
+ */
+const PLACEHOLDER_KEY = "unknown";
+
+/** A field that actually says where something is. */
+function names(field: string | null | undefined): boolean {
+  const key = cityKey(field);
+  return key !== "" && key !== PLACEHOLDER_KEY;
+}
+
+/**
+ * A shop nothing can place: no city, no area, no beat worth the name.
+ * Each field is judged on its own, so a placeholder city beside a real area is
+ * still a placed shop.
+ */
 export function hasNoPlace(row: Placeable): boolean {
-  return !cityKey(row.city) && !cityKey(row.area) && !cityKey(row.beat);
+  return !names(row.city) && !names(row.area) && !names(row.beat);
 }
 
 /**
