@@ -66,6 +66,7 @@ import { salesTypeLabel } from "@/lib/lead-labels";
 import { leadOwed, owedWord } from "@/lib/lead-owed";
 import type { LeadView } from "@/lib/lead-views";
 import { today } from "@/lib/recompute";
+import { arrangedByOffice, officeMayEdit } from "@/lib/journey-day-edit";
 import type { DocumentCategory } from "@/lib/mbos/library-labels";
 import { err, fromThrown, ok, okVoid, type Result } from "@/lib/result";
 import { releaseHandsetBinding } from "@/lib/services/handset-release";
@@ -1464,6 +1465,266 @@ export async function saveJourneyPeriod(input: {
       skipped.length
         ? `Saved ${saved === 1 ? "one day" : `${saved} days`}. ${skipped.length === 1 ? "One day was" : `${skipped.length} days were`} left alone — ${skipped.join(", ")} ${skipped.length === 1 ? "has" : "have"} already been walked.`
         : `Saved ${saved === 1 ? "one day" : `${saved} days`}${cleared ? `, cleared ${cleared}` : ""}.`,
+    );
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * The office adding shops to one day, or taking them off it.
+ *
+ * Takes what CHANGED rather than the whole list, so a screen that is out of
+ * date cannot delete a stop it never showed. A stop nobody removed keeps its
+ * id, its time and its place in the order — only its number closes up where one
+ * ahead of it was taken off — so the handset has nothing to replace. A visited
+ * or skipped stop is never removed.
+ *
+ * A day from today onwards that was proposed or agreed becomes `planned` once
+ * it has shops, the word a day gets when the salesman picks them himself. A
+ * refused day stays refused, a past day keeps its state, and a `planned` day is
+ * only edited where the office arranged it and it has not gone by.
+ */
+export async function editJourneyDayStops(input: {
+  salesmanId: string;
+  planDate: string;
+  city?: string | null;
+  cities?: string[] | null;
+  add: string[];
+  remove: string[];
+}): Promise<Result<{ stops: number; added: number; removed: number }>> {
+  try {
+    const user = await requireSalesAccess(SALES_MANAGER("sales.journeys"));
+    if (await salesmanOutsideScope(input.salesmanId)) return err(NOT_YOUR_TEAM, "not_permitted");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(input.planDate)) {
+      return err(`"${input.planDate}" is not a date this can plan for.`, "validation");
+    }
+
+    const [salesman] = await db
+      .select({ id: users.id, name: users.name, active: users.active })
+      .from(users)
+      .where(eq(users.id, input.salesmanId))
+      .limit(1);
+    if (!salesman) return err("That salesman is not on MahekOne.", "not_found");
+    if (!salesman.active) {
+      return err(
+        `${salesman.name}'s account is closed, so there is nobody to walk these plans.`,
+        "validation",
+      );
+    }
+
+    const add = [...new Set(input.add)];
+    const remove = new Set(input.remove);
+
+    /* Only what is being ADDED is checked. A shop closed since it was put on
+     * the day must not stop somebody adding another one beside it. */
+    if (add.length) {
+      const found = await db
+        .select({ id: customers.id, name: customers.name, status: customers.status })
+        .from(customers)
+        .where(inArray(customers.id, add));
+      if (found.length < add.length) {
+        return err(
+          `${add.length - found.length} of those shops are no longer on the book. Untick them and save again.`,
+          "validation",
+        );
+      }
+      const closed = found.filter((c) => c.status !== "active");
+      if (closed.length) {
+        return err(
+          `${closed.map((c) => c.name).join(", ")} ${closed.length === 1 ? "is" : "are"} not active, so ${closed.length === 1 ? "it" : "they"} cannot be planned into a day.`,
+          "validation",
+        );
+      }
+    }
+
+    const dayCities = cityColumns(normaliseCities(input.city, input.cities));
+    const perStop = 75;
+    const todayIso = await today();
+
+    const result = await db.transaction(async (tx) => {
+      const [existing] = await tx
+        .select({
+          id: mbosJourneyPlans.id,
+          dayState: mbosJourneyPlans.dayState,
+          respondedAt: mbosJourneyPlans.respondedAt,
+        })
+        .from(mbosJourneyPlans)
+        .where(
+          and(
+            eq(mbosJourneyPlans.userId, input.salesmanId),
+            sql`${mbosJourneyPlans.planDate} = ${input.planDate}::date`,
+          ),
+        )
+        .limit(1)
+        /* Two saves for one day wait for each other rather than both adding. */
+        .for("update");
+
+      if (!existing && !add.length) return { refusal: "There is nothing to save for that day." };
+
+      const planId = existing?.id ?? gen("mbos_plan");
+      const current = existing
+        ? await tx
+            .select({
+              id: mbosJourneyStops.id,
+              customerId: mbosJourneyStops.customerId,
+              status: mbosJourneyStops.status,
+              sequence: mbosJourneyStops.sequence,
+              plannedAt: mbosJourneyStops.plannedAt,
+              createdById: mbosJourneyStops.createdById,
+            })
+            .from(mbosJourneyStops)
+            .where(eq(mbosJourneyStops.planId, planId))
+        : [];
+
+      if (
+        existing &&
+        !officeMayEdit(
+          {
+            dayState: existing.dayState,
+            planDate: input.planDate,
+            officeArranged: arrangedByOffice(current, input.salesmanId),
+          },
+          todayIso,
+        )
+      ) {
+        return {
+          refusal:
+            input.planDate < todayIso
+              ? "That day has gone by, so its shops are no longer changed."
+              : `${salesman.name} picked the shops for that day, so they are not changed from the office.`,
+        };
+      }
+
+      if (!existing) {
+        await tx.insert(mbosJourneyPlans).values({
+          id: planId,
+          userId: input.salesmanId,
+          planDate: input.planDate,
+          city: dayCities.city,
+          cities: dayCities.cities,
+          status: "active",
+          createdById: user.id,
+          updatedById: user.id,
+        });
+      }
+
+      const dropping = current.filter((s) => s.status === "planned" && remove.has(s.customerId));
+      if (dropping.length) {
+        await tx.delete(mbosJourneyStops).where(
+          inArray(
+            mbosJourneyStops.id,
+            dropping.map((s) => s.id),
+          ),
+        );
+        await tombstoneStops(tx, dropping, input.salesmanId);
+      }
+
+      const dropped = new Set(dropping.map((s) => s.id));
+      const kept = current.filter((s) => !dropped.has(s.id));
+      const onDay = new Set(kept.map((s) => s.customerId));
+      const fresh = add.filter((id) => !onDay.has(id));
+
+      /* A removal leaves a hole — "1, 3, 4" — which reads as a missing shop.
+       * The waiting stops close up in the same order; a walked one keeps the
+       * number it was walked under. */
+      if (dropping.length) {
+        const taken = new Set(kept.filter((s) => s.status !== "planned").map((s) => s.sequence));
+        let n = 0;
+        for (const stop of [...kept].sort((a, b) => a.sequence - b.sequence)) {
+          if (stop.status !== "planned") continue;
+          do n += 1;
+          while (taken.has(n));
+          if (stop.sequence === n) continue;
+          stop.sequence = n;
+          await tx
+            .update(mbosJourneyStops)
+            .set({ sequence: n, updatedAt: new Date(), updatedById: user.id })
+            .where(eq(mbosJourneyStops.id, stop.id));
+        }
+      }
+
+      if (fresh.length) {
+        const lastSequence = kept.reduce((n, s) => Math.max(n, s.sequence), 0);
+        const lastTime = kept.reduce(
+          (n, s) => (s.plannedAt ? Math.max(n, s.plannedAt.getTime()) : n),
+          0,
+        );
+        await tx.insert(mbosJourneyStops).values(
+          fresh.map((customerId, i) => ({
+            id: gen("mbos_stop"),
+            planId,
+            customerId,
+            sequence: lastSequence + i + 1,
+            plannedAt: lastTime
+              ? new Date(lastTime + (i + 1) * perStop * 60_000)
+              : clockOn(input.planDate, 9 * 60 + 30 + i * perStop),
+            status: "planned" as const,
+            createdById: user.id,
+            updatedById: user.id,
+          })),
+        );
+      }
+
+      const total = kept.length + fresh.length;
+      let dayState = existing?.dayState ?? "planned";
+      if (existing && input.planDate >= todayIso && dayState !== "refused") {
+        if (total > 0) dayState = "planned";
+        /* Emptied. A route with no shops is not a route. */
+        else if (dayState === "planned") dayState = existing.respondedAt ? "agreed" : "proposed";
+      }
+
+      await tx
+        .update(mbosJourneyPlans)
+        .set({
+          ...(dayCities.city ? { city: dayCities.city, cities: dayCities.cities } : {}),
+          dayState,
+          estimatedTravelMinutes: perStop * Math.max(0, total - 1),
+          updatedAt: new Date(),
+          updatedById: user.id,
+        })
+        .where(eq(mbosJourneyPlans.id, planId));
+
+      return {
+        stops: total,
+        added: fresh,
+        removed: dropping.map((s) => s.customerId),
+      };
+    });
+
+    if ("refusal" in result) return err(result.refusal!, "validation");
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.journey.period",
+      entityType: "mbos_journey_plan",
+      entityId: input.salesmanId,
+      afterState: {
+        salesman: salesman.name,
+        from: input.planDate,
+        to: input.planDate,
+        daysPlanned: 1,
+        daysCleared: 0,
+        stops: result.stops,
+        /* Which shops moved, so a day can be put back from the log. */
+        added: result.added,
+        removed: result.removed,
+      } as never,
+    });
+
+    const counted = `${result.added.length} added, ${result.removed.length} removed`;
+    await tell(
+      input.salesmanId,
+      `Your route for ${input.planDate}`,
+      `${user.name} changed your shops: ${counted}. It will be on your handset at the next sync.`,
+      "/journey",
+    );
+
+    refresh();
+    return ok(
+      { stops: result.stops, added: result.added.length, removed: result.removed.length },
+      `Saved ${result.stops === 1 ? "1 stop" : `${result.stops} stops`} (${counted}).`,
     );
   } catch (e) {
     return fromThrown(e);

@@ -853,6 +853,8 @@ function DayDrawer({
                   </span>
                 ) : plan.selfPlanned ? (
                   "His own day — nothing to agree"
+                ) : plan.officeArranged && !plan.respondedAt ? (
+                  "He did not answer — the office arranged the shops"
                 ) : (
                   `Agreed${plan.respondedAt ? ` on ${stamp(plan.respondedAt)}` : ""}`
                 )}
@@ -955,12 +957,12 @@ function DayDrawer({
             </div>
           ) : null}
 
-          {future && plan?.dayState !== "planned" ? (
+          {future && (plan?.dayState !== "planned" || plan.officeArranged) ? (
             <Link
               href={`/sales/journeys?tab=salesman&salesman=${salesman.id}&view=propose&from=${day.date}&days=1${stay}`}
               className="mt-2 inline-block text-[12px] text-brand no-underline hover:underline"
             >
-              Pick the shops yourself from the office →
+              {plan?.stops.length ? "Add or remove shops from the office →" : "Pick the shops yourself from the office →"}
             </Link>
           ) : null}
         </section>

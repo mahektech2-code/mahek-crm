@@ -328,6 +328,7 @@ async function ProposeSection({
         plans={plans}
         book={book}
         cities={cities}
+        today={now}
         stay={stay}
       />
     </>

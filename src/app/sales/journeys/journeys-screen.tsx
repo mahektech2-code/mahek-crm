@@ -8,7 +8,8 @@ import { citiesInWords, sameCityList } from "@/lib/journey-cities";
 import { CityListInput } from "./city-list-input";
 import { addDays } from "@/lib/business-date";
 import { dayWhere } from "@/lib/journey-days";
-import { answerRefusal, proposeJourneyDays, saveJourneyPeriod } from "@/lib/actions/sales";
+import { dayEdit, officeMayEdit, saveStopsLabel, type DayEdit } from "@/lib/journey-day-edit";
+import { answerRefusal, editJourneyDayStops, proposeJourneyDays } from "@/lib/actions/sales";
 import type { BookCustomer, JourneyPlan, Salesman } from "@/lib/services/sales-service";
 import { HEALTH_BAND_LABELS } from "@/lib/engines/inactivity";
 
@@ -47,6 +48,9 @@ import { plural } from "@/components/console/words";
  * The old behaviour — the manager picking shops directly — is kept as
  * "Pick the shops yourself", for the days somebody genuinely does need to
  * arrange from the office. It is the exception now rather than the model.
+ *
+ * The picker EDITS a day: what is already on it stays unless somebody unticks
+ * it, and the whole list is drawn on the day whether the picker is open or not.
  */
 
 const HORIZONS = [7, 15, 30] as const;
@@ -67,6 +71,7 @@ export function JourneysScreen({
   plans,
   book,
   cities,
+  today,
   stay = "",
 }: {
   selected: Salesman | null;
@@ -76,6 +81,8 @@ export function JourneysScreen({
   book: BookCustomer[];
   /** Where he works, then the cities his own book names — a shortcut, not a limit. */
   cities: string[];
+  /** The business date. A planned day that has gone by is not edited. */
+  today: string;
   /** Appended to the links back into this view — `&in=team` keeps it in its modal. */
   stay?: string;
 }) {
@@ -120,8 +127,12 @@ export function JourneysScreen({
   const agreed = days.filter((d) => d.plan?.dayState === "agreed");
   const planned = days.filter((d) => d.plan?.dayState === "planned");
 
+  /* A planned day is not proposed over — its cities are saved with its shops. */
   const dirty = days.filter(
-    (d) => d.cities.length > 0 && !sameCityList(d.cities, d.plan?.cities ?? []),
+    (d) =>
+      d.plan?.dayState !== "planned" &&
+      d.cities.length > 0 &&
+      !sameCityList(d.cities, d.plan?.cities ?? []),
   );
 
   function setCities(date: string, cities: string[]) {
@@ -200,18 +211,36 @@ export function JourneysScreen({
   }
 
   /** The exception: arranging a day from the office, shops and all. */
-  async function pickFromOffice(date: string, cities: string[], customerIds: string[]) {
-    if (!selected) return;
+  async function pickFromOffice(
+    date: string,
+    cities: string[],
+    add: string[],
+    remove: string[],
+  ): Promise<boolean> {
+    if (!selected) return false;
     setBusy(true);
     setError(null);
     try {
-      const result = await saveJourneyPeriod({
+      const result = await editJourneyDayStops({
         salesmanId: selected.id,
-        days: [{ planDate: date, city: cities[0], cities, customerIds }],
+        planDate: date,
+        city: cities[0],
+        cities,
+        add,
+        remove,
       });
-      if (!result.ok) return setError(result.error);
+      if (!result.ok) {
+        setError(result.error);
+        return false;
+      }
+      setDrafts((current) => {
+        const next = { ...current };
+        delete next[date];
+        return next;
+      });
       toast.push(result.message ?? "Saved.");
       router.refresh();
+      return true;
     } finally {
       setBusy(false);
     }
@@ -365,7 +394,8 @@ export function JourneysScreen({
                   onAnswer={(take, cities) =>
                     d.plan && void answer(d.date, d.plan.id, take, cities)
                   }
-                  onPickFromOffice={(ids) => void pickFromOffice(d.date, d.cities, ids)}
+                  editable={officeMayEdit(d.plan, today)}
+                  onPickFromOffice={(add, remove) => pickFromOffice(d.date, d.cities, add, remove)}
                 />
               ))}
             </div>
@@ -389,9 +419,12 @@ function ShopChip({
   on,
   onToggle,
   showCity,
+  locked,
 }: {
   c: BookCustomer;
   on: boolean;
+  /** Already visited or skipped — on the day for good. */
+  locked?: boolean;
   onToggle: (id: string) => void;
   /** Where the shop is, drawn only where the point of the list is that it is
    *  somewhere else. On the city's own list every row would say the same word. */
@@ -399,7 +432,11 @@ function ShopChip({
 }) {
   return (
     <button
+      type="button"
       onClick={() => onToggle(c.id)}
+      disabled={locked}
+      aria-pressed={on}
+      title={locked ? "Already visited or skipped, so it stays on the day." : undefined}
       className={
         "inline-flex h-7 items-center gap-1.5 rounded-[4px] border px-2 text-[12px] " +
         (on
@@ -460,6 +497,7 @@ function DayLine({
   busy,
   onCities,
   onAnswer,
+  editable,
   onPickFromOffice,
 }: {
   row: DayRow;
@@ -468,10 +506,17 @@ function DayLine({
   busy: boolean;
   onCities: (cities: string[]) => void;
   onAnswer: (take: "counter" | "other", cities?: string[]) => void;
-  onPickFromOffice: (customerIds: string[]) => void;
+  /** False on a planned day the salesman picked, or one that has gone by. */
+  editable: boolean;
+  /** Resolves true once saved, which is when the ticks stop being a draft. */
+  onPickFromOffice: (add: string[], remove: string[]) => Promise<boolean>;
 }) {
   const [open, setOpen] = React.useState(false);
-  const [picked, setPicked] = React.useState<string[]>([]);
+  /* ONLY WHAT HAS BEEN CHANGED IS HELD. What is on the day comes from the
+     server every render, so a reload, a tab switch or a reopened picker starts
+     from the saved list rather than from nothing. */
+  const [added, setAdded] = React.useState<string[]>([]);
+  const [removed, setRemoved] = React.useState<string[]>([]);
   /* THE ESCAPE HATCH, shut by default. A day is a city — that is the model the
      whole screen rests on — so a shop from somewhere else is a deliberate act
      rather than one more chip in the same list. Opening it is what makes the
@@ -493,8 +538,40 @@ function DayLine({
     ? elsewhere.filter((c) => c.name.toLowerCase().includes(term.trim().toLowerCase()))
     : elsewhere;
 
-  const toggle = (id: string) =>
-    setPicked((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  const stops = row.plan?.stops ?? [];
+  const edit = dayEdit(stops, added, removed);
+  const citiesChanged = row.cities.length > 0 && !sameCityList(row.cities, row.plan?.cities ?? []);
+  /* A proposed or agreed day that already has shops can be saved as it stands,
+     which is what moves it on to planned. */
+  const canSave =
+    edit.added.length > 0 ||
+    edit.removed.length > 0 ||
+    (edit.total > 0 && (citiesChanged || state === "proposed" || state === "agreed"));
+
+  const toggle = (id: string) => {
+    if (edit.locked.has(id)) return;
+    const flip = (prev: string[]) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
+    if (edit.saved.has(id)) setRemoved(flip);
+    else setAdded(flip);
+  };
+
+  async function save() {
+    if (!(await onPickFromOffice(edit.added, edit.removed))) return;
+    setAdded([]);
+    setRemoved([]);
+  }
+
+  const chip = (c: BookCustomer, showCity?: boolean) => (
+    <ShopChip
+      key={c.id}
+      c={c}
+      on={edit.selected.has(c.id)}
+      locked={edit.locked.has(c.id)}
+      onToggle={toggle}
+      showCity={showCity}
+    />
+  );
 
   const tone =
     state === "refused"
@@ -516,7 +593,7 @@ function DayLine({
           </span>
         </span>
 
-        {state === "planned" ? (
+        {state === "planned" && !editable ? (
           <span className="min-w-0 flex-1 text-[13px] text-body">
             {(row.plan && dayWhere(row.plan).text) ?? "Arranged"} ·{" "}
             {plural(row.plan?.stops.length ?? 0, "stop")}
@@ -540,7 +617,9 @@ function DayLine({
               placeholder="Propose a city"
               emptyHint="No allocated or book city matches — what you type is still proposed"
               title={
-                state === "agreed"
+                state === "planned"
+                  ? "Add a city to pick its shops. Saved when you save the shops."
+                  : state === "agreed"
                   ? "He has agreed this day. He picks the shops next."
                   : "The unit you propose. He divides it into a beat himself."
               }
@@ -558,6 +637,8 @@ function DayLine({
                 "Waiting on his answer"
               ) : state === "agreed" ? (
                 "Agreed — he picks the shops"
+              ) : state === "planned" ? (
+                plural(stops.length, "stop") + " arranged"
               ) : (
                 "Nothing proposed"
               )}
@@ -599,20 +680,39 @@ function DayLine({
             his handset included — said "No city named" above shops plainly in
             one town. The city in the box beside it is what the list is cut by
             AND what is saved onto the day with the shops. */}
-        {state !== "planned" ? (
+        {editable ? (
           <Button
             size="sm"
             tone="quiet"
-            disabled={busy || (!open && !proposed)}
-            title={!proposed ? "Choose the city first — the shops listed are that city's." : undefined}
+            disabled={busy || (!open && !proposed && !stops.length)}
+            title={
+              !proposed && !stops.length
+                ? "Choose the city first — the shops listed are that city's."
+                : undefined
+            }
             onClick={() => setOpen((o) => !o)}
           >
-            {open ? "Close" : proposed ? `Pick shops in ${where}` : "Choose a city to pick shops"}
+            {open
+              ? "Close"
+              : stops.length
+                ? "Add or remove shops"
+                : proposed
+                  ? `Pick shops in ${where}`
+                  : "Choose a city to pick shops"}
           </Button>
         ) : null}
       </div>
 
-      {open && proposed ? (
+      {stops.length || edit.added.length ? (
+        <DayList
+          stops={stops}
+          book={book}
+          edit={edit}
+          onToggle={open && editable && !busy ? toggle : null}
+        />
+      ) : null}
+
+      {open && editable && (proposed || stops.length) ? (
         <div className="mt-2 ml-[132px] border-l border-divider pl-3">
           <p className="mb-2 max-w-[620px] text-[12px] text-pretty text-muted">
             The exception rather than the model. Arranging a day from here skips the
@@ -623,18 +723,18 @@ function DayLine({
               book, so a day in Gwalior was arranged from a list containing
               every shop in Bhopal — and nothing said so, which made it look
               like the salesman had a lot of shops in Gwalior. */}
-          {here.length ? (
-            <div className="flex max-h-[240px] flex-wrap gap-1.5 overflow-y-auto">
-              {here.map((c) => (
-                <ShopChip
-                  key={c.id}
-                  c={c}
-                  on={picked.includes(c.id)}
-                  onToggle={toggle}
-                  showCity={row.cities.length > 1}
-                />
-              ))}
-            </div>
+          {!proposed ? (
+            <p className="text-[13px] text-muted">Choose a city above to add shops.</p>
+          ) : here.length ? (
+            <>
+              <p className="mb-1 text-[12px] text-muted">
+                Shops in {where} — {here.filter((c) => edit.selected.has(c.id)).length} of{" "}
+                {here.length} ticked
+              </p>
+              <div className="flex max-h-[240px] flex-wrap gap-1.5 overflow-y-auto">
+                {here.map((c) => chip(c, row.cities.length > 1))}
+              </div>
+            </>
           ) : (
             <p className="text-[13px] text-muted">
               {book.length === 0
@@ -651,16 +751,14 @@ function DayLine({
               book, and hiding it inside a longer list is how it stays a gap.
               It is offered for picking anyway — the salesman may well know
               exactly where it is. */}
-          {unplaceable.length ? (
+          {proposed && unplaceable.length ? (
             <details className="mt-2">
               <summary className="cursor-pointer text-[12px] text-warn-ink">
                 {plural(unplaceable.length, "shop")} with no city, area or beat recorded — nothing
                 can place {unplaceable.length === 1 ? "it" : "them"}
               </summary>
               <div className="mt-1.5 flex max-h-[160px] flex-wrap gap-1.5 overflow-y-auto">
-                {unplaceable.map((c) => (
-                  <ShopChip key={c.id} c={c} on={picked.includes(c.id)} onToggle={toggle} />
-                ))}
+                {unplaceable.map((c) => chip(c))}
               </div>
             </details>
           ) : null}
@@ -694,15 +792,7 @@ function DayLine({
                   </div>
                   <div className="mt-1.5 flex max-h-[160px] flex-wrap gap-1.5 overflow-y-auto">
                     {othersShown.length ? (
-                      othersShown.map((c) => (
-                        <ShopChip
-                          key={c.id}
-                          c={c}
-                          on={picked.includes(c.id)}
-                          onToggle={toggle}
-                          showCity
-                        />
-                      ))
+                      othersShown.map((c) => chip(c, true))
                     ) : (
                       <span className="text-[12px] text-muted">No shop of his matches that.</span>
                     )}
@@ -720,21 +810,123 @@ function DayLine({
             </div>
           ) : null}
 
-          {picked.length ? (
-            <div className="mt-2">
-              <Button
-                size="sm"
-                tone="primary"
-                disabled={busy}
-                onClick={() => onPickFromOffice(picked)}
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              tone="primary"
+              disabled={busy || !canSave}
+              title={canSave ? undefined : "Nothing has been changed."}
+              onClick={() => void save()}
+            >
+              {saveStopsLabel(edit)}
+            </Button>
+            {edit.added.length || edit.removed.length ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setAdded([]);
+                  setRemoved([]);
+                }}
+                className="cursor-pointer text-[12px] text-muted hover:text-ink"
               >
-                Arrange {plural(picked.length, "stop")} in {where} from the office
-              </Button>
-            </div>
-          ) : null}
+                Undo changes
+              </button>
+            ) : null}
+          </div>
         </div>
       ) : null}
 
+    </div>
+  );
+}
+
+/* ------------------------------------------------------- what is on the day */
+
+/**
+ * Every shop on the day, by name, whether or not the picker is open and whatever
+ * city is selected — a shop outside the listed cities must still be seen, or it
+ * is one nobody knows is there.
+ */
+function DayList({
+  stops,
+  book,
+  edit,
+  onToggle,
+}: {
+  stops: JourneyPlan["stops"];
+  book: BookCustomer[];
+  edit: DayEdit;
+  /** Null while the picker is shut: the list is then read, not edited. */
+  onToggle: ((id: string) => void) | null;
+}) {
+  const byId = new Map(book.map((c) => [c.id, c]));
+  const removing = new Set(edit.removed);
+  const lines = [
+    ...stops.map((s) => ({
+      id: s.customerId,
+      key: s.id,
+      name: s.customerName,
+      city: s.city,
+      mark: edit.locked.has(s.customerId)
+        ? s.status
+        : removing.has(s.customerId)
+          ? "will be removed"
+          : "arranged",
+    })),
+    ...edit.added.map((id) => ({
+      id,
+      key: id,
+      name: byId.get(id)?.name ?? id,
+      city: byId.get(id)?.city ?? null,
+      mark: "to be added",
+    })),
+  ];
+
+  return (
+    <div className="mt-2 ml-[132px] max-w-[720px] rounded-[6px] border border-line bg-surface">
+      <p className="border-b border-divider px-3 py-1.5 text-[12px] font-semibold text-ink">
+        {edit.added.length || edit.removed.length
+          ? `On this day after saving: ${plural(edit.total, "shop")}`
+          : `On this day: ${plural(stops.length, "shop")}`}
+      </p>
+      <ol className="max-h-[320px] divide-y divide-divider overflow-y-auto">
+        {lines.map((line, i) => (
+          <li key={line.key} className="flex items-center gap-2 px-3 py-1 text-[12px]">
+            <span className="w-6 flex-none text-right text-muted tabular-nums">{i + 1}</span>
+            {onToggle ? (
+              <input
+                type="checkbox"
+                checked={edit.selected.has(line.id)}
+                disabled={edit.locked.has(line.id)}
+                onChange={() => onToggle(line.id)}
+                aria-label={`Keep ${line.name} on this day`}
+                className="flex-none"
+              />
+            ) : null}
+            <span
+              className={
+                "min-w-0 flex-1 " +
+                (line.mark === "will be removed" ? "text-muted line-through" : "text-ink")
+              }
+            >
+              {line.name}
+              {line.city ? <span className="ml-1.5 text-muted">{line.city}</span> : null}
+            </span>
+            <span
+              className={
+                "flex-none " +
+                (line.mark === "will be removed"
+                  ? "text-warn-ink"
+                  : line.mark === "to be added"
+                    ? "text-brand-hover"
+                    : "text-muted")
+              }
+            >
+              {line.mark}
+            </span>
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }

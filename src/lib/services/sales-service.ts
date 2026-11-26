@@ -1,4 +1,5 @@
 import "server-only";
+import { arrangedByOffice } from "@/lib/journey-day-edit";
 import { QUAL_NEXT } from "@/lib/qualification-next";
 import { convertedOff, notConverted } from "../lead-action-window";
 import { bandFor, type HealthBand } from "../engines/inactivity";
@@ -5236,6 +5237,8 @@ export type JourneyPlan = {
   notes: string | null;
   estimatedTravelMinutes: number | null;
   stops: PlanStop[];
+  /** The office created every stop on it — see `arrangedByOffice`. */
+  officeArranged: boolean;
   /** The stops' cities, most shops first — where a day with no agreed city is. */
   shopCities: string[];
 };
@@ -5264,7 +5267,7 @@ export async function journeyPlansBetween(
   const scope = await managerScope();
   const who = userId ? sql`and p.user_id = ${userId}` : sql``;
 
-  const plans = (await db.execute<Omit<JourneyPlan, "stops" | "shopCities" | "cities"> & { cities: string[] | null }>(sql`
+  const plans = (await db.execute<Omit<JourneyPlan, "stops" | "shopCities" | "cities" | "officeArranged"> & { cities: string[] | null }>(sql`
     select p.id, p.user_id as "userId", u.name as "userName",
            p.plan_date::text as "planDate", p.beat, p.area,
            p.status::text as status,
@@ -5280,12 +5283,13 @@ export async function journeyPlansBetween(
      where p.plan_date between ${fromDay}::date and ${toDay}::date ${who}
        ${onlyMine(scope, "p.user_id")}
      order by p.plan_date asc, u.name asc
-  `)) as unknown as Array<Omit<JourneyPlan, "stops" | "shopCities" | "cities"> & { cities: string[] | null }>;
+  `)) as unknown as Array<Omit<JourneyPlan, "stops" | "shopCities" | "cities" | "officeArranged"> & { cities: string[] | null }>;
 
   if (!plans.length) return [];
 
-  const stops = (await db.execute<PlanStop & { planId: string }>(sql`
+  const stops = (await db.execute<PlanStop & { planId: string; createdById: string | null }>(sql`
     select s.id, s.plan_id as "planId", s.customer_id as "customerId",
+           s.created_by_id as "createdById",
            c.name as "customerName", c.area, c.beat,
            s.sequence, s.planned_at as "plannedAt",
            s.status::text as status, s.skip_reason as "skipReason",
@@ -5313,7 +5317,7 @@ export async function journeyPlansBetween(
      where p.plan_date between ${fromDay}::date and ${toDay}::date ${who}
        ${onlyMine(scope, "p.user_id")}
      order by p.plan_date asc, s.sequence asc
-  `)) as unknown as Array<PlanStop & { planId: string }>;
+  `)) as unknown as Array<PlanStop & { planId: string; createdById: string | null }>;
 
   return plans.map((p) => {
     const own = stops.filter((s) => s.planId === p.id);
@@ -5321,6 +5325,7 @@ export async function journeyPlansBetween(
       ...p,
       cities: planCityList(p),
       stops: own,
+      officeArranged: arrangedByOffice(own, p.userId),
       shopCities: rankShopCities(own.map((s) => s.city)),
     };
   });
