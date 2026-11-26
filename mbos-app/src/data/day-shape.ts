@@ -22,3 +22,18 @@ export const IN_FLIGHT_LEG_SHOPS_SQL = `SELECT DISTINCT customerId FROM travel_l
 
 /** How far back a closed, unbound leg still holds its shop on the phone. */
 export const IN_FLIGHT_LEG_WINDOW_MS = 86_400_000;
+
+/**
+ * THE FIRST CHECK-IN PINS THE SHOP ON THE PHONE TOO.
+ *
+ * The office pins an unpinned shop from the check-in fix (`gps_lat is null`
+ * in its statement), and the phone never did — so the shop stayed unpinned
+ * here until the next pull, and the very next visit to it, an hour later,
+ * asked "Are you at this shop?" again and measured nothing. Guarded by
+ * `gpsLat IS NULL` in the statement for the office's reason: a pin already
+ * there, from the office or an earlier visit, is never moved by this.
+ * Bound values: lat, lng, accuracy, customer id.
+ */
+export const PIN_UNPINNED_SHOP_SQL = `UPDATE customers
+  SET gpsLat = ?, gpsLng = ?, gpsAccuracyM = ?
+  WHERE id = ? AND gpsLat IS NULL`;

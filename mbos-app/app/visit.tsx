@@ -1248,6 +1248,13 @@ export default function Visit() {
         monthlyVolumeLitres: parseDecimal(reqLitres) || null,
         quantityCans: parseWhole(reqCans) || null,
         aiDraftId,
+        /* A shop with no pin, let in by the gate on its own reading: that
+           reading is about to be its pin at the office, so it is its pin
+           here too. Never on an override — that is a pin that exists and
+           is wrong — and never without a check-in fix, which the gate only
+           keeps for a reading good enough to have answered it. */
+        pinShopAt:
+          c && c.gpsLat == null && !overrideReason && ours?.checkInFix ? ours.checkInFix : null,
       });
     } catch {
       savingRef.current = false;

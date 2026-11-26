@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { MIGRATIONS } from '../db/schema';
-import { IN_FLIGHT_LEG_SHOPS_SQL, IN_FLIGHT_LEG_WINDOW_MS } from './day-shape';
+import { IN_FLIGHT_LEG_SHOPS_SQL, IN_FLIGHT_LEG_WINDOW_MS, PIN_UNPINNED_SHOP_SQL } from './day-shape';
 
 /**
  * The edges of a field day, run against the REAL handset schema. See
@@ -36,4 +36,17 @@ test('a shop he is riding to, or reached and has not yet visited, is held on the
     .map((r) => r.customerId)
     .sort();
   assert.deepEqual(ids, ['arrived_at', 'riding_to']);
+});
+
+test('the first check-in pins an unpinned shop on the phone, and never moves a pin', () => {
+  const db = handset();
+  db.prepare("INSERT INTO customers (id, name) VALUES ('bare', 'No Pin Traders')").run();
+  db.prepare("INSERT INTO customers (id, name, gpsLat, gpsLng) VALUES ('pinned', 'Pinned Paints', 21.1, 79.1)").run();
+  db.prepare(PIN_UNPINNED_SHOP_SQL).run(21.2, 79.2, 12, 'bare');
+  db.prepare(PIN_UNPINNED_SHOP_SQL).run(21.9, 79.9, 12, 'pinned');
+  const rows = db.prepare('SELECT id, gpsLat, gpsLng, gpsAccuracyM FROM customers ORDER BY id').all() as Record<string, unknown>[];
+  assert.deepEqual(rows.map((r) => ({ ...r })), [
+    { id: 'bare', gpsLat: 21.2, gpsLng: 79.2, gpsAccuracyM: 12 },
+    { id: 'pinned', gpsLat: 21.1, gpsLng: 79.1, gpsAccuracyM: null },
+  ]);
 });
