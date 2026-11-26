@@ -214,3 +214,65 @@ record that would never land, with the office seeing nothing and the handset
 saying only that it was still trying. It was found by sending a real visit
 payload through the HTTP endpoint rather than the service, which is the only
 way any of these three ever show up.
+
+**EVERY CAPPED CHANNEL HOLDS THE CURSOR, and the clamp list is where that is
+said.** Tasks and the journey were capped at 500 and in neither
+`nextPullCursorAt` list, so a manager reassigning 600 tasks put 100 behind the
+cursor for good. Both are clamped now (`TASKS_PER_PULL`,
+`JOURNEY_STOPS_PER_PULL`), and so is the new `myComplaints` channel. A capped
+channel has to be ordered by its change time or its last row is not the newest
+change it sent — the journey was ordered by day and is ordered by
+`greatest(s.updated_at, p.updated_at)` now, with `updatedAt` stripped before it
+goes (the `stripped` entry in the wire test's `DELTA`). `pull-cursor.test.ts`
+reads the clamp list as text.
+
+**A PULL THAT THROWS AFTER INGEST STILL ANSWERS THE RESULTS.** The items are
+already written by then; a 500 made the handset count each one as a failure
+and resend it towards `failed`. `/api/mbos/sync` catches round `buildPull`,
+logs it, and answers `pull: null` — the handset keeps its cursor.
+
+**THE OUTBOX'S HOUSEKEEPING IS `sync/outbox-ops.ts`, with the database passed
+in**, so it runs against the real migrations under `tsx --test`
+(`outbox-ops.test.ts`). `ENTITY_TABLE` lives there now. Its rules:
+
+- **Letting a create go takes everything waiting on it.** Not accepted lists
+  rejected, failed AND blocked entries; Remove on a create removes every entry
+  blocked behind it (the approval of a refused leave, the payment against a
+  refused order, an edit to the record itself) and their local records, and
+  the confirm says how many go with it. They were blocked for ever and counted
+  against the handover with nothing able to clear them.
+- **A refused edit puts the phone's copy back.** `updateAndQueue` keeps the
+  columns it changed, as they were, in `kv` (`prev:<queue id>`);
+  `markRejected` and Remove restore them, Send again re-applies them. A task
+  refused as Done comes back open even with no snapshot (an edit from an older
+  build). Skipped while a later edit to the record is still waiting.
+- **An edit waits on its own create while the create is in the outbox.** An
+  edit that overtook its create was answered "retry"; one made after the create
+  was refused was retried for ever. `presumedLanded` (in `ordering.ts`) is why
+  this is safe: an edit that waits on its own record is not counted as the
+  record "waiting", so once the create is pruned the edit is not waiting on
+  itself.
+- **Stuck work stops counting at handover after
+  `mbos.sync.handoverIgnoreDays`** (14). Queued and in-flight work always
+  counts; failed and blocked entries older than that do not, and the Sync
+  screen says how many it is ignoring.
+- **A row and its outbox item are one transaction.** `insertAndQueue`,
+  `updateAndQueue`, `saveOrder` and `collectPayment` read the location first
+  (`whereNow`, then `enqueue({ where })`) and write both inside `tx()`. `tx()`
+  does not nest, so a write called from inside another save's transaction
+  passes `inTransaction: true` — the visit's follow-up task and the order's
+  approval do. A write added inside a `tx()` body without it waits on itself.
+- **A record a crash left saved and never queued** (an older build) is marked
+  `failed` with "Saved on this phone but never sent" by `sweepOrphans` on cold
+  start — not re-queued, because the payload is the row plus the wire's own
+  spellings, which the row cannot rebuild.
+
+**Complaints have a delta channel: `myComplaints`**, `{ id, status }` from
+`myComplaintStates`, the same function for bootstrap and delta, applied as an
+UPDATE under `noPending` (a row the phone does not hold is not created). The
+badge reads `syncBadge` first and the office's word second
+(`sync/labels.ts`), so a refused complaint says Not accepted, never Open.
+
+**`notification_read` is an entity**: tapping a push (and opening one on the
+bell) marks the office's copy read too. The handler only ever touches the
+sender's own row and always accepts.
