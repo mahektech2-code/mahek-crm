@@ -1,4 +1,6 @@
-import { getKv, newId, setKv } from '../db';
+import { all, getKv, newId, one, setKv } from '../db';
+import { getConfig } from './config';
+import { IN_FLIGHT_LEG_SHOPS_SQL, IN_FLIGHT_LEG_WINDOW_MS } from './day-shape';
 import { isoDate } from '../lib/format';
 import { arrivalIsCurrent, withCheckIn } from '../lib/visit';
 
@@ -62,6 +64,19 @@ export type Arrival = {
   leftShopAt?: number | null;
   /** How far away he was when that was noticed, for the sentence that says so. */
   leftShopMetres?: number | null;
+  /**
+   * "I DIDN'T LEAVE", and why — the answer to a wrong reading.
+   *
+   * The trail can be wrong: a fix that jumped across the market from inside a
+   * steel-roofed godown, a phone left in the bike's box at the gate. Before
+   * this, a wrong "you left" closed the visit at an instant he never left at,
+   * cut the dwell figure short and could not be argued with anywhere on the
+   * phone. His answer clears the instant, is kept here with the reading it
+   * disputes, and rides on the visit to the office so a manager can weigh one
+   * against the other. Once given, the same visit is not asked again — a
+   * trail that keeps disagreeing with him is already on the record.
+   */
+  leftShopDispute?: { reason: string; seenAt: number; metres: number | null } | null;
   /**
    * THE VISIT'S ID, MINTED AT THE DOOR rather than at the save.
    *
@@ -128,11 +143,42 @@ function parse(raw: string | null): Arrival | null {
 export async function readArrival(): Promise<Arrival | null> {
   const value = parse(await getKv(KEY));
   if (!value) return null;
-  if (!arrivalIsCurrent(value, isoDate(new Date()))) {
+  const today = isoDate(new Date());
+  /* The punch-in is read only when the date has moved — the ordinary read,
+     every keystroke of the draft, costs no extra query. See
+     `arrivalIsCurrent` for why midnight alone no longer erases it. */
+  if (value.day !== today && !arrivalIsCurrent(value, today, await punchedInSince())) {
     await clearArrival();
     return null;
   }
   return value;
+}
+
+/**
+ * When the punch-in he is still on began, or null.
+ *
+ * Read straight off `attendance_days` rather than through `runningSince`,
+ * which needs the user and drags the tracker and the outbox into a module the
+ * store imports — the arrival has no user on it, and the handset has one
+ * person's attendance on it at a time. Bounded by the same ceiling
+ * `currentRow` keeps (`mbos.location.serviceMaxDayHours`) so a session left
+ * open on Friday does not keep Friday's arrival alive on Monday.
+ */
+async function punchedInSince(): Promise<number | null> {
+  try {
+    const row = await one<{ sessions: string | null }>(
+      'SELECT sessions FROM attendance_days ORDER BY day DESC LIMIT 1',
+    );
+    if (!row?.sessions) return null;
+    const sessions = JSON.parse(row.sessions) as { inAt?: number; outAt?: number | null }[];
+    const open = sessions.find((s) => typeof s?.inAt === 'number' && s.outAt == null);
+    if (!open?.inAt) return null;
+    const hours = await getConfig<number>('mbos.location.serviceMaxDayHours', 16);
+    return Date.now() - open.inAt < Math.max(1, hours) * 3_600_000 ? open.inAt : null;
+  } catch {
+    /* A row nobody can read proves no punch-in; the date rule stands. */
+    return null;
+  }
 }
 
 /** He is at the shop. Written the moment the leg closes, before anything else. */
@@ -191,6 +237,8 @@ export async function markLeftShop(at: number, metres: number): Promise<Arrival 
   const value = await readArrival();
   if (!value || value.checkedInAt == null) return null;
   if (value.leftShopAt != null) return value;
+  /* He has said he did not leave. Asked once per visit — see `leftShopDispute`. */
+  if (value.leftShopDispute) return null;
   const next: Arrival = { ...value, leftShopAt: at, leftShopMetres: metres };
   await setKv(KEY, JSON.stringify(next));
   return next;
@@ -210,6 +258,39 @@ export async function patchArrival(patch: Partial<Arrival>): Promise<Arrival | n
   const next: Arrival = { ...value, ...patch };
   await setKv(KEY, JSON.stringify(next));
   return next;
+}
+
+/**
+ * THE SHOPS A SYNC MAY NOT TAKE OFF THIS PHONE, because he is on his way to
+ * one or standing in it.
+ *
+ * A pull drops a shop that has left his book (`reconcileBook`) or that the
+ * office tombstones — a reassignment at noon, a territory edit, a stop on an
+ * office-made plan for a shop the phone was never sent. Taken from under an
+ * open arrival, the visit screen had no customer to save against and Check
+ * out did nothing at all; taken from under an open trip, the arrival had no
+ * shop to arrive at. Neither is the office's to undo mid-visit: the work he
+ * is doing there is his, and the next pull after the visit is saved removes
+ * the row as it would have.
+ *
+ * The arrival is read RAW — not through `readArrival` — because this asks
+ * what is on disk, not whether it is still current, and a read here must
+ * never be the thing that rubs an arrival out.
+ */
+export async function shopsInFlight(): Promise<string[]> {
+  const ids = new Set<string>();
+  const value = parse(await getKv(KEY));
+  if (value?.customerId) ids.add(value.customerId);
+  try {
+    const legs = await all<{ customerId: string }>(
+      IN_FLIGHT_LEG_SHOPS_SQL,
+      [Date.now() - IN_FLIGHT_LEG_WINDOW_MS],
+    );
+    for (const l of legs) ids.add(l.customerId);
+  } catch {
+    /* No legs table on a phone mid-migration: the arrival alone still holds. */
+  }
+  return [...ids];
 }
 
 /** Spent — the visit is in the ledger, or the trip was called off. */

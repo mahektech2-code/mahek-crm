@@ -258,3 +258,26 @@ moving to somebody else is 2,587 tombstones from one click.
 reads `kind = 'region'` and the handset's book reads the rest, so allocating a
 salesman a city cannot narrow a manager's console to it. Two tables would be two
 places for "Vidarbha" to be spelled differently.
+
+**A TOWN THE TREE DOES NOT KNOW, IN HIS DISTRICT, IS FILED UNDER THE
+DISTRICT.** The lead form offers a district as a chip and asks for the town to
+be typed, and the tree holds only towns a shop was ever reviewed in — so a
+village in the district he was allocated matched no district row and the lead
+was refused after the shop, the photograph and the pin were behind it.
+`placeNewLead` now answers `filedUnder` (the district's ids) when the tree
+could not place the town at all and the district he picked (`district` on the
+lead payload; on an older build, his one district in that state) is his.
+`handleLead` writes `resolved_state_id` and `resolved_district_id` with
+`place_source = 'field'`, which keeps the nightly typed pass (it re-reads only
+`sheet` rows) off it while a geocode of the pin may still refine it; nobody
+decided it, so `place_decided_at` stays null. The typed town stays in `city`.
+A town the tree DOES place in another district is still outside, and two
+districts in one state with no district named is still refused rather than
+guessed.
+
+**AND NO TERRITORY STILL KEEPS THE SHOPS HE OPENED.** `customerIdsInScope`
+short-circuited to `[]` before the creator clause was built, so a salesman with
+no area who opened a shop at a counter had it deleted by the reconcile on the
+pull that answered the create. With nothing allocated the book is now his own
+`mbos`-created shops inside `visible` and nothing else — the rule "no
+territory, no book" is unchanged for everything he did not create.

@@ -468,3 +468,12 @@ where a form was filled in records where somebody lives and answers none.
 a position for it is a record of somewhere a salesman stood while something
 failed — noise on every screen, and one more row held about a person for no
 reason.
+
+**A HANDSET'S OWN "NO FIX" SAYS WHICH, TOO.** `getFix` returns a `cause` on
+every result without a reading — `permission`, `services_off` (asked of
+`hasServicesEnabledAsync` first, so a switched-off phone is not left waiting
+the whole timeout), `no_signal`, `error` — and `noFixCauseOf` reads it. The
+check-in gate words its refusal from it (`noFixSentence`) and offers
+`openLocationSettings` for the two a switch cures. Only `no_signal` is cured
+by stepping outside, and telling the other three to do so sent people into
+the street to be refused again.

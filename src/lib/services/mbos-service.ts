@@ -840,7 +840,8 @@ export async function customerIdsInScope(
 
   /*
    * NO TERRITORY, NO BOOK — and the short-circuit is here rather than in the
-   * clause so the query is never asked at all.
+   * clause so the territory is never asked at all. (His own field-created
+   * shops are the one exception, below.)
    *
    * Who this applies to is the whole of the carve-out below: a field salesman
    * works a beat somebody allocates him, and an unallocated one carrying five
@@ -860,7 +861,6 @@ export async function customerIdsInScope(
    */
   const exempt = territoryExempt(principal);
   const territories = await territoriesFor(principal.user.id);
-  if (!exempt && !territories.length) return [];
 
   /*
    * HIS OWN FIELD-CREATED SHOPS STAY IN HIS BOOK whatever their address says.
@@ -873,12 +873,27 @@ export async function customerIdsInScope(
    * permission (see above), so letting the creator keep the row he created
    * widens nobody's sight beyond what `visible` already allows.
    */
-  const territory = territories.length
-    ? or(
-        territoryClause(territories),
-        and(eq(customers.leadSource, "mbos"), eq(customers.ownerId, principal.user.id)),
-      )
-    : undefined;
+  const ownFieldShops = and(eq(customers.leadSource, "mbos"), eq(customers.ownerId, principal.user.id));
+
+  /*
+   * AND WITH NO TERRITORY AT ALL, his own field shops are the whole book.
+   *
+   * This short-circuited to `[]` before the clause above was ever built, so a
+   * salesman with no area who added a shop at a counter — which the shop form
+   * allows, because the order is in his hand — had it deleted by the reconcile
+   * on the very pull that answered the create, his orders pointing at nothing.
+   * Only the creator clause is asked, still inside `visible`, so nothing about
+   * "no territory, no book" widens: he holds the shops he made and nothing else.
+   */
+  if (!exempt && !territories.length) {
+    const own = await db
+      .select({ id: customers.id })
+      .from(customers)
+      .where(and(isNull(customers.deletedAt), visible, ownFieldShops));
+    return own.map((r) => r.id);
+  }
+
+  const territory = territories.length ? or(territoryClause(territories), ownFieldShops) : undefined;
 
   // A lead in the trash is in nobody's book — on top of both clauses above,
   // because the "named by" arm can admit what the scope arm leaves out.
@@ -1411,6 +1426,16 @@ async function customersForDevice(ids: string[]) {
            coalesce(c.contact_person, case when nullif(trim(c.company_name), '') is not null then c.name end) as "contactPerson",
            c.phone,
            c.city, c.area, c.beat,
+           -- WHERE IT IS, in words. A lead carries its address down the leads
+           -- channel; the day it converts that channel stops, and the address
+           -- went with it — the customer card had no line for it. Half this
+           -- book has no pin, and for that half the address is the way there.
+           c.address,
+           -- The office's own clock on the row, as epoch milliseconds. The
+           -- handset sends it back as baseUpdatedAt on a shop edit, so an edit
+           -- made against a copy older than a desk's change is recorded as the
+           -- conflict it is rather than silently winning.
+           (extract(epoch from c.updated_at) * 1000)::double precision as "serverUpdatedAt",
            c.territory_region as "territoryRegion", c.dealer_code as "dealerCode",
            -- what mbos_price_list is keyed on for this account
            c.price_tag as "priceTag",
@@ -1975,6 +2000,14 @@ async function openLeads(
            -- app/lead.tsx has drawn it as "Where it is" all along. What was
            -- missing was this line and the one in upsertLeads that reads it.
            c.address,
+           -- WHAT THEY WANT, and WHY IT WAS LOST, which also went up and never
+           -- came back: handleLead writes both from the phone and the office
+           -- edits both at a desk, and neither was selected here, so a
+           -- requirement corrected in the office or a loss recorded there was
+           -- on no handset. Read in upsertLeads in the same change, because a
+           -- field read there and not sent here writes NULL over the row.
+           c.lead_requirement as requirement,
+           c.lead_lost_reason as "lostReason",
            c.gps_lat as "gpsLat", c.gps_lng as "gpsLng",
            -- The coordinating seat, and the NAME beside it: a salesman with a
            -- commercial question needs somebody to ring, and an id is not a

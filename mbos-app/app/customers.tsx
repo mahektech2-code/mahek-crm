@@ -662,12 +662,20 @@ export default function Customers() {
     if (!biller) return notify('Pick who gets the bill for this shop.', 'warn');
     setSaving(true);
     try {
+      /* WHERE HE IS STANDING, which is where a shop opened at its counter is.
+         `addFieldShop` has always taken a pin and nothing passed one, so every
+         field shop arrived unpinned. `whereNow` never waits on the radio — the
+         freshest fix already known, or none, the trade `createLead` makes. */
+      const { whereNow } = await import('../src/native/where');
+      const fix = await whereNow().catch(() => null);
       const r = await addFieldShop({
         name: newShopName,
         phone: shopPhone,
         city: shopCity,
         distributorCustomerId: biller.id,
         distributorName: biller.name,
+        gpsLat: fix?.lat ?? null,
+        gpsLng: fix?.lng ?? null,
       });
       if (!r.ok) return notify(r.message, 'warn');
       setAdding(false);
@@ -685,7 +693,7 @@ export default function Customers() {
    * gates are; everything else opens the record.
    */
   const openAccount = React.useCallback(
-    (x: { id: string; isLead?: number; leadStage?: string | null }) => {
+    (x: { id: string; isLead?: number; isFiledLead?: number; leadStage?: string | null }) => {
       set({ custId: x.id, pTab: 0 });
       /* `/lead` only where the lead row is on this phone — see
          `opensLeadRecord`. A shop the office calls a lead whose row never

@@ -54,5 +54,30 @@ export function leadVisitRefusal(l: { archived: number; syncState: string }): st
  */
 export const DROP_PHONE_LEAD_SHOP_SQL = `DELETE FROM customers WHERE id = ? AND kind = 'lead' AND lastSyncedAt = 0`;
 
+/**
+ * AND THE ONES STRANDED BEFORE THAT. A build without the drop above left a
+ * refused lead's phone-only shop behind for ever — a second copy of a real
+ * shop in Customers and Nearby, which `reconcileBook` keeps because a refused
+ * create is still in the outbox. The pull clears them on every pass: the
+ * phone's own copy only (`lastSyncedAt = 0`, `kind = 'lead'`) and only where
+ * the lead's create is REFUSED, never merely queued.
+ */
+const REFUSED_LEAD_SHOP = `customers.kind = 'lead' AND customers.lastSyncedAt = 0
+  AND EXISTS (SELECT 1 FROM sync_queue q WHERE q.entityId = customers.id AND q.entityType = 'lead'
+                AND q.op = 'create' AND q.state = 'rejected')`;
+export const REFUSED_LEAD_SHOPS_SQL = `SELECT COUNT(*) AS n FROM customers WHERE ${REFUSED_LEAD_SHOP}`;
+export const DROP_REFUSED_LEAD_SHOPS_SQL = `DELETE FROM customers WHERE ${REFUSED_LEAD_SHOP}`;
+
+/**
+ * THE SHOP A DUPLICATE REFUSAL MEANT. The office refuses a lead whose number
+ * is already on the book and names that shop by NAME; the phone finds it by
+ * the number, which is what the office matched on — the last ten digits — so
+ * the refusal can offer "open the existing shop" rather than a dead end.
+ * Never the lead's own row (same id), and only when the refusal was a
+ * duplicate (`failureCode`).
+ */
+export const DUPLICATE_REFUSAL_SQL = `SELECT failureCode AS code FROM sync_queue
+  WHERE entityId = ? AND entityType = 'lead' AND op = 'create' AND state = 'rejected' LIMIT 1`;
+
 /** Whether this lead's create was refused, read off the outbox — an edit since does not clear it. */
 export const LEAD_CREATE_REFUSED_SQL = `SELECT 1 AS refused FROM sync_queue WHERE entityId = ? AND entityType = 'lead' AND op = 'create' AND state = 'rejected' LIMIT 1`;

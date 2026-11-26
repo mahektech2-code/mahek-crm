@@ -3684,6 +3684,17 @@ export const SETTINGS = [
     max: 90,
   },
   {
+    key: "mbos.sync.reassignedWorkGraceHours",
+    type: "integer",
+    category: "mbos-sync",
+    label: "Work accepted after a shop moves away",
+    description:
+      "A visit, order or payment on a shop that has since been reassigned away from the salesman is accepted — and the new owner and his manager are told — when it was done before the move, or within this many hours after it. The hours cover a phone that had not synced yet when the office moved the shop, and a handset clock that runs a little wrong. A shop that was never his is refused whatever this says. 0 accepts only work dated before the move.",
+    default: 24,
+    min: 0,
+    max: 168,
+  },
+  {
     key: "mbos.sync.retryBackoffSeconds",
     type: "structured",
     category: "mbos-sync",
@@ -7691,6 +7702,7 @@ export type Config = {
   "mbos.sync.imageMaxDimensionPx": number;
   "mbos.sync.imageQualityPercent": number;
   "mbos.sync.offlineLoginValidityDays": number;
+  "mbos.sync.reassignedWorkGraceHours": number;
   "mbos.sync.retryBackoffSeconds": number[];
   "mbos.sync.statementMonths": number;
   "mbos.sync.maxItemsPerRequest": number;

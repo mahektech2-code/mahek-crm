@@ -189,6 +189,37 @@ describe("a field salesman's book", () => {
     assert.deepEqual(boot.bookIds, [], "the pull must STATE the empty book");
   });
 
+  test("WITH NO AREA, a shop he opened in the field stays in his book — and nothing else does", async () => {
+    await db.delete(mbosUserTerritories).where(eq(mbosUserTerritories.userId, salesman.id));
+    /* The shape `handleCustomerCreate` writes: `mbos` as its source, him as
+       owner and sales seat. Before, the empty book deleted it on the next pull. */
+    const [opened] = await db
+      .insert(customers)
+      .values({
+        id: id("cus"),
+        name: "Counter Paints",
+        phone: String(++phoneCounter),
+        city: "Wardha",
+        kind: "customer",
+        leadSource: "mbos",
+        ownerId: salesman.id,
+        salesAmId: salesman.id,
+      })
+      .returning({ id: customers.id });
+    /* Another salesman's field shop is not his, area or no area. */
+    await db.insert(customers).values({
+      id: id("cus"),
+      name: "Her Counter",
+      phone: String(++phoneCounter),
+      city: "Wardha",
+      kind: "customer",
+      leadSource: "mbos",
+      ownerId: other.id,
+      salesAmId: other.id,
+    });
+    assert.deepEqual(await book(salesman), [opened.id], "his own field shop, and none of his allocated book");
+  });
+
   test("a city narrows INSIDE its state rather than beside it", async () => {
     const elsewhere = await makeShop("Pune Paints", salesman.id);
     await db.update(customers).set({ city: "Pune" }).where(eq(customers.id, elsewhere));

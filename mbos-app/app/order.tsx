@@ -22,6 +22,7 @@ import {
   listCustomersPage,
   productsByIds,
   searchProducts,
+  shopOrderBlock,
   type BillingChoice,
   type Customer,
 } from '../src/data/customers';
@@ -629,6 +630,16 @@ export default function OrderScreen() {
         `${c.name} is billed to ${billingOptions?.[0]?.name ?? 'someone'}, who is not in your list. Ask the office to move the account, or bill the shop direct.`,
         'error',
       );
+    }
+
+    /* A shop the office REFUSED to open takes no new order: it would be saved
+       and then blocked behind a create that will never land. Said here, with
+       the office's own reason, while he can still take it on the right shop. */
+    if (!changingId) {
+      const shopBlock =
+        (await shopOrderBlock(biller.id, biller.name)) ??
+        (deliverTo && deliverTo.id !== biller.id ? await shopOrderBlock(deliverTo.id, deliverTo.name) : null);
+      if (shopBlock) return notify(shopBlock, 'error');
     }
 
     if (changingId) {

@@ -1,4 +1,5 @@
 import React from 'react';
+import { opensLeadRecord } from '../src/lib/account-label';
 import { Pressable, View } from 'react-native';
 import { router } from 'expo-router';
 import { AppFrame, useCameFrom } from '../src/components/shell/AppFrame';
@@ -9,6 +10,7 @@ import { NavigateButton } from '../src/components/ui/navigate';
 import { DashedAdd, GroupCard, Pill, PillButton } from '../src/components/ui/v3';
 import { color as C, weight } from '../src/theme/tokens';
 import { whatIsNearby, type NearbyAnswer } from '../src/data/nearby';
+import { openLocationSettings } from '../src/native/location';
 /* No `navigateTo` here either — both buttons on this screen are
    `NavigateButton`, so one failure message cannot drift from the other. */
 import { inrFromPaise, plural, shopName } from '../src/lib/format';
@@ -80,17 +82,16 @@ export default function Nearby() {
   /* A lead opens `/lead`, where its ladder and gates are — the same rule the
      Customers list follows. This opened the customer record for every shop,
      which for a lead is a page of empty ledgers. */
-  const open = (shop: { id: string; leadStage: string | null }) => {
+  /* THE LIST'S OWN RULE — `opensLeadRecord` over `leadCustomerClause` and
+     `filedLeadClause` — rather than a reading of the six-word stage, which
+     called a third-party or invoiced shop with a stale lead row a lead. */
+  const open = (shop: { id: string; leadStage: string | null; isLead: number; isFiledLead: number }) => {
     set({ custId: shop.id, pTab: 0 });
-    const stage = shop.leadStage?.toLowerCase() ?? '';
-    if (stage && stage !== 'converted' && stage !== 'won') router.push(`/lead?id=${shop.id}&from=nearby`);
+    if (opensLeadRecord(shop)) router.push(`/lead?id=${shop.id}&from=nearby`);
     else router.push('/customer');
   };
 
-  const isLead = (shop: { leadStage: string | null }) => {
-    const stage = shop.leadStage?.toLowerCase() ?? '';
-    return !!stage && stage !== 'converted' && stage !== 'won';
-  };
+  const isLead = (shop: { leadStage: string | null; isLead: number; isFiledLead: number }) => opensLeadRecord(shop);
 
   const hero = (
     /* The radii the office configured, not a list written into this screen. */
@@ -162,6 +163,18 @@ export default function Nearby() {
                   ? 'Turn on Location from the top of your phone screen. Then come back.'
                   : 'Step outside for a minute so GPS can find you.'}
             </T>
+            {/* "Then come back" had nothing to come back TO: the screen read its
+                fix once on open, so the only way to try again was to leave
+                and re-enter. The switch is offered where one cures it, and
+                every case can ask again from here. */}
+            {answer?.reason === 'denied' || answer?.reason === 'off' ? (
+              <DashedAdd
+                label={answer.reason === 'denied' ? 'Allow location' : 'Turn location on'}
+                onPress={() => void openLocationSettings(answer.reason === 'denied' ? 'permission' : 'services_off')}
+                style={{ marginTop: 10 }}
+              />
+            ) : null}
+            <DashedAdd label="Try again" onPress={() => load(within ?? undefined)} style={{ marginTop: 10 }} />
           </View>
         </View>
       ) : (

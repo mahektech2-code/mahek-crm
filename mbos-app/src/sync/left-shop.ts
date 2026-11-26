@@ -30,7 +30,7 @@ export async function watchForLeftShop(fix: Reading): Promise<void> {
   busy = true;
   try {
     const arrival = await readArrival();
-    if (!arrival || arrival.checkedInAt == null || arrival.leftShopAt != null) return;
+    if (!arrival || arrival.checkedInAt == null || arrival.leftShopAt != null || arrival.leftShopDispute) return;
 
     let anchor = arrival.checkInFix ? { lat: arrival.checkInFix.lat, lng: arrival.checkInFix.lng } : null;
     if (!anchor) {
@@ -85,7 +85,7 @@ export async function watchForLeftShop(fix: Reading): Promise<void> {
 export async function checkLeftShopFromLastKnown(): Promise<void> {
   try {
     const arrival = await readArrival();
-    if (!arrival || arrival.checkedInAt == null || arrival.leftShopAt != null) return;
+    if (!arrival || arrival.checkedInAt == null || arrival.leftShopAt != null || arrival.leftShopDispute) return;
     const last = await Location.getLastKnownPositionAsync({ maxAge: 5 * 60_000 });
     if (!last) return;
     await watchForLeftShop({

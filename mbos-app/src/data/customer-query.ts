@@ -13,7 +13,7 @@
  */
 
 import { isoDate } from '../lib/format';
-import { leadCustomerClause } from './lead-query';
+import { filedLeadClause, leadCustomerClause } from './lead-query';
 
 /**
  * A PAGE OF THE BOOK IS FIFTEEN SHOPS, however big the territory is.
@@ -96,7 +96,13 @@ const IS_LEAD = leadCustomerClause('customers');
 /* `leadStage` is NOT NULL on every `leads` row, so a non-null `leadStage`
    here is also the proof a live lead row exists — which is what decides
    whether a tap opens `/lead` (see `opensLeadRecord` in `lib/account-label.ts`). */
+/* A lead filed away on this phone is listed under Customers but is not one —
+   `filedLeadClause`. Asked on BOTH halves, because that is the half it is
+   listed in; one point lookup on the lead's primary key. */
+const IS_FILED_LEAD = filedLeadClause('customers');
+
 const LEAD_FACTS = `${IS_LEAD} AS isLead,
+    ${IS_FILED_LEAD} AS isFiledLead,
     (SELECT l.funnelStage FROM leads l WHERE l.id = customers.id AND l.archived = 0) AS leadFunnelStage,
     (SELECT l.stage FROM leads l WHERE l.id = customers.id AND l.archived = 0) AS leadStage`;
 
@@ -110,7 +116,7 @@ const LEAD_FACTS = `${IS_LEAD} AS isLead,
  * lookups to print three constants. The names stay, because the card reads
  * them and `account-label.test.ts` pins that they are there.
  */
-const NOT_A_LEAD = `0 AS isLead, NULL AS leadFunnelStage, NULL AS leadStage`;
+const NOT_A_LEAD = `0 AS isLead, ${IS_FILED_LEAD} AS isFiledLead, NULL AS leadFunnelStage, NULL AS leadStage`;
 
 function leadFacts(view: BookView | undefined): string {
   return view === 'customers' ? NOT_A_LEAD : LEAD_FACTS;
