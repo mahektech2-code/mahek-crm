@@ -65,6 +65,19 @@ export type Arrival = {
   /** How far away he was when that was noticed, for the sentence that says so. */
   leftShopMetres?: number | null;
   /**
+   * "I DIDN'T LEAVE", and why — the answer to a wrong reading.
+   *
+   * The trail can be wrong: a fix that jumped across the market from inside a
+   * steel-roofed godown, a phone left in the bike's box at the gate. Before
+   * this, a wrong "you left" closed the visit at an instant he never left at,
+   * cut the dwell figure short and could not be argued with anywhere on the
+   * phone. His answer clears the instant, is kept here with the reading it
+   * disputes, and rides on the visit to the office so a manager can weigh one
+   * against the other. Once given, the same visit is not asked again — a
+   * trail that keeps disagreeing with him is already on the record.
+   */
+  leftShopDispute?: { reason: string; seenAt: number; metres: number | null } | null;
+  /**
    * THE VISIT'S ID, MINTED AT THE DOOR rather than at the save.
    *
    * An order, a payment and every photograph are taken from INSIDE a visit
@@ -224,6 +237,8 @@ export async function markLeftShop(at: number, metres: number): Promise<Arrival 
   const value = await readArrival();
   if (!value || value.checkedInAt == null) return null;
   if (value.leftShopAt != null) return value;
+  /* He has said he did not leave. Asked once per visit — see `leftShopDispute`. */
+  if (value.leftShopDispute) return null;
   const next: Arrival = { ...value, leftShopAt: at, leftShopMetres: metres };
   await setKv(KEY, JSON.stringify(next));
   return next;

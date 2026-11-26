@@ -1255,6 +1255,7 @@ export default function Visit() {
            keeps for a reading good enough to have answered it. */
         pinShopAt:
           c && c.gpsLat == null && !overrideReason && ours?.checkInFix ? ours.checkInFix : null,
+        leftShopDispute: ours?.leftShopDispute ?? null,
       });
     } catch {
       savingRef.current = false;
@@ -1913,6 +1914,39 @@ export default function Visit() {
                   hhmm(leftAt) +
                   '.'}
               </Text>
+              {/* The reading can be wrong, and he is the one standing there.
+                  See `Arrival.leftShopDispute`. */}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="I did not leave the shop. Say why"
+                hitSlop={HIT}
+                onPress={() =>
+                  askConfirm({
+                    title: 'You did not leave?',
+                    body: 'Your visit time keeps running until you check out. Your reason goes to your manager with the reading.',
+                    reasonLabel: 'Why · needed',
+                    placeholder: 'I was inside the godown the whole time.',
+                    confirmLabel: 'I did not leave',
+                    cancelLabel: 'Back',
+                    tone: 'navy',
+                    run: (reason) => {
+                      void patchArrival({
+                        leftShopAt: null,
+                        leftShopMetres: null,
+                        leftShopDispute: { reason: reason.trim(), seenAt: leftAt, metres: arrival?.leftShopMetres ?? null },
+                      })
+                        .then((next) => {
+                          if (next) setArrival(next);
+                        })
+                        .catch(() => notify('That answer could not be saved on this phone. Try again.', 'error'));
+                    },
+                  })
+                }
+                style={{ marginTop: 8, minHeight: 44, alignSelf: 'flex-start', justifyContent: 'center' }}>
+                <Text style={[{ fontSize: 14, lineHeight: 20, color: C.warnInk, textDecorationLine: 'underline' }, weight(700)]}>
+                  I did not leave
+                </Text>
+              </Pressable>
             </View>
           </View>
         ) : null}

@@ -137,6 +137,8 @@ export type SaveVisitArgs = {
    * onto the phone's copy of the shop in the same transaction as the visit.
    */
   pinShopAt?: { lat: number; lng: number; accuracyM: number | null } | null;
+  /** His answer to a "you left" reading he says is wrong — see `Arrival`. */
+  leftShopDispute?: { reason: string; seenAt: number; metres: number | null } | null;
 };
 
 export async function saveVisit(args: SaveVisitArgs): Promise<string> {
@@ -408,6 +410,9 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
         aiDraftId: args.aiDraftId ?? undefined,
         /* His own sentence for saving it as not checked — see the type. */
         fieldUnverifiedReason: args.savedAnywayReason?.trim() || undefined,
+        /* "I did not leave", against the reading that said he had — see
+           `Arrival.leftShopDispute`. */
+        leftShopDispute: args.leftShopDispute ?? undefined,
         clientCreatedAt: base.clientCreatedAt,
         deviceId: base.deviceId,
       },
