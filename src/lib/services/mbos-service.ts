@@ -1784,9 +1784,17 @@ async function tasksSince(userId: string, sinceIso: string) {
      where t.assigned_to_user_id = ${userId}
        and t.updated_at > ${sinceIso}
      order by t.updated_at asc
-     limit 500
+     limit ${TASKS_PER_PULL}
   `);
 }
+
+/** The page size of the tasks channel. A FULL page holds the cursor at its
+    last row (see `nextPullCursorAt`) — without that, a manager who reassigned
+    600 tasks at once put 100 of them behind the cursor for good. */
+export const TASKS_PER_PULL = 500;
+/** The same for the journey channel, which is ordered by its change time on
+    a delta for exactly that reason. */
+export const JOURNEY_STOPS_PER_PULL = 500;
 
 /**
  * Samples out on trial.
@@ -3794,14 +3802,17 @@ export async function buildPull(
                to_char(s.planned_at at time zone ${APP_TIMEZONE}, 'HH24:MI') as "plannedAt",
                (extract(epoch from s.actual_visit_at) * 1000)::double precision as "actualAt",
                s.status,
-               s.skip_reason as "skipReason"
+               s.skip_reason as "skipReason",
+               greatest(s.updated_at, p.updated_at) as "updatedAt"
           from mbos_journey_stops s
           join mbos_journey_plans p on p.id = s.plan_id
          where p.user_id = ${principal.user.id}
            and p.plan_date >= (now() at time zone ${APP_TIMEZONE})::date - ${PLAN_HISTORY_DAYS}::int
            and (s.updated_at > ${sinceIso} or p.updated_at > ${sinceIso})
-         order by p.plan_date asc, s.sequence asc
-         limit 500
+         -- ORDERED BY THE CHANGE, not the day: a capped page has to take the
+         -- oldest changes first or the cursor cannot be held at its last row.
+         order by greatest(s.updated_at, p.updated_at) asc, p.plan_date asc, s.sequence asc
+         limit ${JOURNEY_STOPS_PER_PULL}
       `),
 
       /* The answer to something he asked for.
@@ -3952,6 +3963,15 @@ export async function buildPull(
       ? asDate((approvalRows[approvalRows.length - 1] as { updatedAt?: unknown }).updatedAt)
       : null;
 
+  const taskLastAt =
+    taskChanges.length === TASKS_PER_PULL
+      ? asDate((taskChanges[taskChanges.length - 1] as { updatedAt?: unknown }).updatedAt)
+      : null;
+  const journeyLastAt =
+    journeyRows.length === JOURNEY_STOPS_PER_PULL
+      ? asDate((journeyRows[journeyRows.length - 1] as { updatedAt?: unknown }).updatedAt)
+      : null;
+
   return {
     /* CLAMPED wherever a capped page came back full, and stepped back a
        little always — see `nextPullCursorAt`. Everything is re-sent from that
@@ -3964,6 +3984,8 @@ export async function buildPull(
         newTimeline.lastAt,
         notificationLastAt,
         approvalLastAt,
+        taskLastAt,
+        journeyLastAt,
       ]),
     ),
     territory: await territoryStateFor(principal),
@@ -3974,7 +3996,7 @@ export async function buildPull(
     remote: await remoteFor(principal),
     notifications: notificationsForWire(freshNotifications) as unknown[],
     transcripts: newTranscripts as unknown[],
-    journeyStops: journeyRows as unknown[],
+    journeyStops: journeyRows.map((r) => without(r, "updatedAt")) as unknown[],
     approvals: approvalRows.map((r) => without(r, "updatedAt")) as unknown[],
     planDays: planDayRows as unknown[],
     leaveBalances: leaveBalanceRows as unknown[],
