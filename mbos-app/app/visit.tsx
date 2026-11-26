@@ -943,7 +943,17 @@ export default function Visit() {
       if (shot.reason !== 'cancelled') notify(shot.reason, 'error');
       return;
     }
-    set({ shots: { ...shots, [which]: shot.mediaId } });
+    /* Taken again means the last one was not wanted — the voice note's rule
+       above, one tile along. The earlier photograph stayed in the queue,
+       went up under this visit's id and sat on the record beside the one he
+       kept, so the office saw two shop photos for one visit and could not
+       tell which he meant. Dropped AFTER the new one is safely queued, so a
+       failed retake leaves the first photograph where it was. */
+    const previous = useStore.getState().shots[which];
+    set({ shots: { ...useStore.getState().shots, [which]: shot.mediaId } });
+    if (previous && previous !== shot.mediaId) {
+      void discardQueuedMedia(previous).catch(() => undefined);
+    }
   };
 
   /* ---- the two records punched from inside the visit ----
