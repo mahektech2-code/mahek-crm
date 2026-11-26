@@ -184,6 +184,10 @@ jobs:
       - name: Route types
         run: npx next typegen
       - name: Type check
+        # tsc on the whole repo runs past Node's default heap beside the
+        # in-memory Postgres above; claude-fix.yml gives it the same room.
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
         run: npx tsc --noEmit
 
       # The database was for the migrations and the catalogue import above;
