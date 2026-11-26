@@ -19,6 +19,7 @@ import {
   type TrainingModuleVersion,
 } from "@/db/schema";
 import { err, ok, type Result } from "@/lib/result";
+import { calendarDate } from "@/lib/business-date";
 import { notifyUsers } from "@/lib/notify";
 import { canStartAttempt, drawAttempt, moduleProblems, moduleStates, progress, score, seedFrom, trackProblems, type AttemptLite, type EventLite, type ModuleProgress } from "./engine";
 import { emptyModule, TRAINING_CATEGORIES, type ModuleDefinition, type TrackDefinition, type TrainingCategory } from "./types";
@@ -274,7 +275,7 @@ export async function enroll(x: Exec, input: { userId: string; trackKey: string;
   const existing = await x.select({ id: trainingEnrollments.id }).from(trainingEnrollments).where(and(eq(trainingEnrollments.userId, input.userId), eq(trainingEnrollments.trackVersionId, tv.id), eq(trainingEnrollments.status, "active"))).limit(1);
   if (existing[0]) return ok({ enrollmentId: existing[0].id }, "Already enrolled.");
   const days = tv.def.completeWithinDays;
-  const due = days ? new Date(Date.parse(`${input.todayYmd}T12:00:00+05:30`) + days * 86_400_000).toISOString().slice(0, 10) : null;
+  const due = days ? calendarDate(new Date(Date.parse(`${input.todayYmd}T12:00:00+05:30`) + days * 86_400_000)) : null;
   const id = tid("ten");
   await x.insert(trainingEnrollments).values({ id, userId: input.userId, applicationId: input.applicationId ?? null, trackVersionId: tv.id, trainerId: input.trainerId ?? null, assignedById: input.assignedById, dueOn: due });
   return ok({ enrollmentId: id }, "Enrolled.");
@@ -786,6 +787,7 @@ export async function trainingInsights(nowMs: number) {
       join training_track_versions tv on tv.id = e.track_version_id join training_tracks t on t.id = tv.track_id
      where e.status <> 'withdrawn' order by e.assigned_at desc limit 200`)) as unknown as { id: string; name: string; status: string; assigned_at: string; due_on: string | null; completed_at: string | null; track: string }[];
   const views = await Promise.all(people.filter((p) => p.status === "active").map((p) => enrollmentView(p.id, nowMs)));
+  const today = calendarDate(new Date(nowMs));
   const firstN = perModule.reduce((n, m) => n + m.first_n, 0);
   const firstPass = perModule.reduce((n, m) => n + m.first_pass, 0);
   const completed = people.filter((p) => p.status === "completed");
@@ -795,7 +797,7 @@ export async function trainingInsights(nowMs: number) {
     gaps,
     people: people.map((p) => {
       const v = views.find((x) => x?.enrollment.id === p.id);
-      return { ...p, passed: v?.summary.passed ?? null, required: v?.summary.required ?? null, retraining: v?.modules.some((m) => m.state === "retraining_required") ?? false, overdue: p.status === "active" && p.due_on != null && p.due_on < new Date(nowMs).toISOString().slice(0, 10) };
+      return { ...p, passed: v?.summary.passed ?? null, required: v?.summary.required ?? null, retraining: v?.modules.some((m) => m.state === "retraining_required") ?? false, overdue: p.status === "active" && p.due_on != null && p.due_on < today };
     }),
     totals: {
       active: people.filter((p) => p.status === "active").length,
@@ -803,7 +805,7 @@ export async function trainingInsights(nowMs: number) {
       firstAttemptPassRate: firstN ? Math.round((firstPass / firstN) * 100) : null,
       firstAttempts: firstN,
       retakesPerCompletion: completed.length ? Math.round((retakesAll / completed.length) * 10) / 10 : null,
-      overdue: people.filter((p) => p.status === "active" && p.due_on != null && p.due_on < new Date(nowMs).toISOString().slice(0, 10)).length,
+      overdue: people.filter((p) => p.status === "active" && p.due_on != null && p.due_on < today).length,
     },
   };
 }

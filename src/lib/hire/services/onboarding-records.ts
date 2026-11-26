@@ -21,6 +21,7 @@ import {
 } from "@/db/schema";
 export { slabLines };
 import { err, ok, type Result } from "@/lib/result";
+import { calendarDate } from "@/lib/business-date";
 import { fileStorage } from "@/lib/storage";
 import { rupees, slabLines } from "@/app/hire/_onboard/letter";
 import type { HireContext } from "../access";
@@ -505,7 +506,7 @@ export async function courierEvent(ctx: HireContext, shipmentId: string, input: 
     const [ret] = await db.select({ id: hireCourierShipments.id }).from(hireCourierShipments).where(and(eq(hireCourierShipments.applicationId, s.applicationId), eq(hireCourierShipments.direction, "return"))).limit(1);
     if (!ret) {
       const days = (await (await import("@/lib/config/store")).getConfig())["hire.reminders.courierDays"];
-      const due = new Date(Date.parse(`${on}T12:00:00+05:30`) + days * 86_400_000).toISOString().slice(0, 10);
+      const due = calendarDate(new Date(Date.parse(`${on}T12:00:00+05:30`) + days * 86_400_000));
       await addShipment(ctx, s.applicationId, { direction: "return", status: "awaited", on, dueOn: due, docKeys: s.docKeys, remarks: "Opened when the outbound copies were delivered" });
     }
   }
