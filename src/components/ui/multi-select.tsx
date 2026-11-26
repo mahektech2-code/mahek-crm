@@ -24,7 +24,12 @@ import { cx } from "./primitives";
  * panel offering both invites picking the wrong one for no reason.
  * ------------------------------------------------------------------------- */
 
-export type MultiSelectOption = { value: string; label: string };
+export type MultiSelectBadge = { key: string; text: string; title?: string };
+/**
+ * `sub` is a smaller second line (and is searched); `badges` are small marks drawn beside the
+ * label — a picker that must say "this one needs a look" without hiding or changing the row.
+ */
+export type MultiSelectOption = { value: string; label: string; sub?: string; badges?: MultiSelectBadge[] };
 
 const PANEL_MIN_WIDTH = 220;
 const PANEL_MAX_WIDTH = 340;
@@ -130,7 +135,7 @@ export function MultiSelect({
   }, [open, close]);
 
   const matches = term.trim()
-    ? options.filter((o) => o.label.toLowerCase().includes(term.trim().toLowerCase()))
+    ? options.filter((o) => `${o.label} ${o.sub ?? ""}`.toLowerCase().includes(term.trim().toLowerCase()))
     : options;
 
   const summary = triggerLabel
@@ -221,7 +226,24 @@ export function MultiSelect({
                       onChange={() => toggle(o.value)}
                       className="h-[15px] w-[15px] flex-none accent-brand"
                     />
-                    <span className="truncate">{o.label}</span>
+                    {o.sub || o.badges?.length ? (
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate">{o.label}</span>
+                        {o.sub ? <span className="block text-[11px] leading-tight break-words text-muted">{o.sub}</span> : null}
+                      </span>
+                    ) : (
+                      <span className="truncate">{o.label}</span>
+                    )}
+                    {(o.badges ?? []).map((b) => (
+                      <span
+                        key={b.key}
+                        title={b.title}
+                        data-badge={b.key}
+                        className="flex-none rounded-[3px] border border-[#D9A441] bg-[#FFF6E0] px-1.5 text-[11px] font-medium text-[#7A5200]"
+                      >
+                        {b.text}
+                      </span>
+                    ))}
                   </label>
                 ))}
                 {!matches.length ? (

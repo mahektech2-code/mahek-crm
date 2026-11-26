@@ -13,7 +13,7 @@ import { previewAreaHandover, setSalesmanTerritories, type AreaHandover } from "
 import type { DistrictNode, PlaceTree, Salesman, StateNode } from "@/lib/services/sales-service";
 import { Button, Pill } from "@/components/console/parts";
 import { GeoAreas } from "./geo-areas";
-import type { GeoAllocation, GeoData } from "@/lib/geography/geo-picker";
+import type { GeoAllocation } from "@/lib/geography/geo-picker";
 
 /**
  * Where a salesman WORKS, and the dialog that sets it.
@@ -92,13 +92,14 @@ const districtKey = (district: string, state: string) => `${state}|${district}`;
 export function Territories({
   salesman,
   places,
-  geo = null,
+  geoAvailable = false,
   geoSaved = [],
 }: {
   salesman: Salesman;
   places: PlaceTree;
   /** The official geography master, or null while none has been loaded. */
-  geo?: GeoData | null;
+  /** Whether an official master exists; the master itself is fetched when the dialog opens. */
+  geoAvailable?: boolean;
   geoSaved?: GeoAllocation[];
 }) {
   const router = useRouter();
@@ -558,7 +559,7 @@ export function Territories({
               </div>
             ) : null}
 
-            <GeoAreas salesmanId={salesman.id} salesmanName={salesman.name} geo={geo} saved={geoSaved} />
+            <GeoAreas salesmanId={salesman.id} salesmanName={salesman.name} available={geoAvailable} saved={geoSaved} />
 
             {/* THE HAND-OVER, named before it happens: how many, and out of whose book. */}
             {picked.length ? (

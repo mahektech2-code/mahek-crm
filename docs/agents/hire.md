@@ -109,7 +109,7 @@ next stage and enrols them on the blueprint's training track, and
 lets `hired` move only between stages after Provision (`isPostHireStage`), and
 nothing after Provision is reachable by override. An older version keeps the
 flow it was published with — documents and offer together, the account last,
-`onboarding_completed_at` = `hired_at` (backfilled by 0380).
+`onboarding_completed_at` = `hired_at` (backfilled by 0381).
 
 **THE ONBOARDING STATUS IS DERIVED, NEVER TYPED.** The PRD's fourteen statuses
 (Compensation discussion … Onboarding completed) come from
