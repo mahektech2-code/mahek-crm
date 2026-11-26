@@ -362,6 +362,39 @@ export function customerRowSettled(alias: string): string {
  * there is nothing to draw it from — so the Leads TAB can count a lead the
  * Customers "Leads" chip does not. That is the one gap left between the two.
  */
+/**
+ * A `customers` row whose lead was FILED AWAY on this phone — the lead row is
+ * here, archived (the office's tombstone for a lead lost, trashed or filed),
+ * and nothing says it converted.
+ *
+ * It is not a live lead, so `leadCustomerClause` leaves it out and it is
+ * listed under Customers — where it used to open `/customer`, a page of empty
+ * ledgers about a shop nobody bills, while the duplicate check called the same
+ * shop "a lead". One rule now, read by the list, Nearby and the duplicate
+ * check: it is a "Lost / filed lead", and a tap opens the lead record, where
+ * its history is and where it can be brought back.
+ */
+export function filedLeadClause(alias = 'customers'): string {
+  return `(NOT ${customerRowSettled(alias)}
+    AND EXISTS (SELECT 1 FROM leads l WHERE l.id = ${alias}.id AND l.archived = 1
+                  AND NOT ${leadRowConverted('l')}))`;
+}
+
+/**
+ * THE DUPLICATE CHECK'S TWO HALVES, on the list's own rule. A customers row is
+ * a lead where `leadCustomerClause` says so OR it is a filed lead; the leads
+ * half asks every lead row not converted, archived or not — a shop already
+ * lost is still a shop somebody worked, and raising it again as new loses
+ * that history.
+ */
+export const DUPLICATE_CUSTOMERS_SQL = `SELECT id, name, phone,
+    (${leadCustomerClause('customers')} OR ${filedLeadClause('customers')}) AS isLead,
+    ${filedLeadClause('customers')} AS isFiled
+  FROM customers WHERE phone IS NOT NULL`;
+
+export const DUPLICATE_LEADS_SQL = `SELECT id, name, mobile, archived AS isFiled
+  FROM leads WHERE mobile IS NOT NULL AND NOT ${leadRowConverted('leads')}`;
+
 export function leadCustomerClause(alias = 'customers'): string {
   return `(NOT ${customerRowSettled(alias)}
     AND (EXISTS (SELECT 1 FROM leads l WHERE l.id = ${alias}.id AND l.archived = 0

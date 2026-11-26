@@ -191,6 +191,13 @@ export const MBOS_EVENT = {
   competitor: "competitor",
   validation: "validation_call",
   internalNote: "internal_note",
+  /**
+   * A note or a next action the salesman queued on a LEAD that had become a
+   * customer by the time it reached the office. The lead columns mean nothing
+   * on a customer, so what he said is kept here instead of being refused —
+   * see `lib/mbos/converted-lead-note.ts`.
+   */
+  fieldNote: "field_note",
 
   /* The sample, at each point somebody's word changes. */
   sampleDispatched: "sample_dispatched",

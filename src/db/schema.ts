@@ -2367,7 +2367,11 @@ export const customers = pgTable(
     resolvedDistrictId: text("resolved_district_id").references(() => places.id),
     resolvedCityId: text("resolved_city_id").references(() => places.id),
     resolvedAreaId: text("resolved_area_id").references(() => places.id),
-    /** `gps` | `geocode` | `pincode` | `manual` — which evidence answered. */
+    /**
+     * `gps` | `geocode` | `pincode` | `manual` | `review` | `sheet` | `field` —
+     * which evidence answered. `field` is a handset lead filed under the
+     * district its salesman picked, its typed town unknown to the tree.
+     */
     placeSource: text("place_source"),
     placeResolvedAt: timestamp("place_resolved_at", { withTimezone: true }),
     /**

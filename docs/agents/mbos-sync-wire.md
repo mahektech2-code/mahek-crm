@@ -214,3 +214,43 @@ record that would never land, with the office seeing nothing and the handset
 saying only that it was still trying. It was found by sending a real visit
 payload through the HTTP endpoint rather than the service, which is the only
 way any of these three ever show up.
+
+**A SHOP HE ADDED CARRIES THE OUTBOX'S ANSWER.** `customers` is reference data
+and had no `syncState`, so a field shop the office refused looked normal for
+ever and took orders that could only be blocked behind its create. The
+customers migration adds `syncState` ('synced' by default), `syncMessage` and
+`serverCreatedAt` (the third column `setEntityState` writes on an accept — see
+the test above), `ENTITY_TABLE` maps `customer`, the card draws the refusal and
+`order.tsx` refuses a new order against a shop whose create was REFUSED
+(`SHOP_CREATE_REFUSED_SQL`, read off the outbox). A shop still on its way is
+not refused — the order waits behind it.
+
+**THE PIN RULE IS THE SERVER'S TOO.** `handleCustomerEdit` writes coordinates
+only onto a shop with none; a pin alone onto a pinned shop is refused in words
+(the same pin again is a resend and passes). `editShop` sends `baseUpdatedAt`
+from `serverUpdatedAt`, the office's clock on the row now on the customers
+wire, so an edit against an older copy is the recorded conflict it is. And
+`upsertCustomers` holds `SHOP_EDIT_COLUMNS` (contact, phone, pin) while a
+`customer` item for the shop is pending — per column (`upsertSets`), so the
+office's money and health always land.
+
+**REQUIREMENT AND LOST REASON GO BOTH WAYS.** `openLeads` sends
+`lead_requirement` and `lead_lost_reason` and `upsertLeads` reads them in the
+same change. **And the customers wire sends `address`**, which a lead carried
+down its own channel and lost the day it converted; the card draws it.
+
+**A REFUSED LEAD'S GHOST IS CLEARED ON EVERY PULL.** #1256 drops the
+phone-only shop row (`kind = 'lead'`, `lastSyncedAt = 0`) when a lead create
+is refused; rows stranded by an older build are dropped by
+`dropRefusedLeadShops` in the pull, its own helper beside `reconcileBook`, and
+only where the outbox holds a REFUSED create. A duplicate refusal names the
+shop by name; the lead's banner finds it by the number (`shopThatRefusedLead`)
+and offers to open it.
+
+**A NOTE ON A LEAD THAT HAS SINCE CONVERTED IS KEPT, NOT REFUSED.** The outbox
+drains hours late, and a note or a next action queued on a lead accounts
+billed in the meantime was refused "is a customer now". An update carrying
+nothing but a note, a next action and the activity stamps
+(`survivesConversion` in `lib/mbos/converted-lead-note.ts`) is accepted and
+written to the customer's timeline as `field_note`, keyed on the outbox item so
+a resend writes nothing twice. Any other field keeps the refusal.

@@ -57,3 +57,11 @@ test('a town fills itself and its state; a district asks for the town but knows 
     ],
   );
 });
+
+test('a district chip names its district, so a town the office does not know is filed under it', () => {
+  const rule = areaRule({ exempt: false, areas: [{ kind: 'district', value: 'Thane', parent: 'Maharashtra' }] });
+  assert.equal(rule.kind, 'pick');
+  if (rule.kind !== 'pick') return;
+  assert.equal(rule.choices[0].district, 'Thane');
+  assert.equal(rule.choices[0].city, null, 'the town is still typed');
+});

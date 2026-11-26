@@ -16,7 +16,7 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appAccess, customers, mbosUserTerritories, places, users } from "@/db/schema";
+import { appAccess, customers, mbosUserTerritories, places, timelineEvents, users } from "@/db/schema";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { ingestSyncBatch } from "@/lib/actions/mbos";
 import { customerIdsInScope, type MbosPrincipal } from "@/lib/services/mbos-service";
@@ -212,6 +212,22 @@ describe("A district or a town is matched on the reviewed tree", () => {
     assert.ok((await customerIdsInScope(rahul)).includes(item.entityId));
   });
 
+  test("A TOWN THE TREE DOES NOT KNOW, under a district of his, is let in and filed under that district", async () => {
+    await tree();
+    const rahul = await person("associate", [{ kind: "district", region: "Thane", parent: "Maharashtra" }]);
+    /* The district chip on the form, and the village typed beside it. */
+    const item = lead({ city: "Shahapur", state: "Maharashtra", district: "Thane" });
+    const [result] = await ingestSyncBatch(rahul, [item]);
+    assert.equal(result.status, "accepted", JSON.stringify(result));
+    const row = await stored(item.entityId);
+    assert.equal(row.city, "Shahapur", "the typed town stays as text");
+    assert.equal(row.resolvedStateId, "pl_mh");
+    assert.equal(row.resolvedDistrictId, "pl_thane");
+    assert.equal(row.resolvedCityId, null);
+    assert.equal(row.placeSource, "field", "kept off the nightly typed pass");
+    assert.ok((await customerIdsInScope(rahul)).includes(item.entityId), "and it is on his book");
+  });
+
   test("a lead in another district is refused, and the refusal names his district", async () => {
     await tree();
     const rahul = await person("associate", [{ kind: "district", region: "Thane", parent: "Maharashtra" }]);
@@ -237,5 +253,68 @@ describe("A district or a town is matched on the reviewed tree", () => {
     const townBook = await customerIdsInScope(town);
     assert.ok(townBook.includes(kalyan));
     assert.ok(!townBook.includes(bhiwandi), "a neighbouring town in the same district is not his");
+  });
+});
+
+describe("After the office has moved on", () => {
+  function update(entityType: "lead" | "customer", entityId: string, payload: Record<string, unknown>): SyncItem {
+    return {
+      queueId: id("q"),
+      entityType,
+      entityId,
+      op: "update",
+      idempotencyKey: `${entityId}:update:${randomUUID().slice(0, 8)}`,
+      clientCreatedAt: Date.now(),
+      payload,
+    };
+  }
+
+  async function shopOf(owner: string, extra: Partial<typeof customers.$inferInsert> = {}) {
+    const [row] = await db
+      .insert(customers)
+      .values({
+        id: id("cus"),
+        name: "Converted Paints",
+        phone: testPhone(),
+        city: "Nagpur",
+        territoryRegion: "Maharashtra",
+        kind: "customer",
+        ownerId: owner,
+        salesAmId: owner,
+        leadNotes: "2026-11-01 — first visit",
+        ...extra,
+      })
+      .returning({ id: customers.id });
+    return row.id;
+  }
+
+  test("A NOTE QUEUED ON A LEAD THAT HAS SINCE CONVERTED lands on the customer's timeline", async () => {
+    const rahul = await person("associate", [{ kind: "state", region: "Maharashtra" }]);
+    const shop = await shopOf(rahul.user.id);
+    const item = update("lead", shop, {
+      id: shop,
+      notes: "2026-11-01 — first visit\n2026-11-20 — wants the thinner price",
+      lastActivityDate: "2026-11-20",
+    });
+    const [result] = await ingestSyncBatch(rahul, [item]);
+    assert.equal(result.status, "accepted", JSON.stringify(result));
+    const lines = await db.select().from(timelineEvents).where(eq(timelineEvents.customerId, shop));
+    assert.deepEqual(lines.map((l) => l.summary), ["Note: 2026-11-20 — wants the thinner price"]);
+    /* A rung is still refused on a customer. */
+    const [stage] = await ingestSyncBatch(rahul, [update("lead", shop, { id: shop, stage: "prospect" })]);
+    assert.equal(stage.status, "rejected");
+  });
+
+  test("A PIN IS SET FROM THE FIELD, NEVER MOVED — on the server too", async () => {
+    const rahul = await person("associate", [{ kind: "state", region: "Maharashtra" }]);
+    const pinned = await shopOf(rahul.user.id, { gpsLat: 21.1, gpsLng: 79.1 });
+    const [moved] = await ingestSyncBatch(rahul, [update("customer", pinned, { customerId: pinned, gpsLat: 19.0, gpsLng: 72.8 })]);
+    assert.equal(moved.status, "rejected", JSON.stringify(moved));
+    assert.equal((await stored(pinned)).gpsLat, 21.1);
+
+    const bare = await shopOf(rahul.user.id);
+    const [set] = await ingestSyncBatch(rahul, [update("customer", bare, { customerId: bare, gpsLat: 19.0, gpsLng: 72.8 })]);
+    assert.equal(set.status, "accepted", JSON.stringify(set));
+    assert.equal((await stored(bare)).gpsLat, 19.0);
   });
 });

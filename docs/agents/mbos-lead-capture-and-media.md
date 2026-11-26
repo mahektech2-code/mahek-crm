@@ -75,3 +75,9 @@ the outbox counts as landed, so ordinary visits are unaffected, and a lead the
 office refused blocks its visit instead of sending it to be refused.
 `customersForDevice` names a lead by its shop (`company_name`) and the person
 as its contact, the way the phone does, so the card does not change on sync.
+
+**A SHOP OPENED AT A COUNTER IS PINNED WHERE HE STANDS.** `addFieldShop` took
+a pin and nothing passed one, and it wrote none locally either, so every field
+shop arrived unpinned — off the map and Nearby, with no check-in radius. The
+Customers screen passes `whereNow()` (the freshest fix already known, never a
+wait on the radio, the trade `createLead` makes) and the local row carries it.
