@@ -25,6 +25,20 @@ test('an arrival from an earlier day is not today’s', () => {
   assert.equal(arrivalIsCurrent(arrival, '2026-09-14'), false);
 });
 
+test('a visit he is checked into survives midnight', () => {
+  const inside = { ...arrival, checkedInAt: arrival.arrivedAt + 60_000 };
+  assert.equal(arrivalIsCurrent(inside, '2026-09-14'), true);
+});
+
+test('an arrival inside the punch-in still running survives midnight', () => {
+  /* Punched in before he arrived — the late market, the night drive. */
+  assert.equal(arrivalIsCurrent(arrival, '2026-09-14', arrival.arrivedAt - 3_600_000), true);
+  /* Punched in AFTER it: the arrival belongs to a stretch that has ended. */
+  assert.equal(arrivalIsCurrent(arrival, '2026-09-14', arrival.arrivedAt + 3_600_000), false);
+  /* Not punched in at all. */
+  assert.equal(arrivalIsCurrent(arrival, '2026-09-14', null), false);
+});
+
 test('checking in stamps the instant he walked in', () => {
   const after = withCheckIn(arrival, 1_700_000_600_000);
   assert.equal(after.checkedInAt, 1_700_000_600_000);

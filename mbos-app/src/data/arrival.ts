@@ -1,4 +1,5 @@
-import { getKv, newId, setKv } from '../db';
+import { getKv, newId, one, setKv } from '../db';
+import { getConfig } from './config';
 import { isoDate } from '../lib/format';
 import { arrivalIsCurrent, withCheckIn } from '../lib/visit';
 
@@ -128,11 +129,42 @@ function parse(raw: string | null): Arrival | null {
 export async function readArrival(): Promise<Arrival | null> {
   const value = parse(await getKv(KEY));
   if (!value) return null;
-  if (!arrivalIsCurrent(value, isoDate(new Date()))) {
+  const today = isoDate(new Date());
+  /* The punch-in is read only when the date has moved — the ordinary read,
+     every keystroke of the draft, costs no extra query. See
+     `arrivalIsCurrent` for why midnight alone no longer erases it. */
+  if (value.day !== today && !arrivalIsCurrent(value, today, await punchedInSince())) {
     await clearArrival();
     return null;
   }
   return value;
+}
+
+/**
+ * When the punch-in he is still on began, or null.
+ *
+ * Read straight off `attendance_days` rather than through `runningSince`,
+ * which needs the user and drags the tracker and the outbox into a module the
+ * store imports — the arrival has no user on it, and the handset has one
+ * person's attendance on it at a time. Bounded by the same ceiling
+ * `currentRow` keeps (`mbos.location.serviceMaxDayHours`) so a session left
+ * open on Friday does not keep Friday's arrival alive on Monday.
+ */
+async function punchedInSince(): Promise<number | null> {
+  try {
+    const row = await one<{ sessions: string | null }>(
+      'SELECT sessions FROM attendance_days ORDER BY day DESC LIMIT 1',
+    );
+    if (!row?.sessions) return null;
+    const sessions = JSON.parse(row.sessions) as { inAt?: number; outAt?: number | null }[];
+    const open = sessions.find((s) => typeof s?.inAt === 'number' && s.outAt == null);
+    if (!open?.inAt) return null;
+    const hours = await getConfig<number>('mbos.location.serviceMaxDayHours', 16);
+    return Date.now() - open.inAt < Math.max(1, hours) * 3_600_000 ? open.inAt : null;
+  } catch {
+    /* A row nobody can read proves no punch-in; the date rule stands. */
+    return null;
+  }
 }
 
 /** He is at the shop. Written the moment the leg closes, before anything else. */

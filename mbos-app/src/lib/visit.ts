@@ -284,15 +284,44 @@ export function elapsedLabel(seconds: number): string {
 export type ArrivalFacts = { arrivedAt: number; checkedInAt: number | null; day: string };
 
 /**
- * Is this arrival today's?
+ * Is this arrival still his?
  *
  * An arrival from an earlier day is not restored: he did not go in, the day
  * has ended, and the journey behind it was closed at the boundary by
  * `closeStaleLegs`. Offering it back on Wednesday morning would put Tuesday's
  * last shop on the one bar this app never lets him dismiss.
+ *
+ * **BUT MIDNIGHT IS NOT THE END OF A DAY HE IS STILL WORKING, and the date
+ * alone erased two kinds of real work.** A salesman checked into a
+ * distributor's godown at 23:40 had his visit — the note, the photographs,
+ * the order taken inside it, the clock — rubbed out by the next read after
+ * midnight, which is every keystroke (the draft is written to this record).
+ * And one who punched in at ten last night to work a late market and arrived
+ * at 00:20 found the arrival he had just made gone the moment he pressed
+ * Check in. `runDayBoundaryWork` already refuses to tidy anything inside the
+ * stretch he is still punched in on; this is the same rule one record along.
+ *
+ * So two arrivals survive the date changing:
+ *
+ *  - one he has CHECKED IN on. That is a visit in progress, and the only thing
+ *    that ends a visit is his check-out — erasing it loses work, and the
+ *    worst a stale one can cost is a check-out sheet for a shop he left,
+ *    which `leftShopAt` already closes at the right instant.
+ *  - one made AFTER the punch-in he is still on (`punchedInSince`, the start
+ *    of the open attendance session; null when he is not punched in). It
+ *    belongs to the stretch he is working, whatever the date says.
+ *
+ * An arrival he never went into, from a stretch that has ended, is still
+ * rubbed out — that is the case the rule was written for.
  */
-export function arrivalIsCurrent(arrival: ArrivalFacts, today: string): boolean {
-  return arrival.day === today;
+export function arrivalIsCurrent(
+  arrival: ArrivalFacts,
+  today: string,
+  punchedInSince: number | null = null,
+): boolean {
+  if (arrival.day === today) return true;
+  if (arrival.checkedInAt != null) return true;
+  return punchedInSince != null && arrival.arrivedAt >= punchedInSince;
 }
 
 /**

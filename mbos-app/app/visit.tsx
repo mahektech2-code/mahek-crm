@@ -839,12 +839,14 @@ export default function Visit() {
       const at = Date.now();
       const next = await checkInAtShop(at);
       if (!next) {
-        /* The arrival is gone from under him — the day rolled over while the
-           screen sat open, which `readArrival` rubs out deliberately. Sending
+        /* The arrival is gone from under him. Midnight alone no longer does
+           this — an arrival inside the punch-in he is still on survives the
+           date (`arrivalIsCurrent`) — so what is left is one from a stretch
+           that has ended, or one he called off on another screen. Sending
            him back to the journey is the honest answer; pretending to check
            him into a shop with no arrival behind it is not. */
         setArrival(null);
-        notify('That arrival is from another day. Start the visit again.', 'error');
+        notify('That arrival is no longer on this phone. Start the visit again.', 'error');
         router.replace('/journey');
         return;
       }
