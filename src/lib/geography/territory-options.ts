@@ -17,6 +17,7 @@
 
 import { canonicalState, stateKey } from "@/lib/india-states";
 import { INDIA_GEOGRAPHY } from "@/lib/geography/india-districts";
+import { townsOf } from "@/lib/geography/india-towns";
 import { placeKey } from "@/lib/place-parse";
 import { splitTownParent } from "@/lib/territory-path";
 import type { DistrictNode, PlaceTree, StateNode } from "@/lib/services/sales-service";
@@ -40,9 +41,21 @@ export function mergeMasterWithBook(book: PlaceTree): PlaceTree {
       const k = placeKey(m.name);
       const found = bookDistricts.get(k);
       if (found) matched.add(k);
+      /* The book's towns first, then every other town of the district from the
+         shared list, at zero. Matched on the folded name, so a town is never
+         offered twice (a pick is stored by name); the book's spelling wins. */
+      const booked = found?.towns ?? [];
+      const have = new Set(booked.map((t) => placeKey(t.town)));
+      const unbooked: { town: string; shops: number }[] = [];
+      for (const [town] of townsOf(master.name, m.name)) {
+        const townKey = placeKey(town);
+        if (have.has(townKey)) continue;
+        have.add(townKey);
+        unbooked.push({ town, shops: 0 });
+      }
       return {
         district: m.name,
-        towns: found?.towns ?? [],
+        towns: [...booked, ...unbooked],
         shops: found?.shops ?? 0,
         ...(m.provisional ? { provisional: true } : {}),
       };
