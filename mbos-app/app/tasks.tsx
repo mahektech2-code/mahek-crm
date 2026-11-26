@@ -33,7 +33,7 @@ import {
 import { TaskFormFields } from '../src/components/task-form';
 import { cleanTaskAnswers, taskAnswerProblems, taskAnswersNote, type TaskAnswers } from '../src/engines/task-form';
 import { customerNames, daysSince, listCustomersPage, type Customer } from '../src/data/customers';
-import { dmy, isoDate, plural } from '../src/lib/format';
+import { dmy, isoDate, plural, todayIst } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 import { Stagger, SwipeRow, animateLayoutFor } from '../src/components/ui/motion';
 
@@ -97,7 +97,10 @@ export default function TasksScreen() {
   const [customers, setCustomers] = React.useState<Customer[]>([]);
   const [bookTotal, setBookTotal] = React.useState(0);
   const [names, setNames] = React.useState<Map<string, string>>(new Map());
-  const [today] = React.useState(() => isoDate(new Date()));
+  /* THE OFFICE'S DAY, and read again on every focus: kept from the first
+     open, a screen left on overnight sorted this morning's tasks as
+     tomorrow's. */
+  const [today, setToday] = React.useState(todayIst);
 
   const [formOpen, setFormOpen] = React.useState(false);
   const [title, setTitle] = React.useState('');
@@ -163,7 +166,16 @@ export default function TasksScreen() {
     };
   }, []);
 
-  useFocusEffect(React.useCallback(() => load(), [load]));
+  /* Re-read when a pull lands, too — a task a push opened this screen for may
+     arrive a moment after it. */
+  const pullSeq = useStore((s) => s.pullSeq);
+  useFocusEffect(
+    React.useCallback(() => {
+      void pullSeq;
+      setToday(todayIst());
+      return load();
+    }, [load, pullSeq]),
+  );
 
   /* The book is read by the SEARCH rather than once on focus, which is what
      makes a shop past the first page reachable at all. An empty query is the

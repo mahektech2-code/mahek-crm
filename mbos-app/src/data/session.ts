@@ -508,18 +508,31 @@ export async function signOut(): Promise<void> {
   }
   try {
     const service = await import('../native/location-service');
+    const trail = await import('../sync/trail');
     await service.releaseService();
-    /* Whatever the native recorder still holds is his day after he left it —
-       never to be filed against the next person's token. */
+    /* WHATEVER THE RECORDER STILL HOLDS IS HIS DAY, and it is KEPT — moved
+       into the outbound queue, not thrown away. They were deleted here, so a
+       sign-out with no signal silently cost the afternoon's route. They go up
+       when he signs in again; a different person signing in empties them with
+       the rest of his day (`forgetLastPerson`), so they can never be filed
+       under somebody else's token. */
     for (let i = 0; i < 20; i++) {
       const rows = await service.drainFixes(500);
       if (!rows.length) break;
-      if (!(await service.forgetFixes(rows.map((r) => r.id)))) break;
+      const kept: string[] = [];
+      for (const r of rows) {
+        try {
+          await trail.keepFix(r.lat, r.lng, r.accuracyM, r.at);
+          kept.push(r.id);
+        } catch {
+          /* One row that would not store stays in the buffer. */
+        }
+      }
+      if (!kept.length || !(await service.forgetFixes(kept))) break;
     }
   } catch {
     /* Nothing further to try. */
   }
-  await run(`DELETE FROM positions`).catch(() => undefined);
 
   /* Before the tokens go: clearing the push token is a request, and it needs
      the token to be allowed. */

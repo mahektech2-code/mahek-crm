@@ -77,6 +77,9 @@ export function BootProvider({ children }: { children: React.ReactNode }) {
       if (existing) {
         await rememberWhoThisIs(existing);
         onSessionStarted(existing);
+      } else {
+        /* A sign-out with no signal left the push token on the server. */
+        void import('../native/push').then((m) => m.releasePendingPushToken()).catch(() => undefined);
       }
     })().catch((e: unknown) => {
       if (cancelled) return;

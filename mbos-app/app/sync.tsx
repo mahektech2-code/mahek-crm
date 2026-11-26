@@ -13,7 +13,7 @@ import { batteryExemption } from '../src/native/phone-setup';
 import { trackerNotice, type StartFailure } from '../src/engines/tracker-notice';
 import type { BatteryExemption } from '../src/engines/phone-readiness';
 import { color as C, weight } from '../src/theme/tokens';
-import { isoDate, plural, pretty } from '../src/lib/format';
+import { isoDate, plural, pretty, todayIst } from '../src/lib/format';
 import { discardCount, discardRefused, listQueue, queueCounts, queueDepth, retryItem, type QueueItem } from '../src/sync/queue';
 import { handoverCounts } from '../src/data/session';
 import { describePayload, entityLabel } from '../src/sync/labels';
@@ -163,7 +163,7 @@ export default function SyncScreen() {
   const [sending, setSending] = React.useState(false);
   /* Read once rather than during render — the clock is impure, and every row
      on the list is compared against this one value. */
-  const [today] = React.useState(() => isoDate(new Date()));
+  const [today] = React.useState(todayIst);
 
   const load = React.useCallback(() => {
     let live = true;

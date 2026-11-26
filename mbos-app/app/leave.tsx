@@ -11,7 +11,7 @@ import { Stagger, animateLayout, animateLayoutFor } from '../src/components/ui/m
 import { feedback } from '../src/components/ui/feedback';
 import { applyForLeave, leaveCalendar, listLeave, withdrawLeave, type LeaveRequest } from '../src/data/requests';
 import { leaveDays, type LeaveCalendar } from '../src/engines/leave';
-import { dmy, isoDate, plural } from '../src/lib/format';
+import { dmy, isoDate, plural, todayIst } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { color as C, weight, tabular, type BadgeTone } from '../src/theme/tokens';
@@ -132,7 +132,7 @@ export default function LeaveScreen() {
 
   const load = React.useCallback(() => {
     let live = true;
-    setYear(isoDate(new Date()).slice(0, 4));
+    setYear(todayIst().slice(0, 4));
     void leaveCalendar()
       .then((c) => live && setCalendar(c))
       .catch(() => {});
@@ -568,7 +568,7 @@ export default function LeaveScreen() {
             accessibilityLabel="Today"
             hitSlop={{ top: 6, bottom: 6 }}
             onPress={() => {
-              const iso = isoDate(new Date());
+              const iso = todayIst();
               const refusal = refuseTo(iso);
               if (refusal) return notify(refusal + '.', 'error');
               if (pick === 'to') patch({ to: iso });

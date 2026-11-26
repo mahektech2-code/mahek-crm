@@ -274,6 +274,10 @@ export async function mbosLogin(input: {
       target: mbosDevices.deviceId,
       set: {
         userId: user.id,
+        /* A DIFFERENT PERSON ON THIS PHONE starts with no token. The last one
+           may have signed out with no signal, so the clear never arrived; their
+           handset registers its own token again moments after sign-in. */
+        pushToken: sql`case when ${mbosDevices.userId} = ${user.id} then ${mbosDevices.pushToken} else null end`,
         model: input.deviceLabel ?? null,
         platform: input.platform ?? null,
         /* Not `appVersion`: the heartbeat below writes it, so a sign-in on a
@@ -953,6 +957,8 @@ async function dispatchItem(
       return handleTravelLeg(principal, item);
     case "expense_day_submit":
       return handleExpenseDaySubmit(principal, item);
+    case "notification_read":
+      return handleNotificationRead(principal, item);
     default:
       return {
         kind: "rejected",
@@ -962,6 +968,20 @@ async function dispatchItem(
         ),
       };
   }
+}
+
+/**
+ * A notification he read on the phone. Only ever his own — the user id is in
+ * the WHERE — and accepted whether or not the row still exists: a notification
+ * the office has since cleared was read all the same, and refusing it would
+ * park a tap in his outbox.
+ */
+async function handleNotificationRead(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
+  await db
+    .update(notifications)
+    .set({ read: true })
+    .where(and(eq(notifications.id, item.entityId), eq(notifications.userId, principal.user.id)));
+  return { kind: "accepted", value: { serverId: item.entityId } };
 }
 
 /* -------------------------------------------------- the customer, in scope */
