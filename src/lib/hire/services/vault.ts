@@ -83,6 +83,17 @@ export async function storeNumber(candidateId: string, kind: VaultKind, value: s
   return { id, last4 };
 }
 
+/**
+ * Store a piece of restricted TEXT — a background-check remark — the way a
+ * number is stored. `last4` carries nothing of it; a list shows only that a
+ * remark exists.
+ */
+export async function storeSecret(candidateId: string, kind: "bgv_remark", text: string, actorId: string | null): Promise<{ id: string }> {
+  const id = hid("hvt");
+  await db.insert(hireVault).values({ id, candidateId, kind, ciphertext: encrypt(text), last4: "", createdById: actorId });
+  return { id };
+}
+
 export async function vaultEntry(id: string) {
   const [v] = await db
     .select({ id: hireVault.id, candidateId: hireVault.candidateId, kind: hireVault.kind, last4: hireVault.last4 })

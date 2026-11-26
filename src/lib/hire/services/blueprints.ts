@@ -258,3 +258,12 @@ export async function deleteDraftBlueprint(
   if (!gone) return err("Only a draft that was never published can be deleted.", "rule_violation");
   return ok(undefined, `Draft ${b.title} v${b.version} deleted.`);
 }
+
+/** What a blueprint may name that lives elsewhere: the plans, templates and tracks with a published version. */
+export async function blueprintRefs(): Promise<{ planKeys: string[]; templateKeys: string[]; trackKeys: string[] }> {
+  const rows = (await db.execute(sql`
+    select 'plan' as k, key from hire_incentive_plans where status = 'published'
+    union select 'template', key from hire_doc_templates where status = 'published'
+    union select 'track', t.key from training_tracks t join training_track_versions v on v.track_id = t.id where v.status = 'published'`)) as unknown as { k: string; key: string }[];
+  return { planKeys: rows.filter((r) => r.k === "plan").map((r) => r.key), templateKeys: rows.filter((r) => r.k === "template").map((r) => r.key), trackKeys: rows.filter((r) => r.k === "track").map((r) => r.key) };
+}

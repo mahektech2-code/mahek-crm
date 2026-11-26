@@ -74,8 +74,8 @@ The model is never shown the candidate's name or earlier scores, and a
 response too short to assess comes back as insufficient with a probe — never
 as a low score.
 
-**HIRE'S JOBS ARE ROLES, NOT LEVELS.** Six — recruiter, interviewer, hiring
-manager, onboarding, HR head, admin — in `lib/hire/roles.ts`, stored in
+**HIRE'S JOBS ARE ROLES, NOT LEVELS.** Eight — recruiter, interviewer, hiring
+manager, onboarding, trainer, sales head, HR head, admin — in `lib/hire/roles.ts`, stored in
 `hire_user_roles` and set on the Admin Console's People → Access screen, as
 "Role in Hire" under the Hire grant — the one place every app is granted, the
 same way an ERP designation or HRMS powers are. Picking a role sets the app
@@ -97,9 +97,62 @@ secret means re-encrypting the vault. Numbers are drawn masked; unmasking is a
 capability, a warning and an audit line with `is_pii_access`. Files are
 `hire_files`, read through `/api/hire/files/[id]`, never a stored URL.
 
-**HIRED IS SET BY PROVISIONING (D9).** The pipeline ends by creating the
-MahekOne account and granting the apps the blueprint's provisioning names —
-that act, and nothing else, makes an application `hired`.
+**HIRED IS SET BY PROVISIONING (D9) — AND IN THE ONBOARDING FLOW IT IS NOT
+THE END.** Creating the MahekOne account and granting the apps the blueprint's
+provisioning names is the one act that makes an application `hired`. A
+blueprint version on the Onboarding & Training PRD's flow (it has a
+`compensation` stage — `isOnboardingFlow`) puts Provision BEFORE Assets &
+induction and Training, because the new employee acknowledges assets and
+takes tests in their own account: provisioning sets `hired`, moves them to the
+next stage and enrols them on the blueprint's training track, and
+`onboarding_completed_at` is set when the last stage after it passes. Gating
+lets `hired` move only between stages after Provision (`isPostHireStage`), and
+nothing after Provision is reachable by override. An older version keeps the
+flow it was published with — documents and offer together, the account last,
+`onboarding_completed_at` = `hired_at` (backfilled by 0381).
+
+**THE ONBOARDING STATUS IS DERIVED, NEVER TYPED.** The PRD's fourteen statuses
+(Compensation discussion … Onboarding completed) come from
+`engines/onboarding.ts` `onboardingStatus`, read off the offer, documents,
+background check, employment documents, courier, assets and training. There
+is no status column. The Onboarding board (`services/onboarding-board.ts`)
+and its tiles read the same rows.
+
+**COMPENSATION: A NEGOTIATED BASIC PAST THE LINE WAITS FOR AN APPROVER.**
+`proposed_basic_paise` is the first offer's basic, carried through a
+negotiation chain; a draft more than `hire.compensation.approvalAbovePercent`
+above it is `approval_status = pending` and cannot be issued until somebody
+holding `compensationApprove` — not the person who asked, unless HR Head or
+Admin — approves it with 20+ characters. A changed figure asks again. Every
+figure change writes `compensation_changed` with `before`/`after`. Incentive
+plans are `hire_incentive_plans`, versioned like blueprints: an offer points
+at the plan VERSION, never the key, and slabs are never constants. A role with
+no incentive (Accounts) says "Not applicable" on the letter.
+
+**THE BACKGROUND CHECK LIVES ON THE APPLICATION.** `hire_background_checks`,
+superseded rather than edited; the old `hire_offers.background_check` and
+`courier_status` are read only by old-flow screens. Remarks are vaulted text
+(`storeSecret`, kind `bgv_remark`) opened only with `bgRemarks`, each read a
+PII audit line. In the onboarding flow Documents & verification passes only
+with every mandatory document verified/waived AND the check clear or not
+applicable.
+
+**EMPLOYMENT DOCUMENTS ARE FILLED FROM THE ACCEPTED OFFER.**
+`hire_doc_templates` (versioned, `{{placeholders}}` from `TEMPLATE_FIELDS`;
+an unknown placeholder is refused at save and left visible if it ever
+renders) → `hire_employment_docs` prepared → approved (by a second person) →
+sent → signed → filed. Hard copies open an outbound courier shipment; its
+delivery opens the return leg, due in `hire.reminders.courierDays`. The stage
+passes when every required document is signed and every return is received.
+`hire_courier_events` is append-only (trigger); the shipment's `status` is a
+cache of its newest event.
+
+**ASSETS ARE AN APPEND-ONLY HISTORY, ACKNOWLEDGED BY THE EMPLOYEE.**
+`hire_asset_issues`: every issue, not-applicable, acknowledgement, problem and
+return is a new row superseding the last. The employee acknowledges in the
+Training app (`acknowledgeMyAsset`, only their own); a signed slip is the
+fallback. Assets & induction passes when every applicable asset is issued and
+acknowledged, and every introduction, topic and setup step is ticked.
 
 **INSTALLING IS PART OF THE DEPLOY.** `installHire` (`lib/hire/install.ts`)
 seeds the role blueprints that are missing and gives Hire, as Admin, to every

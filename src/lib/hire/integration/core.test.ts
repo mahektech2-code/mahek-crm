@@ -166,7 +166,7 @@ describe("Hire core", () => {
     const ctx = await as(admin);
     assert.equal(ctx.role, "admin");
     const again = await installHire();
-    assert.deepEqual(again, { blueprints: [], admins: [] });
+    assert.deepEqual(again, { blueprints: [], admins: [], content: [] }, "the onboarding content is seeded once, too");
 
     /* Taken away on the console, it stays away: the next deploy does not give it back. */
     await db.delete(appAccess).where(sql`${appAccess.userId} = ${admin.id} and ${appAccess.app} = 'hire'`);

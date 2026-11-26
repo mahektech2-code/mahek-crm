@@ -16,6 +16,8 @@ import { WorkdayChip } from "@/components/workday/workday-chip";
 import { ResumeAfterUnlock } from "@/components/workday/resume-after-unlock";
 import { APP_ICON_PATH, GROUP_TONE, groupApps, groupOf, roleTone } from "@/lib/launcher-groups";
 import type { AppId } from "@/lib/apps";
+import { enrollmentView, enrollmentsForUser } from "@/lib/training/service";
+import { nowMs } from "@/lib/format";
 import "@/styles/v4-theme.css";
 
 export const metadata = { title: "Your apps - MahekOne" };
@@ -56,7 +58,10 @@ export default async function LauncherPage({ searchParams }: { searchParams: Pro
   const user = await requireUser();
   const nextParam = (await searchParams).next;
   const next = typeof nextParam === "string" ? nextParam : null;
-  const [apps, ids, roles] = await Promise.all([launcherApps(user), listUserApps(user.id), launcherRoles(user.id)]);
+  const [apps, ids, roles, enrolments] = await Promise.all([launcherApps(user), listUserApps(user.id), launcherRoles(user.id), enrollmentsForUser(user.id)]);
+  /* TRAINING IS NOT AN APP GRANT: somebody enrolled on a track is given the way in here. */
+  const activeTraining = enrolments.find((e) => e.status === "active");
+  const training = activeTraining ? await enrollmentView(activeTraining.id, nowMs()) : null;
   /* PUNCHING IN IS HERE: the launcher is where everybody lands after signing
      in, and the day card is the workday clock's, for whoever holds the HRMS. */
   const checkIn = ids.includes("hrms");
@@ -115,6 +120,27 @@ export default async function LauncherPage({ searchParams }: { searchParams: Pro
             </div>
 
             {checkIn ? <LauncherCheckIn quiet /> : null}
+
+            {training ? (
+              <Link
+                href="/learn"
+                className="flex min-h-[72px] items-center gap-3.5 rounded-[16px] border border-brand-softer bg-brand-soft p-4 text-ink no-underline transition-colors hover:border-brand hover:no-underline"
+              >
+                <span className="flex size-[46px] flex-none items-center justify-center rounded-[12px] bg-brand text-white">
+                  <svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M2 9l10-5 10 5-10 5zM6 11v5c3 2.5 9 2.5 12 0v-5M22 9v6" />
+                  </svg>
+                </span>
+                <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <span className="text-[15px] font-bold tracking-[-0.01em]">Training · {training.track.title}</span>
+                  <span className="truncate text-[13px] text-body">
+                    {training.summary.passed} of {training.summary.required} modules passed
+                    {training.modules.some((m) => m.state === "retraining_required") ? " · a module needs a retake" : training.summary.current ? ` · next: ${training.modules.find((m) => m.moduleKey === training.summary.current?.moduleKey)?.title ?? ""}` : ""}
+                  </span>
+                </span>
+                <span className="text-[13px] font-semibold text-brand-hover">Open</span>
+              </Link>
+            ) : null}
 
             {needs.length ? (
               <section className="flex flex-col gap-3.5">

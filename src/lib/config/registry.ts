@@ -6367,6 +6367,96 @@ export const SETTINGS = [
     min: 1,
     max: 10,
   },
+  {
+    key: "hire.compensation.approvalAbovePercent",
+    type: "decimal",
+    category: "hire",
+    label: "Negotiated basic needing approval (%)",
+    description:
+      "An offer whose basic is more than this percentage above the basic first proposed waits for a Hiring Manager, HR Head or Admin to approve it before it can be issued (Onboarding PRD §6). At or below the first proposal never needs approval.",
+    default: 5,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "hire.reminders.documentsDays",
+    type: "integer",
+    category: "hire",
+    label: "Days before a requested document is chased",
+    description: "A document requested and not received after this many days appears on Tasks and bells the onboarding owner.",
+    default: 3,
+    min: 1,
+    max: 30,
+  },
+  {
+    key: "hire.reminders.acceptanceDays",
+    type: "integer",
+    category: "hire",
+    label: "Days before an unanswered offer is chased",
+    description: "An issued offer with no answer after this many days appears on Tasks.",
+    default: 3,
+    min: 1,
+    max: 30,
+  },
+  {
+    key: "hire.reminders.signatureDays",
+    type: "integer",
+    category: "hire",
+    label: "Days before an unsigned employment document is chased",
+    description: "An employment document sent and not signed after this many days appears on Tasks.",
+    default: 5,
+    min: 1,
+    max: 30,
+  },
+  {
+    key: "hire.reminders.courierDays",
+    type: "integer",
+    category: "hire",
+    label: "Days a return courier may take",
+    description: "Signed copies not received this many days after the documents were delivered are drawn late, on Tasks and the onboarding board.",
+    default: 5,
+    min: 1,
+    max: 60,
+  },
+  {
+    key: "hire.reminders.assetAckDays",
+    type: "integer",
+    category: "hire",
+    label: "Days before an unacknowledged asset is chased",
+    description: "An issued asset the employee has not acknowledged after this many days appears on Tasks.",
+    default: 2,
+    min: 1,
+    max: 30,
+  },
+  {
+    key: "hire.reminders.trainingStartDays",
+    type: "integer",
+    category: "hire",
+    label: "Days before training not started is chased",
+    description: "Somebody enrolled who has not opened a module after this many days appears on Tasks and is belled.",
+    default: 2,
+    min: 1,
+    max: 30,
+  },
+  {
+    key: "hire.reminders.retrainingDays",
+    type: "integer",
+    category: "hire",
+    label: "Days a retraining sign-off may wait",
+    description: "A failed module with no trainer sign-off after this many days is drawn late on Retakes and Tasks.",
+    default: 2,
+    min: 1,
+    max: 30,
+  },
+  {
+    key: "hire.directory",
+    type: "text",
+    category: "hire",
+    label: "Who to contact — the new employee's directory",
+    description:
+      "One line per desk: Department | work email or work number | what to ask them about. Shown in the Training app and the induction module. A line whose person cannot be found by that email or number is left out, and the Training app says so.",
+    default: "",
+  },
 ] as const satisfies readonly SettingDefinition[];
 
 export type SettingKey = (typeof SETTINGS)[number]["key"];
@@ -7434,6 +7524,15 @@ export type Config = {
   "hire.languages": string;
   "hire.voice.callWindow": string;
   "hire.voice.maxAttempts": number;
+  "hire.compensation.approvalAbovePercent": number;
+  "hire.reminders.documentsDays": number;
+  "hire.reminders.acceptanceDays": number;
+  "hire.reminders.signatureDays": number;
+  "hire.reminders.courierDays": number;
+  "hire.reminders.assetAckDays": number;
+  "hire.reminders.trainingStartDays": number;
+  "hire.reminders.retrainingDays": number;
+  "hire.directory": string;
   "voice.enabled": boolean;
   "voice.maxSeconds": number;
   "voice.maxSizeMb": number;

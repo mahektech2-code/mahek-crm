@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { requireHireScreen } from "@/lib/hire/access";
-import { getBlueprintRow, inFlightOn, previousVersion } from "@/lib/hire/services/blueprints";
+import { blueprintRefs, getBlueprintRow, inFlightOn, previousVersion } from "@/lib/hire/services/blueprints";
+import { studioRefs } from "./refs";
 import { PageHead, fd } from "../../_ui/kit";
 import { Editor } from "./editor";
 
@@ -14,7 +15,7 @@ export default async function BlueprintPage({ params }: { params: Promise<{ id: 
   const ctx = await requireHireScreen("blueprints");
   const b = await getBlueprintRow(id);
   if (!b) notFound();
-  const [inFlight, prev] = await Promise.all([inFlightOn(b.id), previousVersion(b)]);
+  const [inFlight, prev, refs] = await Promise.all([inFlightOn(b.id), previousVersion(b), blueprintRefs().then(studioRefs)]);
   return (
     <>
       <PageHead
@@ -38,6 +39,7 @@ export default async function BlueprintPage({ params }: { params: Promise<{ id: 
           inFlight={inFlight}
           hasPrevious={Boolean(prev)}
           publishedLine={b.publishedAt ? `published ${fd(b.publishedAt)}` : ""}
+          refs={refs}
         />
       </Suspense>
     </>

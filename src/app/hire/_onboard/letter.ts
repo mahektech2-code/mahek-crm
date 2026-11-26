@@ -49,6 +49,13 @@ export type LetterInput = {
   growth?: GrowthStep[] | null;
   /** ISO date the letter is dated; today's IST date when absent. */
   datedOn?: string | null;
+  /** PRD §6: No prints "Incentive: Not applicable". Absent reads as yes. */
+  incentiveApplicable?: boolean;
+  /** The plan's slabs, one per line, when the offer names a plan. */
+  incentiveSlabs?: string[] | null;
+  /** Pay items beside the basic. */
+  components?: { label: string; amountPaise: number; per: "month" | "year" | "one_time" }[];
+  effectiveDate?: string | null;
 };
 
 export function renderLetter(i: LetterInput): string {
@@ -62,8 +69,10 @@ export function renderLetter(i: LetterInput): string {
     "",
     `We are pleased to offer you the position of ${i.roleTitle} at Mahek Marketing India, at the grade of ${i.gradeLabel}${i.location ? `, based in ${i.location}` : ""}.`,
     "",
-    `Your basic salary will be ${rupees(i.basicPaise)} a month (INR).${i.ctcPaise ? ` Your total cost to company will be ${rupees(i.ctcPaise)} a year (INR).` : ""}`,
-    i.incentive ? `Incentive: ${i.incentive}` : "",
+    `Your basic salary will be ${rupees(i.basicPaise)} a month (INR)${i.effectiveDate ? `, from ${longDate(i.effectiveDate)}` : ""}.${i.ctcPaise ? ` Your total cost to company will be ${rupees(i.ctcPaise)} a year (INR).` : ""}`,
+    ...(i.components?.length ? ["", "Other pay", ...i.components.map((c) => `  · ${c.label}: ${rupees(c.amountPaise)}${c.per === "month" ? " a month" : c.per === "year" ? " a year" : ", once"}`)] : []),
+    i.incentiveApplicable === false ? "Incentive: Not applicable." : i.incentive ? `Incentive: ${i.incentive}` : "",
+    ...(i.incentiveApplicable !== false && i.incentiveSlabs?.length ? i.incentiveSlabs.map((l) => `  · ${l}`) : []),
     "",
     "Growth plan",
     ...ladder.map((r) => `  · ${r.grade} — ${r.when}: ${r.pay}`),
@@ -79,4 +88,13 @@ export function renderLetter(i: LetterInput): string {
   ]
     .filter((l, idx, a) => !(l === "" && a[idx - 1] === ""))
     .join("\n");
+}
+
+/** An incentive plan's slabs, one line each, in words — what the letter and the offer screen print. */
+export function slabLines(p: { slabs: { fromPaise: number; toPaise: number | null; kind: "percent" | "fixed"; value: number }[] }): string[] {
+  return p.slabs.map((s) => {
+    const range = s.toPaise == null ? `Above ${rupees(s.fromPaise)}` : s.fromPaise === 0 ? `Up to ${rupees(s.toPaise)}` : `${rupees(s.fromPaise)} – ${rupees(s.toPaise)}`;
+    const pay = s.kind === "percent" ? (s.value ? `${s.value}% of sales` : "Nil") : rupees(s.value);
+    return `${range}: ${pay}`;
+  });
 }

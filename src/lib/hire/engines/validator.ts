@@ -1,5 +1,5 @@
 import type { BlueprintDefinition, Question, Stage } from "../blueprint-types";
-import { MASKABLE, isScored } from "../blueprint-types";
+import { MASKABLE, incentiveApplies, isOnboardingFlow, isScored } from "../blueprint-types";
 import { formulaIdentifiers } from "./scoring";
 
 /* ---------------------------------------------------------------------------
@@ -20,7 +20,10 @@ const PROTECTED = /\b(married|marital|wife|husband|pregnan|children|kids|religio
 /** Trait language — a rubric scores what was said and done, not who somebody is. */
 const TRAIT = /\b(personality|confident|confidence|charisma|attitude|energetic|culture fit|smart|presentable|good looking|appearance|accent)\b/i;
 
-export function validateBlueprint(def: BlueprintDefinition): Issue[] {
+/** What the blueprint names that lives elsewhere — published plans, templates and tracks. Omitted: not checked. */
+export type BlueprintRefs = { planKeys?: ReadonlySet<string>; templateKeys?: ReadonlySet<string>; trackKeys?: ReadonlySet<string> };
+
+export function validateBlueprint(def: BlueprintDefinition, refs: BlueprintRefs = {}): Issue[] {
   const out: Issue[] = [];
   const err = (section: string, where: string, message: string) => out.push({ level: "error", section, where, message });
   const warn = (section: string, where: string, message: string) => out.push({ level: "warning", section, where, message });
@@ -54,11 +57,13 @@ export function validateBlueprint(def: BlueprintDefinition): Issue[] {
     if (!s.approved) err("stages", s.name, "Not approved yet.");
   }
   const gateAt = def.stages.findIndex((s) => s.type === "decision_gate");
-  const offerAt = def.stages.findIndex((s) => s.type === "document_collection");
+  const offerAt = def.stages.findIndex((s) => s.type === "compensation" || s.type === "document_collection");
   if (gateAt < 0) err("stages", "Decision gate", "There must be at least one decision gate before an offer.");
   else if (offerAt >= 0 && gateAt > offerAt) err("stages", "Decision gate", "The decision gate has to come before documents and offer.");
   if (def.stages[0] && def.stages[0].type !== "application") warn("stages", def.stages[0].name, "Pipelines usually start with an Application stage.");
   if (!def.stages.some((s) => s.type === "system_setup")) warn("stages", "System setup", "No system setup stage — provisioning will run straight after the checklist.");
+  if (isOnboardingFlow(def)) onboardingFlowChecks(def, refs, err, warn);
+  else for (const t of ["employment_docs", "training"] as const) if (def.stages.some((s) => s.type === t)) err("stages", t === "training" ? "Training" : "Employment documents", "This stage belongs to the onboarding flow, which starts with a Compensation stage.");
 
   /* Documents */
   for (const d of def.documents) if (!d.approved) err("documents", d.label, "Not approved yet.");
@@ -87,6 +92,52 @@ export function validateBlueprint(def: BlueprintDefinition): Issue[] {
 
   for (const q of def.openQuestions) warn("identity", "Open question for the business", q);
   return out;
+}
+
+/**
+ * The Onboarding & Training PRD's order: compensation agreed, documents and
+ * verification, employment documents back, THEN the account (so the new
+ * employee can sign in), then assets and training. Each step reads the one
+ * before it, so an order that broke it would ask for something that cannot
+ * exist yet — training somebody with no account.
+ */
+function onboardingFlowChecks(
+  def: BlueprintDefinition,
+  refs: BlueprintRefs,
+  err: (section: string, where: string, m: string) => void,
+  warn: (section: string, where: string, m: string) => void,
+) {
+  const at = (t: string) => def.stages.findIndex((s) => s.type === t);
+  const comp = at("compensation");
+  const docs = at("document_collection");
+  const emp = at("employment_docs");
+  const prov = at("system_setup");
+  const kit = at("checklist");
+  const train = at("training");
+  const gate = at("decision_gate");
+  if (gate > comp) err("stages", "Compensation", "Compensation is agreed after the decision gate.");
+  if (docs < 0) err("stages", "Documents & verification", "The onboarding flow needs a Document Collection stage.");
+  else if (docs < comp) err("stages", "Documents & verification", "Documents are collected after compensation is agreed.");
+  if (emp >= 0 && emp < docs) err("stages", "Employment documents", "Employment documents are prepared after documents and the background check.");
+  if (prov < 0) err("stages", "Provision", "The onboarding flow needs a System Setup stage — it creates the account the employee trains in.");
+  else {
+    if (prov < Math.max(docs, emp)) err("stages", "Provision", "Provision comes after documents and employment documents.");
+    if (kit >= 0 && kit < prov) err("stages", "Assets & induction", "Assets & induction comes after Provision — the employee acknowledges assets in their own account.");
+    if (train >= 0 && train < prov) err("stages", "Training", "Training comes after Provision — the employee takes tests in their own account.");
+  }
+  if (prov >= 0 && prov === def.stages.length - 1) warn("stages", "Provision", "Nothing follows Provision, so onboarding ends the moment the account is made.");
+
+  const o = def.offer;
+  if (incentiveApplies(o) && !(o.incentivePlanKeys ?? []).length) warn("offer", "Incentive", "Incentive is on but no plan is named — offers will carry the text only.");
+  for (const k of o.incentivePlanKeys ?? []) if (refs.planKeys && !refs.planKeys.has(k)) err("offer", "Incentive", `Names the plan “${k}”, which has no published version.`);
+  const ed = def.employmentDocs ?? [];
+  if (emp >= 0 && !ed.length) err("employment", "Employment documents", "The stage is there but no document is listed for it.");
+  for (const d of ed) if (refs.templateKeys && !refs.templateKeys.has(d.templateKey)) err("employment", d.label, `Uses the template “${d.templateKey}”, which has no published version.`);
+  if (new Set(ed.map((d) => d.key)).size !== ed.length) err("employment", "Employment documents", "Two documents share one key.");
+  if (train >= 0) {
+    if (!def.training?.trackKey) err("training", "Training", "The training stage needs a track.");
+    else if (refs.trackKeys && !refs.trackKeys.has(def.training.trackKey)) err("training", "Training", `Names the track “${def.training.trackKey}”, which has no published version.`);
+  } else if (def.training?.trackKey) warn("training", "Training", "A track is named but there is no Training stage, so nobody is enrolled.");
 }
 
 function stageChecks(

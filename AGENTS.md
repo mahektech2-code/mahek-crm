@@ -160,8 +160,12 @@ Hire's own staff come from `npm run hire:seed -- --demo --reset`, not
 `db:seed` — `kavita@mahek.in` (HR Head), `priya.sharma@mahek.in` and
 `neha.k@mahek.in` (recruiters), `rakesh.iyer@mahek.in`, `meena@mahek.in`,
 `nitin@mahek.in` (interviewers), `sanjay@mahek.in` (hiring manager),
-`farida@mahek.in` (onboarding), `farhan@mahek.in` (admin); Vikram gets Hire as
-HR Head. Same password.
+`farida@mahek.in` (onboarding), `rohini@mahek.in` (trainer),
+`sunil.kadam@mahek.in` (sales head), `farhan@mahek.in` (admin); Vikram gets
+Hire as HR Head. Two new employees from the onboarding demo sign in to
+`/learn`: `kiran.shinde@mahek.in` (acknowledging assets) and
+`tejas.kale@mahek.in` (in training, a failed module waiting for the trainer).
+Same password.
 
 ## Rules that keep the data honest
 
@@ -351,6 +355,7 @@ Everything else this file used to hold now lives in `docs/agents/`, moved word f
 | `docs/agents/customer-order-tracking.md` | /t/<token>, milestones, holds, invoice PDF |
 | `docs/agents/tasks.md` | tasks, routines, automations |
 | `docs/agents/hire.md` | src/lib/hire |
+| `docs/agents/training.md` | src/lib/training, /hire/train, /learn, MCQ attempts, retraining |
 | `docs/agents/factory-app.md` | /factory, factory-mobile |
 | `docs/agents/docs-app.md` | src/docs, /docs |
 | `docs/agents/website-cms.md` | website_content, review workflow |

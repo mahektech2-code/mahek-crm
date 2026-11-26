@@ -10,7 +10,11 @@ import {
   hireBriefingResponses,
   hireCandidates,
   hireDecisions,
+  hireAssetIssues,
+  hireBackgroundChecks,
+  hireCourierShipments,
   hireDocuments,
+  hireEmploymentDocs,
   hireOffers,
   hireOnboardingItems,
   hireStageExecutions,
@@ -21,7 +25,8 @@ import {
 } from "@/db/schema";
 import { err, ok, type Result } from "@/lib/result";
 import type { BlueprintDefinition, Stage } from "../blueprint-types";
-import { isScored, stageByKey } from "../blueprint-types";
+import { isOnboardingFlow, isPostHireStage, isScored, stageByKey } from "../blueprint-types";
+import { courierOverall, empDocSigned } from "../engines/onboarding";
 import { canMove, OVERRIDE_REASON_MIN } from "../engines/gating";
 import { scopeWhere, type HireContext } from "../access";
 import { GATE_POINT } from "../roles";
@@ -166,19 +171,44 @@ export async function stageOutcome(app: HireApplication, def: BlueprintDefinitio
       if (blocked.length) return { outcome: "fail", why: `Disagreed with ${blocked.map((p) => p.title).join(", ")} — a blocking briefing point.` };
       return { outcome: "pass" };
     }
+    case "compensation": {
+      const [offer] = await db.select({ status: hireOffers.status, approval: hireOffers.approvalStatus }).from(hireOffers).where(and(eq(hireOffers.applicationId, app.id), isNull(hireOffers.supersededById))).orderBy(desc(hireOffers.createdAt)).limit(1);
+      if (!offer) return { outcome: "pending", why: "No offer has been drafted yet." };
+      if (offer.approval === "pending") return { outcome: "pending", why: "The negotiated figure is waiting for approval." };
+      if (offer.status !== "accepted") return { outcome: "pending", why: `The offer is ${offer.status}, not accepted.` };
+      return { outcome: "pass" };
+    }
+    case "employment_docs":
+      return employmentDocsOutcome(app.id, def);
+    case "training": {
+      const { trainingOutcome } = await import("./training-status");
+      return trainingOutcome(app.id);
+    }
     case "document_collection": {
       const docs = await db.select().from(hireDocuments).where(and(eq(hireDocuments.applicationId, app.id), isNull(hireDocuments.supersededById)));
       const okKeys = new Set(docs.filter((d) => d.verificationStatus === "verified" || d.verificationStatus === "waived").map((d) => d.requirementKey));
       const missing = def.documents.filter((d) => d.mandatory && !okKeys.has(d.key));
       if (missing.length) return { outcome: "pending", why: `Mandatory documents missing or unverified: ${missing.map((d) => d.label).join(", ")}.` };
+      /* The onboarding flow agrees the offer earlier, in its own stage, and
+         checks the background here instead. */
+      if (isOnboardingFlow(def)) {
+        const [bg] = await db.select({ required: hireBackgroundChecks.required, status: hireBackgroundChecks.status }).from(hireBackgroundChecks).where(and(eq(hireBackgroundChecks.applicationId, app.id), isNull(hireBackgroundChecks.supersededById))).orderBy(desc(hireBackgroundChecks.createdAt)).limit(1);
+        if (!bg) return { outcome: "pending", why: "The background check has not been recorded — say whether one is needed." };
+        if (bg.required && bg.status !== "clear" && bg.status !== "not_applicable") return { outcome: "pending", why: bg.status === "concern" ? "The background check raised a concern — a person decides whether to go on." : "The background check is not clear yet." };
+        return { outcome: "pass" };
+      }
       const [offer] = await db.select({ status: hireOffers.status, courier: hireOffers.courierStatus }).from(hireOffers).where(and(eq(hireOffers.applicationId, app.id), isNull(hireOffers.supersededById))).orderBy(desc(hireOffers.createdAt)).limit(1);
       if (offer?.status !== "accepted") return { outcome: "pending", why: offer ? `The offer is ${offer.status}, not accepted.` : "No offer has been issued yet." };
       /* Courier status gates progression (spec §7.1): the signed letter is back with us. */
       if (offer.courier !== "received" && offer.courier !== "received_by_staff") return { outcome: "pending", why: "The signed offer letter has not come back by courier yet." };
       return { outcome: "pass" };
     }
-    case "checklist":
-    case "system_setup": {
+    case "system_setup":
+      /* In the onboarding flow this stage IS the account: it is passed when the person is hired. */
+      if (isOnboardingFlow(def)) return app.status === "hired" ? { outcome: "pass" } : { outcome: "pending", why: "The MahekOne account has not been created yet." };
+    // falls through
+    case "checklist": {
+      if (stage.type === "checklist" && isOnboardingFlow(def)) return checklistOutcome(app.id, def);
       const kinds = stage.type === "checklist" ? ["asset", "topic"] : ["setup"];
       const items = await db.select().from(hireOnboardingItems).where(and(eq(hireOnboardingItems.applicationId, app.id), inArray(hireOnboardingItems.kind, kinds)));
       const done = new Set(items.filter((i) => i.done).map((i) => `${i.kind}:${i.groupKey}:${i.itemKey}`));
@@ -193,6 +223,47 @@ export async function stageOutcome(app: HireApplication, def: BlueprintDefinitio
     default:
       return exec?.outcome === "pass" ? { outcome: "pass" } : { outcome: "pending", why: `${stage.name} is not complete.` };
   }
+}
+
+/** Every required employment document signed, and every hard copy back by courier. */
+async function employmentDocsOutcome(applicationId: string, def: BlueprintDefinition): Promise<Outcome> {
+  const want = (def.employmentDocs ?? []).filter((d) => d.required);
+  const rows = await db.select({ key: hireEmploymentDocs.docKey, status: hireEmploymentDocs.status, hardCopy: hireEmploymentDocs.hardCopy }).from(hireEmploymentDocs).where(and(eq(hireEmploymentDocs.applicationId, applicationId), isNull(hireEmploymentDocs.supersededById)));
+  const open = want.filter((d) => !rows.some((r) => r.key === d.key && empDocSigned(r.status)));
+  if (open.length) return { outcome: "pending", why: `Not signed yet: ${open.map((d) => d.label).join(", ")}.` };
+  const hard = rows.some((r) => r.hardCopy);
+  const ships = await db.select({ direction: hireCourierShipments.direction, status: hireCourierShipments.status }).from(hireCourierShipments).where(eq(hireCourierShipments.applicationId, applicationId));
+  const c = courierOverall(hard, ships);
+  if (c !== "not_required" && c !== "completed") return { outcome: "pending", why: "The signed hard copies have not been received by the company yet." };
+  return { outcome: "pass" };
+}
+
+/** The live asset row per asset key — the newest that nothing superseded. */
+export async function liveAssets(applicationId: string) {
+  return db.select().from(hireAssetIssues).where(and(eq(hireAssetIssues.applicationId, applicationId), isNull(hireAssetIssues.supersededById)));
+}
+
+/** Onboarding flow: every applicable asset issued (and acknowledged where asked), every introduction, topic and setup step done. */
+async function checklistOutcome(applicationId: string, def: BlueprintDefinition): Promise<Outcome> {
+  const assets = await liveAssets(applicationId);
+  const left: string[] = [];
+  for (const a of def.onboarding.assets) {
+    const row = assets.find((r) => r.assetKey === a.key);
+    const applicable = row ? row.applicable : (a.applicableByDefault ?? true);
+    if (!applicable) continue;
+    if (!row?.issuedOn) left.push(`${a.label} not issued`);
+    else if (a.acknowledge && !row.acknowledgedAt) left.push(`${a.label} not acknowledged`);
+  }
+  const items = await db.select().from(hireOnboardingItems).where(and(eq(hireOnboardingItems.applicationId, applicationId), eq(hireOnboardingItems.done, true)));
+  const done = new Set(items.map((i) => `${i.kind}:${i.groupKey}:${i.itemKey}`));
+  const need = [
+    ...(def.onboarding.intros ?? []).map((i) => ({ k: `intro:dept:${i.key}`, l: `introduction to ${i.label}` })),
+    ...def.onboarding.modules.flatMap((m) => m.topics.map((t) => ({ k: `topic:${m.key}:${t.key}`, l: `${m.name} · ${t.title}` }))),
+    ...def.onboarding.setup.flatMap((g) => g.steps.map((s) => ({ k: `setup:${g.key}:${s.key}`, l: `${g.system} · ${s.label}` }))),
+  ];
+  for (const n of need) if (!done.has(n.k)) left.push(n.l);
+  if (left.length) return { outcome: "pending", why: `${left.length} still open: ${left.slice(0, 3).join("; ")}${left.length > 3 ? "…" : ""}.` };
+  return { outcome: "pass" };
 }
 
 /**
@@ -249,12 +320,27 @@ export async function moveApplication(ctx: HireContext, applicationId: string, t
 /** Advance to the next stage if the current one is passed; used after a stage completes. */
 export async function advanceIfPassed(ctx: HireContext, applicationId: string): Promise<boolean> {
   const b = await getApplication(ctx, applicationId);
-  if (!b || b.app.status !== "in_progress") return false;
+  if (!b) return false;
+  const onboarding = b.app.status === "hired" && !b.app.onboardingCompletedAt && isPostHireStage(b.def, b.app.stageKey);
+  if (b.app.status !== "in_progress" && !onboarding) return false;
   const i = b.def.stages.findIndex((s) => s.key === b.app.stageKey);
   const next = b.def.stages[i + 1];
-  if (!next) return false;
   const oc = await stageOutcome(b.app, b.def);
   if (oc.outcome !== "pass" || b.stage?.type === "decision_gate") return false;
+  if (!next) {
+    if (!onboarding) return false;
+    /* The last stage after Provision passed: onboarding is complete. */
+    const now = new Date();
+    await db.transaction(async (tx) => {
+      await tx.update(hireApplications).set({ onboardingCompletedAt: now, updatedAt: now, updatedById: ctx.user.id }).where(and(eq(hireApplications.id, applicationId), isNull(hireApplications.onboardingCompletedAt)));
+      if (b.stage) {
+        const ex = await ensureExecution(applicationId, b.stage, ctx.user.id, tx);
+        await tx.update(hireStageExecutions).set({ status: "completed", outcome: "pass", completedAt: now, updatedAt: now }).where(eq(hireStageExecutions.id, ex.id));
+      }
+      await hireTrail(ctx, { applicationId, candidateId: b.candidate.id, entityType: "application", entityId: applicationId, event: "onboarding_completed", summary: `Onboarding completed · ${b.stage?.name ?? "last stage"} passed` }, tx);
+    });
+    return true;
+  }
   const r = await moveApplication(ctx, applicationId, next.key);
   return r.ok;
 }

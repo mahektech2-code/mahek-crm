@@ -10,7 +10,7 @@ import { ScreenInButton } from "./screen-in-button";
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Tasks" };
 
-const ORDER: TaskKind[] = ["interview", "proposal", "gate", "review", "duplicate", "screen", "sla"];
+const ORDER: TaskKind[] = ["interview", "proposal", "gate", "approval", "review", "duplicate", "screen", "acceptance", "documents", "signature", "courier", "asset", "retraining", "sla"];
 
 /** What is waiting on this person, oldest first — derived from the records, never a list of its own. */
 export default async function HireTasksPage() {
@@ -22,7 +22,7 @@ export default async function HireTasksPage() {
     <>
       <PageHead title="Tasks" sub="What is waiting on you, oldest first. Each one opens where the work is done." />
       {!groups.length ? (
-        <Empty title="Nothing is waiting on you">Scores to confirm, decisions, duplicates and interviews appear here as they arrive.</Empty>
+        <Empty title="Nothing is waiting on you">Scores to confirm, decisions, duplicates, interviews and onboarding reminders appear here as they arrive.</Empty>
       ) : (
         <div className="flex max-w-[980px] flex-col gap-5">
           {groups.map((g) => (

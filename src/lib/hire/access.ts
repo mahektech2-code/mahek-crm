@@ -6,7 +6,7 @@ import { hireUserRoles, type User } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
 import { levelInApp } from "@/lib/access-control";
 import { listUserApps } from "@/lib/access";
-import { can, holdsScreen, lockedWhy, ROLE_LABEL, type HireCap, type HireNavKey, type HireRole } from "./roles";
+import { can, holdsScreen, lockedWhy, navFor, ROLE_LABEL, type HireCap, type HireNavKey, type HireRole } from "./roles";
 import { GATE_POINT } from "./roles";
 
 /* ---------------------------------------------------------------------------
@@ -58,7 +58,8 @@ export async function requireHireScreen(key: HireNavKey): Promise<HireContext> {
   const ctx = await requireHire();
   if (!holdsScreen(ctx.role, key)) {
     const { redirect } = await import("next/navigation");
-    redirect("/hire");
+    /* The first screen they DO hold — a Trainer has no board, and sending them to it would loop. */
+    redirect(navFor(ctx.role)[0]?.items[0]?.href ?? "/apps");
   }
   return ctx;
 }
@@ -101,6 +102,11 @@ export function scopeWhere(ctx: HireContext, alias = "a"): SQL {
         select 1 from hire_stage_executions x
         where x.application_id = ${a}.id and x.conducted_by_id = ${me} and x.superseded_by_id is null
           and x.status in ('scheduled','in_progress'))))`;
+    case "trainer":
+      /* The people they train, and nobody else. */
+      return sql`exists (select 1 from training_enrollments te where te.application_id = ${a}.id and te.trainer_id = ${me})`;
+    case "sales_head":
+      return sql`(${a}.status = 'hired')`;
     case "onboarding":
       return sql`(${a}.status = 'hired' or exists (
         select 1 from hire_decisions d

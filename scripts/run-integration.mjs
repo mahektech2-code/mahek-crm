@@ -154,6 +154,10 @@ const files = [
   // Hire: identity is the phone, gating is enforced, an override is a named
   // act, an interviewer's scope is narrow, and the record is append-only.
   "src/lib/hire/integration/core.test.ts",
+  // The Onboarding & Training PRD: compensation approval, documents and the
+  // background check, employment documents and courier, provisioning,
+  // assets acknowledged by the employee, retraining and the track complete.
+  "src/lib/hire/integration/onboarding.test.ts",
   // The call assistant: learning from logged calls, reading with no model,
   // and the save writing back what the call was really logged as.
   "src/lib/call-intel.test.ts",

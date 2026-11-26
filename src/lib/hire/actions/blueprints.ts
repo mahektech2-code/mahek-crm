@@ -8,7 +8,7 @@ import { hireBlueprints } from "@/db/schema";
 import { err, ok, type Result } from "@/lib/result";
 import { HireNotPermitted, requireHireCap, type HireContext } from "../access";
 import { hireTrail, hid } from "../services/core";
-import { blankDefinition, deleteDraftBlueprint, freeKey, getBlueprintRow, publishedForCopy, studioIssues, type StudioDefinition } from "../services/blueprints";
+import { blankDefinition, blueprintRefs, deleteDraftBlueprint, freeKey, getBlueprintRow, publishedForCopy, studioIssues, type StudioDefinition } from "../services/blueprints";
 import { blocking } from "../engines/validator";
 import { critiqueRubric } from "../ai/rubric-critic";
 import { assembleDefinition, generateStep, type GenParts, type GenStep, type Intake } from "../ai/generate-blueprint";
@@ -90,7 +90,8 @@ export async function publishBlueprint(id: string): Promise<Result> {
     const b = await getBlueprintRow(id);
     if (!b) return err("Not found.", "not_found");
     if (b.status !== "draft") return err("Only a draft can be published.", "rule_violation");
-    const errors = blocking(studioIssues(b.definition));
+    const refs = await blueprintRefs();
+    const errors = blocking(studioIssues(b.definition, { planKeys: new Set(refs.planKeys), templateKeys: new Set(refs.templateKeys), trackKeys: new Set(refs.trackKeys) }));
     if (errors.length) return err(`${errors.length} error${errors.length === 1 ? "" : "s"} must be fixed first — see Validation.`, "rule_violation");
     const retired: number[] = [];
     await db.transaction(async (tx) => {

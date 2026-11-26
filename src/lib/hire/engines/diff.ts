@@ -1,7 +1,7 @@
 
 import { money } from "@/lib/format";
 import type { BlueprintDefinition, CalcRule, Question, Stage } from "../blueprint-types";
-import { validateBlueprint, type Issue } from "./validator";
+import { validateBlueprint, type BlueprintRefs, type Issue } from "./validator";
 
 /* ---------------------------------------------------------------------------
  * WHAT CHANGED BETWEEN TWO BLUEPRINT VERSIONS (design §7.7). Pure.
@@ -151,8 +151,8 @@ export function approvalCount(def: StudioDefinition): { approved: number; total:
 }
 
 /** The shared validator, plus the competency model's own approval. */
-export function studioIssues(def: StudioDefinition): Issue[] {
-  const issues = validateBlueprint(def);
+export function studioIssues(def: StudioDefinition, refs: BlueprintRefs = {}): Issue[] {
+  const issues = validateBlueprint(def, refs);
   if (def.competenciesApproved === false) issues.unshift({ level: "error", section: "competencies", where: "Competency model", message: "Not approved yet." });
   return issues;
 }

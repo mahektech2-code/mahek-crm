@@ -53,6 +53,7 @@ export const WEIGHTS = {
   "src/lib/erp/erp-ai-reading.test.ts": 2,
   "src/lib/hrms/integration/restructure.test.ts": 2,
   "src/lib/hire/integration/core.test.ts": 1,
+  "src/lib/hire/integration/onboarding.test.ts": 2,
   "src/lib/call-intel.test.ts": 4,
   "src/lib/they-called-us.test.ts": 8,
   "src/lib/visit-intel.test.ts": 3,
