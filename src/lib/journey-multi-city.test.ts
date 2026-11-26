@@ -25,7 +25,10 @@ import { db } from "@/db";
 import { appAccess, customers, mbosJourneyPlans, mbosJourneyStops, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
-import { answerRefusal, proposeJourneyDays, saveJourneyPeriod } from "@/lib/actions/sales";
+import { answerRefusal, editJourneyDayStops, proposeJourneyDays, saveJourneyPeriod } from "@/lib/actions/sales";
+import { ingestSyncBatch } from "@/lib/actions/mbos";
+import { buildPull, type MbosPrincipal } from "@/lib/services/mbos-service";
+import type { SyncItem } from "@/lib/mbos/types";
 import { journeyPlansBetween } from "@/lib/services/sales-service";
 import { testPhone } from "@/lib/test-phone";
 
@@ -86,7 +89,7 @@ after(async () => {
 });
 beforeEach(async () => {
   await db.execute(sql`
-    truncate table notifications, audit_log, mbos_journey_stops, mbos_journey_plans, app_module_access, app_access,
+    truncate table notifications, audit_log, mbos_deletions, mbos_journey_stops, mbos_journey_plans, app_module_access, app_access,
       customers, users, app_settings restart identity cascade`);
   invalidateConfig();
   await seedConfig();
@@ -272,5 +275,171 @@ describe("arranging the shops from the office", () => {
     await saveJourneyPeriod({ salesmanId: salesman.id, days: [{ planDate: d, customerIds: [a.id] }] });
     p = await planOn(d);
     assert.equal(p.city, "Pune", "no city given leaves the day's city alone");
+  });
+});
+
+/* ------------------------------------------- the office editing a day's shops */
+
+const stopsOn = async (date: string) => {
+  const p = await planOn(date);
+  return db
+    .select()
+    .from(mbosJourneyStops)
+    .where(eq(mbosJourneyStops.planId, p.id))
+    .orderBy(mbosJourneyStops.sequence);
+};
+
+const edit = async (planDate: string, add: string[], remove: string[] = [], city = "Mumbai") => {
+  const r = await editJourneyDayStops({ salesmanId: salesman.id, planDate, city, cities: [city], add, remove });
+  assert.ok(landed(r), r.ok ? "" : r.error);
+};
+
+const shops = async (n: number) => {
+  const made = [];
+  for (let i = 0; i < n; i++) made.push(await shop("Mumbai"));
+  return made;
+};
+
+const handset = (): MbosPrincipal => ({
+  user: salesman,
+  deviceId: "probe-device",
+  role: "associate",
+  scope: { kind: "own", userIds: [salesman.id] },
+});
+
+const sent = (entityType: string, entityId: string, payload: Record<string, unknown>): SyncItem =>
+  ({
+    queueId: id("q"),
+    entityType,
+    entityId,
+    op: "update",
+    idempotencyKey: `${entityId}:${randomUUID()}`,
+    clientCreatedAt: Date.now(),
+    payload,
+  }) as SyncItem;
+
+describe("editing a day's shops from the office", () => {
+  test("saving a second time ADDS to the day, and the earlier stops are the same rows", async () => {
+    const d = DAY(3);
+    const [a, b, c] = await shops(3);
+    await edit(d, [a.id, b.id]);
+    const first = await stopsOn(d);
+
+    await edit(d, [c.id]);
+    const second = await stopsOn(d);
+
+    assert.deepEqual(second.map((s) => s.customerId), [a.id, b.id, c.id]);
+    assert.deepEqual(second.slice(0, 2), first, "an untouched stop was rewritten");
+  });
+
+  test("only the shop named for removal leaves, and adding one already there does nothing", async () => {
+    const d = DAY(3);
+    const [a, b, c] = await shops(3);
+    await edit(d, [a.id, b.id, c.id]);
+    const [first, , third] = await stopsOn(d);
+    await edit(d, [a.id], [b.id]);
+    const left = await stopsOn(d);
+    assert.deepEqual(left.map((s) => s.customerId), [a.id, c.id]);
+    assert.deepEqual(left.map((s) => s.id), [first.id, third.id], "a kept stop was replaced");
+    assert.deepEqual(left.map((s) => s.sequence), [1, 2]);
+  });
+
+  test("a visited shop is never removed", async () => {
+    const d = DAY(3);
+    const [a, b] = await shops(2);
+    await edit(d, [a.id, b.id]);
+    const [visited] = await stopsOn(d);
+    await db.update(mbosJourneyStops).set({ status: "visited" }).where(eq(mbosJourneyStops.id, visited.id));
+    await edit(d, [], [a.id, b.id]);
+    assert.deepEqual((await stopsOn(d)).map((s) => s.customerId), [a.id]);
+  });
+
+  test("a proposed day becomes planned, and emptying it hands it back as proposed", async () => {
+    const d = DAY(4);
+    const a = await shop("Mumbai");
+    await proposeJourneyDays({ salesmanId: salesman.id, days: [{ planDate: d, city: "Mumbai" }] });
+    await edit(d, [a.id]);
+    assert.equal((await planOn(d)).dayState, "planned");
+
+    await edit(d, [], [a.id]);
+    assert.equal((await planOn(d)).dayState, "proposed");
+    assert.equal((await stopsOn(d)).length, 0);
+  });
+
+  test("a refused day stays refused, and a past day keeps its state", async () => {
+    const refused = DAY(4);
+    const past = DAY(-4);
+    const a = await shop("Mumbai");
+    for (const d of [refused, past]) {
+      await proposeJourneyDays({ salesmanId: salesman.id, days: [{ planDate: d, city: "Mumbai" }] });
+    }
+    await db
+      .update(mbosJourneyPlans)
+      .set({ dayState: "refused", refusalReason: "Market shut" })
+      .where(eq(mbosJourneyPlans.id, (await planOn(refused)).id));
+
+    await edit(refused, [a.id]);
+    await edit(past, [a.id]);
+    assert.equal((await planOn(refused)).dayState, "refused");
+    assert.equal((await planOn(past)).dayState, "proposed");
+  });
+
+  test("a planned day that has gone by is not changed", async () => {
+    const d = DAY(-4);
+    const [a, b] = await shops(2);
+    await edit(d, [a.id]);
+    const r = await editJourneyDayStops({ salesmanId: salesman.id, planDate: d, add: [b.id], remove: [] });
+    assert.equal(r.ok, false);
+    assert.equal((await stopsOn(d)).length, 1);
+  });
+
+  test("a day the SALESMAN picked is not changed from the office, and his own pick still works", async () => {
+    const d = DAY(5);
+    const [a, b, c] = await shops(3);
+    await proposeJourneyDays({ salesmanId: salesman.id, days: [{ planDate: d, city: "Mumbai" }] });
+    const planId = (await planOn(d)).id;
+    await db.update(mbosJourneyPlans).set({ dayState: "agreed" }).where(eq(mbosJourneyPlans.id, planId));
+
+    const [picked] = await ingestSyncBatch(handset(), [sent("plan_stops", planId, { customerIds: [a.id, b.id] })]);
+    assert.equal(picked.status, "accepted", JSON.stringify(picked));
+
+    const [plan] = await journeyPlansBetween(d, d, salesman.id);
+    assert.equal(plan.officeArranged, false);
+    const r = await editJourneyDayStops({ salesmanId: salesman.id, planDate: d, add: [c.id], remove: [a.id] });
+    assert.equal(r.ok, false);
+    assert.deepEqual((await stopsOn(d)).map((s) => s.customerId), [a.id, b.id]);
+
+    const [again] = await ingestSyncBatch(handset(), [sent("plan_stops", planId, { customerIds: [b.id, c.id] })]);
+    assert.equal(again.status, "accepted", JSON.stringify(again));
+    assert.deepEqual((await stopsOn(d)).map((s) => s.customerId), [b.id, c.id]);
+  });
+
+  test("the phone is sent exactly the final list, and told which stops went", async () => {
+    const d = DAY(2);
+    const [a, b, c] = await shops(3);
+    await proposeJourneyDays({ salesmanId: salesman.id, days: [{ planDate: d, city: "Mumbai" }] });
+    await edit(d, [a.id, b.id]);
+    const [, second] = await stopsOn(d);
+    const before = await buildPull(handset(), null);
+    const held = (before.journeyStops as Array<{ id: string }>).map((s) => s.id);
+
+    await edit(d, [c.id], [b.id]);
+    const delta = await buildPull(handset(), before.cursor);
+
+    const gone = delta.deletions.find((g) => g.entity === "journey_stops")?.ids ?? [];
+    assert.ok(gone.includes(second.id), "the removed stop was never tombstoned");
+
+    const arrived = delta.journeyStops as Array<{ id: string }>;
+    const onPhone = new Set([...held, ...arrived.map((s) => s.id)]);
+    for (const g of gone) onPhone.delete(g);
+    const server = await stopsOn(d);
+    assert.deepEqual([...onPhone].sort(), server.map((s) => s.id).sort());
+    assert.deepEqual(server.map((s) => s.customerId), [a.id, c.id]);
+
+    const day = (delta.planDays as Array<{ planDate: string; dayState: string; picked: number }>).find(
+      (p) => p.planDate === d,
+    );
+    assert.equal(day?.dayState, "planned");
+    assert.equal(day?.picked, 2);
   });
 });
