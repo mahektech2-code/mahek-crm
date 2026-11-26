@@ -118,3 +118,23 @@ proposed (trimmed, case-insensitive) is his agreement and is recorded exactly
 as one (`mbos.journey.answered`, `via: planned_on_phone`, the manager told); a
 different city moves nothing — the proposal waits, and `plan_stops` against it
 is refused with a sentence sending him to answer it on the Journey tab.
+
+**The handset half of those three.** `adoptPlanDay` (data/journey.ts), called
+by the sync engine on an accepted `plan_day` create whose `serverId` differs
+(`adoptsServerId`), renames the local day — or folds its picks into the
+office's row if a pull brought it first — and repoints every outbox row still
+under the old id, payload `id` and `dependsOn` included. `pickShops` now
+depends on the day's create WHERE that create is still in the outbox, so a
+refused create blocks the picks with a reason instead of leaving them retrying;
+and `landedDependencies` (sync/ordering.ts) never holds an item behind its OWN
+id, because `plan_stops` shares its id with the day it waits on. The Next stop
+card offers "Skip, with a reason" (`skipStop`, local first, queued as
+`stop_skip`), and the card moves on. A day still with the office lists its
+picked shops with Start visit on the Journey card, and the Journeys day sheet
+reads the queued picks instead of "No shops picked yet".
+
+**Navigate needs `<queries>` on Android 11+.** `openMaps` asks
+`canOpenURL('google.navigation:…')`, and package visibility answers false for
+any scheme the manifest has not declared — so Navigate always fell through to
+the browser's maps page. `plugins/withNavigationQueries.js` declares
+`google.navigation`, `geo` and `whatsapp` by scheme on every prebuild.
