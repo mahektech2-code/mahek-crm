@@ -211,6 +211,24 @@ export function todayIst(): string {
   return IST_DAY.format(new Date());
 }
 
+/** The Asia/Kolkata calendar day an instant falls on, `YYYY-MM-DD`. */
+export function istDate(ms: number): string {
+  return IST_DAY.format(new Date(ms));
+}
+
+/**
+ * THE INSTANT AN IST DAY BEGINS, for "today's orders" and "today's money".
+ *
+ * `setHours(0, 0, 0, 0)` is the PHONE's midnight, and a handset left on UTC
+ * counted the orders of 00:00-05:30 IST into yesterday — on the home figure he
+ * judges his day by, and on the money he has to hand in. The office's day is
+ * Asia/Kolkata (`APP_TIMEZONE`), which has no daylight saving, so the offset
+ * is fixed and spelled once here.
+ */
+export function istDayStartMs(ms: number = Date.now()): number {
+  return Date.parse(istDate(ms) + 'T00:00:00+05:30');
+}
+
 /**
  * How far away, in words a person walking a beat would use.
  *

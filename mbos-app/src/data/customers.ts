@@ -1,4 +1,4 @@
-import { all, newId, one, run } from '../db';
+import { all, getKv, newId, one, run } from '../db';
 import {
   CUSTOMER_PAGE,
   cityOriginsQuery,
@@ -12,6 +12,8 @@ import {
   type Origin,
 } from './customer-query';
 import { enqueue } from '../sync/queue';
+import { LOCAL_ORDERS_FOR_SHOP_SQL, mergeShopOrders } from './order-money';
+import { istDate } from '../lib/format';
 import { insertAndQueue, insertLocal, stamp } from './write';
 import { SHOP_CREATE_REFUSED_SQL, shopOrderRefusal } from './shop-refusal';
 
@@ -251,6 +253,8 @@ export type CustomerOrder = {
   valuePaise: number | null;
   lines: number | null;
   orderNo: string | null;
+  /** One he took on this phone that the office has not accepted yet. */
+  pending?: boolean;
 };
 
 export type CustomerPayment = {
@@ -330,10 +334,21 @@ export function billLines(bill: { lines: string | null }): BillLine[] {
  * the whole history and tells the customer so.
  */
 export async function customerOrders(id: string): Promise<CustomerOrder[]> {
-  return all<CustomerOrder>(
-    'SELECT * FROM customer_orders WHERE customerId = ? ORDER BY orderedAt DESC, id DESC',
-    [id],
-  );
+  const [office, local] = await Promise.all([
+    all<CustomerOrder>(
+      'SELECT * FROM customer_orders WHERE customerId = ? ORDER BY orderedAt DESC, id DESC',
+      [id],
+    ),
+    /* AND WHAT HE PUNCHED HERE THAT THE OFFICE HAS NOT SENT BACK YET — billed
+       to this shop or delivered to it. The tab used to show an order only
+       after it had gone up, been accepted and come down on a later pull, so
+       the order he took five minutes ago in this shop was not on its record. */
+    all<{ id: string; customerId: string; orderedAtMs: number; status: string | null; valuePaise: number | null; lines: number | null; orderNo: string | null }>(
+      LOCAL_ORDERS_FOR_SHOP_SQL,
+      [id, id],
+    ),
+  ]);
+  return mergeShopOrders(office, local.map((l) => ({ ...l, customerId: id })), istDate);
 }
 
 export async function customerPayments(id: string): Promise<CustomerPayment[]> {
@@ -354,10 +369,17 @@ export async function customerPayments(id: string): Promise<CustomerPayment[]> {
  * settled bill is gone from the next pass rather than left here to be offered.
  */
 export async function customerBills(id: string): Promise<CustomerBill[]> {
-  return all<CustomerBill>(
-    'SELECT * FROM customer_bills WHERE customerId = ? ORDER BY billDate ASC, id ASC',
-    [id],
-  );
+  /* The STATEMENT's window. An open bill older than it is on the phone now —
+     for collecting and for the overdue rule — but its earlier receipts are
+     not, so drawing it into a running balance would open on a debt the
+     screen cannot account for. It stays on the collection picker. */
+  const from = await getKv('statementFrom');
+  return from
+    ? all<CustomerBill>(
+        'SELECT * FROM customer_bills WHERE customerId = ? AND (billDate IS NULL OR billDate >= ?) ORDER BY billDate ASC, id ASC',
+        [id, from],
+      )
+    : all<CustomerBill>('SELECT * FROM customer_bills WHERE customerId = ? ORDER BY billDate ASC, id ASC', [id]);
 }
 
 /**
@@ -391,9 +413,14 @@ export async function customersOwing(limit = 20): Promise<Customer[]> {
 }
 
 export async function openCustomerBills(id: string): Promise<CustomerBill[]> {
+  /* NOT AN UNSTATED BILL. Its balance is the full amount only because nobody
+     has said whether it is owed or paid (`paymentPosition`), and the office
+     keeps it out of outstanding for that reason — so offering it to collect
+     against would file money against a bill that may already be settled. */
   return all<CustomerBill>(
     `SELECT * FROM customer_bills
       WHERE customerId = ? AND coalesce(balancePaise, 0) > 0
+        AND coalesce(paymentPosition, '') <> 'unstated'
       ORDER BY billDate ASC, id ASC`,
     [id],
   );

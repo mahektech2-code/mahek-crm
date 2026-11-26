@@ -11,7 +11,7 @@ import { BottomSheet, Calendar } from '../src/components/ui/overlays';
 import { Icon } from '../src/components/ui/Icon';
 import { Presence, Stagger, animateLayout, animateLayoutFor } from '../src/components/ui/motion';
 import { feedback } from '../src/components/ui/feedback';
-import { claimExpense, expenseTotals, expensesOn, listExpenses, type Expense } from '../src/data/requests';
+import { claimExpense, expenseTotals, expensesOn, listExpenses, recordedTripOn, type Expense } from '../src/data/requests';
 import { getConfig } from '../src/data/config';
 import {
   activePolicy,
@@ -136,6 +136,8 @@ export default function ExpensesScreen() {
      claim, so a preview priced without these reports the whole cap however much
      of it has gone — and he finds out at approval. */
   const [dayLines, setDayLines] = React.useState<ClaimedLine[]>([]);
+  /* A trip the app recorded on the day being claimed for — see `recordedTripOn`. */
+  const [tripOnDay, setTripOnDay] = React.useState(false);
 
   const [open, setOpen] = React.useState(false);
   const [fixing, setFixing] = React.useState(false);
@@ -230,8 +232,10 @@ export default function ExpensesScreen() {
      the list and the day it landed on now has one more line on it. */
   React.useEffect(() => {
     let live = true;
-    void expensesOn(claimDay).then((l) => {
-      if (live) setDayLines(l);
+    void Promise.all([expensesOn(claimDay), recordedTripOn(claimDay)]).then(([l, trip]) => {
+      if (!live) return;
+      setDayLines(l);
+      setTripOnDay(trip);
     });
     return () => {
       live = false;
@@ -266,8 +270,9 @@ export default function ExpensesScreen() {
         hasBill: ex.files.length > 0,
         day: claimDay,
         alreadyClaimed,
+        recordedTrip: tripOnDay,
       }),
-    [policy, kind, exAmtPaise, ex.files.length, claimDay, alreadyClaimed],
+    [policy, kind, exAmtPaise, ex.files.length, claimDay, alreadyClaimed, tripOnDay],
   );
   const exOver = preview.excessPaise > 0;
   const capLine = preview.line;
@@ -428,7 +433,9 @@ export default function ExpensesScreen() {
        thumb already is rather than the sheet scrolling to the first mark. */
     const missing: FieldKey[] = [];
     if (!exAmtPaise) missing.push('amt');
-    if (!ex.files.length) missing.push('bill');
+    /* A bill — unless the policy takes the trip the app recorded that day as
+       the proof ("bills OR travel logs"), which it does for local travel. */
+    if (!ex.files.length && !preview.tripStandsAsProof) missing.push('bill');
     if (!ex.whenIso.trim()) missing.push('when');
     if (!ex.note.trim()) missing.push('note');
     /* Refused with the reasons on the sheet — felt as well, because with the
@@ -863,9 +870,11 @@ export default function ExpensesScreen() {
         ) : null}
 
         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 14 }}>
-          <Text accessibilityLabel="Bill and proof, needed" style={[{ flex: 1, fontSize: 13, lineHeight: 18, color: C.ink }, weight(700)]}>
+          <Text
+            accessibilityLabel={preview.tripStandsAsProof ? 'Bill and proof, optional: your recorded trip counts' : 'Bill and proof, needed'}
+            style={[{ flex: 1, fontSize: 13, lineHeight: 18, color: C.ink }, weight(700)]}>
             Bill &amp; proof
-            <Text style={{ color: C.danger }}>{' *'}</Text>
+            {preview.tripStandsAsProof ? null : <Text style={{ color: C.danger }}>{' *'}</Text>}
           </Text>
           <Text accessibilityLabel={ex.files.length + ' of ' + maxFiles} style={[{ fontSize: 12, lineHeight: 17, color: C.muted }, weight(700)]}>
             {ex.files.length + ' / ' + maxFiles}
@@ -944,9 +953,15 @@ export default function ExpensesScreen() {
             : null}
         </View>
         <Text
-          accessibilityLabel="Needed on every claim. Add every page. Add the payment screenshot if you have it."
+          accessibilityLabel={
+            preview.tripStandsAsProof
+              ? 'Not needed: the trip the app recorded that day is the proof. Add a bill if you have one.'
+              : 'Needed on every claim. Add every page. Add the payment screenshot if you have it.'
+          }
           style={{ fontSize: 12, lineHeight: 17, marginTop: 6, color: bad('bill') ? C.danger : C.muted }}>
-          Every page · payment screenshot if you have it
+          {preview.tripStandsAsProof
+            ? 'Not needed — your recorded trip that day is the proof'
+            : 'Every page · payment screenshot if you have it'}
         </Text>
         {bad('bill') ? (
           <Text style={[{ fontSize: 12, lineHeight: 17, color: C.danger, marginTop: 4 }, weight(600)]}>Add the bill or payment proof.</Text>

@@ -91,7 +91,6 @@ All three screens are narrowed to the manager's team: a manager with regions all
 ## Where the code and the intent disagree today
 
 - **"Order value needing approval" is not an office approval.** The setting says an order at or above it "waits for a manager before dispatch". The office never reads it; only the handset's credit check uses it, and every field order goes to accounts regardless.
-- **The overdue-days order block is handset-only.** <Setting k="mbos.credit.overdueDaysBlockOrders" /> stops the handset offering new orders, but the office does not re-check it on sync.
 - **The deposit window is called working days but counted in calendar days.** The subtitle says "working day"; the hours are divided by 24 and compared with calendar days since collection.
 - **Invoices narrows on the sales seat, falling back to the owner** — not on the shared "whose book" rule the CRM uses, so an account whose seat was deliberately emptied falls to whoever owns the row.
 - **AGENTS.md says an order on a lead below negotiation is refused.** The code now accepts it and converts the lead.

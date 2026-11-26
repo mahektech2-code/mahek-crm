@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Pressable, Text, TextInput, type TextProps } from 'react-native';
+import { Linking, View, Pressable, Text, TextInput, type TextProps } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Input } from '../src/components/ui/primitives';
@@ -18,6 +18,7 @@ import { skuLines } from '../src/lib/sku-lines';
 import { cleanWhole, parseWhole } from '../src/lib/decimal-input';
 import {
   billingChoicesFor,
+  getCustomer,
   listCustomersPage,
   productsByIds,
   searchProducts,
@@ -29,13 +30,16 @@ import { freshSuggestions, rememberedSuggestions, type OrderSuggestions } from '
 import {
   assessCart,
   editOrder,
+  finishRetake,
   orderForChange,
+  refusedOrder,
   requestOrderChange,
   saveOrder,
   type CartLine,
   type OrderAssessment,
 } from '../src/data/orders';
-import { lastOrderLines, ratesForTag, type ReorderLine } from '../src/data/pricing';
+import { lastOrderLines, priceKeyFor, ratesForTag, unofferedFor, type ReorderLine } from '../src/data/pricing';
+import { getConfig } from '../src/data/config';
 import { useCustomer, useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 
@@ -123,7 +127,10 @@ export default function OrderScreen() {
     else setQty(id, String(next));
   };
   const notify = useStore((s) => s.notify);
+  const askConfirm = useStore((s) => s.askConfirm);
   const markVisitDone = useStore((s) => s.markVisitDone);
+  /* "Save without them", answered once for this order. */
+  const lostOk = React.useRef(false);
 
   /* Every product this panel has been shown, by id. A cart line whose product
      fell out of the last search still has a name, a pack and a rate. */
@@ -141,7 +148,7 @@ export default function OrderScreen() {
    * shop. From anywhere else he says which, and the shop is drawn large enough
    * to be noticed and changed.
    */
-  const params = useLocalSearchParams<{ from?: string; edit?: string; change?: string }>();
+  const params = useLocalSearchParams<{ from?: string; edit?: string; change?: string; retake?: string }>();
   const arrival = useStore((s) => s.arrival);
   const inVisit = arrival?.checkedInAt != null ? arrival : null;
   /*
@@ -155,14 +162,29 @@ export default function OrderScreen() {
   const changingId = editId ?? changeId;
   const [changing, setChanging] = React.useState<Awaited<ReturnType<typeof orderForChange>>>(null);
   const [changeNote, setChangeNote] = React.useState('');
-  const shopIsGiven = params.from === 'customer' || params.from === 'visit' || !!inVisit || !!changingId;
+  /*
+   * TAKING A REFUSED ORDER AGAIN. `retake` is the refused entry's outbox id:
+   * the form opens on the shop the goods were for, with the biller it was
+   * billed to and its lines in the cart, and the refused entry is let go only
+   * once this order is saved — see `refusedOrder`.
+   */
+  const retakeId = params.retake ?? null;
+  const [retake, setRetake] = React.useState<Awaited<ReturnType<typeof refusedOrder>>>(null);
+  /*
+   * LINES THAT CANNOT COME ACROSS, from the order being edited or retaken: a
+   * product since retired, or a line the office wrote with no product on the
+   * phone. They used to be dropped without a word, so "Save changes" quietly
+   * shortened an order. They are listed, and saving asks first.
+   */
+  const [lostLines, setLostLines] = React.useState<{ productName: string; cans: number }[]>([]);
+  const shopIsGiven = params.from === 'customer' || params.from === 'visit' || !!inVisit || !!changingId || !!retakeId;
   const [picking, setPicking] = React.useState(!shopIsGiven);
   React.useEffect(() => {
-    if (changingId) return;
+    if (changingId || retakeId) return;
     if (inVisit && params.from !== 'customer' && useStore.getState().custId !== inVisit.customerId) {
       set({ custId: inVisit.customerId });
     }
-  }, [inVisit, params.from, set, changingId]);
+  }, [inVisit, params.from, set, changingId, retakeId]);
   const [results, setResults] = React.useState<Product[]>([]);
   /** Which query the rows in `results` answer. Anything else is stale. */
   const [resultsFor, setResultsFor] = React.useState<string | null>(null);
@@ -215,6 +237,38 @@ export default function OrderScreen() {
 
   const custId = c?.id ?? null;
 
+  /*
+   * THE SHOP'S OWN DRAFT, kept aside while another order's lines are in the
+   * cart. An edit, a change request or a retake loads THAT order into the
+   * cart, and backing out of it used to leave those lines as the shop's draft
+   * — so the next "New order" there opened pre-filled with an order already
+   * taken. On leaving without saving, the draft he had is put back; where it
+   * was another shop's, the cart is simply emptied.
+   */
+  const savedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!changingId && !retakeId) return;
+    const before = { cart: useStore.getState().cart, cartFor: useStore.getState().cartFor };
+    return () => {
+      if (savedRef.current) return;
+      const now = useStore.getState().cartFor;
+      set(now === before.cartFor ? { cart: before.cart } : { cart: {} });
+    };
+  }, [changingId, retakeId, set]);
+
+  /* Lines into the cart from another order, saying which could not come. */
+  const loadLines = React.useCallback(
+    async (lines: { productId: string; productName: string; cans: number }[], isLive: () => boolean) => {
+      const found = await productsByIds(lines.map((l) => l.productId).filter(Boolean));
+      if (!isLive()) return;
+      const sold = new Set(found.map((f) => f.id));
+      remember(found);
+      set({ cart: Object.fromEntries(lines.filter((l) => sold.has(l.productId)).map((l) => [l.productId, String(l.cans)])) });
+      setLostLines(lines.filter((l) => !sold.has(l.productId)).map((l) => ({ productName: l.productName, cans: l.cans })));
+    },
+    [remember, set],
+  );
+
   /* The order being changed: its shop, and its lines back in the cart. */
   React.useEffect(() => {
     if (!changingId) return;
@@ -223,16 +277,30 @@ export default function OrderScreen() {
       if (!live || !o) return;
       /* The shop the goods go to — the billing choice below picks the biller. */
       set({ custId: o.deliveryCustomerId ?? o.customerId });
-      const found = await productsByIds(o.lines.map((l) => l.productId));
+      await loadLines(o.lines, () => live);
       if (!live) return;
-      remember(found);
-      set({ cart: Object.fromEntries(o.lines.map((l) => [l.productId, String(l.cans)])) });
       setChanging(o);
     });
     return () => {
       live = false;
     };
-  }, [changingId, set, remember]);
+  }, [changingId, set, loadLines]);
+
+  /* The refused order: the DELIVERY shop, its lines, its biller chosen below. */
+  React.useEffect(() => {
+    if (!retakeId) return;
+    let live = true;
+    void refusedOrder(retakeId).then(async (r) => {
+      if (!live || !r) return;
+      set({ custId: r.deliveryCustomerId ?? r.customerId });
+      await loadLines(r.lines, () => live);
+      if (!live) return;
+      setRetake(r);
+    });
+    return () => {
+      live = false;
+    };
+  }, [retakeId, set, loadLines]);
 
   /* The arrangement, read once per customer. It came down with the pull, so
      this is a local read and works with no signal. */
@@ -257,10 +325,11 @@ export default function OrderScreen() {
     };
   }, [c]);
 
-  /* An order being changed keeps the biller it was taken against. */
+  /* An order being changed, or taken again, keeps the biller it was taken against. */
   React.useEffect(() => {
-    if (changing && billingOptions?.some((o) => o.id === changing.customerId)) setBilling(changing.customerId);
-  }, [changing, billingOptions]);
+    const was = changing?.customerId ?? retake?.customerId ?? null;
+    if (was && billingOptions?.some((o) => o.id === was && o.onBook)) setBilling(was);
+  }, [changing, retake, billingOptions]);
 
   /** Who is being invoiced. Every credit figure on this screen is theirs. */
   const biller = billingOptions?.find((o) => o.id === billing) ?? null;
@@ -295,20 +364,51 @@ export default function OrderScreen() {
     }, [custId, remember]),
   );
 
-  const priceTag = c?.priceTag ?? null;
+  /*
+   * THE BILLER'S RATES, under the key the office filed them for that account —
+   * its tag, or its tag and its list where shops on one tag sit on different
+   * lists (`priceKeyFor`). They were the SHOP's tag's, so a third-party shop
+   * showed its own list value over an order the distributor's list prices,
+   * and two shops on one tag but different lists got one rate that the office
+   * refused for one of them.
+   */
+  const priceTag = (billing && billing !== c?.id ? null : c?.priceTag) ?? null;
+  const [priceKey, setPriceKey] = React.useState<string | null>(null);
+  /** What the biller's list prints a dash for: not sold to this account. */
+  const [unoffered, setUnoffered] = React.useState<Set<string>>(new Set());
+  React.useEffect(() => {
+    let live = true;
+    if (!billing) return;
+    void (async () => {
+      const row = billing === c?.id ? { priceTag: c?.priceTag ?? null } : await getCustomer(billing);
+      const key = await priceKeyFor(billing, row?.priceTag ?? null);
+      const [rates, dashes] = await Promise.all([ratesForTag(key), unofferedFor(key)]);
+      if (!live) return;
+      setPriceKey(key);
+      setListRates(rates);
+      setUnoffered(dashes);
+    })();
+    return () => {
+      live = false;
+    };
+  }, [billing, c?.id, c?.priceTag]);
 
   React.useEffect(() => {
     let live = true;
     if (!custId) return;
-    void Promise.all([ratesForTag(priceTag), lastOrderLines(custId)]).then(([rates, last]) => {
-      if (!live) return;
-      setListRates(rates);
-      setLastOrder(last);
+    void lastOrderLines(custId).then((last) => {
+      if (live) setLastOrder(last);
     });
     return () => {
       live = false;
     };
-  }, [custId, priceTag]);
+  }, [custId]);
+
+  /* Who to ring when the office will not take the order. */
+  const [accountsPhone, setAccountsPhone] = React.useState('');
+  React.useEffect(() => {
+    void getConfig<string>('mbos.credit.accountsPhone', '').then((v) => setAccountsPhone(typeof v === 'string' ? v.trim() : ''));
+  }, []);
 
   const query = (oQ || '').trim();
 
@@ -358,13 +458,13 @@ export default function OrderScreen() {
        block belong to whoever is invoiced — assessing against a third-party
        shop reads a blank account and waves everything through. */
     if (!billing) return;
-    void assessCart(billing, lines).then((a) => {
+    void assessCart(billing, lines, { editingOrderId: editId, changeRequest: !!changeId }).then((a) => {
       if (live) setAssessment(a);
     });
     return () => {
       live = false;
     };
-  }, [billing, lines]);
+  }, [billing, lines, editId, changeId]);
 
   if (picking || !c) {
     return (
@@ -424,7 +524,12 @@ export default function OrderScreen() {
 
   const inCart = lines.filter((l) => cart[l.productId] != null);
   const blank = inCart.some((l) => !l.cans);
-  const canSubmit = inCart.length > 0 && !blank && !blocked && !!billing;
+  /* What the office will refuse at sync — the limit, an overdue bill, the
+     minimum — said now and the button held, rather than "Send for approval"
+     saving an order that comes back Not accepted. */
+  const refusal = assessment?.officeRefusal ?? null;
+  const notSold = inCart.filter((l) => unoffered.has(l.productId));
+  const canSubmit = inCart.length > 0 && !blank && !blocked && !!billing && !refusal && !notSold.length;
 
   const usual = suggested?.usual ?? [];
   const starter = suggested?.starter ?? [];
@@ -435,13 +540,13 @@ export default function OrderScreen() {
      known yet" until that switch is deliberately flipped. Null the moment any
      line has no rate on this tag: a total that quietly excluded one line
      would look complete and be wrong. */
-  const listValuePaise = priceTag && inCart.length && inCart.every((l) => listRates.has(l.productId))
+  const listValuePaise = priceKey && inCart.length && inCart.every((l) => listRates.has(l.productId))
     ? inCart.reduce((sum, l) => sum + l.cans * (listRates.get(l.productId) ?? 0), 0)
     : null;
 
   const reorder = async () => {
-    const found = await productsByIds(lastOrder.map((l) => l.productId));
-    if (!found.length) return notify('No product from that order is sold now.', 'error');
+    const found = (await productsByIds(lastOrder.map((l) => l.productId))).filter((p) => !unoffered.has(p.id));
+    if (!found.length) return notify('No product from that order is sold to this shop now.', 'error');
     remember(found);
     animateLayout();
     const byId = new Map(lastOrder.map((l) => [l.productId, l.cans]));
@@ -453,6 +558,12 @@ export default function OrderScreen() {
         ' Check quantities before sending.',
       'warn',
     );
+  };
+
+  /* Collect against the BILLER's bills — where the money owed actually is. */
+  const collectHere = () => {
+    if (billing) set({ custId: billing });
+    router.push('/pay?from=order');
   };
 
   const dupShape = (): OrderDuplicateShape => ({
@@ -493,6 +604,25 @@ export default function OrderScreen() {
     if (!inCart.length) return notify('Add a product first', 'error');
     if (blank) return notify('Set a quantity on every line', 'error');
     if (!assessment || blocked) return notify(assessment?.blockReason ?? 'You cannot take an order for this customer', 'error');
+    if (refusal) return notify(refusal.reason, 'error');
+    if (notSold.length) return notify(`${notSold[0].productName} is not sold to this account. Take it off the order.`, 'error');
+    /* Lines the edited or refused order had that cannot come across are said
+       and confirmed, never dropped quietly. */
+    if (lostLines.length && !lostOk.current) {
+      return askConfirm({
+        title: plural(lostLines.length, 'line') + ' will not be on it',
+        body:
+          lostLines.map((l) => `${l.productName} · ${plural(l.cans, 'can')}`).join('\n') +
+          '\n\nThese are not sold any more, so they cannot go on this order. Tell the shop, then save.',
+        confirmLabel: 'Save without them',
+        cancelLabel: 'Go back',
+        tone: 'warn',
+        run: () => {
+          lostOk.current = true;
+          void submit(dupAnswer);
+        },
+      });
+    }
     /* Said while he is standing in the shop rather than by a refusal at sync
        hours later: the arrangement names a distributor who is not his. */
     if (!billing || !biller) {
@@ -522,6 +652,7 @@ export default function OrderScreen() {
           ? await editOrder({ orderId: changing.id, lines: inCart, assessment })
           : await requestOrderChange({ orderId: changing.id, lines: inCart, assessment, note: changeNote });
         if (!r.ok) return notify(r.message, 'error');
+        savedRef.current = true;
         set({ cart: {} });
         notify(
           editId
@@ -590,6 +721,10 @@ export default function OrderScreen() {
         duplicate: dupAnswer ?? null,
       });
       setDup(null);
+      savedRef.current = true;
+      /* The refused one goes now that its replacement is safely written —
+         never before, or a save that failed would have lost both. */
+      if (retake) await finishRetake(retake.queueId).catch(() => undefined);
 
       if (forVisit) {
         const linked = useStore.getState().visitLinked;
@@ -602,7 +737,7 @@ export default function OrderScreen() {
       set({ cart: {} });
       notify(
         sentForApproval
-          ? 'Sent to your manager · waiting for approval'
+          ? 'Sent to Accounts · waiting for approval'
           : (await isOnline())
             ? 'Order saved · sending to the office now'
             : 'Order saved · will send when you have signal',
@@ -657,9 +792,13 @@ export default function OrderScreen() {
         : (needsApproval ? 'Send for approval' : 'Submit order') + ' · ' + c.name;
   const whyOff = busy
     ? 'The last order is still sending.'
-    : changeId
-      ? 'Off until every line has a quantity · for ' + c.name
-      : 'Add a product and set a quantity on every line.';
+    : refusal
+      ? refusal.reason
+      : notSold.length
+        ? `${notSold[0].productName} is not sold to this account. Take it off the order.`
+        : changeId
+          ? 'Off until every line has a quantity · for ' + c.name
+          : 'Add a product and set a quantity on every line.';
 
   /* ------------------------------------------------------------ the dock
      The order's sum, its credit and its one button, pinned to the bottom in
@@ -787,9 +926,20 @@ export default function OrderScreen() {
       {/* The approval note opens in place as the order crosses the line,
           rather than shoving the button down in the frame his thumb is
           heading for it. */}
-      <Presence show={needsApproval && !!assessment}>
+      <Presence show={needsApproval && !!assessment && !refusal}>
         <View style={{ marginTop: 10, backgroundColor: 'rgba(253,243,220,0.12)', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10 }}>
           <Tx style={{ fontSize: 13, lineHeight: 18, color: '#FCE3A6' }}>{assessment?.reason}</Tx>
+        </View>
+      </Presence>
+
+      {/* What the office will refuse, in its own terms, while he can still
+          change the order or ring somebody — never as a refusal at sync. */}
+      <Presence show={!!refusal}>
+        <View style={{ marginTop: 10, backgroundColor: 'rgba(255,107,94,0.16)', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10, gap: 8 }}>
+          <Tx accessibilityRole="alert" style={{ fontSize: 13, lineHeight: 18, color: '#FFD3CE' }}>{refusal?.reason ?? ''}</Tx>
+          {refusal && refusal.code !== 'below_minimum' ? (
+            <StopActions onNavy accountsPhone={accountsPhone} onCollect={collectHere} />
+          ) : null}
         </View>
       </Presence>
 
@@ -1053,6 +1203,9 @@ export default function OrderScreen() {
             <Tx style={{ fontSize: 13, lineHeight: 19, color: C.ink, marginTop: 4 }}>
               {assessment?.blockReason ?? assessment?.reason ?? ''}
             </Tx>
+            {/* What he can do from here: ring accounts, or collect what is
+                owed — the two things that lift a block. */}
+            <StopActions accountsPhone={accountsPhone} onCollect={collectHere} />
           </View>
         </View>
       ) : null}
@@ -1113,6 +1266,7 @@ export default function OrderScreen() {
                     onDrop={() => removeLine(k.id)}
                     ordered={{ count: k.orderCount, last: k.lastPurchaseDate ? shortDate(k.lastPurchaseDate) : null }}
                     onAdd={() => addLine(k.id)}
+                    notSold={unoffered.has(k.id)}
                   />
                 ))}
               </RowsCard>
@@ -1136,6 +1290,7 @@ export default function OrderScreen() {
                     onQty={(v) => setQty(k.id, v)}
                     onDrop={() => removeLine(k.id)}
                     onAdd={() => addLine(k.id)}
+                    notSold={unoffered.has(k.id)}
                   />
                 ))}
               </RowsCard>
@@ -1187,6 +1342,7 @@ export default function OrderScreen() {
                   onQty={(v) => setQty(k.id, v)}
                   onDrop={() => removeLine(k.id)}
                   onAdd={() => addLine(k.id)}
+                  notSold={unoffered.has(k.id)}
                 />
               ))}
               {/* Three different empty states, and they must never look alike:
@@ -1250,6 +1406,23 @@ export default function OrderScreen() {
             </View>
           ) : null}
 
+          {lostLines.length ? (
+            <View
+              accessible
+              accessibilityLabel={'Not on this order: ' + lostLines.map((l) => l.productName).join(', ') + '. They are not sold any more.'}
+              style={{ marginBottom: 10, backgroundColor: C.warnBg, borderRadius: 18, paddingHorizontal: 14, paddingVertical: 12, gap: 4 }}>
+              <Tx style={[{ fontSize: 13, lineHeight: 18, color: C.warnInk }, weight(700)]}>
+                {plural(lostLines.length, 'line') + ' from the order cannot come across'}
+              </Tx>
+              {lostLines.map((l, i) => (
+                <Tx key={i} style={{ fontSize: 12.5, lineHeight: 17, color: C.warnInk }}>
+                  {'· ' + l.productName + ' · ' + plural(l.cans, 'can')}
+                </Tx>
+              ))}
+              <Tx style={{ fontSize: 12, lineHeight: 16, color: C.warnInk }}>Not sold any more. Tell the shop; saving asks first.</Tx>
+            </View>
+          ) : null}
+
           <View style={{ gap: 10 }}>
             {inCart.map((line) => {
               const priced = assessment?.lines.find((p) => p.line.productId === line.productId);
@@ -1274,7 +1447,9 @@ export default function OrderScreen() {
                  to count. `Math.ceil` was a no-op on an integer. */
               const counts = [
                 plural(qty, 'can'),
-                priced?.litres != null ? Math.round(priced.litres) + ' L' : null,
+                /* One decimal: a 0.5 L pack times three is 1.5 L, and rounding
+                   it to 2 L is a figure nobody ordered. */
+                priced?.litres != null ? litresLabel(priced.litres) : null,
                 priced && priced.boxes > 0 ? plural(priced.boxes, 'box', 'boxes') : null,
               ]
                 .filter(Boolean)
@@ -1303,7 +1478,7 @@ export default function OrderScreen() {
                       backgroundColor: C.surface,
                       borderRadius: 20,
                       borderWidth: 2,
-                      borderColor: qty ? C.primary : C.danger,
+                      borderColor: qty && !unoffered.has(line.productId) ? C.primary : C.danger,
                       paddingTop: 14,
                       paddingBottom: 14,
                       paddingLeft: 16,
@@ -1631,6 +1806,56 @@ function shortDate(iso: string): string {
 }
 
 /** One product to add: the SKU, the liquid, the pack, and one tap. */
+/** "1.5 L", "20 L" — one decimal where there is one. */
+function litresLabel(litres: number): string {
+  const r = Math.round(litres * 10) / 10;
+  return (Number.isInteger(r) ? String(r) : r.toFixed(1)) + ' L';
+}
+
+/**
+ * WHAT TO DO WHEN AN ORDER CANNOT GO: ring accounts, or collect what is owed.
+ * The block used to be a red box and nothing else — a dead end in the shop.
+ * "Call accounts" appears only where the office has published a number
+ * (`mbos.credit.accountsPhone`); otherwise the line says to ring them.
+ */
+function StopActions({ accountsPhone, onCollect, onNavy = false }: { accountsPhone: string; onCollect: () => void; onNavy?: boolean }) {
+  const ink = onNavy ? '#FFFFFF' : C.primaryDeep;
+  const bg = onNavy ? 'rgba(255,255,255,0.14)' : C.primaryTint;
+  const pill = (label: string, a11y: string, onPress: () => void) => (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={a11y}
+      hitSlop={4}
+      style={({ pressed }) => ({
+        minHeight: 40,
+        paddingHorizontal: 14,
+        borderRadius: 20,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: bg,
+        opacity: pressed ? 0.85 : 1,
+      })}>
+      <Tx style={[{ fontSize: 13, lineHeight: 18, color: ink }, weight(700)]}>{label}</Tx>
+    </Pressable>
+  );
+  return (
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+      {accountsPhone
+        ? pill('Call accounts', 'Call accounts on ' + accountsPhone, () => {
+            void Linking.openURL('tel:' + accountsPhone.replace(/[^0-9+]/g, ''));
+          })
+        : null}
+      {pill('Collect payment', 'Collect a payment against what they owe', onCollect)}
+      {!accountsPhone ? (
+        <Tx style={{ flexBasis: '100%', fontSize: 12, lineHeight: 16, color: onNavy ? C.onNavyMuted : C.muted }}>
+          Or ring accounts before you promise the shop anything.
+        </Tx>
+      ) : null}
+    </View>
+  );
+}
+
 function ProductRow({
   p,
   on,
@@ -1640,10 +1865,13 @@ function ProductRow({
   onAdd,
   onQty,
   onDrop,
+  notSold = false,
 }: {
   p: Product;
   on: boolean;
   first: boolean;
+  /** The biller's list prints a dash for it: listed, and not sold to this account. */
+  notSold?: boolean;
   /** How often this shop has ordered it, and when last. */
   ordered?: { count: number; last: string | null };
   /** What is on the order for it, as typed. Drawn as a stepper once added. */
@@ -1662,11 +1890,16 @@ function ProductRow({
   return (
     <Pressable
       onPress={() => {
-        if (!on) onAdd();
+        if (!on && !notSold) onAdd();
       }}
-      disabled={on}
+      disabled={on || notSold}
       accessibilityRole="button"
-      accessibilityLabel={(on ? 'Added: ' : 'Add ') + p.name + (orderedA11y ? '. ' + orderedA11y : '')}
+      accessibilityState={{ disabled: on || notSold }}
+      accessibilityLabel={
+        notSold
+          ? p.name + '. Not sold to this account on its price list.'
+          : (on ? 'Added: ' : 'Add ') + p.name + (orderedA11y ? '. ' + orderedA11y : '')
+      }
       style={({ pressed }) => ({
         flexDirection: 'row',
         alignItems: 'center',
@@ -1678,7 +1911,12 @@ function ProductRow({
       })}>
       <View style={{ flex: 1, minWidth: 0 }}>
         <SkuChip sku={p.sku} />
-        <Tx style={[{ fontSize: 14, lineHeight: 19, color: C.ink }, weight(700)]}>{row.lead}</Tx>
+        <Tx style={[{ fontSize: 14, lineHeight: 19, color: notSold ? C.faint : C.ink }, weight(700)]}>{row.lead}</Tx>
+        {notSold ? (
+          <Tx style={[{ fontSize: 12, lineHeight: 16, color: C.danger, marginTop: 2 }, weight(600)]}>
+            Not sold to this account — its price list has no rate
+          </Tx>
+        ) : null}
         {facts.length || orderedText ? (
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 10, rowGap: 2, marginTop: 2 }}>
             {facts.length ? (
@@ -1721,6 +1959,8 @@ function ProductRow({
         />
       ) : on ? (
         <Tx style={[{ fontSize: 13, lineHeight: 18, color: C.primaryDeep }, weight(700)]}>✓ Added</Tx>
+      ) : notSold ? (
+        <Icon name="lock" size={18} color={C.faint} strokeWidth={2} />
       ) : (
         <View
           style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: C.primaryTint, alignItems: 'center', justifyContent: 'center' }}>

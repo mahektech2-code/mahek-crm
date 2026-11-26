@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Pressable, Text, TextInput } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { T } from '../src/components/ui/primitives';
 import { Disc } from '../src/components/ui/v3';
@@ -9,16 +9,19 @@ import { Icon, type IconName } from '../src/components/ui/Icon';
 import { Presence, animateLayout, animateLayoutFor } from '../src/components/ui/motion';
 import { feedback } from '../src/components/ui/feedback';
 import { color as C, tabular, weight } from '../src/theme/tokens';
-import { dmy, inrFromPaise, isoDate, plural, pretty } from '../src/lib/format';
+import { dmy, inrFromPaise, plural, pretty, todayIst } from '../src/lib/format';
 import { cleanAmount, paiseFromTyped, typedFromPaise } from '../src/lib/money-input';
-import { cashInHand, collectPayment, type PaymentMode } from '../src/data/payments';
+import { cashInHand, collectPayment, refusedPayment, type PaymentMode } from '../src/data/payments';
+import { finishRetake } from '../src/data/orders';
 import { FALLBACK_MODES, fieldModes } from '../src/engines/payment-modes';
 import { getConfig } from '../src/data/config';
 import {
+  billingChoicesFor,
   customersOwing,
   getCustomer,
   listCustomersPage,
   openCustomerBills,
+  type BillingChoice,
   type Customer,
   type CustomerBill,
 } from '../src/data/customers';
@@ -169,6 +172,63 @@ export default function PayScreen() {
      act on a customer that is not the one chosen. */
   const current = c && c.id === custId ? c : null;
 
+  /*
+   * WHO IS PAID — the BILLING party, as the order screen asks it. At a
+   * third-party shop the bills are the distributor's, so money collected there
+   * was filed on the shop: against no bill, "in advance", on an account that
+   * owes nothing, while the distributor's bills went on being chased. The
+   * arrangement is the same one `billingChoicesFor` gives the order form; the
+   * first party that can be billed is chosen, and he can change it.
+   */
+  const [payers, setPayers] = React.useState<BillingChoice[] | null>(null);
+  const [payerId, setPayerId] = React.useState<string | null>(null);
+  const [payerRow, setPayerRow] = React.useState<Customer | null>(null);
+  React.useEffect(() => {
+    let live = true;
+    if (!current) return;
+    void billingChoicesFor(current).then((options) => {
+      if (!live) return;
+      setPayers(options);
+      setPayerId(options.find((o) => o.onBook)?.id ?? current.id);
+    });
+    return () => {
+      live = false;
+    };
+  }, [current]);
+  React.useEffect(() => {
+    let live = true;
+    if (!payerId || !current || payerId === current.id) return;
+    void getCustomer(payerId).then((row) => {
+      if (live) setPayerRow(row);
+    });
+    return () => {
+      live = false;
+    };
+  }, [payerId, current]);
+  /** The account the receipt is filed on. The shop itself until the arrangement is read. */
+  const payer: Customer | null = !current ? null : payerId && payerId !== current.id ? (payerRow?.id === payerId ? payerRow : null) : current;
+  const [pickingPayer, setPickingPayer] = React.useState(false);
+
+  /*
+   * COLLECTING A REFUSED PAYMENT AGAIN. The shop, the amount and the mode come
+   * back from the refused entry, and the refused entry is let go only once the
+   * new receipt is saved — it used to go first, so a save that failed lost both.
+   */
+  const params = useLocalSearchParams<{ retake?: string }>();
+  const retakeId = params.retake ?? null;
+  React.useEffect(() => {
+    if (!retakeId) return;
+    let live = true;
+    void refusedPayment(retakeId).then((r) => {
+      if (!live || !r) return;
+      setCustId(r.customerId);
+      useStore.getState().set({ payAmt: r.amountPaise ? typedFromPaise(r.amountPaise) : '', payMode: r.mode ?? null });
+    });
+    return () => {
+      live = false;
+    };
+  }, [retakeId]);
+
   /* The customer search: what he typed, and what has been asked. */
   const [typed, setTyped] = React.useState('');
   const [asked, setAsked] = React.useState('');
@@ -254,7 +314,8 @@ export default function PayScreen() {
   const [allBills, setAllBills] = React.useState(false);
 
   const userId = boot.session?.user.id ?? null;
-  const customerId = custId;
+  /* The bills are the PAYER's — the distributor's, at a third-party shop. */
+  const customerId = payer?.id ?? null;
   useFocusEffect(
     React.useCallback(() => {
       let live = true;
@@ -325,10 +386,13 @@ export default function PayScreen() {
   /* Step 3 opens once there is somebody paying and something to pay against —
      a bill, an explicit "not against a bill", or a shop with no unpaid bills
      on this phone at all. */
-  const billsAnswered = !!current && bills !== null && (chosen.length > 0 || noBill || openBills.length === 0);
+  const billsAnswered = !!payer && bills !== null && (chosen.length > 0 || noBill || openBills.length === 0);
 
   const chooseCustomer = (id: string | null) => {
     setCustId(id);
+    setPayers(null);
+    setPayerId(null);
+    setPickingPayer(false);
     if (!id) setC(null);
     setBills(null);
     setPicked(new Set());
@@ -397,13 +461,16 @@ export default function PayScreen() {
     if (needsCheque && !payChq.trim()) return notify('Cheque number is needed', 'error');
     if (needsCheque && !chequeDate) return notify(CHEQUE_DATE_LINE, 'error');
     if (needsCheque && !chequePhotoId) return notify(CHEQUE_PHOTO_LINE, 'error');
-    const c = current;
-    if (!c) return notify('Pick the shop first', 'error');
+    const c = payer;
+    if (!current) return notify('Pick the shop first', 'error');
+    if (!c) return notify('Still reading who this shop is billed to…', 'info');
 
     askConfirm({
       title: 'Take ' + inrFromPaise(amtPaise) + '?',
       body:
-        `${inrFromPaise(amtPaise)} from ${c.name}, by ${payMode.toLowerCase()}` +
+        `${inrFromPaise(amtPaise)} from ${current.name}` +
+        (c.id !== current.id ? `, on ${c.name}'s account` : '') +
+        `, by ${payMode.toLowerCase()}` +
         (needsCheque ? ` — cheque ${payChq.trim()}, dated ${dmy(chequeDate)}` : '') +
         '. The receipt is made when you say yes. You cannot change it later on this phone.',
       confirmLabel: 'Yes, take it',
@@ -429,7 +496,8 @@ export default function PayScreen() {
     /* This visit's money, where it is — named on the receipt from the moment
        it is taken. See `Arrival.visitId`. */
     const visitNow = lockedToVisit ? useStore.getState().arrival : null;
-    const visitId = visitNow && visitNow.customerId === cust.id ? visitNow.visitId ?? null : null;
+    /* The visit is the SHOP's, whoever the money is filed on. */
+    const visitId = visitNow && (visitNow.customerId === cust.id || visitNow.customerId === current?.id) ? visitNow.visitId ?? null : null;
     let receiptRef: string;
     let paymentId: string;
     try {
@@ -461,6 +529,7 @@ export default function PayScreen() {
     }
     busyRef.current = false;
     setBusy(false);
+    if (retakeId) await finishRetake(retakeId).catch(() => undefined);
 
     /* Only a visit's own payment marks the visit. Money taken for another shop
        from the + button is not something the visit in progress did. */
@@ -488,11 +557,12 @@ export default function PayScreen() {
       reference: receiptRef,
       confirmed: false,
       collectedBy: boot.session?.user.name ?? 'your salesman',
-      when: pretty(isoDate(new Date())),
+      when: pretty(todayIst()),
       chequeNumber: needsCheque ? payChq.trim() : null,
     });
 
-    const phone = cust.phone;
+    /* The receipt goes to the counter the money came across — the shop. */
+    const phone = current?.phone ?? cust.phone;
     set({ payAmt: '', payChq: '', payMode: null });
     setChequePhotoId(null);
     setChequeDate('');
@@ -655,7 +725,61 @@ export default function PayScreen() {
             </Pressable>
           )}
         </View>
-      ) : (
+      ) : null}
+
+      {/* WHOSE ACCOUNT IT GOES ON, where that is not simply the shop. */}
+      {custId && current && payers && (payers.length > 1 || (payerId && payerId !== current.id)) ? (
+        <View style={{ marginTop: 8, backgroundColor: C.surface, borderRadius: 18, paddingHorizontal: 16, paddingVertical: 12, gap: 6 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <T style={{ fontSize: 11, lineHeight: 15, color: C.muted }}>On the account of</T>
+              <T numberOfLines={1} style={[{ fontSize: 14, lineHeight: 19, color: C.ink }, weight(700)]}>
+                {payers.find((o) => o.id === payerId)?.name ?? current.name}
+              </T>
+              {payer && payer.id !== current.id ? (
+                <T style={{ fontSize: 12, lineHeight: 16, color: payer.outstandingPaise > 0 ? C.danger : C.muted }}>
+                  {payer.outstandingPaise > 0 ? 'Owes ' + inrFromPaise(payer.outstandingPaise) : 'Nothing outstanding'}
+                  {' · bills ' + current.name}
+                </T>
+              ) : null}
+            </View>
+            {payers.length > 1 ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={pickingPayer ? 'Done choosing whose account' : 'Change whose account it goes on'}
+                onPress={() => setPickingPayer((v) => !v)}
+                hitSlop={6}
+                style={({ pressed }) => ({ minHeight: 32, paddingHorizontal: 12, borderRadius: 16, backgroundColor: C.primaryTint, alignItems: 'center', justifyContent: 'center', opacity: pressed ? 0.85 : 1 })}>
+                <T style={[{ fontSize: 12, lineHeight: 17, color: C.primaryDeep }, weight(700)]}>{pickingPayer ? 'Done' : 'Change'}</T>
+              </Pressable>
+            ) : null}
+          </View>
+          {pickingPayer
+            ? payers.map((o) => (
+                <Pressable
+                  key={o.id}
+                  disabled={!o.onBook}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: o.id === payerId, disabled: !o.onBook }}
+                  onPress={() => {
+                    setPayerId(o.id);
+                    setPickingPayer(false);
+                    setBills(null);
+                    setPicked(new Set());
+                    setNoBill(false);
+                  }}
+                  style={{ minHeight: 44, borderRadius: 14, borderWidth: o.id === payerId ? 2 : 1, borderColor: o.id === payerId ? C.primary : C.hairline, paddingHorizontal: 12, paddingVertical: 6, justifyContent: 'center' }}>
+                  <T style={[{ fontSize: 13, lineHeight: 18, color: o.onBook ? C.ink : C.faint }, weight(700)]}>{o.name}</T>
+                  <T style={{ fontSize: 11.5, lineHeight: 15, color: C.muted }}>
+                    {!o.onBook ? 'Not in your list' : o.id === current.id ? 'The shop itself' : o.isPrimary ? 'Usually bills this shop' : 'Also bills this shop'}
+                  </T>
+                </Pressable>
+              ))
+            : null}
+        </View>
+      ) : null}
+
+      {custId ? null : (
         <View>
           <View style={{ minHeight: 48, borderRadius: 24, backgroundColor: C.surface, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16 }}>
             <Icon name="search" size={18} color={C.muted} strokeWidth={2} />

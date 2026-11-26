@@ -254,3 +254,12 @@ nothing but a note, a next action and the activity stamps
 (`survivesConversion` in `lib/mbos/converted-lead-note.ts`) is accepted and
 written to the customer's timeline as `field_note`, keyed on the outbox item so
 a resend writes nothing twice. Any other field keeps the refusal.
+
+**FOUR MONEY CHANNELS, ALL OPTIONAL, ALL HAND-APPLIED (Nov 2026).**
+`openOrdered`, `priceKeys`, `priceUnoffered` and `myPayments` are applied by
+`sync/money-channels.ts`, which returns plain statements so
+`order-money.test.ts` runs them against the real schema. Each is absent from an
+older server and absent changes nothing; `openOrdered` is sent whole and zeroes
+what it does not list. `customerOrders` can now carry `<order id>@<shop id>`
+rows (an order delivered to a shop in the book) — anything de-duplicating
+`customer_orders` against `orders` by id strips the suffix.

@@ -59,7 +59,7 @@ import { employeeLateral } from "../employee-link";
 import { listBills } from "./payment-service";
 import { activeScopesAndLists, geographyOf, ratesForCustomer } from "./price-list-service";
 import { resolvePriceList } from "../engines/price-resolution";
-import { mergeOfficeRatesIntoTags } from "../engines/order-price-authority";
+import { phonePriceTables, phoneRateKey, type PhoneRateGroup } from "../engines/order-price-authority";
 import {
   accountKey,
   clearSignInFailures,
@@ -70,7 +70,7 @@ import {
 /* What "did we sell anything" means, everywhere. See lib/order-status.ts: the
    eight money queries read it and a status list typed into a query is the half
    that drifts. */
-import { orderCountsSql, orderDeliveredSql } from "../order-status";
+import { orderCountsSql, orderDeliveredSql, orderValueSql, PURCHASE_STATUSES } from "../order-status";
 import { nextPullCursorAt } from "../mbos/pull-cursor";
 import { withoutResentLeads } from "./lead-tombstone-rules";
 /* §3.4 — a commitment is a day AND a size, in one place. */
@@ -1011,6 +1011,27 @@ export type BootstrapPayload = {
   planDays: unknown[];
   /** In force today. See `priceListRows` — the handset replaces it wholesale. */
   priceList: unknown[];
+  /**
+   * Which shops' rates are filed under a key other than their tag — shops on a
+   * tag split across office price lists, or untagged shops a list resolves
+   * for — and which products their list prints a dash for. Both replaced
+   * wholesale. See `phonePriceTables`. Optional: an older server sends neither.
+   */
+  priceKeys?: { customerId: string; priceKey: string }[];
+  priceUnoffered?: { priceKey: string; productId: string }[];
+  /**
+   * ORDERED, NOT YET INVOICED, per billing party — open field and CRM orders
+   * (pending approval or approved, not yet on a bill) inside
+   * `mbos.credit.openOrderWindowDays`, in paise. Sent whole every pass; the
+   * handset zeroes what is not listed. See `openOrderedFor`.
+   */
+  openOrdered?: { customerId: string; paise: number }[];
+  /**
+   * The office's word on each receipt HE reported — reported, held,
+   * confirmed, rejected or reversed — with the reason and the receipt number,
+   * so Collections can say what Accounts decided. See `myReceiptStates`.
+   */
+  myPayments?: { id: string; status: string; receiptNo: string | null; reason: string | null; decidedAt: number | null }[];
   /** Live promotions, as data. Nothing here interprets eligibility or benefit. */
   schemes: unknown[];
   tasks: unknown[];
@@ -1265,7 +1286,11 @@ export async function buildBootstrap(
     products: productRows,
     journeyStops: journeyRows,
     planDays: planDayRows,
-    priceList: priceRows,
+    priceList: priceRows.priceList,
+    priceKeys: priceRows.priceKeys,
+    priceUnoffered: priceRows.priceUnoffered,
+    openOrdered: await openOrderedFor(ids, config["mbos.credit.openOrderWindowDays"] as number),
+    myPayments: await myReceiptStates(principal.user.id),
     schemes: schemeRowsForBootstrap,
     tasks: taskRows,
     samples: sampleRows,
@@ -2520,27 +2545,55 @@ async function recentOrders(ids: string[], perCustomer: number, changedSince?: s
      answer to that is to send the CURRENT ten for any shop with an order that
      moved since the cursor, and let the handset prune to ten; a shop with no
      order touched has nothing new to say. */
-  const onlyChanged = changedSince
-    ? sql`and o.customer_id in (
+  /*
+   * AND THE ORDERS DELIVERED TO A SHOP, not only the ones billed to it (Nov
+   * 2026). A third-party shop is invoiced through its distributor, so every
+   * order it ever received sits under the distributor's id and its own Orders
+   * tab read empty — while the salesman stood in it. Each such order comes
+   * down a second time under the delivery shop, as `<order id>@<shop id>` so
+   * the handset's one-row-per-id table can hold both copies; the journey's
+   * "already counted" check strips the suffix.
+   */
+  const onlyChanged = (col: ReturnType<typeof sql.raw>) =>
+    changedSince
+      ? sql`and ${col} in (
+              select coalesce(oc.delivery_customer_id, oc.customer_id) from orders oc
+               where (oc.customer_id in ${idList} or oc.delivery_customer_id in ${idList})
+                 and oc.updated_at > ${changedSince}
+              union
               select oc.customer_id from orders oc
                where oc.customer_id in ${idList} and oc.updated_at > ${changedSince}
             )`
-    : sql``;
+      : sql``;
   return db.execute<Record<string, unknown>>(sql`
     select id, "customerId", "orderedAt", status, "valuePaise", lines, "orderNo"
       from (
-        select o.id, o.customer_id as "customerId",
-               (o.ordered_at at time zone ${APP_TIMEZONE})::date::text as "orderedAt",
-               o.status::text as status,
-               o.total_amount as "valuePaise",
-               coalesce(jsonb_array_length(o.line_items), 0) as lines,
-               o.order_no as "orderNo",
+        select x.*,
                row_number() over (
-                 partition by o.customer_id order by o.ordered_at desc, o.id desc
+                 partition by x."customerId" order by x."orderedAtTs" desc, x.id desc
                ) as rn
-          from orders o
-         where o.customer_id in ${idList}
-           ${onlyChanged}
+          from (
+            select o.id, o.customer_id as "customerId", o.ordered_at as "orderedAtTs",
+                   (o.ordered_at at time zone ${APP_TIMEZONE})::date::text as "orderedAt",
+                   o.status::text as status,
+                   o.total_amount as "valuePaise",
+                   coalesce(jsonb_array_length(o.line_items), 0) as lines,
+                   o.order_no as "orderNo"
+              from orders o
+             where o.customer_id in ${idList}
+               ${onlyChanged(sql.raw("o.customer_id"))}
+            union all
+            select o.id || '@' || o.delivery_customer_id, o.delivery_customer_id, o.ordered_at,
+                   (o.ordered_at at time zone ${APP_TIMEZONE})::date::text,
+                   o.status::text,
+                   o.total_amount,
+                   coalesce(jsonb_array_length(o.line_items), 0),
+                   o.order_no
+              from orders o
+             where o.delivery_customer_id in ${idList}
+               and o.delivery_customer_id <> o.customer_id
+               ${onlyChanged(sql.raw("o.delivery_customer_id"))}
+          ) x
       ) ranked
      where rn <= ${perCustomer}
      order by "customerId" asc, "orderedAt" desc
@@ -2666,8 +2719,20 @@ async function customerBills(
 ) {
   if (!ids.length) return [];
 
+  /*
+   * EVERY OPEN BILL, WHATEVER ITS AGE (Nov 2026). The window is the
+   * statement's; it is not the debt's. A bill older than
+   * `mbos.sync.statementMonths` that is still unpaid is the oldest debt on the
+   * account — the one the overdue rule and the collector are about — and the
+   * window took it off the phone. So the first send is "in the window, or
+   * open", and a delta sends any bill that MOVED, in the window or not: an old
+   * open bill being settled is exactly a change the phone has to hear, and
+   * the handset prunes an old one once it reads settled.
+   */
   const rows = await listBills(
-    { customerIds: ids, from: window.from, updatedSince: window.updatedSince },
+    window.updatedSince
+      ? { customerIds: ids, updatedSince: window.updatedSince }
+      : { customerIds: ids, openOrFrom: window.from },
     principal,
   );
   if (!rows.length) return [];
@@ -3346,7 +3411,18 @@ async function salaryFor(userId: string): Promise<Record<string, unknown>[]> {
                       where ex.user_id = ${userId}
                         and ex.superseded_by_id is null
                         and ex.expense_date >= p."from" and ex.expense_date < p."to"), 0)
-             as "reimbursedPaise"
+             as "reimbursedPaise",
+
+           /* What was actually PAID BACK that month — mbos_expense_payouts,
+              the money handed over, never pinned to an expense. "Approved to
+              pay back" beside it was all the phone could say, and approved
+              is not in his account. */
+           coalesce((select sum(po.amount_paise)
+                       from mbos_expense_payouts po
+                      where po.user_id = ${userId}
+                        and po.voided_at is null
+                        and po.paid_on >= p."from" and po.paid_on < p."to"), 0)::double precision
+             as "paidBackPaise"
 
       from periods p
       left join users u on u.id = ${userId}
@@ -3418,45 +3494,132 @@ async function priceListRows(customerIds: string[] = []) {
    * keeps the tag table — one tag cannot carry two prices — and those shops
    * are the ones an APK reading a per-customer rate would fix.
    */
-  const office = await officeRatesByTag(customerIds);
-  return mergeOfficeRatesIntoTags(tagRows, office);
+  return phonePriceTables(tagRows, await officeRateGroups(customerIds));
 }
 
-/** Tag → product → the office's rate (per can, GST included), or null for a dash. */
-async function officeRatesByTag(customerIds: string[]): Promise<Map<string, Map<string, number | null>>> {
-  const out = new Map<string, Map<string, number | null>>();
-  if (!customerIds.length) return out;
-  const tagged = await db.execute<{ id: string; tag: string }>(sql`
-    select c.id, c.price_tag as tag
+/**
+ * Every shop in the book, grouped by the rates the office will hold its
+ * orders to — see `phonePriceTables`. A tag whose shops all resolve to one
+ * list is one group keyed by the tag (what this always sent); a tag whose
+ * shops disagree is one group per list; an untagged shop a list resolves for
+ * is grouped by the list. Each group's rates come from ONE of its shops
+ * through `ratesForCustomer`, the function the order check prices with.
+ */
+async function officeRateGroups(customerIds: string[]): Promise<PhoneRateGroup[]> {
+  if (!customerIds.length) return [];
+  const rows = await db.execute<{ id: string; tag: string | null }>(sql`
+    select c.id, nullif(trim(c.price_tag), '') as tag
       from customers c
      where c.id in ${sql`(${sql.join(customerIds.map((i) => sql`${i}`), sql`, `)})`}
-       and nullif(trim(c.price_tag), '') is not null
   `);
-  if (!tagged.length) return out;
+  if (!rows.length) return [];
   const day = await today();
-  const [geo, { scopes, lists }] = await Promise.all([geographyOf(tagged.map((t) => t.id)), activeScopesAndLists()]);
-  const byTag = new Map<string, { listIds: Set<string | null>; first: string }>();
-  for (const t of tagged) {
-    const g = geo.get(t.id);
+  const [geo, { scopes, lists }] = await Promise.all([geographyOf(rows.map((t) => t.id)), activeScopesAndLists()]);
+  const listOf = new Map<string, string | null>();
+  const listsByTag = new Map<string, Set<string | null>>();
+  for (const r of rows) {
+    const g = geo.get(r.id);
     const listId = g ? (resolvePriceList(g, scopes, lists, day)?.listId ?? null) : null;
-    const entry = byTag.get(t.tag) ?? { listIds: new Set<string | null>(), first: t.id };
-    entry.listIds.add(listId);
-    byTag.set(t.tag, entry);
+    listOf.set(r.id, listId);
+    if (r.tag) {
+      const set = listsByTag.get(r.tag) ?? new Set<string | null>();
+      set.add(listId);
+      listsByTag.set(r.tag, set);
+    }
   }
-  const uniform = [...byTag].filter(([, e]) => e.listIds.size === 1 && !e.listIds.has(null));
-  if (!uniform.length) return out;
+  const byKey = new Map<string, { tag: string | null; customerIds: string[] }>();
+  for (const r of rows) {
+    const listId = listOf.get(r.id) ?? null;
+    if (!listId) continue;
+    const uniform = r.tag ? listsByTag.get(r.tag)!.size === 1 : false;
+    const key = phoneRateKey(r.tag, listId, uniform);
+    if (!key) continue;
+    const entry = byKey.get(key) ?? { tag: r.tag, customerIds: [] };
+    entry.customerIds.push(r.id);
+    byKey.set(key, entry);
+  }
+  if (!byKey.size) return [];
   const productIds = (
     await db.execute<{ id: string }>(sql`select id from products where active = true`)
   ).map((r) => r.id);
-  for (const [tag, e] of uniform) {
+  const out: PhoneRateGroup[] = [];
+  for (const [key, e] of byKey) {
     /* The same function the order check prices with, for one shop of the
-       tag — so what is sent is what the office will hold the order to. */
-    const rates = await ratesForCustomer(e.first, productIds, day);
+       group — so what is sent is what the office will hold the order to. */
+    const rates = await ratesForCustomer(e.customerIds[0], productIds, day);
     const m = new Map<string, number | null>();
     for (const [productId, r] of Object.entries(rates)) m.set(productId, r.offered ? r.rateInclGstPaise : null);
-    if (m.size) out.set(tag, m);
+    if (m.size) out.push({ key, tag: e.tag, rates: m, customerIds: e.customerIds });
   }
   return out;
+}
+
+/**
+ * ORDERED, NOT YET INVOICED, per billing party — the figure the handset's
+ * credit check adds to what a customer owes (`submittedNotInvoicedPaise` on
+ * the phone). The phone used to keep it itself, adding every order it took
+ * and taking nothing off when one was billed, declined or refused, so the
+ * credit bar only ever filled.
+ *
+ * Defined here once: field (`mbos`) and CRM orders BILLED TO the customer,
+ * still `pending_approval` or approved (`confirmed` and on), with no bill
+ * against them yet, ordered inside `mbos.credit.openOrderWindowDays` — at the
+ * order's own value (`orderValueSql`). Paise. Only customers with something
+ * open are listed; the handset zeroes the rest, because the channel is sent
+ * whole on every pass and an absence is an answer.
+ */
+async function openOrderedFor(ids: string[], windowDays: number) {
+  if (!ids.length) return [];
+  const statuses = ["pending_approval", ...PURCHASE_STATUSES.filter((st) => st !== "captured")];
+  const rows = await db.execute<{ customerId: string; paise: number }>(sql`
+    select o.customer_id as "customerId",
+           sum(${orderValueSql("o")})::double precision as paise
+      from orders o
+     where o.customer_id in ${sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`}
+       and o.source in ('mbos', 'crm')
+       and o.status::text in ${sql`(${sql.join(statuses.map((st) => sql`${st}`), sql`, `)})`}
+       and o.ordered_at >= now() - make_interval(days => ${windowDays}::int)
+       and not exists (select 1 from bills b where b.order_id = o.id)
+     group by o.customer_id
+    having sum(${orderValueSql("o")}) > 0
+  `);
+  return rows.map((r) => ({ customerId: r.customerId, paise: Math.round(Number(r.paise)) }));
+}
+
+/**
+ * THE OFFICE'S WORD ON HIS OWN RECEIPTS, for Collections.
+ *
+ * A field receipt is `reported` until accounts find the money; then it is
+ * confirmed, rejected ("never arrived"), held, or — after counting —
+ * reversed. The handset heard none of it: `customer_payments` carries a shop's
+ * receipts inside the statement window for the RECORD, and nothing joined
+ * them back to the receipt he took, so Collections read "Sent" for ever.
+ * Keyed on the id the handset minted, which is the receipt's own id.
+ * Bootstrap: ninety days. Delta: what moved since the cursor.
+ */
+async function myReceiptStates(userId: string, sinceIso?: string) {
+  const rows = await db.execute<Record<string, unknown>>(sql`
+    select r.id, r.status::text as status, r.receipt_no as "receiptNo",
+           case r.status::text
+             when 'rejected' then r.reject_reason
+             when 'reversed' then r.reject_reason
+             when 'held' then r.hold_reason
+             else null
+           end as reason,
+           (extract(epoch from coalesce(r.confirmed_at, r.held_at, r.updated_at)) * 1000)::double precision as "decidedAt"
+      from payment_receipts r
+     where r.reported_by_id = ${userId}
+       ${sinceIso ? sql`and r.updated_at > ${sinceIso}` : sql`and r.created_at > now() - interval '90 days'`}
+     order by r.updated_at asc
+     limit 1000
+  `);
+  return rows.map((r) => ({
+    id: String(r.id),
+    status: String(r.status),
+    receiptNo: (r.receiptNo as string | null) ?? null,
+    reason: (r.reason as string | null) ?? null,
+    decidedAt: r.decidedAt == null ? null : Math.round(Number(r.decidedAt)),
+  }));
 }
 
 /**
@@ -4012,7 +4175,11 @@ export async function buildPull(
     planDays: planDayRows as unknown[],
     leaveBalances: leaveBalanceRows as unknown[],
     holidays: holidayRows as unknown[],
-    priceList: priceRows as unknown[],
+    priceList: priceRows.priceList as unknown[],
+    priceKeys: priceRows.priceKeys,
+    priceUnoffered: priceRows.priceUnoffered,
+    openOrdered: await openOrderedFor(ids, (await getConfig())["mbos.credit.openOrderWindowDays"]),
+    myPayments: await myReceiptStates(principal.user.id, sinceIso),
     schemes: schemeChanges as unknown[],
     documents: documentChanges as unknown[],
     courses: courseChanges as unknown[],

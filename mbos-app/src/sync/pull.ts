@@ -6,6 +6,7 @@ import { DROP_REFUSED_LEAD_SHOPS_SQL, REFUSED_LEAD_SHOPS_SQL } from '../data/lea
 import { storeRemote } from '../data/remote';
 import { shopsInFlight } from '../data/arrival';
 import { noPending, noPendingLead, pendingShopEdit, PENDING_STATES, SHOP_EDIT_COLUMNS, upsertSets } from './pending';
+import { expenseTombstoneStatement, myPaymentStatements, openOrderedStatements, priceKeyStatements, type Statement } from './money-channels';
 
 /** Where `storeTerritory` files it, and where `territoryState` reads it back. */
 export const TERRITORY_KEY = 'territory';
@@ -59,11 +60,15 @@ export async function applyPull(pull: PullPayload): Promise<number> {
     await c('customers', () => upsertCustomers(pull.customers, now));
     await c('products', () => upsertProducts(pull.products, now));
     await c('priceList', () => upsertPriceList(pull.priceList));
+    await c('priceKeys', () => runStatements(priceKeyStatements(pull.priceKeys, pull.priceUnoffered)));
     await c('schemes', () => upsertSchemes(pull.schemes));
     await c('timeline', () => upsertTimeline(pull.timeline));
     await c('customerOrders', () => upsertCustomerOrders(pull.customerOrders, now));
     await c('customerPayments', () => upsertCustomerPayments(pull.customerPayments, now, pull.statementFrom));
     await c('customerBills', () => upsertCustomerBills(pull.customerBills, now, pull.statementFrom));
+    /* AFTER the customers: a customer row from an older server carries the
+       figure too, and the office's own answer is this one. */
+    await c('openOrdered', () => runStatements(openOrderedStatements(pull.openOrdered)));
     await c('journeyStops', () => upsertStops(pull.journeyStops, now));
     await c('planDays', () => upsertPlanDays(pull.planDays, now));
     await c('config', () => upsertConfig(pull.config, now));
@@ -101,6 +106,7 @@ export async function applyPull(pull: PullPayload): Promise<number> {
     /* AFTER the approvals: an order's own row is the office's word on it, and
        a manager approval nobody can decide must not read it back to pending. */
     await c('myOrders', () => applyMyOrders(pull.myOrders));
+    await c('myPayments', () => runStatements(myPaymentStatements(pull.myPayments)));
     await c('orderChanges', () => applyOrderChanges(pull.orderChanges));
     await c('territoryRequests', () => applyTerritoryRequests(pull.territoryRequests));
     await c('attendanceToday', () => restoreAttendance(pull.attendanceToday));
@@ -450,8 +456,17 @@ async function upsertCustomerBills(
 ) {
   const n = rows?.length ? await upsert('customer_bills', 'id', rows, { lastSyncedAt: now }) : 0;
   /* Only where the server said what the window is. An older server sends no
-     boundary, and pruning against a guess would empty the table. */
-  if (from) await run('DELETE FROM customer_bills WHERE billDate IS NOT NULL AND billDate < ?', [from]);
+     boundary, and pruning against a guess would empty the table.
+     NOT AN OPEN ONE: every open bill is sent whatever its age, because the
+     oldest debt is the one being collected — only a settled bill ages out. The
+     window is kept so the statement can start where the receipts do. */
+  if (from) {
+    await run(
+      'DELETE FROM customer_bills WHERE billDate IS NOT NULL AND billDate < ? AND COALESCE(balancePaise, 0) <= 0',
+      [from],
+    );
+    await setKv('statementFrom', from);
+  }
   return n;
 }
 
@@ -1698,6 +1713,9 @@ async function applyDeletionChunk(entity: string, ids: string[]): Promise<number
     await run(`UPDATE leads SET archived = 1 WHERE id IN (${marks})`, ids);
     return ids.length;
   }
+  /* An expense the office entered for him and then deleted — never one with
+     anything still waiting in his outbox. See `expenseTombstoneStatement`. */
+  if (entity === 'expenses') return runStatements([expenseTombstoneStatement(ids)].filter((x): x is Statement => !!x));
   if (!DELETABLE.has(entity)) return 0;
   /* A tombstoned shop he is standing in, or riding to, waits for the visit —
      the same rule `reconcileBook` keeps. */
@@ -1712,6 +1730,12 @@ async function applyDeletionChunk(entity: string, ids: string[]): Promise<number
   }
   await run(`DELETE FROM ${entity} WHERE id IN (${marks})`, ids);
   return ids.length;
+}
+
+/** A channel applied as plain statements (`sync/money-channels.ts`). */
+async function runStatements(statements: Statement[]): Promise<number> {
+  for (const [sql, params] of statements) await run(sql, params);
+  return statements.length;
 }
 
 /* ------------------------------------------------------- his own history */

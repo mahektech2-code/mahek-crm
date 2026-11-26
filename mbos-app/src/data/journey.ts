@@ -894,7 +894,7 @@ export async function dayHistory(planDate: string): Promise<ShopDay[]> {
       }
     }
     for (const o of officeOrders) {
-      if (o.customerId === s.customerId && !orders.has(o.id)) {
+      if (o.customerId === s.customerId && !orders.has(o.id.split('@')[0])) {
         orders.set(o.id, { id: o.id, valuePaise: o.valuePaise, lines: o.lines, orderNo: o.orderNo, items: [], at: null });
       }
     }

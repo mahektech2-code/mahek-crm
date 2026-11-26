@@ -335,9 +335,23 @@ somebody else, under the same gate as `addExpenseFor`, while every approval on
 it is `pending`; once decided they refuse. Edit re-prices both days where the
 day moved and tells him; Delete needs a reason, removes the line and its
 pending approval, re-prices the day, audits `mbos.expense.deleted_for` and
-writes an `expenses` tombstone in `mbos_deletions`. The handset does NOT honour
-that tombstone yet (`DELETABLE` in mbos-app/src/sync/pull.ts lacks `expenses`,
-and `applyExpenseBook` never drops a non-allowance), so a deleted line can sit
-on his phone as pending until a build adds it. Offered on `/sales/expenses`
+writes an `expenses` tombstone in `mbos_deletions`. The handset honours it from
+the Nov 2026 build — NOT through `DELETABLE` (expenses is an OWNED table and
+`deletable.test.ts` keeps it out) but as its own case in `applyDeletionChunk`
+(`expenseTombstoneStatement`), which deletes only a synced line with nothing
+waiting in the outbox. Older builds keep a deleted line as pending. Offered on `/sales/expenses`
 and a salesman's ledger page via `entered-expense-actions.tsx`, keyed off
 `ExpenseLineRow.enteredById`.
+
+**A RECORDED TRIP IS THE BILL WHERE THE POLICY SAYS SO, ON THE PHONE TOO (Nov
+2026).** The claim sheet demanded a bill for every claim while the standard
+policy pays local travel on "a bill or a recorded trip" (`travelLogCounts`).
+`previewClaim` takes `recordedTrip` and answers `tripStandsAsProof` by asking
+the engine the same unproven line with and without a recorded leg —
+never re-reading the rules — and the sheet then marks the bill optional.
+`recordedTripOn` (data/requests.ts) is a leg that day with a start and an end,
+a typed distance or two odometer readings.
+
+**SALARY SAYS WHAT WAS PAID BACK.** `salaryFor` sends `paidBackPaise`, the
+month's `mbos_expense_payouts` (not voided) — "approved to pay back" was all
+the phone could say, and approved is not in his account.

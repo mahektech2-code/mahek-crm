@@ -22,6 +22,33 @@ export async function ratesForTag(priceTag: string | null): Promise<Map<string, 
   return new Map(rows.map((r) => [r.productId, r.ratePaise]));
 }
 
+/**
+ * THE KEY THIS SHOP'S RATES ARE FILED UNDER — its tag, unless the office said
+ * otherwise. Shops sharing a tag but sitting on different office price lists
+ * are pointed at `tag::list`, and an untagged shop a list resolves for at
+ * `::list` (`customer_price_keys`, sent whole on every pull). Without it two
+ * such shops got one rate on the phone and the office refused one of them
+ * `price_changed` at sync.
+ */
+export async function priceKeyFor(customerId: string | null, priceTag: string | null): Promise<string | null> {
+  if (customerId) {
+    const row = await one<{ priceKey: string }>('SELECT priceKey FROM customer_price_keys WHERE customerId = ?', [customerId]);
+    if (row?.priceKey) return row.priceKey;
+  }
+  return priceTag?.trim() ? priceTag : null;
+}
+
+/**
+ * The products this shop's list prints a dash for — listed, and not sold to
+ * it. The office refuses an order carrying one (`not_offered`), so the order
+ * screen marks them and will not add them.
+ */
+export async function unofferedFor(priceKey: string | null): Promise<Set<string>> {
+  if (!priceKey) return new Set();
+  const rows = await all<{ productId: string }>('SELECT productId FROM price_unoffered WHERE priceKey = ?', [priceKey]);
+  return new Set(rows.map((r) => r.productId));
+}
+
 export type ReorderLine = { productId: string; productName: string; cans: number };
 
 /**

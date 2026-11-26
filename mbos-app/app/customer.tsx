@@ -1054,7 +1054,11 @@ export default function CustomerRecord() {
                       </View>
                       <View style={{ alignItems: 'flex-end', gap: 4 }}>
                         <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>{pretty(o.orderedAt)}</Text>
-                        {o.status ? <Badge tone={orderTone(o.status)}>{o.status}</Badge> : null}
+                        {o.pending ? (
+                          <Badge tone="amber">Not sent yet</Badge>
+                        ) : o.status ? (
+                          <Badge tone={orderTone(o.status)}>{o.status}</Badge>
+                        ) : null}
                       </View>
                     </View>
                   </Stagger>
@@ -1080,7 +1084,10 @@ export default function CustomerRecord() {
               sentence the Accounts app puts above its own ledger for the same
               account, one screen over.
             */}
-            {accountKind === 'Lead' ? (
+            {/* Only while there is nothing to show: a lead that ordered once
+                has a bill, and the bill is the point — hiding it behind
+                "a lead has never ordered" told him the opposite of the truth. */}
+            {accountKind === 'Lead' && bills.length === 0 && receipts.length === 0 ? (
               <Empty
                 head="Nothing billed to a lead"
                 body="A lead has never ordered from us. When the first order is billed, it will show here."

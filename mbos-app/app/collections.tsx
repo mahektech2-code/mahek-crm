@@ -14,7 +14,10 @@ import {
   type CollectedPayment,
 } from '../src/data/payments';
 import { takePhoto } from '../src/native/capture';
-import { dmy, inrFromPaise, isoDate } from '../src/lib/format';
+import { dmy, inrFromPaise, istDate } from '../src/lib/format';
+import { getConfig } from '../src/data/config';
+import { OFFICE_RECEIPT_WORDS } from '../src/sync/money-channels';
+import { copyToClipboard, openWhatsApp, receiptMessage } from '../src/lib/messaging';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { color as C, tabular, weight, type BadgeTone } from '../src/theme/tokens';
@@ -54,15 +57,22 @@ function refused(p: CollectedPayment): boolean {
 }
 
 /** What the row is doing, in one word, and how to draw it. */
-function stateOf(p: CollectedPayment): { label: string; tone: BadgeTone } {
+function stateOf(p: CollectedPayment, dated: (mode: string) => boolean): { label: string; tone: BadgeTone } {
   if (refused(p)) return { label: 'Not accepted', tone: 'danger' };
   if (p.bounced) return { label: 'Bounced', tone: 'danger' };
-  if (p.deposited) return { label: p.mode === 'Cheque' ? 'Handed in' : 'Banked', tone: 'success' };
+  /* ACCOUNTS' DECISION, once they have made one — the thing this screen never
+     knew. Confirmed is money the business has seen; rejected and reversed are
+     money it has not, whatever he wrote at the counter. */
+  if (p.officeStatus === 'confirmed') return { label: 'Confirmed', tone: 'success' };
+  if (p.officeStatus === 'rejected') return { label: 'Not found', tone: 'danger' };
+  if (p.officeStatus === 'reversed') return { label: 'Taken back', tone: 'danger' };
+  if (p.officeStatus === 'held') return { label: 'Being checked', tone: 'amber' };
+  if (p.deposited) return { label: dated(p.mode) ? 'Handed in' : 'Banked', tone: 'success' };
   if (p.mode === 'Cash') return { label: 'On you', tone: 'amber' };
   /* A cheque is paper in his bag until he hands it in or banks it — "Sent"
      said it had gone somewhere. A transfer was in the company's account
      before he left the shop. */
-  if (p.mode === 'Cheque') return { label: 'With you', tone: 'neutral' };
+  if (dated(p.mode)) return { label: 'With you', tone: 'neutral' };
   return { label: 'Paid to bank', tone: 'neutral' };
 }
 
@@ -87,6 +97,34 @@ export default function CollectionsScreen() {
    * at" date below cannot disagree about what time it is either.
    */
   const [nowMs, setNowMs] = React.useState(() => Date.now());
+  /* Which modes are an instrument with a date on it — a cheque, or whatever
+     accounts add beside it (`payments.datedModes`). Each of them can be handed
+     in and can bounce; only "Cheque" could, because it was spelled out. */
+  const [datedModes, setDatedModes] = React.useState<string[]>(['Cheque']);
+  React.useEffect(() => {
+    void getConfig<unknown>('payments.datedModes', ['Cheque']).then((d) => {
+      if (Array.isArray(d)) setDatedModes(d.filter((x): x is string => typeof x === 'string'));
+    });
+  }, []);
+  const dated = React.useCallback((mode: string) => datedModes.includes(mode), [datedModes]);
+
+  /* THE RECEIPT AGAIN, with the office's real number once it has issued one —
+     the slip he sent at the counter carried only the provisional TMP one. */
+  const resend = async (p: CollectedPayment) => {
+    const slip = receiptMessage({
+      customerName: p.customerName ?? 'Customer',
+      amountRupees: inrFromPaise(p.amountPaise),
+      mode: p.mode,
+      reference: p.receiptNumber ?? p.localReceiptRef,
+      confirmed: p.officeStatus === 'confirmed',
+      numbered: !!p.receiptNumber,
+      collectedBy: boot.session?.user.name ?? 'your salesman',
+      when: dmy(istDate(p.collectedAt)),
+      chequeNumber: dated(p.mode) ? p.chequeNumber : null,
+    });
+    const out = p.customerPhone ? await openWhatsApp(p.customerPhone, slip) : await copyToClipboard(slip);
+    if (out.status !== 'handed_off') notify(out.reason, p.customerPhone ? 'warn' : 'success');
+  };
 
   /* `animate` after banking or a bounce: the row grows a line and loses its
      buttons, and the rows under it should slide rather than jump. */
@@ -213,7 +251,7 @@ export default function CollectionsScreen() {
     });
   };
 
-  const today = isoDate(new Date(nowMs));
+  const today = istDate(nowMs);
   /* The cash he can bank in one go — the rows the per-row button would have
      banked one slip at a time. */
   const cashOnHim = (rows ?? []).filter(
@@ -301,12 +339,14 @@ export default function CollectionsScreen() {
       ) : (
         <View style={{ gap: 10 }}>
           {rows.map((p, i) => {
-            const state = stateOf(p);
+            const state = stateOf(p, dated);
             const late = !p.deposited && !p.bounced && p.depositSlaDueAt != null && p.depositSlaDueAt <= nowMs;
-            /* Only a cheque can bounce, and only one that has not already. */
+            /* Only a dated instrument can bounce, and only one that has not
+               already — and not one accounts have already said never arrived. */
             const no = refused(p);
-            const canBounce = p.mode === 'Cheque' && !p.bounced && !no;
-            const canDeposit = !p.deposited && !p.bounced && !no && (p.mode === 'Cash' || p.mode === 'Cheque');
+            const officeSaidNo = p.officeStatus === 'rejected' || p.officeStatus === 'reversed';
+            const canBounce = dated(p.mode) && !p.bounced && !no && !officeSaidNo;
+            const canDeposit = !p.deposited && !p.bounced && !no && !officeSaidNo && (p.mode === 'Cash' || dated(p.mode));
 
             return (
               <Stagger
@@ -344,15 +384,14 @@ export default function CollectionsScreen() {
                     <T style={{ flexShrink: 1, fontSize: 12, lineHeight: 17, color: C.muted }}>
                       {[
                         p.mode,
-                        dmy(isoDate(new Date(p.collectedAt))),
+                        dmy(istDate(p.collectedAt)),
                         p.chequeNumber ? (p.mode === 'Cheque' ? 'no. ' : 'ref ') + p.chequeNumber : null,
                         /* The date written ACROSS a cheque, which decides when it
                            can be banked at all — not the day it was handed over. */
                         p.chequeDate ? 'dated ' + dmy(p.chequeDate) : null,
-                        /* The receipt he read out to the customer. It is
-                           provisional until the office issues the real one, and
-                           saying so here is cheaper than being asked. */
-                        p.localReceiptRef,
+                        /* The office's receipt number once it has issued one;
+                           until then the provisional one he read out. */
+                        p.receiptNumber ?? p.localReceiptRef,
                       ]
                         .filter(Boolean)
                         .join(' · ')}
@@ -389,6 +428,27 @@ export default function CollectionsScreen() {
                   </Pressable>
                 ) : null}
 
+                {/* What accounts said, in their words, where they said no or
+                    are still looking. */}
+                {!no && p.officeStatus && p.officeStatus !== 'reported' ? (
+                  <T style={{ fontSize: 12, lineHeight: 17, color: officeSaidNo ? C.danger : C.muted, marginTop: 6 }}>
+                    {(OFFICE_RECEIPT_WORDS[p.officeStatus] ?? p.officeStatus) + (p.officeReason ? ': “' + p.officeReason + '”' : '')}
+                  </T>
+                ) : null}
+
+                {!no && p.syncState === 'synced' ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={'Send the receipt again' + (p.receiptNumber ? ', number ' + p.receiptNumber : '')}
+                    onPress={() => void resend(p)}
+                    hitSlop={4}
+                    style={({ pressed }) => ({ alignSelf: 'flex-start', marginTop: 8, minHeight: 36, paddingHorizontal: 12, borderRadius: 18, backgroundColor: C.primaryTint, justifyContent: 'center', opacity: pressed ? 0.85 : 1 })}>
+                    <T style={[{ fontSize: 12.5, lineHeight: 17, color: C.primaryDeep }, weight(700)]}>
+                      {p.receiptNumber ? 'Send receipt ' + p.receiptNumber : 'Send the receipt again'}
+                    </T>
+                  </Pressable>
+                ) : null}
+
                 {late && !no ? (
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 8 }}>
                     <Icon name="alert" size={14} color={C.danger} strokeWidth={2.2} />
@@ -400,14 +460,14 @@ export default function CollectionsScreen() {
 
                 {p.bounced ? (
                   <T style={[{ fontSize: 12, lineHeight: 17, color: C.danger, marginTop: 6 }, weight(700)]}>
-                    Bounced{p.bouncedAt ? ' on ' + dmy(isoDate(new Date(p.bouncedAt))) : ''} · the office is told
+                    Bounced{p.bouncedAt ? ' on ' + dmy(istDate(p.bouncedAt)) : ''} · the office is told
                   </T>
                 ) : null}
 
                 {p.deposited ? (
                   <T style={{ fontSize: 12, lineHeight: 17, color: C.muted, marginTop: 6 }}>
-                    {p.mode === 'Cheque' ? 'Handed in' : 'Banked'}
-                    {p.depositedAt ? ' on ' + dmy(isoDate(new Date(p.depositedAt))) : ''} · the office will check it
+                    {dated(p.mode) ? 'Handed in' : 'Banked'}
+                    {p.depositedAt ? ' on ' + dmy(istDate(p.depositedAt)) : ''} · the office will check it
                     with the bank
                   </T>
                 ) : null}
@@ -434,7 +494,7 @@ export default function CollectionsScreen() {
                         })}>
                         <Icon name="camera" size={16} color={C.primaryDeep} strokeWidth={2} />
                         <T style={[{ flexShrink: 1, fontSize: 14, color: C.primaryDeep }, weight(700)]}>
-                          {p.mode === 'Cheque' ? 'I handed it in' : 'I banked it'}
+                          {dated(p.mode) ? 'I handed it in' : 'I banked it'}
                         </T>
                       </Pressable>
                     ) : null}
