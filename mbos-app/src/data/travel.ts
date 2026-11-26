@@ -1,4 +1,5 @@
 import { all, getKv, one, run, setKv } from '../db';
+import { parseUnpaidMeters, unpaidMeterCard, withUnpaidMeter, type UnpaidMeterEntry } from '../lib/travel-leg';
 import { insertAndQueue, stamp } from './write';
 import {
   computeDay,
@@ -1035,31 +1036,41 @@ export async function closeStaleSessions(userId: string, dayBoundaryMs: number):
        leg on such a day is excluded in favour of the meter. That was true and
        said nowhere: he found out when the claim came back. Home says so the
        next morning and offers the camera — see `addLateClosingReading`. */
-    if (leg.odometerStartKm != null) {
-      await setKv(UNPAID_METER_KEY, JSON.stringify({ day: leg.day, legId: leg.id })).catch(() => {});
+    if (leg.odometerStartKm != null && leg.day) {
+      /* ADDED to the list, never written over it — see `parseUnpaidMeters`. */
+      const kept = parseUnpaidMeters(await getKv(UNPAID_METER_KEY).catch(() => null));
+      await setKv(UNPAID_METER_KEY, JSON.stringify(withUnpaidMeter(kept, { day: leg.day, legId: leg.id }))).catch(() => {});
     }
   }
   return open.length;
 }
 
-/** The kv key for the last day closed with no end reading. See `closeStaleSessions`. */
+/** The kv key for the days closed with no end reading — a list. See `closeStaleSessions`. */
 export const UNPAID_METER_KEY = 'travel.unpaidMeterDay';
 
-/** What the morning card needs: the day, the leg, and the reading it opened on. */
-export type UnpaidMeter = { day: string; legId: string; startKm: number | null };
+/**
+ * What the morning card needs: the day, the leg, the reading it opened on —
+ * and any EARLIER days closed the same way, which can no longer be answered by
+ * photograph and are named so he can ask the office. See `parseUnpaidMeters`.
+ */
+export type UnpaidMeter = { day: string; legId: string; startKm: number | null; earlierDays: string[] };
 
 /** The day whose vehicle km went unpaid for want of a punch-out, until he has answered it. */
 export async function unpaidMeterDay(): Promise<UnpaidMeter | null> {
-  const raw = await getKv(UNPAID_METER_KEY);
-  if (!raw) return null;
   try {
-    const kept = JSON.parse(raw) as { day?: string; legId?: string };
-    if (!kept.day || !kept.legId) return null;
-    const leg = await one<TravelLeg>('SELECT * FROM travel_legs WHERE id = ?', [kept.legId]);
-    /* A leg already given its reading — on this phone, or a day the office
-       corrected — is not asked about twice. */
-    if (!leg || leg.odometerStartKm == null || leg.odometerEndKm !== leg.odometerStartKm) return null;
-    return { day: kept.day, legId: kept.legId, startKm: leg.odometerStartKm };
+    const kept = parseUnpaidMeters(await getKv(UNPAID_METER_KEY));
+    const open: { entry: UnpaidMeterEntry; startKm: number }[] = [];
+    for (const entry of kept) {
+      const leg = await one<TravelLeg>('SELECT * FROM travel_legs WHERE id = ?', [entry.legId]);
+      /* A leg already given its reading — on this phone, or a day the office
+         corrected — is not asked about twice. */
+      if (!leg || leg.odometerStartKm == null || leg.odometerEndKm !== leg.odometerStartKm) continue;
+      open.push({ entry, startKm: leg.odometerStartKm });
+    }
+    const card = unpaidMeterCard(open.map((o) => o.entry));
+    if (!card) return null;
+    const startKm = open.find((o) => o.entry.legId === card.newest.legId)?.startKm ?? null;
+    return { day: card.newest.day, legId: card.newest.legId, startKm, earlierDays: card.earlierDays };
   } catch {
     return null;
   }

@@ -1447,6 +1447,16 @@ export default function Home() {
           <Text style={[{ fontSize: 13, lineHeight: 19, color: C.body, marginTop: 8 }, weight(400)]}>
             No punch-out, so the day closed at its opening reading. If the vehicle has not moved, photograph the meter now and those km count. Your manager sees it was added this morning.
           </Text>
+          {/* The earlier days the same thing happened to. The meter has moved
+              since them, so a photograph cannot answer them — but he is told,
+              so he can ask the office. See `parseUnpaidMeters`. */}
+          {unpaidMeter.earlierDays.length ? (
+            <Text style={[{ fontSize: 13, lineHeight: 19, color: C.body, marginTop: 6 }, weight(600)]}>
+              {'Also not counted: ' +
+                unpaidMeter.earlierDays.map((d) => dmy(d)).join(', ') +
+                '. Ask your manager to add those readings.'}
+            </Text>
+          ) : null}
           <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
             <Pressable
               accessibilityRole="button"
