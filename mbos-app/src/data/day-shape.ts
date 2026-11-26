@@ -23,6 +23,50 @@ export const IN_FLIGHT_LEG_SHOPS_SQL = `SELECT DISTINCT customerId FROM travel_l
 /** How far back a closed, unbound leg still holds its shop on the phone. */
 export const IN_FLIGHT_LEG_WINDOW_MS = 86_400_000;
 
+/** The half-finished order and payment, and the shop they were built for. */
+export type DraftCart = {
+  cartFor: string;
+  cart: Record<string, string>;
+  oQ: string;
+  payMode: string | null;
+  payAmt: string;
+  payChq: string;
+};
+
+/**
+ * WHAT HAPPENS TO THE CART WHEN HE OPENS ANOTHER SHOP.
+ *
+ * A draft belongs to a shop, so moving to a different one clears it — the
+ * rule `draftMovedShop` in the store was written for, after three lines typed
+ * at one counter turned up priced against the next. But a visit is a shop he
+ * is STANDING in, and opening a second shop's record mid-visit — to check
+ * whose the godown next door is, to answer a call about another account — is
+ * not leaving it. The clear took the visit's cart with it, so he came back to
+ * the counter with nothing in the order he had been building for ten minutes.
+ *
+ * So the cart of the shop he is checked into (`visitShopId`) is SET ASIDE on
+ * the way out rather than thrown away, the other shop opens on an empty one as
+ * it always did, and the visit's cart comes back the moment he returns to it.
+ * With no visit running nothing is kept aside, which is the old rule exactly.
+ */
+export function moveDraft(
+  cur: DraftCart & { visitCartStash: DraftCart | null },
+  nextCustId: string,
+  visitShopId: string | null,
+): Partial<DraftCart & { visitCartStash: DraftCart | null }> {
+  if (nextCustId === cur.cartFor) return {};
+  const empty = { cartFor: nextCustId, cart: {}, oQ: '', payMode: null, payAmt: '', payChq: '' };
+  if (!visitShopId) return { ...empty, visitCartStash: null };
+  if (nextCustId === visitShopId && cur.visitCartStash?.cartFor === visitShopId) {
+    return { ...cur.visitCartStash, visitCartStash: null };
+  }
+  if (cur.cartFor === visitShopId) {
+    const { cartFor, cart, oQ, payMode, payAmt, payChq } = cur;
+    return { ...empty, visitCartStash: { cartFor, cart, oQ, payMode, payAmt, payChq } };
+  }
+  return empty;
+}
+
 /**
  * THE FIRST CHECK-IN PINS THE SHOP ON THE PHONE TOO.
  *

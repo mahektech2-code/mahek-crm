@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { MIGRATIONS } from '../db/schema';
-import { IN_FLIGHT_LEG_SHOPS_SQL, IN_FLIGHT_LEG_WINDOW_MS, PIN_UNPINNED_SHOP_SQL } from './day-shape';
+import { IN_FLIGHT_LEG_SHOPS_SQL, IN_FLIGHT_LEG_WINDOW_MS, PIN_UNPINNED_SHOP_SQL, moveDraft } from './day-shape';
 
 /**
  * The edges of a field day, run against the REAL handset schema. See
@@ -36,6 +36,27 @@ test('a shop he is riding to, or reached and has not yet visited, is held on the
     .map((r) => r.customerId)
     .sort();
   assert.deepEqual(ids, ['arrived_at', 'riding_to']);
+});
+
+test('opening another shop mid-visit sets the visit cart aside, and it comes back', () => {
+  const inVisit = { cartFor: 'shopA', cart: { sku1: '3' }, oQ: 'ena', payMode: 'cash', payAmt: '500', payChq: '', visitCartStash: null };
+  const away = moveDraft(inVisit, 'shopB', 'shopA');
+  assert.deepEqual(away.cart, {}, 'the other shop opens on an empty cart');
+  assert.equal(away.cartFor, 'shopB');
+  assert.deepEqual(away.visitCartStash?.cart, { sku1: '3' });
+
+  const there = { ...inVisit, ...away } as typeof inVisit;
+  const back = moveDraft(there, 'shopA', 'shopA');
+  assert.deepEqual(back.cart, { sku1: '3' }, 'the visit cart is back');
+  assert.equal(back.payAmt, '500');
+  assert.equal(back.visitCartStash, null);
+
+  /* No visit running: the old rule, a cleared draft and nothing kept. */
+  const plain = moveDraft(inVisit, 'shopB', null);
+  assert.deepEqual(plain.cart, {});
+  assert.equal(plain.visitCartStash, null);
+  /* Same shop again changes nothing. */
+  assert.deepEqual(moveDraft(inVisit, 'shopA', 'shopA'), {});
 });
 
 test('the first check-in pins an unpinned shop on the phone, and never moves a pin', () => {
