@@ -1,5 +1,6 @@
 import { all, one, run } from '../db';
 import { insertAndQueue, stamp, updateAndQueue } from './write';
+import { LEAD_CREATE_REFUSED_SQL, LEAD_SHOP_SQL, leadShopParams, leadVisitRefusal, type LeadShopInput } from './lead-shop';
 import { getConfig } from './config';
 import { isoDate } from '../lib/format';
 import { wireNotes, wireSource } from '../lib/wire';
@@ -700,7 +701,32 @@ export async function createLead(args: {
     await run('UPDATE media_queue SET parentId = ? WHERE id = ?', [id, args.shopPhotoId]);
   }
 
+  await ensureLeadShop({
+    id,
+    name: args.name,
+    company: args.company ?? null,
+    contactPerson: args.contactPerson ?? null,
+    mobile: mobile || null,
+    city: args.city ?? null,
+    area: args.area ?? null,
+    customerType: args.customerType ?? null,
+    gpsLat: fix?.lat ?? null,
+    gpsLng: fix?.lng ?? null,
+  });
+
   return { ok: true, value: id };
+}
+
+/** Write the lead's shop row on this phone — see `lead-shop.ts`. */
+export async function ensureLeadShop(l: LeadShopInput): Promise<void> {
+  await run(LEAD_SHOP_SQL, leadShopParams(l));
+}
+
+export { leadVisitRefusal };
+
+/** Read off the outbox, not the row: an edit re-queues the row and would wipe the refusal. */
+export async function leadCreateRefused(id: string): Promise<boolean> {
+  return !!(await one<{ refused: number }>(LEAD_CREATE_REFUSED_SQL, [id]));
 }
 
 /* `setStage` was here — the six-word ladder's own move, written before the

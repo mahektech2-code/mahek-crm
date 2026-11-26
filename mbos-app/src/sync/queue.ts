@@ -1,6 +1,7 @@
 import { all, newId, one, payloadHash, run } from '../db';
 import { backoffFor as computeBackoff, MAX_ATTEMPTS as MAX, partition } from './ordering';
 import { whereNow } from '../native/where';
+import { DROP_PHONE_LEAD_SHOP_SQL } from '../data/lead-shop';
 
 /**
  * The outbox.
@@ -279,6 +280,7 @@ export async function markRejected(item: QueueItem, code: string, message: strin
   await setEntityState(item.entityType, item.entityId, 'rejected', message, null);
   /* Only a refused CREATE leaves dependents with nothing to attach to. */
   if (item.op === 'create') await blockDependents(item.entityId);
+  if (item.op === 'create' && item.entityType === 'lead') await run(DROP_PHONE_LEAD_SHOP_SQL, [item.entityId]);
 }
 
 export async function markFailure(item: QueueItem, reason: string, now = Date.now()): Promise<void> {

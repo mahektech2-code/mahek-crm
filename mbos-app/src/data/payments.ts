@@ -110,6 +110,8 @@ export async function collectPayment(args: {
     entityType: 'payment',
     entityId: base.id,
     op: 'create',
+    /* Behind its shop, where the shop was added on this phone — as orders and visits are. */
+    dependsOn: [args.customerId],
     /* PROTOCOL.md §4.1. Two of these mattered more than the names suggest:
        `billRefs` reached a server reading `billIds`, so every collection was
        spread oldest-first however carefully the salesman had named the bills;

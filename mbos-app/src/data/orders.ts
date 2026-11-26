@@ -353,6 +353,11 @@ export async function saveOrder(args: {
     entityType: 'order',
     entityId: base.id,
     op: 'create',
+    /* Behind the shops it names, where either was added on this phone and has
+       not reached the office yet — see the same line in `visits.ts`. A shop
+       with nothing in the outbox counts as landed, so an order for a shop the
+       office already has goes exactly as before. */
+    dependsOn: [...new Set([args.customerId, ...(deliveryId ? [deliveryId] : [])])],
     /* The WIRE names, which are not this table's column names — see
        PROTOCOL.md §4.1. `cans` is what a telecaller counts and what this app
        stores; `quantityCans` is what MahekOne calls the same number, and the

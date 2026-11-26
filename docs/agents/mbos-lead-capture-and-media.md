@@ -60,3 +60,18 @@ told to keep visiting the shop — a lead's owner IS its MBOS scope. It is the
 same split `back_office_am_id` already lives under, with the same consequence:
 one record legitimately appears on two lists. `lead_manager_decided_at` is the
 usual mark that a person chose, so an override survives the next org-chart pass.
+
+**A LEAD ADDED ON THE PHONE IS A SHOP HE CAN VISIT AT ONCE.** On the handset
+leads and customers are separate tables, and every way into a visit looks the
+shop up in `customers`, so a new lead had no shop to visit until its create had
+round-tripped the sync — with no signal, never; and the lead record had no
+Start visit at all. `createLead` now also writes a local `customers` row under
+the lead's id, `kind = 'lead'` (`mbos-app/src/data/lead-shop.ts`), which the
+next pull replaces with the office's copy and `reconcileBook` keeps meanwhile
+because its id is a live lead. The lead record has Start visit, under the
+quick action's rules (one shop, one visit). A visit is queued `dependsOn` its
+shop, so it reaches the office after the lead's create; a shop with nothing in
+the outbox counts as landed, so ordinary visits are unaffected, and a lead the
+office refused blocks its visit instead of sending it to be refused.
+`customersForDevice` names a lead by its shop (`company_name`) and the person
+as its contact, the way the phone does, so the card does not change on sync.
