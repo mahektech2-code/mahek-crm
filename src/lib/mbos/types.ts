@@ -231,6 +231,12 @@ export const SYNC_ENTITY_TYPES = [
    * would do none of that.
    */
   "expense_day_submit",
+  /**
+   * A notification he opened on the phone — by tapping its push or on the
+   * bell. Without it the office's copy stayed unread for ever, so the web bell
+   * of somebody who holds both kept counting what he had already read.
+   */
+  "notification_read",
 ] as const;
 
 export type SyncEntityType = (typeof SYNC_ENTITY_TYPES)[number];
@@ -468,6 +474,8 @@ export type PullDelta = {
   approvals: unknown[];
   /** His own field orders as the office stands on them — status, reason, lines. */
   myOrders: unknown[];
+  /** Where each complaint he raised has got to — `{ id, status }`. */
+  myComplaints: unknown[];
   /** Changes he asked for on approved orders, and their answers. */
   orderChanges: unknown[];
   /** What he said about his allocated areas, and the office's answer. */

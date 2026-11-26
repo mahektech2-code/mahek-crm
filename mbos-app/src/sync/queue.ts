@@ -1,7 +1,22 @@
 import { all, newId, one, payloadHash, run } from '../db';
 import { backoffFor as computeBackoff, MAX_ATTEMPTS as MAX, landedDependencies, partition } from './ordering';
-import { whereNow } from '../native/where';
+import { whereNow, type Where } from '../native/where';
 import { DROP_PHONE_LEAD_SHOP_SQL } from '../data/lead-shop';
+import {
+  discardCount as countWith,
+  discardWithDependents,
+  dropSnapshot,
+  ENTITY_TABLE,
+  markOrphans,
+  reapplyEdit,
+  restoreBeforeEdit,
+  saveSnapshot,
+  type Db,
+  type EditSnapshot,
+} from './outbox-ops';
+
+/** The app's connection, in the shape the pure housekeeping takes. */
+const DB: Db = { all, one, run };
 
 /**
  * The outbox.
@@ -81,6 +96,10 @@ export async function enqueue(args: {
   now?: number;
   /** Set false for a write that is paperwork rather than field work. */
   location?: boolean;
+  /** Where it was done, read BEFORE a transaction opened — see `write.ts`. */
+  where?: Where;
+  /** What an edit changed and from what, so a refusal can put it back. */
+  snapshot?: EditSnapshot;
 }): Promise<string> {
   const now = args.now ?? Date.now();
   const hash = await payloadHash(args.payload);
@@ -121,7 +140,9 @@ export async function enqueue(args: {
      `native/where.ts`. A failure here is a queue item with no location, which
      is exactly what a phone in a basement should produce. */
   let location: string | null = null;
-  if (args.location !== false) {
+  if (args.location !== false && args.where) {
+    location = JSON.stringify(args.where);
+  } else if (args.location !== false) {
     try {
       const where = await whereNow();
       if (where) location = JSON.stringify(where);
@@ -149,6 +170,7 @@ export async function enqueue(args: {
       location,
     ],
   );
+  if (args.snapshot) await saveSnapshot(DB, id, args.snapshot);
   /* Tell the engine there is something to send, so a save goes up in about a
      second rather than on the next minute's tick. A hook rather than an
      import, because the engine imports this file. */
@@ -227,13 +249,14 @@ export async function readyItems(now = Date.now(), limit = 50): Promise<QueueIte
      create went up and has since been pruned (`pruneSynced`), or it is a record
      the office made. Without this, pruning sent rows would leave anything
      depending on a fortnight-old record waiting for ever. Nor is an item held
-     behind its OWN id — see `landedDependencies` in `ordering.ts`. */
-  const inFlight = await all<{ entityId: string; entityType: string }>(
-    `SELECT entityId, entityType FROM sync_queue WHERE state = 'syncing'`,
+     behind its OWN id, nor behind an edit waiting on its own create — see
+     `landedDependencies` in `ordering.ts`. */
+  const inFlight = await all<{ entityId: string; entityType: string; op: string; dependsOn: string }>(
+    `SELECT entityId, entityType, op, dependsOn FROM sync_queue WHERE state = 'syncing'`,
   );
   for (const d of landedDependencies(
-    queued.map((q) => ({ entityId: q.entityId, entityType: q.entityType, dependsOn: JSON.parse(q.dependsOn) as string[] })),
-    inFlight,
+    queued.map((q) => ({ entityId: q.entityId, entityType: q.entityType, op: q.op, dependsOn: JSON.parse(q.dependsOn) as string[] })),
+    inFlight.map((r) => ({ ...r, dependsOn: JSON.parse(r.dependsOn) as string[] })),
     deadIds,
   )) {
     syncedIds.add(d);
@@ -269,6 +292,7 @@ export async function markSyncing(ids: string[]): Promise<void> {
 export async function markSynced(item: QueueItem, serverAt: number | null): Promise<void> {
   await run(`UPDATE sync_queue SET state = 'synced', failureCode = NULL, failureReason = NULL WHERE id = ?`, [item.id]);
   await setEntityState(item.entityType, item.entityId, 'synced', null, serverAt);
+  await dropSnapshot(DB, item.id);
 }
 
 /**
@@ -281,6 +305,10 @@ export async function markSynced(item: QueueItem, serverAt: number | null): Prom
 export async function markRejected(item: QueueItem, code: string, message: string): Promise<void> {
   await run(`UPDATE sync_queue SET state = 'rejected', failureCode = ?, failureReason = ? WHERE id = ?`, [code, message, item.id]);
   await setEntityState(item.entityType, item.entityId, 'rejected', message, null);
+  /* A REFUSED EDIT PUTS THE PHONE'S COPY BACK as the office has it. A task
+     refused as Done stayed done here and left the list, with the office still
+     holding it open — see `restoreBeforeEdit`. */
+  if (item.op === 'update') await restoreBeforeEdit(DB, item);
   /* Only a refused CREATE leaves dependents with nothing to attach to. */
   if (item.op === 'create') await blockDependents(item.entityId);
   if (item.op === 'create' && item.entityType === 'lead') await run(DROP_PHONE_LEAD_SHOP_SQL, [item.entityId]);
@@ -341,6 +369,9 @@ export async function retryItem(id: string, now = Date.now()): Promise<void> {
     [now, id],
   );
   await setEntityState(item.entityType, item.entityId, 'queued', null, null);
+  /* The edit was taken off the phone's copy when it was refused; sending it
+     again puts it back on. */
+  await reapplyEdit(DB, item);
   await unblockDependents(item.entityId, now);
 }
 
@@ -355,50 +386,7 @@ async function unblockDependents(entityId: string, now: number): Promise<void> {
   }
 }
 
-/**
- * Reflect the queue item's fate onto the record itself, so a screen showing
- * an order can say what state it is in without joining the outbox.
- */
-const ENTITY_TABLE: Record<string, string> = {
-  visit: 'visits',
-  order: 'orders',
-  order_change_request: 'order_change_requests',
-  payment: 'payments',
-  attendance: 'attendance_days',
-  task: 'tasks',
-  lead: 'leads',
-  sample: 'samples',
-  complaint: 'complaints',
-  expense: 'expenses',
-  leave: 'leave_requests',
-  tour: 'tours',
-  territory_request: 'territory_requests',
-  competitor: 'competitor_records',
-  /* Without this the row would sync and its own syncState would stay 'queued'
-     for ever — the sync screen would show a call that never landed, and the
-     salesman would make it again. A table missing from this map fails silently
-     and looks exactly like a broken connection. */
-  lead_validation: 'lead_validations',
-  approval: 'approvals',
-  plan_day: 'journey_days',
-  /*
-   * Both answers about a day land on the same row, because `entityId` for a
-   * pick IS the plan day's id. Missing, a refused pick wrote nothing back at
-   * all: the local row kept the `dayState = 'planned'` the pick had set
-   * optimistically, with no stops behind it and nothing on the screen saying
-   * the office had refused it — a route claiming to be a route, which is the
-   * one state this model exists to prevent.
-   */
-  plan_stops: 'journey_days',
-  /*
-   * A SHOP HE ADDED. Reference data everywhere else, but a field shop is the
-   * one customers row this phone authors, and without this the office refusing
-   * it reached the outbox and nothing else: the card read like any other shop
-   * and went on taking orders that could only ever be blocked behind it.
-   */
-  customer: 'customers',
-};
-
+/* Which table each entity's state is written to lives in `outbox-ops.ts`. */
 async function setEntityState(
   entityType: string,
   entityId: string,
@@ -497,29 +485,39 @@ export async function listQueue(limit = QUEUE_PAGE): Promise<QueueItem[]> {
  *
  * A refused CREATE never reached the office, so the local record goes with it —
  * the salesman is about to take it again, and two copies on his phone of one
- * order would be counted twice in his day. A refused EDIT leaves the record:
- * the office holds it, and the next pull writes the office's version back over
- * the edit it did not accept.
+ * order would be counted twice in his day — and so does everything waiting on
+ * it, which would otherwise be blocked for ever. A refused EDIT leaves the
+ * record and puts it back the way it was before the edit (`restoreBeforeEdit`),
+ * because the next pull says nothing about a record the office did not change.
+ * Failed and blocked entries can be let go the same way.
  */
-const OWNED_CHILDREN: Record<string, { table: string; key: string }[]> = {
-  order: [{ table: 'order_lines', key: 'orderId' }],
-};
-
-export async function discardRefused(id: string): Promise<void> {
-  const item = await one<QueueItem>('SELECT * FROM sync_queue WHERE id = ?', [id]);
-  if (!item || (item.state !== 'rejected' && item.state !== 'failed')) return;
-  await run('DELETE FROM sync_queue WHERE id = ?', [id]);
-  if (item.op !== 'create') return;
-  for (const child of OWNED_CHILDREN[item.entityType] ?? []) {
-    await run(`DELETE FROM ${child.table} WHERE ${child.key} = ?`, [item.entityId]);
-  }
-  const table = ENTITY_TABLE[item.entityType];
-  if (table) await run(`DELETE FROM ${table} WHERE id = ?`, [item.entityId]);
+export async function discardRefused(id: string): Promise<number> {
+  return discardWithDependents(DB, id);
 }
 
-/** The rejection review screen reads this. */
+/** How many other entries a removal takes with it — said in the confirm. */
+export async function discardCount(id: string): Promise<number> {
+  return countWith(DB, id);
+}
+
+/**
+ * The Not accepted screen reads this: refused, given up on, and held behind
+ * one of those. It listed only the refused, so a failed or blocked entry could
+ * not be removed anywhere — and it still counted against the handover.
+ */
 export async function listRejections(): Promise<QueueItem[]> {
-  return all<QueueItem>(`SELECT * FROM sync_queue WHERE state = 'rejected' ORDER BY createdAt DESC`);
+  return all<QueueItem>(
+    `SELECT * FROM sync_queue WHERE state IN ('rejected','failed','blocked')
+      ORDER BY CASE state WHEN 'rejected' THEN 0 WHEN 'failed' THEN 1 ELSE 2 END, createdAt DESC`,
+  );
+}
+
+/**
+ * A record written before a crash took the enqueue with it — see
+ * `markOrphans`. Cold start only, when nothing can be half way through a save.
+ */
+export async function sweepOrphans(): Promise<number> {
+  return markOrphans(DB);
 }
 
 /**

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { backoffFor, dependents, MAX_ATTEMPTS, partition, type Eligible } from './ordering';
+import { backoffFor, dependents, MAX_ATTEMPTS, partition, presumedLanded, type Eligible } from './ordering';
 
 /**
  * The Phase 0 gate, in tests.
@@ -148,4 +148,39 @@ test('an interrupted pass loses nothing — the same queue re-partitions identic
   const second = partition({ queued, syncedIds: new Set(), deadIds: new Set(), now: NOW });
 
   assert.deepEqual(first.ready.map((r) => r.id), second.ready.map((r) => r.id));
+});
+
+test('an edit behind its own create goes with it on one pass, and never before it', () => {
+  const create = item('q1', 'lv1', [], { createdAt: 1 });
+  const edit = item('q2', 'lv1', ['lv1'], { createdAt: 2 });
+  const both = partition({ queued: [edit, create], syncedIds: new Set(), deadIds: new Set(), now: NOW });
+  assert.deepEqual(both.ready.map((r) => r.id), ['q1', 'q2']);
+  const refused = partition({ queued: [edit], syncedIds: new Set(), deadIds: new Set(['lv1']), now: NOW });
+  assert.deepEqual(refused.blocked.map((r) => r.id), ['q2'], 'an edit to a refused create is held, not retried for ever');
+});
+
+test('an edit whose create was pruned does not wait on itself', () => {
+  /* A create sent after a fortnight offline is pruned the moment it lands;
+     the edits behind it are the only rows left naming the record. */
+  const pending = [
+    { entityId: 'lv1', op: 'update', dependsOn: ['lv1'] },
+    { entityId: 'lv1', op: 'update', dependsOn: ['lv1'] },
+  ];
+  assert.ok(presumedLanded(pending, new Set()).has('lv1'));
+  assert.ok(!presumedLanded([...pending, { entityId: 'lv1', op: 'create', dependsOn: [] }], new Set()).has('lv1'), 'a create still waiting keeps them behind it');
+  assert.ok(!presumedLanded(pending, new Set(['lv1'])).has('lv1'), 'a refused create is never presumed landed');
+});
+
+test('one rule for what waits: my own create holds my edit; my own earlier edits and edits behind their create do not', async () => {
+  const { landedDependencies } = await import('./ordering');
+  const edit = { entityId: 'lv1', entityType: 'leave', op: 'update', dependsOn: ['lv1'] };
+  const create = { entityId: 'lv1', entityType: 'leave', op: 'create', dependsOn: [] as string[] };
+  assert.ok(!landedDependencies([edit, create], [], new Set()).has('lv1'), 'the create still waiting holds its edit');
+  assert.ok(landedDependencies([edit], [], new Set()).has('lv1'), 'once the create is pruned the edit goes');
+  assert.ok(landedDependencies([edit, { ...edit }], [], new Set()).has('lv1'), 'two edits do not hold each other');
+  const picks = { entityId: 'd1', entityType: 'plan_stops', op: 'update', dependsOn: ['d1'] };
+  const day = { entityId: 'd1', entityType: 'plan_day', op: 'create', dependsOn: [] as string[] };
+  assert.ok(!landedDependencies([picks], [day], new Set()).has('d1'), 'the day in flight holds its picks');
+  assert.ok(landedDependencies([picks, { ...picks }], [], new Set()).has('d1'), 'earlier picks for the day do not');
+  assert.ok(!landedDependencies([edit], [], new Set(['lv1'])).has('lv1'), 'a refused create never lands');
 });

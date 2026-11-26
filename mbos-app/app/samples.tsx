@@ -32,6 +32,7 @@ import { type CodedOption } from '../src/engines/funnel';
 import { useStore } from '../src/state/store';
 import { PressableScale, Pop, Presence, Stagger, animateLayoutFor, useShake } from '../src/components/ui/motion';
 import { skuLines } from '../src/lib/sku-lines';
+import { syncBadge } from '../src/sync/labels';
 
 /**
  * Samples given out and never followed up are the quietest way a sales day
@@ -518,8 +519,14 @@ export default function SamplesScreen() {
                   </View>
                   {/* Pops when the office moves it on — dispatched, received —
                       which reaches this list on a pull while it is open. */}
-                  <Pop trigger={x.state}>
-                    <Badge tone={toneFor(x.state)}>{x.state}</Badge>
+                  {/* Until the office has it, where it is on the way says more
+                      than "Requested": a refused one read Requested for ever. */}
+                  <Pop trigger={x.state + (syncBadge(x.syncState)?.label ?? '')}>
+                    {syncBadge(x.syncState) ? (
+                      <Badge tone={syncBadge(x.syncState)!.tone}>{syncBadge(x.syncState)!.label}</Badge>
+                    ) : (
+                      <Badge tone={toneFor(x.state)}>{x.state}</Badge>
+                    )}
                   </Pop>
                 </View>
 

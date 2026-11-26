@@ -51,6 +51,16 @@ export type SyncOutcome = {
 };
 
 let running = false;
+
+/* WHO WANTS TO KNOW A PULL LANDED — the store's counter, which screens a push
+   opens re-read on. A hook rather than an import: the store imports the queue. */
+const pulledListeners = new Set<() => void>();
+export function whenPulled(listener: () => void): () => void {
+  pulledListeners.add(listener);
+  return () => {
+    pulledListeners.delete(listener);
+  };
+}
 let listenerAttached = false;
 
 export async function isOnline(): Promise<boolean> {
@@ -245,6 +255,13 @@ async function onePass(empty: SyncOutcome, _opts: { manual?: boolean }): Promise
     pulled = await applyPull(response.pull);
     if (response.pull.cursor) await setKv('pullCursor', response.pull.cursor);
     await setKv('lastPullAt', String(Date.now()));
+    for (const l of pulledListeners) {
+      try {
+        l();
+      } catch {
+        /* A screen's listener is not the pull's problem. */
+      }
+    }
   }
 
   return { ran: true, pushed: items.length, accepted, rejected, failed, pulled };
@@ -326,13 +343,17 @@ async function stampServerNumber(item: QueueItem, serverNumber: string): Promise
 async function onRejection(item: QueueItem, code: string, message: string): Promise<void> {
   const key = `rejectionNotified:${item.id}`;
   const told = await getKv(key);
-  if (told !== code) {
+  /* NOT FOR AN ORDER: the office rings for a refused order itself — a push
+     and a bell of its own (`raiseRejectionTask`) — so this one made the
+     phone ring twice about one refusal. Every other refusal is told here
+     only. */
+  if (told !== code && item.entityType !== 'order') {
     await setKv(key, code);
     const { notify } = await import('../data/notifications');
     const payload = safeParse(item.payload) as { customerName?: string } | undefined;
     const who = payload?.customerName ? ` · ${payload.customerName}` : '';
     await notify({
-      title: item.entityType === 'order' ? 'Order not accepted' : 'Not accepted by the office',
+      title: 'Not accepted by the office',
       body: message + who,
       kind: 'danger',
       href: '/rejections',

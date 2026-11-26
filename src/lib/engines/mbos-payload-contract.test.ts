@@ -458,6 +458,9 @@ const ROUTES: Record<string, Route> = {
   "travel_leg/create": { schema: "travelLegSchema" },
   "travel_leg/update": { schema: "travelLegSchema" },
   "expense_day_submit/create": { schema: "submitSchema" },
+  /* No schema: `handleNotificationRead` reads nothing off the payload — the
+     entity id is the notification, and the sender's own id is in the WHERE. */
+  "notification_read/update": { readsDirectly: ["id"] },
 };
 
 /** The keys one `const x = z.object({ … })` declares, at the top level only. */

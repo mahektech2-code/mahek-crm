@@ -109,23 +109,33 @@ export function partition<T extends Eligible>(args: {
  * waiting" was always yes — the picks' own row — and once the day's create had
  * been pruned they waited for ever. A row of the same KIND under that id (an
  * earlier set of picks for the same day) is not what it waits on either; only
- * a different kind of record under the id is.
+ * a different kind of record under the id is — or my own record's create
+ * while it still waits (edits wait on it; see `updateAndQueue`). Both rules
+ * in one place: `presumedLanded` below is the same answer for callers that
+ * only know `op`.
  */
 export function landedDependencies(
-  queued: { entityId: string; entityType: string; dependsOn: string[] }[],
-  inFlight: { entityId: string; entityType: string }[],
+  queued: { entityId: string; entityType: string; op?: string; dependsOn: string[] }[],
+  inFlight: { entityId: string; entityType: string; op?: string; dependsOn?: string[] }[],
   deadIds: Set<string>,
 ): Set<string> {
-  const kindsWaiting = new Map<string, string[]>();
-  for (const r of [...queued, ...inFlight]) {
-    kindsWaiting.set(r.entityId, [...(kindsWaiting.get(r.entityId) ?? []), r.entityType]);
-  }
+  const rows = [...queued, ...inFlight];
   const landed = new Set<string>();
   for (const q of queued) {
     for (const d of q.dependsOn) {
-      const kinds = kindsWaiting.get(d) ?? [];
-      const others = q.entityId === d ? kinds.filter((k) => k !== q.entityType) : kinds;
-      if (!others.length && !deadIds.has(d)) landed.add(d);
+      if (deadIds.has(d)) continue;
+      const holding = rows.some((r) => {
+        if (r === q || r.entityId !== d) return false;
+        /* An edit waiting on its own record's create is not what anything
+           waits on (`presumedLanded`) — counting it made edits wait on
+           themselves once the create was pruned. */
+        if (r.op === 'update' && (r.dependsOn ?? []).includes(r.entityId)) return false;
+        /* Nor is an earlier row of the same kind under my own id; my own
+           record's CREATE, still waiting, is. */
+        if (q.entityId === d && r.entityType === q.entityType && r.op !== 'create') return false;
+        return true;
+      });
+      if (!holding) landed.add(d);
     }
   }
   return landed;
@@ -164,4 +174,34 @@ export function dependents<T extends Eligible>(items: T[], entityId: string): T[
     }
   }
   return out;
+}
+
+/**
+ * WHICH DEPENDENCIES HAVE LANDED although nothing in the outbox says `synced`.
+ *
+ * A dependency with no item for it waiting anywhere has gone up and been
+ * pruned (`pruneSynced`), or is a record the office made. "Waiting" means an
+ * item for that record still queued or in flight — EXCEPT an edit that itself
+ * waits on that record's create. Edits wait on their own record's create (see
+ * `updateAndQueue`), so counting them would make an edit wait on itself once
+ * the create was pruned: a create sent after a fortnight offline is pruned the
+ * moment it lands, because it is older than the fortnight, and every edit
+ * behind it would then sit in the outbox for ever.
+ */
+export function presumedLanded(
+  pending: { entityId: string; op: string; dependsOn: string[] }[],
+  deadIds: Set<string>,
+): Set<string> {
+  const waiting = new Set<string>();
+  for (const p of pending) {
+    if (p.op === 'update' && p.dependsOn.includes(p.entityId)) continue;
+    waiting.add(p.entityId);
+  }
+  const landed = new Set<string>();
+  for (const p of pending) {
+    for (const d of p.dependsOn) {
+      if (!waiting.has(d) && !deadIds.has(d)) landed.add(d);
+    }
+  }
+  return landed;
 }

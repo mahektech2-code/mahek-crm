@@ -487,3 +487,49 @@ describe("correcting what went out", () => {
     assert.equal(audits.length, 1);
   });
 });
+
+/* WHO MAY CLOSE A FIELD TASK FROM A HANDSET. `handleTaskUpdate` wrote whatever
+   arrived for any task id, so another salesman's phone could close Rahul's
+   task, and a task the office cancelled could be closed from a phone that had
+   not heard yet. The rule is `taskUpdateVerdict`; this is the handler using it. */
+describe("a task update from a handset", () => {
+  async function plainTask(status: "open" | "cancelled" | "done" = "open") {
+    const [t] = await db
+      .insert(mbosTasks)
+      .values({
+        id: id("tsk"),
+        title: "Ring Patil",
+        assignedToUserId: rahul.id,
+        assignedByUserId: manager.id,
+        status,
+        dueDate: DUE,
+      })
+      .returning();
+    return t!;
+  }
+  const note = { completionNote: "Rang, he will order Monday" };
+
+  test("is refused from somebody else's handset, and the task stays open", async () => {
+    const t = await plainTask();
+    const out = await ingestSyncBatch(principalFor(seema), [answer(t.id, note)]);
+    assert.equal(out[0].status, "rejected");
+    const [row] = await db.select({ status: mbosTasks.status }).from(mbosTasks).where(eq(mbosTasks.id, t.id));
+    assert.equal(row!.status, "open");
+  });
+
+  test("cannot close a task the office cancelled", async () => {
+    const t = await plainTask("cancelled");
+    const out = await ingestSyncBatch(principalFor(rahul), [answer(t.id, note)]);
+    assert.equal(out[0].status, "rejected");
+    const [row] = await db.select({ status: mbosTasks.status }).from(mbosTasks).where(eq(mbosTasks.id, t.id));
+    assert.equal(row!.status, "cancelled");
+  });
+
+  test("closes his own open task, and done again is accepted without a refusal", async () => {
+    const t = await plainTask();
+    const first = await ingestSyncBatch(principalFor(rahul), [answer(t.id, note)]);
+    assert.equal(first[0].status, "accepted");
+    const again = await ingestSyncBatch(principalFor(rahul), [answer(t.id, note)]);
+    assert.equal(again[0].status, "accepted");
+  });
+});

@@ -40,8 +40,11 @@ export async function raiseApproval(args: {
   subjectId: string;
   reason: string;
   deviceId: string;
+  /** Raised from inside the subject's own save transaction (an order). */
+  inTransaction?: boolean;
 }): Promise<string> {
   return insertAndQueue({
+    inTransaction: args.inTransaction,
     table: 'approvals',
     entityType: 'approval',
     dependsOn: [args.subjectId],
@@ -320,6 +323,8 @@ export async function claimExpense(args: {
 export type LeaveRequest = {
   id: string; kind: string; fromDate: string; toDate: string; halfDay: string | null;
   days: number; reason: string; state: string; lossOfPay: number; syncState: string;
+  /** What the office or the phone said about sending it, where it did not go. */
+  syncMessage?: string | null;
   clientCreatedAt: number;
   /** Who decided it, when, and what they said — off the approval, once there is one. */
   approverName: string | null; decidedAt: number | null; decisionNote: string | null;
@@ -508,8 +513,28 @@ export async function requestTour(args: {
   return { ok: true, id };
 }
 
-export async function withdrawLeave(id: string): Promise<void> {
+/**
+ * Withdraw a request — or, where the office never took it, let it go.
+ *
+ * A request the office REFUSED (or one the phone gave up sending) does not
+ * exist there, so a Withdraw queued against it was answered "try again later"
+ * for ever: the office cannot withdraw what it does not hold, and the card read
+ * Waiting with a Withdraw button that did nothing. So the request, its approval
+ * and anything else waiting on it are taken off this phone instead.
+ */
+export async function withdrawLeave(id: string): Promise<'withdrawn' | 'removed'> {
+  const neverLanded = await one<{ id: string }>(
+    `SELECT id FROM sync_queue WHERE entityId = ? AND entityType = 'leave' AND op = 'create'
+        AND state IN ('rejected','failed','blocked') LIMIT 1`,
+    [id],
+  );
+  if (neverLanded) {
+    const { discardRefused } = await import('../sync/queue');
+    await discardRefused(neverLanded.id);
+    return 'removed';
+  }
   await updateAndQueue({ table: 'leave_requests', entityType: 'leave', id, patch: { state: 'Withdrawn' } });
+  return 'withdrawn';
 }
 
 /* ----------------------------------------------------------- complaints */

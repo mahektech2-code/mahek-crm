@@ -7,6 +7,19 @@ import { pendingCount } from '../sync/queue';
 import { dayState } from '../data/attendance';
 import { plural } from '../lib/format';
 
+async function routePointsWaiting(): Promise<number> {
+  const trail = await import('../sync/trail');
+  let native = 0;
+  try {
+    const service = await import('../native/location-service');
+    const state = await service.serviceState();
+    native = state.buffered ?? 0;
+  } catch {
+    native = 0;
+  }
+  return (await trail.pending()) + native;
+}
+
 /**
  * SIGNING OUT ASKS FIRST, from wherever it is offered.
  *
@@ -30,9 +43,13 @@ export function useSignOut(): () => void {
 
   return React.useCallback(() => {
     void (async () => {
-      const [waiting, day] = await Promise.all([
+      const [waiting, day, points] = await Promise.all([
         pendingCount().catch(() => 0),
         userId ? dayState(userId).catch(() => null) : Promise.resolve(null),
+        /* The route still to go up — the native buffer and the queue. Kept for
+           him, but only HE gets them back: said, so a phone handed over with
+           an unsent afternoon is a choice and not a surprise. */
+        routePointsWaiting().catch(() => 0),
       ]);
       const lines: string[] = [];
       if (day?.running) {
@@ -43,6 +60,12 @@ export function useSignOut(): () => void {
           ? `${plural(waiting, 'entry', 'entries')} not sent yet. They stay on this phone and send when you sign in again. Nobody else can sign in on this phone until they have gone.`
           : 'Everything you saved has reached the office.',
       );
+      if (points > 0) {
+        lines.push(
+          plural(points, 'route point', 'route points') +
+            ' not sent yet. They stay on this phone and send when you sign in again — if someone else signs in here first, they are lost.',
+        );
+      }
       askConfirm({
         title: 'Sign out?',
         body: lines.join('\n\n'),

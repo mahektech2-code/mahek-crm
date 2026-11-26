@@ -116,6 +116,10 @@ export type Confirm = {
 } | null;
 
 type State = {
+  /** Bumped every time a pull lands. A screen a push opened re-reads on it, so
+      the record the push was about appears when it arrives rather than on the
+      next visit. See `whenPulled`. */
+  pullSeq: number;
   /* ---- session ---- */
   signedIn: boolean;
   method: LoginMethod;
@@ -416,6 +420,7 @@ export async function restoreOffPlanReason(): Promise<void> {
 }
 
 export const useStore = create<State & Actions>((set, get) => ({
+  pullSeq: 0,
   signedIn: false,
   method: 'password',
   mob: '',

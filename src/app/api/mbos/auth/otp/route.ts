@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { canOpen } from "@/lib/access";
-import { findAccountForCode, otpAvailability, sendOtp } from "@/lib/services/otp-service";
+import { findAccountForCode, maskNumber, otpAvailability, sendOtp } from "@/lib/services/otp-service";
+import { getConfig } from "@/lib/config/store";
 
 /* ---------------------------------------------------------------------------
  * The handset's "sign in with a WhatsApp code", step one.
@@ -47,10 +48,17 @@ export async function POST(request: Request) {
    * way to find out which numbers belong to staff who hold the handset.
    */
   if (!user || !user.active || !(await canOpen(user.id, "field"))) {
-    return NextResponse.json(
-      { ok: false, error: `No open MahekOne account has ${mobile} as its personal mobile in HRMS. OTPs work only with that number — or sign in with your password.` },
-      { status: 404 },
-    );
+    /* THE SAME ANSWER AS A REAL SEND, shape and status. A 404 naming the
+       number was itself the oracle the paragraph above closes: type a number,
+       read whether staff hold it. Nothing is sent; the code he then types is
+       refused at login like any wrong code, which says nothing either. */
+    const config = await getConfig();
+    const digits = mobile.replace(/\D/g, "");
+    return NextResponse.json({
+      ok: true,
+      sentTo: maskNumber(digits.length === 10 ? `91${digits}` : digits),
+      expiresInMinutes: Math.max(1, Number(config["auth.otp.ttlMinutes"]) || 10),
+    });
   }
   const sent = await sendOtp(user.id, "login", { surface: "handset", requestedWith: mobile });
   if (!sent.ok) {

@@ -171,11 +171,22 @@ export async function POST(request: Request) {
   const missingIds = Array.isArray(body.missingIds)
     ? body.missingIds.filter((id): id is string => typeof id === "string").slice(0, 300)
     : [];
-  const pull = await buildPull(
-    auth.principal,
-    typeof body.cursor === "string" ? body.cursor : null,
-    { missingIds },
-  );
+  /* THE RESULTS ARE ANSWERED WHATEVER THE PULL DOES. The items above are
+     already written; a pull that threw after them turned the whole response
+     into a 500, so the handset counted every one of them as a failure and
+     sent them again — saved records retried towards `failed`, and a pull bug
+     reading as a push bug. With no pull the handset keeps its cursor and
+     asks again on the next pass. */
+  let pull: Awaited<ReturnType<typeof buildPull>> | null = null;
+  try {
+    pull = await buildPull(
+      auth.principal,
+      typeof body.cursor === "string" ? body.cursor : null,
+      { missingIds },
+    );
+  } catch (e) {
+    console.error("mbos sync: pull failed after ingest", { userId: auth.principal.user.id, error: e });
+  }
   lap("pull");
 
   /* Written once here rather than by NextResponse.json — the same bytes — so
@@ -185,7 +196,7 @@ export async function POST(request: Request) {
   return new NextResponse(json, {
     headers: {
       "Content-Type": "application/json",
-      "Server-Timing": syncTimingHeader(phases, { items: items.length, bytes: Buffer.byteLength(json), pull: pull as unknown as Record<string, unknown> }),
+      "Server-Timing": syncTimingHeader(phases, { items: items.length, bytes: Buffer.byteLength(json), pull: (pull ?? {}) as unknown as Record<string, unknown> }),
     },
   });
 }

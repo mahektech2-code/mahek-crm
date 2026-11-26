@@ -10,6 +10,7 @@ import { color as C, tabular, weight } from '../src/theme/tokens';
 import { dmy, plural } from '../src/lib/format';
 import { listNotifications, markAllRead, markRead, type Notification } from '../src/data/notifications';
 import { DUR, EASE, Stagger, animateLayoutFor, useReduceMotion } from '../src/components/ui/motion';
+import { useStore } from '../src/state/store';
 
 /**
  * The bell.
@@ -169,7 +170,15 @@ export default function NotificationsScreen() {
     };
   }, []);
 
-  useFocusEffect(React.useCallback(() => load(), [load]));
+  /* Re-read when a pull lands — the message a push opened this for may arrive
+     a moment after the screen. */
+  const pullSeq = useStore((s) => s.pullSeq);
+  useFocusEffect(
+    React.useCallback(() => {
+      void pullSeq;
+      return load();
+    }, [load, pullSeq]),
+  );
 
   const unread = rows.filter((n) => n.readAt == null).length;
 

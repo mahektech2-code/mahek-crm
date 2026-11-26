@@ -6,11 +6,11 @@ import { Badge } from '../src/components/ui/primitives';
 import { Disc, PillButton } from '../src/components/ui/v3';
 import { type IconName } from '../src/components/ui/Icon';
 import { color as C, type, weight } from '../src/theme/tokens';
-import { discardRefused, listRejections, retryItem, type QueueItem } from '../src/sync/queue';
+import { discardCount, discardRefused, listRejections, retryItem, type QueueItem } from '../src/sync/queue';
 import { entityLabel, readPayload as parsePayload } from '../src/sync/labels';
 import { syncNow } from '../src/sync/engine';
 import { useStore } from '../src/state/store';
-import { inrFromPaise } from '../src/lib/format';
+import { inrFromPaise, plural } from '../src/lib/format';
 import { Stagger, animateLayoutFor } from '../src/components/ui/motion';
 
 /**
@@ -23,8 +23,30 @@ import { Stagger, animateLayoutFor } from '../src/components/ui/motion';
  * would leave him finding out from the customer.
  *
  * So every refusal is here, with what the office said, and a way to send it
- * again once it has been corrected. Nothing on this screen deletes anything.
+ * again once it has been corrected. So is every entry the phone GAVE UP on
+ * (failed) and every one held behind it (blocked): those could be removed
+ * nowhere, and they kept the phone from being handed over. Nothing goes until
+ * he chooses, and the confirm says how many entries go with the one he picked.
  */
+
+/** The badge, and what to say where the office said nothing — by outbox state. */
+const STATE_WORD: Record<string, { badge: string; tone: 'danger' | 'amber'; none: string }> = {
+  rejected: {
+    badge: 'Not accepted',
+    tone: 'danger',
+    none: 'The office did not say why. Send it again. If it comes back, ask your manager.',
+  },
+  failed: {
+    badge: 'Could not send',
+    tone: 'danger',
+    none: 'The phone tried several times and gave up. Send it again when you have signal.',
+  },
+  blocked: {
+    badge: 'On hold',
+    tone: 'amber',
+    none: 'Waiting on another entry that did not go. Sort that one out first, or remove this.',
+  },
+};
 
 /**
  * The machine codes from the protocol, in words the salesman can act on.
@@ -192,6 +214,7 @@ export default function Rejections() {
               : null;
           const said = row.failureReason?.trim() || null;
           const guidance = row.failureCode ? WHAT_TO_DO[row.failureCode] ?? null : null;
+          const word = STATE_WORD[row.state] ?? STATE_WORD.rejected;
           const again = retake(row);
           const kind = label(row.entityType);
 
@@ -219,7 +242,7 @@ export default function Rejections() {
                       </Text>
                     ) : null}
                   </View>
-                  <Badge tone="danger">Not accepted</Badge>
+                  <Badge tone={word.tone}>{word.badge}</Badge>
                 </View>
 
                 {/* What the office actually said, verbatim — and where it said
@@ -231,10 +254,10 @@ export default function Rejections() {
                 <View style={{ backgroundColor: C.dangerBg, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10, marginTop: 12 }}>
                   <Text style={{ fontSize: 13, lineHeight: 18, color: C.ink }}>
                     {said
-                      ? '“' + said + '”'
+                      ? (row.state === 'rejected' ? '“' + said + '”' : said)
                       : guidance
                         ? 'The office did not say why.'
-                        : 'The office did not say why. Send it again. If it comes back, ask your manager.'}
+                        : word.none}
                   </Text>
                 </View>
 
@@ -259,7 +282,16 @@ export default function Rejections() {
                         tone: 'navy',
                         subtitle: payload.customerName,
                         run: () => {
-                          router.push(again.route);
+                          /* An order or payment is let go by its form once the
+                             new one is SAVED. A leave's form carries everything
+                             in its route, so the refused one goes now, as its
+                             confirm says. */
+                          if (row.entityType !== 'leave') return router.push(again.route);
+                          void (async () => {
+                            await discardRefused(row.id);
+                            load(true);
+                            router.push(again.route);
+                          })();
                         },
                       })
                     }
@@ -280,28 +312,42 @@ export default function Rejections() {
                   <CardAction
                     label="Remove"
                     ink={C.danger}
-                    onPress={() =>
-                      askConfirm({
-                        title: 'Remove this from your phone?',
-                        body:
-                          row.op === 'create'
-                            ? 'The office never got it, and it will be gone from this phone too. Take it again first if it still matters.'
-                            : 'The office keeps what it already has. Your change that it refused is let go.',
-                        confirmLabel: 'Yes, remove it',
-                        cancelLabel: 'Cancel',
-                        tone: 'danger',
-                        lead: { icon: 'close', tint: C.danger, bg: C.dangerBg },
-                        run: () => {
-                          void discardRefused(row.id).then(() => {
-                            load(true);
-                            notify('Removed from this phone', 'info');
-                          });
-                        },
-                      })
-                    }
+                    onPress={() => {
+                      /* HOW MANY GO WITH IT, said before he agrees. A create
+                         that never reached the office takes everything waiting
+                         on it — the payment against the order, the approval
+                         asked for the leave — which would otherwise be stuck
+                         behind it for ever. */
+                      void discardCount(row.id)
+                        .catch(() => 0)
+                        .then((others) =>
+                          askConfirm({
+                            title: 'Remove this from your phone?',
+                            body:
+                              (row.op === 'create'
+                                ? 'The office never got it, and it will be gone from this phone too. Take it again first if it still matters.'
+                                : 'The office keeps what it already has. Your change that it refused is let go, and this phone goes back to what the office has.') +
+                              (others > 0
+                                ? '\n\n' + plural(others, 'other entry', 'other entries') + ' waiting on it ' + (others === 1 ? 'goes' : 'go') + ' too.'
+                                : ''),
+                            confirmLabel: others > 0 ? 'Yes, remove ' + (others + 1) : 'Yes, remove it',
+                            cancelLabel: 'Cancel',
+                            tone: 'danger',
+                            lead: { icon: 'close', tint: C.danger, bg: C.dangerBg },
+                            run: () => {
+                              void discardRefused(row.id).then((n) => {
+                                load(true);
+                                notify(n > 1 ? plural(n, 'entry', 'entries') + ' removed from this phone' : 'Removed from this phone', 'info');
+                              });
+                            },
+                          }),
+                        );
+                    }}
                   />
                   {/* Duplicates cannot be usefully resent — the office already has it. */}
-                  {row.failureCode !== 'duplicate' ? (
+                  {/* Nor can an entry on hold: it goes when the one it waits on
+                      does, and sending it alone is refused at once. */}
+                  {row.failureCode !== 'duplicate' && row.state !== 'blocked' ? (
                     /* The label carries the lock. With no signal — which is the
                        ordinary condition on this screen — the card stayed
                        identical until `load()` resolved, so nothing appeared to
@@ -393,6 +439,22 @@ function label(entityType: string): string {
 /** Where taking a refused entry again leads, where there is somewhere. */
 function retake(row: QueueItem): { label: string; body: string; route: string } | null {
   if (row.op !== 'create') return null;
+  if (row.entityType === 'leave') {
+    /* The form opens with what he asked for, so the one thing he changes is
+       the thing the office objected to. */
+    const p = parsePayload<{ kind?: string; fromDate?: string; toDate?: string | null; halfDay?: string | null; reason?: string }>(row.payload);
+    const q = new URLSearchParams({ from: 'rejections', retake: '1' });
+    if (p.kind) q.set('kind', p.kind);
+    if (p.fromDate) q.set('fromDate', p.fromDate);
+    if (p.toDate) q.set('toDate', p.toDate);
+    if (p.halfDay) q.set('half', p.halfDay);
+    if (p.reason) q.set('reason', p.reason);
+    return {
+      label: 'Ask for it again',
+      body: 'Opens the leave form with the same dates and reason. This refused one is removed from your phone.',
+      route: '/leave?' + q.toString(),
+    };
+  }
   /* The refused entry is let go by the form once the new one is SAVED — never
      before, or backing out of the form lost both. */
   if (row.entityType === 'payment') {

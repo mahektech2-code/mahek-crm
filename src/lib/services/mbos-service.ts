@@ -1103,6 +1103,8 @@ export type BootstrapPayload = {
   travelModes: unknown[];
   /** His own field orders, as the office now stands on them. See `myOrderStates`. */
   myOrders: unknown[];
+  /** Where each complaint he raised has got to. See `myComplaintStates`. */
+  myComplaints: unknown[];
   /** The changes he asked for on approved orders, and their answers. */
   orderChanges: unknown[];
   /** What he said about his allocated areas, and the office's answer. See `myTerritoryRequests`. */
@@ -1316,6 +1318,7 @@ export async function buildBootstrap(
     salary: salaryRows,
     travelModes: await travelModeRows(),
     myOrders: await myOrderStates(principal.user.id),
+    myComplaints: (await myComplaintStates(principal.user.id)).rows,
     orderChanges: await myOrderChanges(principal.user.id),
     territoryRequests: await myTerritoryRequests(principal.user.id),
     expensePolicy: await expensePolicyFor(principal.user.id, await today()),
@@ -1521,6 +1524,32 @@ async function customersForDevice(ids: string[]) {
  * them at the office. One function for the bootstrap and the delta; the
  * bootstrap reaches back ninety days, the delta whatever moved since.
  */
+/**
+ * WHERE EACH COMPLAINT HE RAISED HAS GOT TO — the office's status word, and
+ * nothing else, because the phone already holds the rest.
+ *
+ * There was no channel at all: a complaint went up from the visit drawer and
+ * the shop's Complaints tab read "Open" for the life of the installation, the
+ * desk's resolution reaching the phone never. The SAME function for the
+ * bootstrap and the delta, ordered by its change and capped, with the last
+ * row's time handed back so a full page holds the cursor.
+ */
+export const COMPLAINTS_PER_PULL = 500;
+
+async function myComplaintStates(userId: string, sinceIso?: string) {
+  const rows = await db.execute<{ id: string; status: string; updatedAt: unknown }>(sql`
+    select c.id, c.status::text as status, c.updated_at as "updatedAt"
+      from complaints c
+     where c.logged_by_user_id = ${userId}
+       and ${sinceIso ? sql`c.updated_at > ${sinceIso}` : sql`c.created_at > now() - interval '180 days'`}
+     order by c.updated_at asc
+     limit ${COMPLAINTS_PER_PULL}
+  `);
+  const list = [...rows];
+  const lastAt = list.length === COMPLAINTS_PER_PULL ? asDate(list[list.length - 1].updatedAt) : null;
+  return { rows: list.map((r) => ({ id: r.id, status: r.status })), lastAt };
+}
+
 async function myOrderStates(userId: string, sinceIso?: string) {
   const rows = await db.execute<Record<string, unknown>>(sql`
     select o.id, o.status::text as status, o.decline_reason as "declineReason",
@@ -1834,9 +1863,17 @@ async function tasksSince(userId: string, sinceIso: string) {
      where t.assigned_to_user_id = ${userId}
        and t.updated_at > ${sinceIso}
      order by t.updated_at asc
-     limit 500
+     limit ${TASKS_PER_PULL}
   `);
 }
+
+/** The page size of the tasks channel. A FULL page holds the cursor at its
+    last row (see `nextPullCursorAt`) — without that, a manager who reassigned
+    600 tasks at once put 100 of them behind the cursor for good. */
+export const TASKS_PER_PULL = 500;
+/** The same for the journey channel, which is ordered by its change time on
+    a delta for exactly that reason. */
+export const JOURNEY_STOPS_PER_PULL = 500;
 
 /**
  * Samples out on trial.
@@ -3823,6 +3860,7 @@ export async function buildPull(
       journeyStops: [],
       approvals: [],
       myOrders: [],
+      myComplaints: [],
       orderChanges: [],
       territoryRequests: [],
       performance: [],
@@ -3990,14 +4028,17 @@ export async function buildPull(
                to_char(s.planned_at at time zone ${APP_TIMEZONE}, 'HH24:MI') as "plannedAt",
                (extract(epoch from s.actual_visit_at) * 1000)::double precision as "actualAt",
                s.status,
-               s.skip_reason as "skipReason"
+               s.skip_reason as "skipReason",
+               greatest(s.updated_at, p.updated_at) as "updatedAt"
           from mbos_journey_stops s
           join mbos_journey_plans p on p.id = s.plan_id
          where p.user_id = ${principal.user.id}
            and p.plan_date >= (now() at time zone ${APP_TIMEZONE})::date - ${PLAN_HISTORY_DAYS}::int
            and (s.updated_at > ${sinceIso} or p.updated_at > ${sinceIso})
-         order by p.plan_date asc, s.sequence asc
-         limit 500
+         -- ORDERED BY THE CHANGE, not the day: a capped page has to take the
+         -- oldest changes first or the cursor cannot be held at its last row.
+         order by greatest(s.updated_at, p.updated_at) asc, p.plan_date asc, s.sequence asc
+         limit ${JOURNEY_STOPS_PER_PULL}
       `),
 
       /* The answer to something he asked for.
@@ -4148,6 +4189,16 @@ export async function buildPull(
       ? asDate((approvalRows[approvalRows.length - 1] as { updatedAt?: unknown }).updatedAt)
       : null;
 
+  const complaintStates = await myComplaintStates(principal.user.id, sinceIso);
+  const taskLastAt =
+    taskChanges.length === TASKS_PER_PULL
+      ? asDate((taskChanges[taskChanges.length - 1] as { updatedAt?: unknown }).updatedAt)
+      : null;
+  const journeyLastAt =
+    journeyRows.length === JOURNEY_STOPS_PER_PULL
+      ? asDate((journeyRows[journeyRows.length - 1] as { updatedAt?: unknown }).updatedAt)
+      : null;
+
   return {
     /* CLAMPED wherever a capped page came back full, and stepped back a
        little always — see `nextPullCursorAt`. Everything is re-sent from that
@@ -4160,6 +4211,9 @@ export async function buildPull(
         newTimeline.lastAt,
         notificationLastAt,
         approvalLastAt,
+        taskLastAt,
+        journeyLastAt,
+        complaintStates.lastAt,
       ]),
     ),
     territory: await territoryStateFor(principal),
@@ -4170,7 +4224,7 @@ export async function buildPull(
     remote: await remoteFor(principal),
     notifications: notificationsForWire(freshNotifications) as unknown[],
     transcripts: newTranscripts as unknown[],
-    journeyStops: journeyRows as unknown[],
+    journeyStops: journeyRows.map((r) => without(r, "updatedAt")) as unknown[],
     approvals: approvalRows.map((r) => without(r, "updatedAt")) as unknown[],
     planDays: planDayRows as unknown[],
     leaveBalances: leaveBalanceRows as unknown[],
@@ -4185,6 +4239,7 @@ export async function buildPull(
     courses: courseChanges as unknown[],
     deletions: deletionGroups,
     myOrders: await myOrderStates(principal.user.id, sinceIso),
+    myComplaints: complaintStates.rows,
     orderChanges: await myOrderChanges(principal.user.id, sinceIso),
     territoryRequests: await myTerritoryRequests(principal.user.id, sinceIso),
     performance: await performanceFor(principal.user.id, sinceIso),

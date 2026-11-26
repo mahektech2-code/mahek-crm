@@ -3726,6 +3726,17 @@ export const SETTINGS = [
     max: 500,
   },
   {
+    key: "mbos.sync.handoverIgnoreDays",
+    type: "integer",
+    category: "mbos-sync",
+    label: "Stuck entries ignored at handover after",
+    description:
+      "Days after which an entry the phone gave up on (failed, or blocked behind one) no longer stops somebody else signing in on that phone. Entries the phone is still sending always count.",
+    default: 14,
+    min: 1,
+    max: 365,
+  },
+  {
     key: "mbos.sync.accessTokenMinutes",
     type: "integer",
     category: "mbos-sync",
@@ -7706,6 +7717,7 @@ export type Config = {
   "mbos.sync.retryBackoffSeconds": number[];
   "mbos.sync.statementMonths": number;
   "mbos.sync.maxItemsPerRequest": number;
+  "mbos.sync.handoverIgnoreDays": number;
   "mbos.sync.accessTokenMinutes": number;
 
   "mbos.devices.onePerPerson": boolean;

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Pressable, Text, View } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Badge, Card, T } from '../src/components/ui/primitives';
@@ -11,7 +11,7 @@ import { Stagger, animateLayout, animateLayoutFor } from '../src/components/ui/m
 import { feedback } from '../src/components/ui/feedback';
 import { applyForLeave, leaveCalendar, listLeave, withdrawLeave, type LeaveRequest } from '../src/data/requests';
 import { leaveDays, type LeaveCalendar } from '../src/engines/leave';
-import { dmy, isoDate, plural } from '../src/lib/format';
+import { dmy, isoDate, plural, todayIst } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { color as C, weight, tabular, type BadgeTone } from '../src/theme/tokens';
@@ -59,6 +59,26 @@ type Draft = { type: string; span: 'half' | 'one' | 'many'; half: string; from: 
 
 const EMPTY: Draft = { type: 'Casual', span: 'one', half: 'Morning', from: '', to: '', reason: '' };
 
+type RetakeParams = { retake?: string; kind?: string; fromDate?: string; toDate?: string; half?: string; reason?: string };
+
+/**
+ * A REFUSED REQUEST ASKED AGAIN, from Not accepted: the form opens with what he
+ * asked for the first time. Read once into the initial state — no effect — so
+ * the form is his to change from there.
+ */
+function draftFrom(p: RetakeParams): Draft | null {
+  if (p.retake !== '1' || !p.fromDate) return null;
+  const many = !!p.toDate && p.toDate !== p.fromDate;
+  return {
+    type: p.kind || EMPTY.type,
+    span: p.half ? 'half' : many ? 'many' : 'one',
+    half: p.half || EMPTY.half,
+    from: p.fromDate,
+    to: many ? p.toDate! : '',
+    reason: p.reason ?? '',
+  };
+}
+
 const TONE: Record<string, BadgeTone> = {
   Pending: 'amber',
   Approved: 'success',
@@ -90,9 +110,11 @@ export default function LeaveScreen() {
   const notify = useStore((s) => s.notify);
   const boot = useBoot();
 
+  const params = useLocalSearchParams<RetakeParams>();
+  const [retaken] = React.useState(() => draftFrom(params));
   const [rows, setRows] = React.useState<LeaveRequest[] | null>(null);
-  const [open, setOpen] = React.useState(false);
-  const [lv, setLv] = React.useState<Draft>(EMPTY);
+  const [open, setOpen] = React.useState(retaken !== null);
+  const [lv, setLv] = React.useState<Draft>(retaken ?? EMPTY);
   const [err, setErr] = React.useState<'dates' | 'reason' | null>(null);
   /** Which end of the range the calendar is picking, or null for closed. */
   const [pick, setPick] = React.useState<'from' | 'to' | null>(null);
@@ -110,7 +132,7 @@ export default function LeaveScreen() {
 
   const load = React.useCallback(() => {
     let live = true;
-    setYear(isoDate(new Date()).slice(0, 4));
+    setYear(todayIst().slice(0, 4));
     void leaveCalendar()
       .then((c) => live && setCalendar(c))
       .catch(() => {});
@@ -191,14 +213,16 @@ export default function LeaveScreen() {
 
   const withdraw = (l: LeaveRequest) =>
     askConfirm({
-      title: 'Withdraw this request?',
-      body: l.kind + ' · ' + whenOf(l),
+      title: neverWent(l) ? 'Remove this request?' : 'Withdraw this request?',
+      body:
+        l.kind + ' · ' + whenOf(l) +
+        (neverWent(l) ? '\n\nThe office never took it, so it is removed from this phone.' : ''),
       confirmLabel: 'Withdraw',
       run: () => {
         void withdrawLeave(l.id)
-          .then(() => {
+          .then((how) => {
             load();
-            notify('Request withdrawn');
+            notify(how === 'removed' ? 'Removed from this phone. The office never had it.' : 'Request withdrawn');
           })
           .catch(() => notify('Could not withdraw it. Try again.', 'error'));
       },
@@ -544,7 +568,7 @@ export default function LeaveScreen() {
             accessibilityLabel="Today"
             hitSlop={{ top: 6, bottom: 6 }}
             onPress={() => {
-              const iso = isoDate(new Date());
+              const iso = todayIst();
               const refusal = refuseTo(iso);
               if (refusal) return notify(refusal + '.', 'error');
               if (pick === 'to') patch({ to: iso });
@@ -596,10 +620,23 @@ const navyBtn = {
   gap: 8,
 };
 
+/** The office never took it: refused, or the phone gave up sending it. */
+function neverWent(l: LeaveRequest): boolean {
+  return l.syncState === 'rejected' || l.syncState === 'failed' || l.syncState === 'blocked';
+}
+
 /** One request: what, when, and where it has got to. */
 function RequestCard({ l, onWithdraw }: { l: LeaveRequest; onWithdraw?: () => void }) {
-  /* Written on this phone and not yet with the office — waiting for signal. */
+  /* Written on this phone and not yet with the office — waiting for signal.
+     A REFUSAL IS NOT A WAIT: "goes with signal" over a request the office
+     turned down sent him looking for signal that would change nothing. */
   const unsent = l.state === 'Pending' && l.syncState !== 'synced';
+  const refused = unsent && neverWent(l);
+  const unsentWords = refused
+    ? l.syncState === 'rejected'
+      ? 'Not accepted by the office'
+      : 'Could not send · see Not accepted'
+    : 'Not sent yet · goes with signal';
   const decided =
     (l.state === 'Approved' || l.state === 'Rejected') && (l.approverName || l.decidedAt)
       ? [l.approverName ? 'By ' + l.approverName : null, l.decidedAt ? dmy(isoDate(new Date(l.decidedAt))) : null]
@@ -641,10 +678,10 @@ function RequestCard({ l, onWithdraw }: { l: LeaveRequest; onWithdraw?: () => vo
           {unsent ? (
             <View
               accessible
-              accessibilityLabel="Not sent yet — it goes when the phone has signal."
-              style={{ minHeight: 28, paddingHorizontal: 10, borderRadius: 14, backgroundColor: C.warnBg, flexDirection: 'row', alignItems: 'center', gap: 5, flexShrink: 1 }}>
-              <Glyph shapes={UNSENT} size={13} color={C.warnInk} strokeWidth={2.2} />
-              <T style={[{ fontSize: 12, color: C.warnInk, flexShrink: 1 }, weight(700)]}>Not sent yet · goes with signal</T>
+              accessibilityLabel={refused ? unsentWords + (l.syncMessage ? '. ' + l.syncMessage : '') : 'Not sent yet — it goes when the phone has signal.'}
+              style={{ minHeight: 28, paddingHorizontal: 10, borderRadius: 14, backgroundColor: refused ? C.dangerBg : C.warnBg, flexDirection: 'row', alignItems: 'center', gap: 5, flexShrink: 1 }}>
+              <Glyph shapes={UNSENT} size={13} color={refused ? C.danger : C.warnInk} strokeWidth={2.2} />
+              <T style={[{ fontSize: 12, color: refused ? C.danger : C.warnInk, flexShrink: 1 }, weight(700)]}>{unsentWords}</T>
             </View>
           ) : null}
           <View style={{ flex: 1 }} />

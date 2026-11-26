@@ -53,6 +53,6 @@ test('the order refusal and the card say why, in the office’s words', () => {
 });
 
 test('the outbox writes its answer back onto a shop row', () => {
-  const src = readFileSync(join(import.meta.dirname, '../sync/queue.ts'), 'utf8');
+  const src = readFileSync(join(import.meta.dirname, '../sync/outbox-ops.ts'), 'utf8');
   assert.match(src, /customer: 'customers'/);
 });

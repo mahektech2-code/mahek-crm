@@ -257,6 +257,15 @@ export async function accessToken(): Promise<string | null> {
 }
 
 /**
+ * A NEW ACCESS TOKEN NOW, for a caller that cannot go through `request` — a
+ * file download, which streams to disk and so never met the 401 retry every
+ * other call has. Null where the refresh was refused or unreachable.
+ */
+export async function refreshedAccessToken(): Promise<string | null> {
+  return (await tryRefresh()) === 'ok' ? accessToken() : null;
+}
+
+/**
  * The refresh token, for the ONE caller that is not `tryRefresh`.
  *
  * The service holds its own copy so it can refresh with no JavaScript in the
@@ -680,6 +689,8 @@ export type PullPayload = {
   approvals?: unknown[];
   /** His own field orders as the office stands on them — status, reason, lines. */
   myOrders?: unknown[];
+  /** Where each complaint he raised has got to, as the office's status word. */
+  myComplaints?: unknown[];
   /** Changes he asked for on approved orders, and their answers. */
   orderChanges?: unknown[];
   /** What he said about his allocated areas, and the office's answer. */
@@ -1238,6 +1249,19 @@ export async function postPositions(
   return request('/api/mbos/positions', {
     method: 'POST',
     body: JSON.stringify({ positions, deviceId: await deviceId(), ...state }),
+  });
+}
+
+/**
+ * Clear this device's push token with nobody signed in — after a sign-out that
+ * had no signal. Names the token as well as the device, so nobody who merely
+ * knows a device id can stop its pushes.
+ */
+export async function releasePushToken(device: string, pushToken: string): Promise<{ ok: boolean }> {
+  return request('/api/mbos/push-token', {
+    method: 'DELETE',
+    auth: false,
+    body: JSON.stringify({ deviceId: device, pushToken }),
   });
 }
 

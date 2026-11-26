@@ -110,6 +110,7 @@ import { refreshDayMoney } from "../services/expense-submit-service";
 import { transcribeSpeech } from "../dictation";
 import { sniffContentType, ACCEPTED_AUDIO_TYPES } from "../file-types";
 import { issueToken, verifyToken, signingKeyPresent } from "../mbos/token";
+import { taskUpdateVerdict } from "../mbos/task-update-rules";
 import {
   checkDeviceBinding,
   loadPrincipal,
@@ -279,6 +280,10 @@ export async function mbosLogin(input: {
       target: mbosDevices.deviceId,
       set: {
         userId: user.id,
+        /* A DIFFERENT PERSON ON THIS PHONE starts with no token. The last one
+           may have signed out with no signal, so the clear never arrived; their
+           handset registers its own token again moments after sign-in. */
+        pushToken: sql`case when ${mbosDevices.userId} = ${user.id} then ${mbosDevices.pushToken} else null end`,
         model: input.deviceLabel ?? null,
         platform: input.platform ?? null,
         /* Not `appVersion`: the heartbeat below writes it, so a sign-in on a
@@ -973,6 +978,8 @@ async function dispatchItem(
       return handleTravelLeg(principal, item);
     case "expense_day_submit":
       return handleExpenseDaySubmit(principal, item);
+    case "notification_read":
+      return handleNotificationRead(principal, item);
     default:
       return {
         kind: "rejected",
@@ -982,6 +989,20 @@ async function dispatchItem(
         ),
       };
   }
+}
+
+/**
+ * A notification he read on the phone. Only ever his own — the user id is in
+ * the WHERE — and accepted whether or not the row still exists: a notification
+ * the office has since cleared was read all the same, and refusing it would
+ * park a tap in his outbox.
+ */
+async function handleNotificationRead(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
+  await db
+    .update(notifications)
+    .set({ read: true })
+    .where(and(eq(notifications.id, item.entityId), eq(notifications.userId, principal.user.id)));
+  return { kind: "accepted", value: { serverId: item.entityId } };
 }
 
 /* -------------------------------------------------- the customer, in scope */
@@ -7114,6 +7135,8 @@ async function handleTaskUpdate(
       id: mbosTasks.id,
       title: mbosTasks.title,
       assignedToUserId: mbosTasks.assignedToUserId,
+      assignedByUserId: mbosTasks.assignedByUserId,
+      status: mbosTasks.status,
       customerId: mbosTasks.customerId,
       form: mbosTaskCampaigns.form,
     })
@@ -7132,6 +7155,20 @@ async function handleTaskUpdate(
         "That task has not reached the office yet, so there is nothing to change. It will be tried again once it has.",
     };
   }
+
+  /* HIS TASK, AND STILL OPEN — see `taskUpdateVerdict`. Any handset could
+     write to any task id it held, and a task the office had cancelled could
+     be closed as done from a phone that had not heard yet. */
+  const verdict = taskUpdateVerdict({
+    senderId: principal.user.id,
+    assigneeId: existing.assignedToUserId,
+    assignerId: existing.assignedByUserId,
+    status: existing.status,
+    title: existing.title,
+    incomingStatus: p.status ?? null,
+  });
+  if (verdict.kind === "refuse") return { kind: "rejected", value: reject(verdict.code, verdict.message) };
+  if (verdict.kind === "already") return { kind: "accepted", value: { serverId: item.entityId } };
 
   /* A task with a form is answered by the form. The answers ARE the "how",
      so they stand in for the note — written out as one, so every screen that

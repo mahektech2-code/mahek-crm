@@ -41,6 +41,7 @@ import { dmy, isoDate, plural, pretty } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 import { Pop, Presence, PressableScale, Swap, useShake } from '../src/components/ui/motion';
 import { feedback } from '../src/components/ui/feedback';
+import { syncBadge } from '../src/sync/labels';
 
 /**
  * One sample, from the godown to what the customer thought of it.
@@ -290,9 +291,11 @@ export default function SampleRecord() {
           </View>
           {/* The mark he just made, answered on the badge: it pops as the
               state moves on. The toast that confirmed the save is the buzz. */}
-          <Pop trigger={s.state}>
-            <Badge tone={toneFor(s.state)} style={{ minHeight: 30, paddingVertical: 4, paddingHorizontal: 12, borderRadius: 15 }}>
-              {s.state}
+          <Pop trigger={s.state + (syncBadge(s.syncState)?.label ?? '')}>
+            <Badge
+              tone={syncBadge(s.syncState)?.tone ?? toneFor(s.state)}
+              style={{ minHeight: 30, paddingVertical: 4, paddingHorizontal: 12, borderRadius: 15 }}>
+              {syncBadge(s.syncState)?.label ?? s.state}
             </Badge>
           </Pop>
         </View>

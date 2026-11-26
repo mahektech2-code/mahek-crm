@@ -5,6 +5,8 @@ import * as Notifications from 'expo-notifications';
 import { routeForNotification } from '../native/push';
 import { isTabRoot, safeHref } from '../components/shell/routes';
 import { readArrival } from '../data/arrival';
+import { markRead } from '../data/notifications';
+import { syncNow, whenPulled } from '../sync/engine';
 import { useBoot } from './boot';
 import { restoreVisitDraft, useStore } from './store';
 
@@ -15,8 +17,28 @@ import { restoreVisitDraft, useStore } from './store';
  * from disk first: the background task that raised the reminder may have run
  * in a context whose writes the screens have not seen yet.
  */
+/** How long a tap waits for the record it is about before opening anyway. */
+const TAP_SYNC_WAIT_MS = 4000;
+
 export async function openFrom(data: unknown): Promise<void> {
-  const d = data as { kind?: unknown; customerId?: unknown } | undefined;
+  const d = data as { kind?: unknown; customerId?: unknown; notificationId?: unknown } | undefined;
+  /*
+   * THE RECORD FIRST, THEN THE SCREEN — for a bounded moment. A push is sent
+   * the instant the office decides, and the decision reaches this phone only
+   * on its next pull: tapped at once, the screen opened on the old state (the
+   * order still pending, the task not there) and he concluded the push was
+   * wrong. One pass is asked for and waited on up to four seconds; with no
+   * signal the screen opens on what is here, and re-reads when the pull lands
+   * (`pullSeq`).
+   */
+  await Promise.race([
+    syncNow().catch(() => undefined),
+    new Promise((r) => setTimeout(r, TAP_SYNC_WAIT_MS)),
+  ]);
+  /* TAPPED IS READ, here and at the office — he has opened it. */
+  if (typeof d?.notificationId === 'string' && d.notificationId) {
+    void markRead(d.notificationId).catch(() => undefined);
+  }
   if (d?.kind === 'forgot-checkout' && typeof d.customerId === 'string') {
     const arrival = await readArrival();
     /*
@@ -96,6 +118,9 @@ export function PushTaps() {
      life of the process, so it has to be consumed rather than re-read on
      every state change. */
   const coldStartHandled = React.useRef(false);
+
+  /* Every pull that lands bumps the counter screens re-read on. */
+  React.useEffect(() => whenPulled(() => useStore.setState((s) => ({ pullSeq: s.pullSeq + 1 }))), []);
 
   React.useEffect(() => {
     if (!boot.ready || !signedIn) return;

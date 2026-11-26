@@ -87,3 +87,17 @@ guessed. **An allocated lot always wins**, even one with no rate yet, and every
 screen says which source a cost came from. Filled by `npm run jobs --
 sheet-lot-costing` (`--dry-run` first), read from the staging copy of the tab;
 Google is never asked.
+
+**On the handset, courses are still view-only and unlinked.** `app/knowledge.tsx`
+exists but no screen routes to it, and a tap says the course cannot be opened
+on the phone: `mbos_courses.attachment_id` is not on the wire and nothing writes
+`mbos_course_progress` from a handset. The one fix made is the label —
+`coursesFor` sends `category` and the handset read `kind`, which nothing fills,
+so `listCourses` reads `COALESCE(kind, category)`. Sending the attachment
+(the documents path) and a completion write are what it would take to link it.
+
+**A withdrawn document takes its file with it.** A `documents` tombstone deletes
+the downloaded file as well as the row (`applyDeletionChunk`); it stayed in the
+app's storage for good. And a download that meets a 401 refreshes the access
+token and tries once more (`refreshedAccessToken`) — a file download streams to
+disk and never went through `request`'s own retry.
