@@ -133,6 +133,23 @@ export default function Visit() {
   const payMode = useStore((s) => s.payMode);
   const arrival = useStore((s) => s.arrival);
   const setArrival = useStore((s) => s.setArrival);
+  /*
+   * THE SHOP, EVEN WHERE ITS ROW IS NOT ON THIS PHONE.
+   *
+   * `c` is the customers row, and a pull can take it away mid-visit — a
+   * reassignment at noon, a tombstone, a stop on an office plan for a shop
+   * this phone was never sent. Every id and name on this screen was read off
+   * `c`, so with the row gone Check out returned without a word and the visit
+   * he was standing in could not be saved at all. The arrival on disk names
+   * the shop he walked into; that is enough to save the visit against, and
+   * the office is the one that decides what it is worth. `shopsInFlight`
+   * stops the sync taking the row in the first place — this is for a row
+   * that was never there.
+   */
+  const storeCustId = useStore((s) => s.custId);
+  const shopId =
+    c?.id ?? (arrival && storeCustId && arrival.customerId === storeCustId ? arrival.customerId : null);
+  const shopLabel = c?.name ?? (arrival && shopId === arrival.customerId ? arrival.customerName : null);
 
   const [form, setForm] = React.useState<'complaint' | 'sample' | null>(null);
   const [draft, setDraft] = React.useState<Record<string, string>>({});
@@ -387,7 +404,7 @@ export default function Visit() {
   /* Read off the ARRIVAL, which is on disk — see `Arrival.overrideReason`.
      Held here they went with the screen, and the visit then saved as though
      nobody had been refused at the door at all. */
-  const ours = arrival && c && arrival.customerId === c.id ? arrival : null;
+  const ours = arrival && shopId && arrival.customerId === shopId ? arrival : null;
   const overrideReason = ours?.overrideReason ?? null;
   const pinRequested = !!ours?.pinCorrectionRequested;
   /* Asked once, after the override, and only where there is a pin to be
@@ -420,7 +437,7 @@ export default function Visit() {
    */
   const mediaParent = ours?.visitId ?? 'pending';
 
-  const custId = c?.id ?? null;
+  const custId = shopId;
   const userId = boot.session?.user.id ?? '';
 
   /*
@@ -1097,7 +1114,15 @@ export default function Visit() {
   }
 
   async function saveAndGo(spent: string, unverifiedReason: string | null) {
-    if (!c || savingRef.current) return;
+    if (savingRef.current) return;
+    /* NEVER A SILENT NO. This returned without a word where the shop row was
+       missing, so Check out simply did nothing — see `shopId`. With no row
+       AND no arrival naming the shop there is genuinely nothing to save
+       against, and he is told so and where to go. */
+    if (!shopId) {
+      notify('This shop is not on your phone any more, so the visit cannot be saved here. Sync, then open the shop again.', 'error');
+      return;
+    }
     /* The answers are owed on EVERY path out, the unverified save included —
        see `ANSWER_KEYS`. Asked, not refused: the sheet has the controls. */
     if (owed.length) {
@@ -1143,8 +1168,8 @@ export default function Visit() {
     try {
       visitId = await saveVisit({
         id: ours?.visitId ?? null,
-        customerId: c.id,
-        customerName: c.name,
+        customerId: shopId,
+        customerName: shopLabel ?? 'this shop',
         userId: boot.session?.user.id ?? '',
         checkIn: fix,
         checkOut,
@@ -1782,7 +1807,7 @@ export default function Visit() {
   return (
     <AppFrame
       chipsBelowTitle
-      title={c?.name ?? 'Visit'}
+      title={shopLabel ?? 'Visit'}
       activeTab="customers"
       onBack={() => router.back()}
       heroTop={

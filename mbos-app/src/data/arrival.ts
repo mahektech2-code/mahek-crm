@@ -1,5 +1,6 @@
-import { getKv, newId, one, setKv } from '../db';
+import { all, getKv, newId, one, setKv } from '../db';
 import { getConfig } from './config';
+import { IN_FLIGHT_LEG_SHOPS_SQL, IN_FLIGHT_LEG_WINDOW_MS } from './day-shape';
 import { isoDate } from '../lib/format';
 import { arrivalIsCurrent, withCheckIn } from '../lib/visit';
 
@@ -242,6 +243,39 @@ export async function patchArrival(patch: Partial<Arrival>): Promise<Arrival | n
   const next: Arrival = { ...value, ...patch };
   await setKv(KEY, JSON.stringify(next));
   return next;
+}
+
+/**
+ * THE SHOPS A SYNC MAY NOT TAKE OFF THIS PHONE, because he is on his way to
+ * one or standing in it.
+ *
+ * A pull drops a shop that has left his book (`reconcileBook`) or that the
+ * office tombstones — a reassignment at noon, a territory edit, a stop on an
+ * office-made plan for a shop the phone was never sent. Taken from under an
+ * open arrival, the visit screen had no customer to save against and Check
+ * out did nothing at all; taken from under an open trip, the arrival had no
+ * shop to arrive at. Neither is the office's to undo mid-visit: the work he
+ * is doing there is his, and the next pull after the visit is saved removes
+ * the row as it would have.
+ *
+ * The arrival is read RAW — not through `readArrival` — because this asks
+ * what is on disk, not whether it is still current, and a read here must
+ * never be the thing that rubs an arrival out.
+ */
+export async function shopsInFlight(): Promise<string[]> {
+  const ids = new Set<string>();
+  const value = parse(await getKv(KEY));
+  if (value?.customerId) ids.add(value.customerId);
+  try {
+    const legs = await all<{ customerId: string }>(
+      IN_FLIGHT_LEG_SHOPS_SQL,
+      [Date.now() - IN_FLIGHT_LEG_WINDOW_MS],
+    );
+    for (const l of legs) ids.add(l.customerId);
+  } catch {
+    /* No legs table on a phone mid-migration: the arrival alone still holds. */
+  }
+  return [...ids];
 }
 
 /** Spent — the visit is in the ledger, or the trip was called off. */
