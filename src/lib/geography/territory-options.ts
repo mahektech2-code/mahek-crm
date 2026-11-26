@@ -17,6 +17,7 @@
 
 import { canonicalState, stateKey } from "@/lib/india-states";
 import { INDIA_GEOGRAPHY } from "@/lib/geography/india-districts";
+import { townsOf } from "@/lib/geography/india-towns";
 import { placeKey } from "@/lib/place-parse";
 import { splitTownParent } from "@/lib/territory-path";
 import type { DistrictNode, PlaceTree, StateNode } from "@/lib/services/sales-service";
@@ -40,9 +41,21 @@ export function mergeMasterWithBook(book: PlaceTree): PlaceTree {
       const k = placeKey(m.name);
       const found = bookDistricts.get(k);
       if (found) matched.add(k);
+      /* The book's towns first, then every other town of the district from the
+         shared list, at zero. Matched on the folded name, so a town is never
+         offered twice (a pick is stored by name); the book's spelling wins. */
+      const booked = found?.towns ?? [];
+      const have = new Set(booked.map((t) => placeKey(t.town)));
+      const unbooked: { town: string; shops: number }[] = [];
+      for (const [town] of townsOf(master.name, m.name)) {
+        const townKey = placeKey(town);
+        if (have.has(townKey)) continue;
+        have.add(townKey);
+        unbooked.push({ town, shops: 0 });
+      }
       return {
         district: m.name,
-        towns: found?.towns ?? [],
+        towns: [...booked, ...unbooked],
         shops: found?.shops ?? 0,
         ...(m.provisional ? { provisional: true } : {}),
       };
@@ -117,6 +130,41 @@ export function leavesByState(leaves: ReadonlyArray<Leaf>): Map<string, Leaf[]> 
 /** The states (as canonical names) that have something narrower than the whole state picked under them. */
 export function narrowedStates(leaves: ReadonlyArray<Leaf>): string[] {
   return [...leavesByState(leaves).keys()];
+}
+
+/**
+ * PICKED TOWNS WITH NO SHOP IN THEM. A town narrows its district, so allocating
+ * one that holds nothing can take every shop of that district off a handset.
+ * Read off the same tree the dialog draws, so the screen and the server name
+ * the same towns. A town the tree does not hold counts as having none.
+ */
+export function zeroShopTowns(tree: PlaceTree, leaves: ReadonlyArray<Leaf>): string[] {
+  const fold = (s: string) => s.trim().toLowerCase();
+  const out: string[] = [];
+  for (const t of leaves) {
+    if (t.kind !== "town") continue;
+    const { district, state } = splitTownParent(t.parent ?? "");
+    const shops = tree.states
+      .find((s) => fold(s.state) === fold(state))
+      ?.districts.find((d) => fold(d.district) === fold(district))
+      ?.towns.find((x) => fold(x.town) === fold(t.value))?.shops;
+    if (!shops) out.push(`${t.value} · ${district}`);
+  }
+  return [...new Set(out)].sort((a, b) => a.localeCompare(b));
+}
+
+/** Why a save may not go ahead until the zero-shop towns are confirmed — or null. */
+export function zeroShopProblem(input: {
+  changed: boolean;
+  towns: ReadonlyArray<string>;
+  acknowledged: ReadonlyArray<string> | undefined;
+}): string | null {
+  if (!input.changed || !input.towns.length) return null;
+  const said = new Set(input.acknowledged ?? []);
+  const missing = input.towns.filter((t) => !said.has(t));
+  if (!missing.length) return null;
+  const one = missing.length === 1;
+  return `${missing.join(", ")} ${one ? "has" : "have"} no shops. Allocating ${one ? "it" : "them"} can take shops off this handset. Confirm that before saving.`;
 }
 
 export type OutsideCount = { state: string; shops: number };

@@ -59,6 +59,7 @@ import {
   fieldTeam,
   managerScope,
   onlyMine,
+  territoryPlaces,
 } from "@/lib/services/sales-service";
 import type { LeadFilters } from "@/lib/lead-filters";
 import { salesTypeLabel } from "@/lib/lead-labels";
@@ -80,7 +81,7 @@ import {
 import { territoryLeaves, territoryName } from "@/lib/territory-rules";
 import { setGeoAllocations } from "@/lib/services/geo-service";
 import type { GeoAllocation, GeoPick } from "@/lib/geography/geo-picker";
-import { acknowledgementProblem, leavesByState } from "@/lib/geography/territory-options";
+import { acknowledgementProblem, leavesByState, zeroShopProblem, zeroShopTowns } from "@/lib/geography/territory-options";
 import { citiesInWords, cityColumns, normaliseCities } from "@/lib/journey-cities";
 import { bookIdsIgnoringTerritory } from "@/lib/services/mbos-service";
 import {
@@ -2412,6 +2413,8 @@ export async function setSalesmanTerritories(input: {
    * stale one — in any state — is refused. Never trusted from the screen.
    */
   acknowledgedOutside?: { state: string; shops: number }[];
+  /** The zero-shop towns the dialog warned about and somebody confirmed. Recomputed here. */
+  acknowledgedZeroTowns?: string[];
 }): Promise<Result<void>> {
   try {
     const user = await requireSalesAccess(SALES_MANAGER("sales.people", "sales.territory"));
@@ -2447,6 +2450,13 @@ export async function setSalesmanTerritories(input: {
         acknowledged: Array.isArray(input.acknowledgedOutside) ? input.acknowledgedOutside : undefined,
       });
       if (problem) return err(problem, "conflict");
+
+      const zero = zeroShopProblem({
+        changed: true,
+        towns: zeroShopTowns(await territoryPlaces(), wanted),
+        acknowledged: Array.isArray(input.acknowledgedZeroTowns) ? input.acknowledgedZeroTowns : undefined,
+      });
+      if (zero) return err(zero, "conflict");
     }
 
     /* THE HAND-OVER moves revenue and targets between people, so it is

@@ -273,6 +273,29 @@ describe("saving a narrowed territory", () => {
     assert.deepEqual(await areasOf(salesman.id), ["state:Maharashtra"]);
   });
 
+  test("a town with no shop is refused until that town is confirmed, and nothing is saved before", async () => {
+    setTestUser(admin);
+    const territories = [{ kind: "town", value: "Murbad", parent: "Thane, Maharashtra" }];
+    /* The shops left outside are confirmed, so what is left to refuse is the town. */
+    const preview = await previewAreaHandover({ salesmanId: salesman.id, territories });
+    assert.ok(preview.ok, JSON.stringify(preview));
+    const acknowledgedOutside = preview.data.outside.map((o) => ({ state: o.state, shops: o.shops }));
+
+    const refused = await setSalesmanTerritories({ salesmanId: salesman.id, territories, acknowledgedOutside });
+    assert.ok(!refused.ok && refused.code === "conflict", JSON.stringify(refused));
+    assert.match(refused.error, /Murbad · Thane has no shops/);
+    assert.deepEqual(await areasOf(salesman.id), []);
+
+    const ok = await setSalesmanTerritories({
+      salesmanId: salesman.id,
+      territories,
+      acknowledgedOutside,
+      acknowledgedZeroTowns: ["Murbad · Thane"],
+    });
+    assert.ok(saved(ok), JSON.stringify(ok));
+    assert.deepEqual(await areasOf(salesman.id), ["town:Murbad"]);
+  });
+
   test("a typed city is acknowledged for what it leaves out, and only that", async () => {
     setTestUser(admin);
     const refused = await setSalesmanTerritories({ salesmanId: salesman.id, territories: NAGPUR_CITY });

@@ -297,7 +297,12 @@ export function GeoAreas({
     </section>
   );
 
-  if (!available || (state.status === "ready" && !state.geo)) {
+  /* A master that is genuinely empty, with nothing saved against it, draws
+     nothing: a heading saying towns are not loaded, under a list of towns, only
+     misleads. A failed load is not "empty" and still says so below. */
+  const empty = !available || (state.status === "ready" && !state.geo);
+  if (empty && !saved.length) return null;
+  if (empty) {
     return note(
       "The official geography (states, districts, talukas and urban local bodies) has not been loaded yet, so there is nothing to pick here. Nothing above is affected.",
     );
