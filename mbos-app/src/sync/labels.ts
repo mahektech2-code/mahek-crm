@@ -21,6 +21,7 @@ export const ENTITY_LABEL: Record<string, string> = {
   expense: 'Expense claim',
   expense_day: 'Day of travel',
   expense_day_submit: 'Day sent for payment',
+  notification_read: 'Message read',
   travel_leg: 'Journey',
   leave: 'Leave request',
   tour: 'Tour request',
@@ -36,6 +37,37 @@ export const ENTITY_LABEL: Record<string, string> = {
   plan_stops: 'Shops for the day',
   territory_request: 'Area request',
 };
+
+/**
+ * WHERE A RECORD HE MADE HAS GOT TO ON ITS WAY TO THE OFFICE, in words and a
+ * tone — or null once the office has it, when the record's own status is the
+ * thing to show. One reading for every list that draws one, so "Not sent" on
+ * one screen and "Open" on the next cannot describe the same refused entry.
+ */
+export function syncBadge(syncState: string | null | undefined): { label: string; tone: 'neutral' | 'danger' | 'amber' } | null {
+  switch (syncState) {
+    case 'queued':
+    case 'syncing':
+    case 'local':
+      return { label: 'Not sent yet', tone: 'neutral' };
+    case 'rejected':
+      return { label: 'Not accepted', tone: 'danger' };
+    case 'failed':
+      return { label: 'Could not send', tone: 'danger' };
+    case 'blocked':
+      return { label: 'On hold', tone: 'amber' };
+    default:
+      return null;
+  }
+}
+
+/** The office's word on a complaint, for the phone's badge. */
+export function complaintStatusBadge(status: string): { label: string; tone: 'amber' | 'success' | 'danger' } {
+  if (status === 'resolved' || status === 'closed') return { label: 'Closed', tone: 'success' };
+  if (status === 'rejected') return { label: 'Turned down', tone: 'danger' };
+  if (status === 'in_progress' || status === 'awaiting_customer') return { label: 'Being handled', tone: 'amber' };
+  return { label: 'Open', tone: 'amber' };
+}
 
 export function entityLabel(entityType: string): string {
   return ENTITY_LABEL[entityType] ?? 'Entry';

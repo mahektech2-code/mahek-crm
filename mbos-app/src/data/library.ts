@@ -8,7 +8,7 @@ import {
   getInfoAsync,
 } from 'expo-file-system/legacy';
 import { all, run } from '../db';
-import { accessToken, BASE, deviceId, versionHeader } from '../sync/api';
+import { accessToken, BASE, deviceId, refreshedAccessToken, versionHeader } from '../sync/api';
 
 /**
  * The document library and the training centre, read from the local store.
@@ -108,7 +108,10 @@ const EXTENSION: Record<string, string> = {
 /** Due first, then unfinished, then what is already done. */
 export async function listCourses(): Promise<CourseRow[]> {
   return all<CourseRow>(
-    `SELECT id, title, category, kind, minutes, mandatory, deadline,
+    /* `kind` is not on the wire — the office sends `category` and nothing
+       fills `kind`, so every row drew no label and the generic mark. The
+       category is the label the office gave it. */
+    `SELECT id, title, category, COALESCE(kind, category) AS kind, minutes, mandatory, deadline,
             completedAt, quizScore
        FROM courses
       ORDER BY (completedAt IS NOT NULL) ASC, mandatory DESC, title COLLATE NOCASE ASC`,
@@ -160,28 +163,39 @@ export async function downloadDocument(
      still count as held. */
   const target = documentDirectory + fileStem(d.remoteRef) + (EXTENSION[d.kind ?? ''] ?? '');
   try {
-    const task = createDownloadResumable(
-      `${BASE}/api/mbos/documents/${encodeURIComponent(d.id)}`,
-      target,
-      {
-        headers: {
-          authorization: `Bearer ${token}`,
-          'x-mbos-device': await deviceId(),
-          'x-mbos-app-version': versionHeader(),
+    const fetchWith = async (bearer: string) =>
+      createDownloadResumable(
+        `${BASE}/api/mbos/documents/${encodeURIComponent(d.id)}`,
+        target,
+        {
+          headers: {
+            authorization: `Bearer ${bearer}`,
+            'x-mbos-device': await deviceId(),
+            'x-mbos-app-version': versionHeader(),
+          },
         },
-      },
-      (p) => {
-        if (p.totalBytesExpectedToWrite > 0) onProgress?.(p.totalBytesWritten / p.totalBytesExpectedToWrite);
-      },
-    );
-    const done = await task.downloadAsync();
+        (p) => {
+          if (p.totalBytesExpectedToWrite > 0) onProgress?.(p.totalBytesWritten / p.totalBytesExpectedToWrite);
+        },
+      ).downloadAsync();
+    let done = await fetchWith(token);
+    /* AN EXPIRED TOKEN IS REFRESHED AND TRIED ONCE MORE. The access token
+       lives minutes; a salesman who opened the library after lunch was told
+       to go and press Send now on another screen and come back. */
+    if (done && done.status === 401) {
+      const fresh = await refreshedAccessToken();
+      if (fresh) {
+        await deleteAsync(target, { idempotent: true });
+        done = await fetchWith(fresh);
+      }
+    }
     if (!done) {
       await deleteAsync(target, { idempotent: true });
       return { ok: false, reason: 'The download stopped. Try again.' };
     }
     if (done.status !== 200) {
       await deleteAsync(target, { idempotent: true });
-      if (done.status === 401) return { ok: false, reason: 'Your sign-in needs refreshing. Open Send to office, press Send now, then try again.' };
+      if (done.status === 401) return { ok: false, reason: 'Your sign-in has run out. Sign in again with signal, then try again.' };
       if (done.status === 404) return { ok: false, reason: 'This document is not available to you any more.' };
       if (done.status === 410) return { ok: false, reason: 'The office has taken this file down.' };
       return { ok: false, reason: 'The file could not be downloaded. Try again.' };

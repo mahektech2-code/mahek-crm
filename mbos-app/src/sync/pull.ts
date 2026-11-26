@@ -99,6 +99,7 @@ export async function applyPull(pull: PullPayload): Promise<number> {
     /* AFTER the approvals: an order's own row is the office's word on it, and
        a manager approval nobody can decide must not read it back to pending. */
     await c('myOrders', () => applyMyOrders(pull.myOrders));
+    await c('myComplaints', () => applyMyComplaints(pull.myComplaints));
     await c('orderChanges', () => applyOrderChanges(pull.orderChanges));
     await c('territoryRequests', () => applyTerritoryRequests(pull.territoryRequests));
     await c('attendanceToday', () => restoreAttendance(pull.attendanceToday));
@@ -1290,6 +1291,27 @@ const ORDER_STATUS: Record<string, string> = {
  * the phone has nothing queued for is touched: a queued edit is the newer fact
  * until it is sent, the rule `leads` and `samples` already follow.
  */
+/**
+ * WHERE HIS COMPLAINTS HAVE GOT TO. Only the status moves, and only on a row
+ * this phone holds with nothing of its own still waiting to go — the rule every
+ * owned table follows. A complaint raised at a desk is not his to see here.
+ */
+async function applyMyComplaints(rows: unknown[] | undefined): Promise<number> {
+  if (!rows?.length) return 0;
+  let n = 0;
+  await eachRow('myComplaints', rows, async (raw) => {
+    const c = raw as { id?: unknown; status?: unknown };
+    if (typeof c.id !== 'string' || typeof c.status !== 'string') return;
+    await run(
+      `UPDATE complaints SET status = ?, syncState = 'synced', syncMessage = NULL
+        WHERE id = ? AND ${noPending('complaints')}`,
+      [c.status, c.id],
+    );
+    n++;
+  });
+  return n;
+}
+
 async function applyMyOrders(rows: unknown[] | undefined): Promise<number> {
   if (!rows?.length) return 0;
   let n = 0;
@@ -1664,7 +1686,23 @@ async function applyDeletionChunk(entity: string, ids: string[]): Promise<number
     return ids.length;
   }
   if (!DELETABLE.has(entity)) return 0;
+  /* A WITHDRAWN DOCUMENT TAKES ITS FILE WITH IT. The row went and the
+     download stayed in the app's storage for good — a price list nobody sells
+     at, on a phone with no way left to find or delete it. Deleted after the
+     row; a file that will not go is not worth the pull. */
+  const files =
+    entity === 'documents'
+      ? await all<{ localUri: string | null }>(`SELECT localUri FROM documents WHERE id IN (${marks}) AND localUri IS NOT NULL`, ids)
+      : [];
   await run(`DELETE FROM ${entity} WHERE id IN (${marks})`, ids);
+  if (files.length) {
+    try {
+      const fs = await import('expo-file-system/legacy');
+      for (const f of files) if (f.localUri) await fs.deleteAsync(f.localUri, { idempotent: true }).catch(() => undefined);
+    } catch {
+      /* No file system here (a test, an old build): the rows are gone regardless. */
+    }
+  }
   return ids.length;
 }
 

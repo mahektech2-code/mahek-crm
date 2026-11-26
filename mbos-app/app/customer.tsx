@@ -47,6 +47,7 @@ import { callNumber, openWhatsApp } from '../src/lib/messaging';
 import { cleanAmount, paiseFromTyped } from '../src/lib/money-input';
 import { Appear, DUR, Stagger, animateLayoutFor } from '../src/components/ui/motion';
 import { feedback } from '../src/components/ui/feedback';
+import { complaintStatusBadge, syncBadge } from '../src/sync/labels';
 
 /**
  * The customer record.
@@ -1185,6 +1186,10 @@ export default function CustomerRecord() {
 
         {/* ---- complaints ----
 
+            The desk's status now comes down on `myComplaints`, so the word
+            below follows the complaint after it is sent.
+
+
             A complaint was WRITE-ONLY for as long as it has existed.
             `logComplaint` wrote the row from the visit drawer and sent it to
             the desk team, and nothing on this handset ever selected one back —
@@ -1215,8 +1220,12 @@ export default function CustomerRecord() {
                       <Text style={[{ flex: 1, minWidth: 0, fontSize: 15, lineHeight: 21, color: C.ink }, weight(700)]}>
                         {g.category}
                       </Text>
-                      <Badge tone={g.syncState === 'queued' ? 'neutral' : g.status === 'open' ? 'amber' : 'success'}>
-                        {g.syncState === 'queued' ? 'Not sent' : g.status === 'open' ? 'Open' : 'Closed'}
+                      {/* WHERE IT IS, not only whether it went. A refused
+                          complaint read "Open" — the one state the desk never
+                          gave it — and an answered one read "Open" for ever,
+                          because nothing brought the desk's word down. */}
+                      <Badge tone={(syncBadge(g.syncState) ?? complaintStatusBadge(g.status)).tone}>
+                        {(syncBadge(g.syncState) ?? complaintStatusBadge(g.status)).label}
                       </Badge>
                     </View>
                     <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 6 }}>
