@@ -3225,10 +3225,30 @@ export const SETTINGS = [
     category: "mbos-credit",
     label: "Days overdue that block new orders",
     description:
-      "A customer with a bill this far past its due date stops being offered new orders in the field. 0 switches the rule off. This is a policy about debt, not about the credit limit — an account inside its limit can still be months late.",
+      "A customer with a bill this far past its due date stops being offered new orders in the field. 0 switches the rule off. This is a policy about debt, not about the credit limit — an account inside its limit can still be months late. The handset says so before the order is taken, and `handleOrder` refuses one that gets through with `overdue_blocked`. Unstated and disputed bills never block.",
     default: 0,
     min: 0,
     max: 365,
+  },
+  {
+    key: "mbos.credit.openOrderWindowDays",
+    type: "integer",
+    category: "mbos-credit",
+    label: "Open orders counted against credit for",
+    description:
+      "Days. What a billing party has ORDERED and not yet been billed for — field and CRM orders pending approval or approved, with no bill against them — is sent to the handset and added to what they owe when an order is judged against the limit. Orders older than this are left out, so one that was never billed does not count against the shop for ever.",
+    default: 60,
+    min: 1,
+    max: 365,
+  },
+  {
+    key: "mbos.credit.accountsPhone",
+    type: "text",
+    category: "mbos-credit",
+    label: "Accounts phone number for the field",
+    description:
+      "The number a salesman's handset rings from \"Call accounts\" when an order is stopped — a credit block, the limit or an overdue bill. Empty hides the button and the screen says to ring accounts instead.",
+    default: "",
   },
 
   /* ------------------------------------------------------------ payments */
@@ -7628,6 +7648,8 @@ export type Config = {
   "mbos.credit.blockOnLimitExceeded": boolean;
   "mbos.credit.outstandingStaleHours": number;
   "mbos.credit.overdueDaysBlockOrders": number;
+  "mbos.credit.accountsPhone": string;
+  "mbos.credit.openOrderWindowDays": number;
 
   "mbos.payments.cashDepositSlaHours": number;
   "mbos.payments.managerNotifyThresholdPaise": number;

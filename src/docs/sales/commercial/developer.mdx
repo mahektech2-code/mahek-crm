@@ -145,7 +145,6 @@ The salesman reads the message on his Not accepted list; it must name the custom
 | Gap | Where |
 |---|---|
 | `mbos.orders.approvalThresholdPaise` / `secondTierThresholdPaise` describe a manager sign-off the server never applies; only the handset credit engine reads the first | `registry.ts`; `mbos-app/src/engines/credit.ts` |
-| `mbos.credit.overdueDaysBlockOrders` is not re-checked by `handleOrder` | `actions/mbos.ts` `handleOrder` |
 | Deposit window shown as "working day(s)" but computed as `hours / 24` against calendar days (`current_date - received_at`) | `payments/page.tsx`; `sales-service.ts` `RECEIPT_COLUMNS` |
 | Invoices narrow on `coalesce(sales_am_id, owner_id)`, not `ASSIGNED_TO_SQL` | `sales-service.ts` `fieldInvoiceWhere` |
 | AGENTS.md: "`handleOrder` refuses one against a lead below negotiation" — the code converts the lead instead | `actions/mbos.ts` `handleOrder` |

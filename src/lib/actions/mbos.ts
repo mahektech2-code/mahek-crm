@@ -98,6 +98,9 @@ import { financialYearOf } from "../financial-year";
 import { metresBetween } from "../geo";
 import { today, recomputeOutstanding, recomputeLastContact, salesManagerForOwner } from "../recompute";
 import { allocate, type AllocatableBill } from "../engines/allocation";
+import { planFieldCollection } from "../engines/field-collection";
+import { overdueBlockingBill } from "../engines/field-order-gates";
+import { listBills } from "../services/payment-service";
 import { computeHealth, type HealthFacts } from "../engines/health";
 import { fileStorage } from "../storage";
 import { classOfCity } from "../services/expense-policy-service";
@@ -2769,6 +2772,27 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
     };
   }
 
+  /* --- the overdue block, `mbos.credit.overdueDaysBlockOrders`. A debt
+     policy rather than a credit one, and 0 is off. The handset asks the same
+     question of its own open bills before the order is taken
+     (`engines/order-gates.ts`), so this is the office confirming what the
+     phone already said rather than a surprise. A new order only: an edit is
+     the same order, already taken. --- */
+  const blockDays = config["mbos.credit.overdueDaysBlockOrders"];
+  if (blockDays > 0) {
+    const open = await listBills({ customerId: customer.id, openOnly: true }, principal);
+    const worst = overdueBlockingBill(open, blockDays);
+    if (worst) {
+      return {
+        kind: "rejected",
+        value: reject(
+          "overdue_blocked",
+          `${customer.name} has bill ${worst.billNo ?? ""} ${worst.overdueDays} days past its due date, and new orders stop at ${blockDays} days. The order was not accepted — collect it or ring accounts.`,
+        ),
+      };
+    }
+  }
+
   /* --- the products and the minimum. Shared with an edit and a change
      request, which put lines on the same order and must pass the same bar. --- */
   const checked = await checkOrderLines(p.lines, customer.name, config);
@@ -2847,8 +2871,10 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
    * truncates to.
    */
   const orderedAtIso = orderedAt.toISOString();
-  const day = await today();
-  const fy = financialYearOf(day);
+  /* The series is the financial year the order is FOR, not the day it
+     reached us: an order taken on 31 March and synced on 1 April belongs to
+     the year it was taken in. */
+  const fy = financialYearOf(String(orderDay));
   const prefix = seriesPrefix(config["mbos.orders.numberSeriesPrefix"], "MBOS");
 
   /* `OrderLine` is the shape the rest of MahekOne reads, with `productId`
@@ -3234,39 +3260,20 @@ async function handlePayment(principal: MbosPrincipal, item: SyncItem): Promise<
     paid: Number(b.paid),
   }));
 
-  /* A bill the handset named that has since been settled is a rejection with
-   * its own code: the money is real, but where it was going no longer exists,
-   * and silently re-allocating it is not a decision code should take. */
-  if (p.billIds?.length) {
-    const byId = new Map(allocatable.map((b) => [b.id, b]));
-    for (const billId of p.billIds) {
-      const bill = byId.get(billId);
-      if (!bill) {
-        return {
-          kind: "rejected",
-          value: reject(
-            "bill_settled",
-            `A bill this payment from ${customer.name} was against is no longer on their account. Re-enter the receipt against the bills that are open.`,
-          ),
-        };
-      }
-      if (bill.amount - bill.paid <= 0) {
-        return {
-          kind: "rejected",
-          value: reject(
-            "bill_settled",
-            `Bill ${bill.billNo} has already been settled, so ${rupees(p.amountPaise)} from ${customer.name} was not applied to it. Record it against their open bills instead.`,
-          ),
-        };
-      }
-    }
-  }
-
-  const allocation = allocate(allocatable, {
-    amount: p.amountPaise,
-    mode: p.billIds?.length ? "settle" : "auto",
-    selectedBillIds: p.billIds ?? undefined,
-  });
+  /*
+   * A BILL THE HANDSET NAMED THAT HAS SINCE BEEN SETTLED IS ACCEPTED, NOT
+   * REFUSED (Nov 2026 — a reversal). It used to be `bill_settled`: the money
+   * is real, but where it was going no longer exists. Refusing it left cash a
+   * salesman was physically holding on Not accepted, and the only way out was
+   * a second receipt for one handful of notes. The receipt is `reported`
+   * whatever happens here, so nothing counts until accounts confirm it — and
+   * confirming can re-point it. So the named bills still open are filled
+   * first, the rest go oldest first and then on account, and the receipt
+   * carries a sentence saying so (`planFieldCollection`).
+   */
+  const plan = planFieldCollection(allocatable, { amountPaise: p.amountPaise, billIds: p.billIds ?? null });
+  const allocation = allocate(allocatable, plan.request);
+  const note = [p.note ?? null, plan.flag].filter((x): x is string => !!x).join(" · ") || null;
 
   const day = await today();
   const receivedAt = p.receivedAt ?? day;
@@ -3288,9 +3295,10 @@ async function handlePayment(principal: MbosPrincipal, item: SyncItem): Promise<
       instrumentDate: p.instrumentDate ?? null,
       visitId: p.visitId ?? null,
       receiptNo: serverNumber,
-      // The note is the salesman's own sentence and nothing else. The receipt
-      // number used to be prefixed onto it for want of a column; it has one.
-      note: p.note ?? null,
+      // The note is the salesman's own sentence, plus — where a bill he named
+      // was settled meanwhile — the office's sentence saying where the money
+      // went instead, for accounts to read before confirming it.
+      note,
       // Money the customer says has arrived is not money the business has
       // seen. It sits at `reported` and moves nothing in the ledger until
       // accounts find it in the bank.
@@ -3330,7 +3338,7 @@ async function handlePayment(principal: MbosPrincipal, item: SyncItem): Promise<
       sourceRecordId: item.entityId,
       occurredAt: new Date(item.clientCreatedAt),
       actorUserId: principal.user.id,
-      summary: `${rupees(p.amountPaise)} collected in the field, receipt ${serverNumber} — reported, awaiting confirmation by accounts`,
+      summary: `${rupees(p.amountPaise)} collected in the field, receipt ${serverNumber} — reported, awaiting confirmation by accounts${plan.flag ? `. ${plan.flag}` : ""}`,
     });
 
     if (p.visitId) {
