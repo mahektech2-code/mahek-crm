@@ -12,6 +12,7 @@ import { AppFrame } from '../src/components/shell/AppFrame';
 import { RemoteBanners } from '../src/components/remote/RemoteBanners';
 import { copy, useRemote } from '../src/data/remote';
 import { useStore } from '../src/state/store';
+import { readArrival } from '../src/data/arrival';
 import { useBoot } from '../src/state/boot';
 import { compactInrFromPaise, dmy, hhmm, inrFromPaise, isoDate, plural } from '../src/lib/format';
 import { DASH_CARDS, DAY_AHEAD } from '../src/data/fixtures';
@@ -20,6 +21,7 @@ import {
   checkOut,
   dayState,
   durationLabel,
+  runningSince,
   setOverrideReason,
   todayRow,
   workedLabel,
@@ -61,9 +63,11 @@ import { OdometerCamera, type OdometerResult } from '../src/components/ui/odomet
 import { BottomSheet } from '../src/components/ui/overlays';
 import { TravelModeList } from '../src/components/ui/travel-mode-list';
 import {
+  abandonLeg,
   addLateClosingReading,
   dismissUnpaidMeterDay,
   endSession,
+  openLegOf,
   openSessionLeg,
   todayOpeningKm,
   unpaidMeterDay,
@@ -912,6 +916,35 @@ export default function Home() {
    */
   const endDay = async () => {
     if (!userId || starting) return;
+    /*
+     * A SHOP HE IS STILL AT IS ASKED ABOUT FIRST, before the camera opens.
+     *
+     * Punching out used to ignore the visit entirely: the day closed, the
+     * tracker stopped, and the visit went on running in his pocket until the
+     * day-boundary sweep closed it "no check-out was recorded" — with the
+     * ride home counted as time in the shop, and his manager reading a visit
+     * that never ended. The arrival is on disk, so it is known here; the way
+     * out of it (Check out, or Not going in) is on the visit screen, and that
+     * is where he is sent. Nothing is written by the question.
+     */
+    const there = useStore.getState().arrival ?? (await readArrival().catch(() => null));
+    if (there) {
+      askConfirm({
+        title: there.checkedInAt != null ? `Still in ${there.customerName}` : `Still at ${there.customerName}`,
+        body:
+          there.checkedInAt != null
+            ? 'Your visit is still on. Check out first, then punch out. Otherwise the visit runs until the end of the day.'
+            : 'You arrived and did not check in. Check in, or say you are not going in, then punch out.',
+        confirmLabel: there.checkedInAt != null ? 'Go to check out' : 'Go to the shop',
+        cancelLabel: 'Stay punched in',
+        tone: 'navy',
+        run: () => {
+          set({ custId: there.customerId });
+          router.push('/visit');
+        },
+      });
+      return;
+    }
     setStarting(true);
     try {
       const threshold = await getConfig<number>('mbos.location.gpsAccuracyThresholdM', 100);
@@ -941,7 +974,19 @@ export default function Home() {
        * camera on it would be the app asking about a vehicle he told it this
        * morning he was not on.
        */
-      const session = await openSessionLeg(userId);
+      /*
+       * THIS STRETCH'S SESSION, not any session ever left open.
+       *
+       * A bus day opens no session leg, so yesterday's own-bike session — on
+       * a phone that has not yet seen a day boundary — was the open one, and
+       * punching out of a day spent on buses opened the camera for a bike
+       * he was not on, and wrote today's reading onto yesterday's ride. Only
+       * a session started inside the punch-in he is ending is his to close
+       * here; an older one is `closeStaleSessions`' to close at its own
+       * reading, which is what it is for.
+       */
+      const stretch = await runningSince(userId);
+      const session = await openSessionLeg(userId, stretch ?? undefined);
       const sessionMode = session
         ? (await travelModesFor('day')).find((m) => m.key === session.modeKey) ?? null
         : null;
@@ -980,6 +1025,17 @@ export default function Home() {
           });
         } catch {
           notify('Punched out. Travel did not close. Check Travel.', 'warn');
+        }
+      }
+      /* A TRIP HE NEVER ARRIVED FROM is closed with the punch-out, at its own
+         reading, and named. Left open it held `TravelGate` shut against the
+         next morning's first journey and claimed a ride nobody finished. */
+      if (out.ok) {
+        try {
+          const trip = await openLegOf(userId);
+          if (trip) await abandonLeg(trip.id, 'Punched out before arriving.');
+        } catch {
+          /* The punch-out has landed; the day boundary closes it anyway. */
         }
       }
       load();

@@ -916,13 +916,22 @@ type LegRow = TravelLeg & { manualReason?: string | null };
  * zero-kilometre row on every such day for the policy to reason about.
  */
 
-/** The session he is punched in on, if he is on one. */
-export async function openSessionLeg(userId: string): Promise<TravelLeg | null> {
+/**
+ * The session he is punched in on, if he is on one.
+ *
+ * `startedSince` bounds it to the punch-in stretch being asked about — the
+ * punch-out passes the start of the stretch it is ending, so a session left
+ * open from an earlier day is not taken for today's. See `endDay` on Home.
+ */
+export async function openSessionLeg(userId: string, startedSince?: number): Promise<TravelLeg | null> {
   return one<TravelLeg>(
     `SELECT * FROM travel_legs
-      WHERE userId = ? AND origin = 'session' AND endedAt IS NULL
-      ORDER BY startedAt DESC, clientCreatedAt DESC LIMIT 1`,
-    [userId],
+      WHERE userId = ? AND origin = 'session' AND endedAt IS NULL` +
+      /* A minute's grace: the session leg is written just AFTER the punch-in
+         it belongs to, never before, so this only guards clock rounding. */
+      (startedSince == null ? '' : ' AND startedAt >= ?') +
+      ` ORDER BY startedAt DESC, clientCreatedAt DESC LIMIT 1`,
+    startedSince == null ? [userId] : [userId, startedSince - 60_000],
   );
 }
 
