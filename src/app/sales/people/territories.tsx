@@ -8,7 +8,7 @@ import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/toast";
 import { Modal } from "@/components/ui/overlays";
 import { MultiSelect } from "@/components/ui/multi-select";
-import { offeredDistricts } from "@/lib/geography/territory-options";
+import { offeredDistricts, zeroShopTowns } from "@/lib/geography/territory-options";
 import { previewAreaHandover, setSalesmanTerritories, type AreaHandover } from "@/lib/actions/sales";
 import type { DistrictNode, PlaceTree, Salesman, StateNode } from "@/lib/services/sales-service";
 import { Button, Pill } from "@/components/console/parts";
@@ -141,6 +141,14 @@ export function Territories({
   const [ackSig, setAckSig] = React.useState("");
   const acknowledged = !needsAck || ackSig === outsideSig;
 
+  /* A town with no shop narrows its district to nothing there. Confirmed by a
+     tick that belongs to the towns it was given for; the server re-checks. */
+  const emptyTowns = zeroShopTowns(places, picked);
+  const emptyTownSig = JSON.stringify(emptyTowns);
+  const [townAckSig, setTownAckSig] = React.useState("");
+  const needsTownAck = emptyTowns.length > 0 && (handover?.changed ?? true);
+  const townsAcknowledged = !needsTownAck || townAckSig === emptyTownSig;
+
   function begin() {
     /* What is STORED is the leaves, so a town arrives with no district or
        state row beside it — and both have to be re-ticked here or their
@@ -173,6 +181,7 @@ export function Territories({
     setError(null);
     setGiveShops(true);
     setAckSig("");
+    setTownAckSig("");
     setOpen(true);
   }
 
@@ -321,6 +330,7 @@ export function Territories({
         territories: picked,
         handOver: handover && handover.canMove && giveShops && handover.total > 0 ? handover.total : undefined,
         acknowledgedOutside: needsAck ? outside.map((o) => ({ state: o.state, shops: o.shops })) : undefined,
+        acknowledgedZeroTowns: needsTownAck ? emptyTowns : undefined,
       });
     } finally {
       setBusy(false);
@@ -394,6 +404,27 @@ export function Territories({
         width={680}
         footer={
           <div className="flex flex-col gap-3">
+            {needsTownAck ? (
+              <label
+                role="alert"
+                className="flex max-h-32 cursor-pointer items-start gap-2 overflow-y-auto rounded-[4px] border border-danger bg-danger-soft px-3 py-2 text-[13px] text-pretty text-danger"
+              >
+                <input
+                  type="checkbox"
+                  checked={townsAcknowledged}
+                  onChange={(e) => setTownAckSig(e.target.checked ? emptyTownSig : "")}
+                  className="mt-[3px] size-3.5 shrink-0 accent-[#5223E0]"
+                />
+                <span>
+                  <span className="font-medium">
+                    {emptyTowns.join(", ")} {emptyTowns.length === 1 ? "has" : "have"} no shops.
+                  </span>{" "}
+                  Picking a town narrows its district to the picked towns, so {salesman.name} may stop
+                  seeing shops elsewhere in that district. No shop is deleted or reassigned by this
+                  warning. I understand.
+                </span>
+              </label>
+            ) : null}
             {needsAck ? (
               <label className="flex cursor-pointer items-start gap-2 text-[13px] text-pretty text-body">
                 <input
@@ -428,7 +459,7 @@ export function Territories({
               <Button tone="quiet" onClick={() => setOpen(false)}>
                 Cancel
               </Button>
-              <Button tone="primary" onClick={save} disabled={busy || counting || !acknowledged}>
+              <Button tone="primary" onClick={save} disabled={busy || counting || !acknowledged || !townsAcknowledged}>
                 {busy ? "Saving…" : counting ? "Counting…" : "Save"}
               </Button>
             </div>
@@ -529,6 +560,11 @@ export function Territories({
                 )}
               </div>
             )}
+
+            <p className="mt-2 text-[11px] text-muted">
+              City and town names: Local Government Directory (lgdirectory.gov.in), Government of
+              India, with MahekOne corrections for Delhi; plus the towns on your own shop records.
+            </p>
 
             {unreachable.length ? (
               <p className="mt-3 text-[12px] text-pretty text-muted">

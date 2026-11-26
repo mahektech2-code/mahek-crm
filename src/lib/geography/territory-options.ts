@@ -132,6 +132,41 @@ export function narrowedStates(leaves: ReadonlyArray<Leaf>): string[] {
   return [...leavesByState(leaves).keys()];
 }
 
+/**
+ * PICKED TOWNS WITH NO SHOP IN THEM. A town narrows its district, so allocating
+ * one that holds nothing can take every shop of that district off a handset.
+ * Read off the same tree the dialog draws, so the screen and the server name
+ * the same towns. A town the tree does not hold counts as having none.
+ */
+export function zeroShopTowns(tree: PlaceTree, leaves: ReadonlyArray<Leaf>): string[] {
+  const fold = (s: string) => s.trim().toLowerCase();
+  const out: string[] = [];
+  for (const t of leaves) {
+    if (t.kind !== "town") continue;
+    const { district, state } = splitTownParent(t.parent ?? "");
+    const shops = tree.states
+      .find((s) => fold(s.state) === fold(state))
+      ?.districts.find((d) => fold(d.district) === fold(district))
+      ?.towns.find((x) => fold(x.town) === fold(t.value))?.shops;
+    if (!shops) out.push(`${t.value} · ${district}`);
+  }
+  return [...new Set(out)].sort((a, b) => a.localeCompare(b));
+}
+
+/** Why a save may not go ahead until the zero-shop towns are confirmed — or null. */
+export function zeroShopProblem(input: {
+  changed: boolean;
+  towns: ReadonlyArray<string>;
+  acknowledged: ReadonlyArray<string> | undefined;
+}): string | null {
+  if (!input.changed || !input.towns.length) return null;
+  const said = new Set(input.acknowledged ?? []);
+  const missing = input.towns.filter((t) => !said.has(t));
+  if (!missing.length) return null;
+  const one = missing.length === 1;
+  return `${missing.join(", ")} ${one ? "has" : "have"} no shops. Allocating ${one ? "it" : "them"} can take shops off this handset. Confirm that before saving.`;
+}
+
 export type OutsideCount = { state: string; shops: number };
 
 /**
