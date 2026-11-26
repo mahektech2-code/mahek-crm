@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { foldRmLots, itemRowId, lotRowId, readsByLot, type FoldLot } from "./stock-fold";
+import { foldRmLots, itemRowId, lotRowId, readsByLot, rmRowShown, shownQuantity, type FoldLot } from "./stock-fold";
 
 const lot = (o: Partial<FoldLot> & Pick<FoldLot, "lotNo">): FoldLot => ({
   rawMaterialId: "rm_tol",
@@ -48,4 +48,23 @@ test("a lot drawn below zero counts against its total, and no rate means no valu
   assert.equal(r.valuePaise, null);
   assert.equal(r.ratePaise, null);
   assert.equal(lotRowId(r.lots[1]), "B2|g1");
+});
+
+test("FB-12: a chemical lot below a litre is not listed; a can total that rounds to nothing is not either; one drawn below zero always is", () => {
+  const can = { rawMaterialId: "rm_can", materialType: "Can" };
+  const rows = foldRmLots([
+    lot({ lotNo: "T1", stock: 0.4 }),
+    lot({ lotNo: "T2", stock: 1 }),
+    lot({ ...can, lotNo: "C1", stock: 0.5 }),
+    lot({ rawMaterialId: "rm_box", materialType: "Box", lotNo: "B1", stock: -2 }),
+  ]);
+  const shown = rows.filter((r) => rmRowShown(r, 1)).map((r) => r.id);
+  assert.deepEqual(shown, ["T2|g1", itemRowId({ rawMaterialId: "rm_box", godownId: "g1" } as FoldLot)]);
+  assert.equal(rows.filter((r) => rmRowShown(r, 0)).length, 4, "0 lists everything above zero, and the one below it");
+});
+
+test("FB-12: cans and boxes show whole; a chemical keeps its fraction", () => {
+  assert.equal(shownQuantity(2.4, false), 2);
+  assert.equal(shownQuantity(2.6, false), 3);
+  assert.equal(shownQuantity(2.4, true), 2.4);
 });
