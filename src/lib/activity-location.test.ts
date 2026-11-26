@@ -1246,14 +1246,17 @@ describe("The pull delta runs — with a cursor, which is every pull after sign-
 
     /*
      * A date the office has already proposed. The unique index on
-     * (user_id, plan_date) is what stops the second row, and the salesman has
-     * to be told which day it is rather than watching the create fail quietly.
+     * (user_id, plan_date) is what stops the second row. The create is no
+     * longer refused: a refusal stranded the shops he had picked under the
+     * phone's id, retrying for ever. It is accepted with the OFFICE'S id, which
+     * the handset adopts and moves its picks onto (adoptClashingDay).
      */
-    test("a day the office already proposed is refused, not duplicated", async () => {
+    test("a day the office already proposed is adopted, not duplicated", async () => {
       const day = tomorrow();
+      const officeId = id("mbos_plan");
       await db.execute(sql`
         insert into mbos_journey_plans (id, user_id, plan_date, city, day_state, proposed_by_id)
-        values (${id("mbos_plan")}, ${salesman.id}, ${day}::date, 'Wardha', 'proposed', ${salesman.id})
+        values (${officeId}, ${salesman.id}, ${day}::date, 'Wardha', 'proposed', ${salesman.id})
       `);
 
       const [result] = await ingestSyncBatch(principal, [
@@ -1265,7 +1268,8 @@ describe("The pull delta runs — with a cursor, which is every pull after sign-
         }),
       ]);
 
-      assert.equal(result.status, "rejected", JSON.stringify(result));
+      assert.equal(result.status, "accepted", JSON.stringify(result));
+      assert.equal(result.serverId, officeId, "the handset is handed the office's day to adopt");
 
       const rows = await db.execute<{ n: number }>(sql`
         select count(*)::int as n from mbos_journey_plans

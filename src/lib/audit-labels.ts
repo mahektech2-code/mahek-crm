@@ -932,6 +932,19 @@ const DESCRIBE: Record<string, Describer> = {
     note: str(c.a.reason),
     changes: false,
   }),
+  "mbos.visit.left_shop_disputed": (c) => ({
+    says: ["said they did not leave", c.customer(c.a.customerId, "a customer"), "when the phone thought they had"],
+    note: str(c.a.reason),
+    changes: false,
+  }),
+  "mbos.work_after_reassignment": (c) => ({
+    says: [
+      "sent work on",
+      c.customer(c.a.customerId, "a customer"),
+      "made before it moved out of their book. It was accepted, and the new holder was told",
+    ],
+    changes: false,
+  }),
   "mbos.journey.period": (c) => ({ says: ["planned the journey of", c.user(c.e.entityId, str(c.a.salesman) ?? "a salesman"), journeyDates(c)], changes: false }),
   "mbos.salesman.territories": (c) => ["changed the area", c.user(c.e.entityId, "a salesman"), "works"],
   "mbos.salesman.geo_territories": (c) => ["changed the official areas", c.user(c.e.entityId, "a salesman"), "works in"],

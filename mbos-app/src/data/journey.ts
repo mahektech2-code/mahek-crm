@@ -4,6 +4,7 @@ import { accountType } from '../lib/account-label';
 import { enqueue } from '../sync/queue';
 import { pickOrigin } from '../engines/route';
 import { haversineMetres } from '../engines/geo';
+import { repointDependsOn, repointPayload } from './day-shape';
 
 /**
  * The day's route.
@@ -93,6 +94,40 @@ export async function saveStopOrder(orderedIds: string[]): Promise<void> {
     location: false,
     payload: { id: day.id, customerIds },
   });
+}
+
+/**
+ * A STOP HE CANNOT MAKE, skipped from the phone with his reason.
+ *
+ * Nothing on the handset ever wrote `skipped`, so a stop he could not make
+ * stayed Next all day and closed as a miss with no word against it. Local
+ * first, like every write here, so the Next card moves on at once; the
+ * office takes it as `stop_skip` and keeps a visit over a skip — a stop he
+ * skipped and then visited after all counts as visited.
+ *
+ * The reason is required here as well as at the office, because a skip
+ * without one is the miss it replaces.
+ */
+export async function skipStop(
+  stopId: string,
+  reason: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const said = reason.trim();
+  if (!said) return { ok: false, message: 'Say why you are skipping it. Your manager needs a reason.' };
+  const stop = await one<{ status: string }>('SELECT status FROM journey_stops WHERE id = ?', [stopId]);
+  if (!stop) return { ok: false, message: 'That stop is not on this phone any more.' };
+  if (stop.status !== 'planned') return { ok: false, message: 'That stop is already done.' };
+  await run(`UPDATE journey_stops SET status = 'skipped', skipReason = ? WHERE id = ?`, [said, stopId]);
+  await enqueue({
+    entityType: 'stop_skip',
+    entityId: stopId,
+    op: 'update',
+    /* Where he decided to skip a shop answers nothing worth a coordinate —
+       it is often decided at breakfast. */
+    location: false,
+    payload: { id: stopId, reason: said },
+  });
+  return { ok: true };
 }
 
 export async function stopCounts(planDate = today()): Promise<{ total: number; done: number }> {
@@ -930,6 +965,18 @@ export async function pickShops(
     [customerIds.length ? 'planned' : 'agreed', customerIds.length, JSON.stringify(customerIds), planDayId],
   );
 
+  /* BEHIND THE DAY'S OWN CREATE, where that is still in the outbox. Sent side
+     by side, the picks could reach the office before the day did and be told
+     "not on the plan yet" — and a create the office REFUSED left them
+     retrying against nothing for ever; behind it, a refusal blocks them with
+     a reason instead. ONLY where such a create exists: the dependency and
+     this item share an id, so on a day the office made it would read as a
+     record still waiting — this very one — and never be sent. */
+  const createWaiting = await one<{ id: string }>(
+    `SELECT id FROM sync_queue
+      WHERE entityType = 'plan_day' AND op = 'create' AND entityId = ? AND state <> 'synced' LIMIT 1`,
+    [planDayId],
+  );
   await enqueue({
     entityType: 'plan_stops',
     entityId: planDayId,
@@ -938,7 +985,49 @@ export async function pickShops(
        be sitting. See `plan_day` above. */
     location: false,
     payload: { id: planDayId, customerIds },
+    dependsOn: createWaiting ? [planDayId] : [],
   });
 
   return { ok: true };
+}
+
+/**
+ * The office answered his new day with ITS day's id — see `repointPayload` in
+ * `day-shape.ts`. Called by the sync engine on an accepted `plan_day` create
+ * whose server id is not the one this phone minted.
+ */
+export async function adoptPlanDay(localId: string, serverId: string): Promise<void> {
+  if (!localId || !serverId || localId === serverId) return;
+  const mine = await one<{ pickedIds: string | null; picked: number }>(
+    'SELECT pickedIds, picked FROM journey_days WHERE id = ?',
+    [localId],
+  );
+  const theirs = await one<{ id: string }>('SELECT id FROM journey_days WHERE id = ?', [serverId]);
+  if (mine && theirs) {
+    /* A pull brought the office's day first. His picks move onto it; the
+       office's own answer about the day (its state, its city) stands. */
+    await run(
+      'UPDATE journey_days SET pickedIds = COALESCE(pickedIds, ?), picked = CASE WHEN pickedIds IS NULL THEN ? ELSE picked END WHERE id = ?',
+      [mine.pickedIds, mine.picked, serverId],
+    );
+    await run('DELETE FROM journey_days WHERE id = ?', [localId]);
+  } else if (mine) {
+    await run('UPDATE journey_days SET id = ? WHERE id = ?', [serverId, localId]);
+  }
+
+  const waiting = await all<{ id: string; entityId: string; payload: string; dependsOn: string }>(
+    `SELECT id, entityId, payload, dependsOn FROM sync_queue WHERE state <> 'synced'`,
+  );
+  for (const q of waiting) {
+    const entityId = q.entityId === localId ? serverId : q.entityId;
+    const payload = q.entityId === localId ? repointPayload(q.payload, localId, serverId) : q.payload;
+    const dependsOn = repointDependsOn(q.dependsOn, localId, serverId);
+    if (entityId === q.entityId && payload === q.payload && dependsOn === q.dependsOn) continue;
+    await run('UPDATE sync_queue SET entityId = ?, payload = ?, dependsOn = ? WHERE id = ?', [
+      entityId,
+      payload,
+      dependsOn,
+      q.id,
+    ]);
+  }
 }

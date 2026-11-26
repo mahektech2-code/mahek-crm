@@ -294,7 +294,38 @@ export type CheckInVerdict = {
   pinsTheShop: boolean;
   /** What the salesman is shown. A statement about a measurement, never about him. */
   sentence: string;
+  /**
+   * WHY there was no reading, where there was none — and the reason this is
+   * carried at all is that three different problems used to wear one
+   * sentence. Permission denied and location switched off both read "No GPS
+   * signal… step outside", so a salesman with the setting off walked out of
+   * the shop into the street, pressed again, was told the same thing, and
+   * concluded the app was broken. Only `no_signal` is cured by a window; the
+   * other two are cured by a switch, and the card offers the switch.
+   */
+  fixCause?: NoFixCause | null;
 };
+
+/**
+ * Why a reading did not arrive. `permission` — the app may not ask;
+ * `services_off` — the phone's location is switched off; `no_signal` — it
+ * asked and nothing answered in time; `error` — the radio threw.
+ */
+export type NoFixCause = 'permission' | 'services_off' | 'no_signal' | 'error';
+
+/** The sentence for a check-in refused for want of any reading. */
+export function noFixSentence(cause: NoFixCause | null | undefined): string {
+  switch (cause) {
+    case 'permission':
+      return 'MahekOne is not allowed to use your location. You need it to check in. Open settings, allow location, then press again.';
+    case 'services_off':
+      return 'Location is switched off on this phone. You need it to check in. Turn it on, then press again.';
+    case 'error':
+      return 'The phone could not read your location. Press again. If it keeps failing, restart location in settings.';
+    default:
+      return 'No GPS signal yet. You need it to check in. Step outside or near a window and press again.';
+  }
+}
 
 /**
  * May this check-in go ahead?
@@ -317,18 +348,22 @@ export function checkInVerdict(
   customerCoords: Coords | null,
   radiusM: number,
   accuracyThresholdM: number,
+  /** Why `fix` is null, where it is — see `CheckInVerdict.fixCause`. */
+  noFixCause: NoFixCause | null = null,
 ): CheckInVerdict {
   const assessment = assessFix(fix, accuracyThresholdM);
   if (!assessment.usable || !fix) {
+    const none = assessment.reason === 'no_fix';
     return {
       accepted: false,
       needsConfirmation: false,
       reason: 'unmeasurable',
       metresAway: null,
       pinsTheShop: false,
+      fixCause: none ? noFixCause ?? 'no_signal' : null,
       sentence:
-        assessment.reason === 'no_fix'
-          ? 'No GPS signal yet. You need it to check in. Step outside or near a window and press again.'
+        none
+          ? noFixSentence(noFixCause)
           : `GPS signal is weak (about ${assessment.accuracyM == null ? 'an unknown distance' : Math.round(assessment.accuracyM) + ' m'}). It is not enough to check you are at the shop. Step outside or near a window and press again.`,
     };
   }

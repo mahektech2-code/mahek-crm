@@ -131,11 +131,27 @@ export function outcomeNeedsNote(outcome: OutcomeKey | null): boolean {
   return outcome !== 'closed';
 }
 
+/**
+ * Whether the time-in-the-shop floor applies to this outcome at all.
+ *
+ * The floor exists to stop a two-second visit being counted as a call on the
+ * customer. A shutter that is down, or an owner who is out, is answered in
+ * the time it takes to read the board — and holding the save until two
+ * minutes had passed forced every such visit to save "not checked", which
+ * put an honest closed shop in front of his manager as a doubtful one. The
+ * gate at the door has already proved he was there; there is nobody inside
+ * to have spent time with.
+ */
+export function outcomeNeedsDwell(outcome: OutcomeKey | null): boolean {
+  return outcome !== 'closed' && outcome !== 'closed_now';
+}
+
 export function visitChecks(f: VisitFacts): VisitCheck[] {
   const fo = f.outcome ? FOLLOW_ON[f.outcome] : undefined;
   const mins = Math.floor(f.dwellSeconds / 60);
   const secs = f.dwellSeconds % 60;
-  const dwellOk = f.dwellSeconds >= f.minimumDwellSeconds;
+  const dwellExempt = !outcomeNeedsDwell(f.outcome);
+  const dwellOk = dwellExempt || f.dwellSeconds >= f.minimumDwellSeconds;
   const floor =
     f.minimumDwellSeconds >= 60
       ? plural(Math.round(f.minimumDwellSeconds / 60), 'minute')
@@ -163,7 +179,9 @@ export function visitChecks(f: VisitFacts): VisitCheck[] {
     {
       key: 'dwell',
       ok: dwellOk,
-      line: dwellOk
+      line: dwellExempt && f.dwellSeconds < f.minimumDwellSeconds
+        ? 'Nobody to meet. No minimum time'
+        : dwellOk
         ? `In the shop ${mins}m ${secs}s`
         : `Only ${f.dwellSeconds}s so far. A visit needs ${floor}`,
       /* The floor is configuration, so the sentence says the configured one —
@@ -284,15 +302,44 @@ export function elapsedLabel(seconds: number): string {
 export type ArrivalFacts = { arrivedAt: number; checkedInAt: number | null; day: string };
 
 /**
- * Is this arrival today's?
+ * Is this arrival still his?
  *
  * An arrival from an earlier day is not restored: he did not go in, the day
  * has ended, and the journey behind it was closed at the boundary by
  * `closeStaleLegs`. Offering it back on Wednesday morning would put Tuesday's
  * last shop on the one bar this app never lets him dismiss.
+ *
+ * **BUT MIDNIGHT IS NOT THE END OF A DAY HE IS STILL WORKING, and the date
+ * alone erased two kinds of real work.** A salesman checked into a
+ * distributor's godown at 23:40 had his visit — the note, the photographs,
+ * the order taken inside it, the clock — rubbed out by the next read after
+ * midnight, which is every keystroke (the draft is written to this record).
+ * And one who punched in at ten last night to work a late market and arrived
+ * at 00:20 found the arrival he had just made gone the moment he pressed
+ * Check in. `runDayBoundaryWork` already refuses to tidy anything inside the
+ * stretch he is still punched in on; this is the same rule one record along.
+ *
+ * So two arrivals survive the date changing:
+ *
+ *  - one he has CHECKED IN on. That is a visit in progress, and the only thing
+ *    that ends a visit is his check-out — erasing it loses work, and the
+ *    worst a stale one can cost is a check-out sheet for a shop he left,
+ *    which `leftShopAt` already closes at the right instant.
+ *  - one made AFTER the punch-in he is still on (`punchedInSince`, the start
+ *    of the open attendance session; null when he is not punched in). It
+ *    belongs to the stretch he is working, whatever the date says.
+ *
+ * An arrival he never went into, from a stretch that has ended, is still
+ * rubbed out — that is the case the rule was written for.
  */
-export function arrivalIsCurrent(arrival: ArrivalFacts, today: string): boolean {
-  return arrival.day === today;
+export function arrivalIsCurrent(
+  arrival: ArrivalFacts,
+  today: string,
+  punchedInSince: number | null = null,
+): boolean {
+  if (arrival.day === today) return true;
+  if (arrival.checkedInAt != null) return true;
+  return punchedInSince != null && arrival.arrivedAt >= punchedInSince;
 }
 
 /**

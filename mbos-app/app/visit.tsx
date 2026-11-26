@@ -17,6 +17,7 @@ import {
   bindLegToVisit,
   openLegOf,
   travelModes,
+  walkAway,
   type TravelLeg,
   type TravelMode,
 } from '../src/data/travel';
@@ -49,7 +50,7 @@ import {
   visitLocationVerdict,
   type CheckInVerdict,
 } from '../src/engines/geo';
-import { fixOf, getFix, type Fix } from '../src/native/location';
+import { fixOf, getFix, noFixCauseOf, openLocationSettings, type Fix } from '../src/native/location';
 import { queueOdometerPhoto, queueRecording, takePhoto } from '../src/native/capture';
 import { discardQueuedMedia } from '../src/sync/media';
 import { VoiceField } from '../src/components/ui/dictate';
@@ -132,6 +133,23 @@ export default function Visit() {
   const payMode = useStore((s) => s.payMode);
   const arrival = useStore((s) => s.arrival);
   const setArrival = useStore((s) => s.setArrival);
+  /*
+   * THE SHOP, EVEN WHERE ITS ROW IS NOT ON THIS PHONE.
+   *
+   * `c` is the customers row, and a pull can take it away mid-visit — a
+   * reassignment at noon, a tombstone, a stop on an office plan for a shop
+   * this phone was never sent. Every id and name on this screen was read off
+   * `c`, so with the row gone Check out returned without a word and the visit
+   * he was standing in could not be saved at all. The arrival on disk names
+   * the shop he walked into; that is enough to save the visit against, and
+   * the office is the one that decides what it is worth. `shopsInFlight`
+   * stops the sync taking the row in the first place — this is for a row
+   * that was never there.
+   */
+  const storeCustId = useStore((s) => s.custId);
+  const shopId =
+    c?.id ?? (arrival && storeCustId && arrival.customerId === storeCustId ? arrival.customerId : null);
+  const shopLabel = c?.name ?? (arrival && shopId === arrival.customerId ? arrival.customerName : null);
 
   const [form, setForm] = React.useState<'complaint' | 'sample' | null>(null);
   const [draft, setDraft] = React.useState<Record<string, string>>({});
@@ -386,7 +404,7 @@ export default function Visit() {
   /* Read off the ARRIVAL, which is on disk — see `Arrival.overrideReason`.
      Held here they went with the screen, and the visit then saved as though
      nobody had been refused at the door at all. */
-  const ours = arrival && c && arrival.customerId === c.id ? arrival : null;
+  const ours = arrival && shopId && arrival.customerId === shopId ? arrival : null;
   const overrideReason = ours?.overrideReason ?? null;
   const pinRequested = !!ours?.pinCorrectionRequested;
   /* Asked once, after the override, and only where there is a pin to be
@@ -419,7 +437,7 @@ export default function Visit() {
    */
   const mediaParent = ours?.visitId ?? 'pending';
 
-  const custId = c?.id ?? null;
+  const custId = shopId;
   const userId = boot.session?.user.id ?? '';
 
   /*
@@ -704,6 +722,7 @@ export default function Visit() {
         c && c.gpsLat != null && c.gpsLng != null ? { lat: c.gpsLat, lng: c.gpsLng } : null,
         radiusM,
         threshold,
+        noFixCauseOf(result),
       );
       if (!gate.accepted && !(override && gate.reason === 'too_far')) {
         /* NOTHING IS WRITTEN. The leg stays open because he is still
@@ -839,12 +858,14 @@ export default function Visit() {
       const at = Date.now();
       const next = await checkInAtShop(at);
       if (!next) {
-        /* The arrival is gone from under him — the day rolled over while the
-           screen sat open, which `readArrival` rubs out deliberately. Sending
+        /* The arrival is gone from under him. Midnight alone no longer does
+           this — an arrival inside the punch-in he is still on survives the
+           date (`arrivalIsCurrent`) — so what is left is one from a stretch
+           that has ended, or one he called off on another screen. Sending
            him back to the journey is the honest answer; pretending to check
            him into a shop with no arrival behind it is not. */
         setArrival(null);
-        notify('That arrival is from another day. Start the visit again.', 'error');
+        notify('That arrival is no longer on this phone. Start the visit again.', 'error');
         router.replace('/journey');
         return;
       }
@@ -922,7 +943,17 @@ export default function Visit() {
       if (shot.reason !== 'cancelled') notify(shot.reason, 'error');
       return;
     }
-    set({ shots: { ...shots, [which]: shot.mediaId } });
+    /* Taken again means the last one was not wanted — the voice note's rule
+       above, one tile along. The earlier photograph stayed in the queue,
+       went up under this visit's id and sat on the record beside the one he
+       kept, so the office saw two shop photos for one visit and could not
+       tell which he meant. Dropped AFTER the new one is safely queued, so a
+       failed retake leaves the first photograph where it was. */
+    const previous = useStore.getState().shots[which];
+    set({ shots: { ...useStore.getState().shots, [which]: shot.mediaId } });
+    if (previous && previous !== shot.mediaId) {
+      void discardQueuedMedia(previous).catch(() => undefined);
+    }
   };
 
   /* ---- the two records punched from inside the visit ----
@@ -1094,7 +1125,15 @@ export default function Visit() {
   }
 
   async function saveAndGo(spent: string, unverifiedReason: string | null) {
-    if (!c || savingRef.current) return;
+    if (savingRef.current) return;
+    /* NEVER A SILENT NO. This returned without a word where the shop row was
+       missing, so Check out simply did nothing — see `shopId`. With no row
+       AND no arrival naming the shop there is genuinely nothing to save
+       against, and he is told so and where to go. */
+    if (!shopId) {
+      notify('This shop is not on your phone any more, so the visit cannot be saved here. Sync, then open the shop again.', 'error');
+      return;
+    }
     /* The answers are owed on EVERY path out, the unverified save included —
        see `ANSWER_KEYS`. Asked, not refused: the sheet has the controls. */
     if (owed.length) {
@@ -1140,8 +1179,8 @@ export default function Visit() {
     try {
       visitId = await saveVisit({
         id: ours?.visitId ?? null,
-        customerId: c.id,
-        customerName: c.name,
+        customerId: shopId,
+        customerName: shopLabel ?? 'this shop',
         userId: boot.session?.user.id ?? '',
         checkIn: fix,
         checkOut,
@@ -1219,6 +1258,14 @@ export default function Visit() {
         monthlyVolumeLitres: parseDecimal(reqLitres) || null,
         quantityCans: parseWhole(reqCans) || null,
         aiDraftId,
+        /* A shop with no pin, let in by the gate on its own reading: that
+           reading is about to be its pin at the office, so it is its pin
+           here too. Never on an override — that is a pin that exists and
+           is wrong — and never without a check-in fix, which the gate only
+           keeps for a reading good enough to have answered it. */
+        pinShopAt:
+          c && c.gpsLat == null && !overrideReason && ours?.checkInFix ? ours.checkInFix : null,
+        leftShopDispute: ours?.leftShopDispute ?? null,
       });
     } catch {
       savingRef.current = false;
@@ -1451,6 +1498,43 @@ export default function Visit() {
                 notify('Check in when you go inside. The bar at the bottom brings you back.', 'info');
                 router.replace('/journey');
               }}
+              style={{ marginTop: 10 }}
+            />
+            {/* THE THIRD ANSWER, and until it existed the only way out of an
+                arrival was checking in. A shop found shut became a visit
+                opened, a clock run and a record saved "not checked" — or an
+                arrival left on the bar he cannot dismiss, with every other
+                journey refused behind it. The trip is KEPT with his reason on
+                it (`walkAway`): he did ride there, and those kilometres are
+                his. Nothing about a visit is written, because none happened. */}
+            <Btn
+              label="Not going in"
+              a11y="Not going in. Say why, and the trip is kept"
+              look="dashed"
+              onPress={() =>
+                askConfirm({
+                  title: 'Not going in?',
+                  body: 'The trip stays on your record with your reason. No visit is saved. You can start another trip.',
+                  reasonLabel: 'Why · needed',
+                  placeholder: 'Shop shut. Owner out of town.',
+                  confirmLabel: 'Not going in',
+                  cancelLabel: 'Back',
+                  tone: 'navy',
+                  run: (reason) => {
+                    void (async () => {
+                      try {
+                        if (arrival.legId) await walkAway(arrival.legId, reason);
+                        await clearArrival();
+                        setArrival(null);
+                        notify('Trip kept. No visit saved.');
+                        router.replace('/journey');
+                      } catch {
+                        notify('That could not be saved on this phone. Try again.', 'error');
+                      }
+                    })();
+                  },
+                })
+              }
               style={{ marginTop: 10 }}
             />
           </Panel>
@@ -1742,7 +1826,7 @@ export default function Visit() {
   return (
     <AppFrame
       chipsBelowTitle
-      title={c?.name ?? 'Visit'}
+      title={shopLabel ?? 'Visit'}
       activeTab="customers"
       onBack={() => router.back()}
       heroTop={
@@ -1840,6 +1924,39 @@ export default function Visit() {
                   hhmm(leftAt) +
                   '.'}
               </Text>
+              {/* The reading can be wrong, and he is the one standing there.
+                  See `Arrival.leftShopDispute`. */}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="I did not leave the shop. Say why"
+                hitSlop={HIT}
+                onPress={() =>
+                  askConfirm({
+                    title: 'You did not leave?',
+                    body: 'Your visit time keeps running until you check out. Your reason goes to your manager with the reading.',
+                    reasonLabel: 'Why · needed',
+                    placeholder: 'I was inside the godown the whole time.',
+                    confirmLabel: 'I did not leave',
+                    cancelLabel: 'Back',
+                    tone: 'navy',
+                    run: (reason) => {
+                      void patchArrival({
+                        leftShopAt: null,
+                        leftShopMetres: null,
+                        leftShopDispute: { reason: reason.trim(), seenAt: leftAt, metres: arrival?.leftShopMetres ?? null },
+                      })
+                        .then((next) => {
+                          if (next) setArrival(next);
+                        })
+                        .catch(() => notify('That answer could not be saved on this phone. Try again.', 'error'));
+                    },
+                  })
+                }
+                style={{ marginTop: 8, minHeight: 44, alignSelf: 'flex-start', justifyContent: 'center' }}>
+                <Text style={[{ fontSize: 14, lineHeight: 20, color: C.warnInk, textDecorationLine: 'underline' }, weight(700)]}>
+                  I did not leave
+                </Text>
+              </Pressable>
             </View>
           </View>
         ) : null}
@@ -2892,6 +3009,21 @@ function RefusalBox({ verdict, radiusM }: { verdict: CheckInVerdict; radiusM: nu
             ? 'Walk to the shop and press again. Nothing is saved yet.'
             : 'Nothing is saved yet.'}
         </Text>
+        {/* A switch cures these two, not a window — so the switch is offered
+            where the sentence names it. See `CheckInVerdict.fixCause`. */}
+        {verdict.fixCause === 'permission' || verdict.fixCause === 'services_off' ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={verdict.fixCause === 'permission' ? 'Open settings to allow location' : 'Open settings to turn location on'}
+            hitSlop={HIT}
+            onPress={() => void openLocationSettings(verdict.fixCause as 'permission' | 'services_off')}
+            style={{ marginTop: 10, minHeight: 44, alignSelf: 'flex-start', paddingHorizontal: 14, borderRadius: 22, backgroundColor: C.surface, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Icon name="locate" size={16} color={C.warnInk} strokeWidth={2.2} />
+            <Text style={[{ fontSize: 14, lineHeight: 20, color: C.warnInk }, weight(700)]}>
+              {verdict.fixCause === 'permission' ? 'Allow location' : 'Turn location on'}
+            </Text>
+          </Pressable>
+        ) : null}
       </View>
     </View>
   );

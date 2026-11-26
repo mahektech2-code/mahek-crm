@@ -97,6 +97,41 @@ export function partition<T extends Eligible>(args: {
 }
 
 /**
+ * THE DEPENDENCIES THAT HAVE LANDED although no synced row says so.
+ *
+ * A dependency with NO row waiting anywhere in the outbox has landed: its
+ * create went up and has since been pruned (`pruneSynced`), or it is a record
+ * the office made. Without this, pruning sent rows would leave anything
+ * depending on a fortnight-old record waiting for ever.
+ *
+ * And an item is never held behind ITSELF. The day's picks (`plan_stops`)
+ * share their id with the day they depend on, so "is a row with that id still
+ * waiting" was always yes — the picks' own row — and once the day's create had
+ * been pruned they waited for ever. A row of the same KIND under that id (an
+ * earlier set of picks for the same day) is not what it waits on either; only
+ * a different kind of record under the id is.
+ */
+export function landedDependencies(
+  queued: { entityId: string; entityType: string; dependsOn: string[] }[],
+  inFlight: { entityId: string; entityType: string }[],
+  deadIds: Set<string>,
+): Set<string> {
+  const kindsWaiting = new Map<string, string[]>();
+  for (const r of [...queued, ...inFlight]) {
+    kindsWaiting.set(r.entityId, [...(kindsWaiting.get(r.entityId) ?? []), r.entityType]);
+  }
+  const landed = new Set<string>();
+  for (const q of queued) {
+    for (const d of q.dependsOn) {
+      const kinds = kindsWaiting.get(d) ?? [];
+      const others = q.entityId === d ? kinds.filter((k) => k !== q.entityType) : kinds;
+      if (!others.length && !deadIds.has(d)) landed.add(d);
+    }
+  }
+  return landed;
+}
+
+/**
  * Backoff: six attempts across roughly forty minutes, then surfaced as failed.
  *
  * A queue that retries forever is a queue nobody ever looks at, and the record

@@ -195,6 +195,13 @@ export const SYNC_ENTITY_TYPES = [
    */
   "plan_stops",
   /**
+   * One stop he will not make today, and why. The office's day sheets have
+   * always drawn a skipped stop and its reason; nothing on the phone could
+   * set one, so a stop he decided against stayed planned and counted as a
+   * miss with no sentence against it.
+   */
+  "stop_skip",
+  /**
    * The day itself: when he left, when he got back, where he went and whether
    * he slept in a hotel.
    *

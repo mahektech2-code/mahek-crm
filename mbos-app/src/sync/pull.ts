@@ -4,6 +4,7 @@ import { isoDate } from '../lib/format';
 import { CONVERTED_LEAD } from '../data/lead-query';
 import { DROP_REFUSED_LEAD_SHOPS_SQL, REFUSED_LEAD_SHOPS_SQL } from '../data/lead-shop';
 import { storeRemote } from '../data/remote';
+import { shopsInFlight } from '../data/arrival';
 import { noPending, noPendingLead, pendingShopEdit, PENDING_STATES, SHOP_EDIT_COLUMNS, upsertSets } from './pending';
 
 /** Where `storeTerritory` files it, and where `territoryState` reads it back. */
@@ -1563,6 +1564,10 @@ async function reconcileBook(bookIds: string[] | undefined): Promise<number> {
                          WHERE q.entityId = customers.id AND q.state <> 'synced')`,
   );
   const keep = new Set(bookIds);
+  /* AND THE SHOP HE IS AT, or on his way to — see `shopsInFlight`. A noon
+     reassignment took the row from under an open visit and Check out had
+     nothing to save against. It goes on the first pull after the visit. */
+  for (const id of await shopsInFlight()) keep.add(id);
   await rememberMissing(bookIds);
   if (!local.length) return 0;
   const gone = local.map((r) => r.id).filter((id) => !keep.has(id));
@@ -1694,6 +1699,17 @@ async function applyDeletionChunk(entity: string, ids: string[]): Promise<number
     return ids.length;
   }
   if (!DELETABLE.has(entity)) return 0;
+  /* A tombstoned shop he is standing in, or riding to, waits for the visit —
+     the same rule `reconcileBook` keeps. */
+  if (entity === 'customers') {
+    const held = new Set(await shopsInFlight());
+    const free = ids.filter((id) => !held.has(id));
+    if (free.length !== ids.length) {
+      if (!free.length) return 0;
+      await run(`DELETE FROM customers WHERE id IN (${free.map(() => '?').join(',')})`, free);
+      return free.length;
+    }
+  }
   await run(`DELETE FROM ${entity} WHERE id IN (${marks})`, ids);
   return ids.length;
 }
