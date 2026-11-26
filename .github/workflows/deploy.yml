@@ -60,7 +60,12 @@ jobs:
       # finds no .next/types on a fresh checkout and checks the routes not at
       # all. A second, and needs no database.
       - run: npx next typegen
-      - run: npx tsc --noEmit
+      - name: Type check
+        # The whole repo runs past Node's default heap (the 24946aa deploy died
+        # of it); ci.yml and claude-fix.yml give tsc the same room.
+        run: npx tsc --noEmit
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
       - run: npx eslint src
       - run: npm test
 
