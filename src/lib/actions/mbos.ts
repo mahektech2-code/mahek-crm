@@ -106,6 +106,7 @@ import { refreshDayMoney } from "../services/expense-submit-service";
 import { transcribeSpeech } from "../dictation";
 import { sniffContentType, ACCEPTED_AUDIO_TYPES } from "../file-types";
 import { issueToken, verifyToken, signingKeyPresent } from "../mbos/token";
+import { taskUpdateVerdict } from "../mbos/task-update-rules";
 import {
   checkDeviceBinding,
   loadPrincipal,
@@ -6715,6 +6716,8 @@ async function handleTaskUpdate(
       id: mbosTasks.id,
       title: mbosTasks.title,
       assignedToUserId: mbosTasks.assignedToUserId,
+      assignedByUserId: mbosTasks.assignedByUserId,
+      status: mbosTasks.status,
       customerId: mbosTasks.customerId,
       form: mbosTaskCampaigns.form,
     })
@@ -6733,6 +6736,20 @@ async function handleTaskUpdate(
         "That task has not reached the office yet, so there is nothing to change. It will be tried again once it has.",
     };
   }
+
+  /* HIS TASK, AND STILL OPEN — see `taskUpdateVerdict`. Any handset could
+     write to any task id it held, and a task the office had cancelled could
+     be closed as done from a phone that had not heard yet. */
+  const verdict = taskUpdateVerdict({
+    senderId: principal.user.id,
+    assigneeId: existing.assignedToUserId,
+    assignerId: existing.assignedByUserId,
+    status: existing.status,
+    title: existing.title,
+    incomingStatus: p.status ?? null,
+  });
+  if (verdict.kind === "refuse") return { kind: "rejected", value: reject(verdict.code, verdict.message) };
+  if (verdict.kind === "already") return { kind: "accepted", value: { serverId: item.entityId } };
 
   /* A task with a form is answered by the form. The answers ARE the "how",
      so they stand in for the note — written out as one, so every screen that
