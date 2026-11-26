@@ -8,6 +8,7 @@ import {
   boxQuantity,
   daysBetween,
   labelCount,
+  costedRate,
   lotCosting,
   margin,
   monthId,
@@ -55,6 +56,12 @@ test("the bill: rate on cans, or litres for a drum; discount off; GST on amount 
 test("costing averages the allocated lots, and a margin needs it", () => {
   assert.equal(lotCosting({ type: "Can", qtyCans: 10, litres: 50, costs: [30000, 40000], extraPaise: 5000 }), 355000);
   assert.equal(lotCosting({ type: "Can", qtyCans: 10, litres: 50, costs: [30000, null], extraPaise: 0 }), null);
+  /* FB-14: a lot rated at zero or below is not costed — never "₹0" and a margin of the whole sale. */
+  assert.equal(lotCosting({ type: "Can", qtyCans: 10, litres: 50, costs: [0], extraPaise: 5000 }), null);
+  assert.equal(lotCosting({ type: "Can", qtyCans: 10, litres: 50, costs: [30000, -500], extraPaise: 0 }), null);
+  assert.equal(costedRate(0), null);
+  assert.equal(costedRate(-1), null);
+  assert.equal(costedRate(4200), 4200);
   assert.equal(margin({ amountPaise: 500000, discountedPaise: 50000, costingPaise: 355000, creditNotePaise: 10000 }), 85000);
 });
 

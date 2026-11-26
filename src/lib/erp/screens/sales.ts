@@ -42,6 +42,7 @@ import {
   boxQuantity,
   daysBetween,
   labelCount,
+  costedRate,
   lotCosting,
   margin,
   monthId,
@@ -2872,7 +2873,7 @@ const batchCodes: ScreenModule = {
               from: r.b.lotFrom === "pack" ? "FG Packing Inventory" : "Finish Goods Inventory",
               lot: r.b.lotCode,
               qty: r.b.quantity,
-              costing: r.b.lotFrom === "pack" ? (packRate.get(r.b.lotCode) ?? null) : (fgRate.get(`${r.b.finishedGoodId}|${r.b.lotCode}`) ?? null),
+              costing: costedRate(r.b.lotFrom === "pack" ? packRate.get(r.b.lotCode) : fgRate.get(`${r.b.finishedGoodId}|${r.b.lotCode}`)),
               godown: r.godown,
               date: calendarDate(r.b.createdAt),
             },
@@ -2958,6 +2959,8 @@ type DetailRow = {
    * "Lotcode Costing" (`sheet_costing_paise`). Null exactly when costing is.
    */
   costSource: "lots" | "sheet" | null;
+  /** Why `costing` is null, in words — said on the drawer instead of a bare dash (FB-14). */
+  notCostedWhy: string | null;
   /**
    * This line's live share of a transporter's bill (Logistics → Transport
    * expenses), split by litres — pending or paid. Part of `costing` where the
@@ -3014,7 +3017,7 @@ export async function detailRows(f: LineFilter, opts: { withUnverified?: boolean
     /* An allocated lot always wins, even one with no rate yet. Only a line nobody
        allocated a lot to falls back on the sheet's cost, which is the WHOLE cost
        the sheet took off the amount — extras included, so none are added. */
-    const allocated = costs.get(l.o.id) ?? [];
+    const allocated = (costs.get(l.o.id) ?? []).map((c) => (l.type === "Drum" ? c.rate : c.perCan));
     const share = freight.get(l.o.id) ?? null;
     const extras = d.extraExpensesPaise == null && !share ? null : (d.extraExpensesPaise ?? 0) + (share?.amountPaise ?? 0);
     const costing = allocated.length
@@ -3030,6 +3033,7 @@ export async function detailRows(f: LineFilter, opts: { withUnverified?: boolean
       company: bill.company,
       costing,
       costSource: costing == null ? null : allocated.length ? "lots" : "sheet",
+      notCostedWhy: costing != null ? null : allocated.length ? "a lot it drew has no rate (or a rate of zero)" : "no lot allocated",
       freight: share,
       margin: margin({ amountPaise: bill.amountPaise, discountedPaise: bill.discountedPaise, costingPaise: costing, creditNotePaise: creditOf(credits, l, d.gstBp) }),
       creditNote: creditOf(credits, l, d.gstBp),
@@ -3072,8 +3076,14 @@ export async function monthlySalesFor(days: (string | null)[]): Promise<Map<stri
   return out;
 }
 
-/** Each order line's allocated lots' costing, per can (or per litre on a drum lot). */
-async function allocationCosts(orderIds: string[]): Promise<Map<string, (number | null)[]>> {
+/**
+ * Each order line's allocated lots' rates, in BOTH bases: `rate` is per can or
+ * per litre as the lot is costed, `perCan` is always one can's value. A can line
+ * multiplies by cans, so it must take `perCan` — taking `rate` priced a can line
+ * that drew a litre-costed lot at cans × the price of ONE LITRE.
+ */
+type AllocRate = { rate: number | null; perCan: number | null };
+async function allocationCosts(orderIds: string[]): Promise<Map<string, AllocRate[]>> {
   if (!orderIds.length) return new Map();
   /* The rates of the lots these lines drew — usually used up by now, so asked for by name rather than read off stock. */
   const codes = await db.select().from(erpBatchCodes).where(inArray(erpBatchCodes.orderId, orderIds));
@@ -3081,11 +3091,12 @@ async function allocationCosts(orderIds: string[]): Promise<Map<string, (number 
     fgRates([...new Set(codes.filter((b) => b.lotFrom !== "pack").map((b) => b.lotCode))]),
     packBatchCosting([...new Set(codes.filter((b) => b.lotFrom === "pack").map((b) => b.lotCode))]),
   ]);
-  const fgRate = new Map([...fg].map(([k, v]) => [k, v.ratePaise]));
   const packRate = new Map([...pack].map(([k, c]) => [k, c.amountPaise == null || !c.cans ? null : Math.round(c.amountPaise / c.cans)]));
-  const out = new Map<string, (number | null)[]>();
+  const out = new Map<string, AllocRate[]>();
   for (const b of codes) {
-    const c = b.lotFrom === "pack" ? (packRate.get(b.lotCode) ?? null) : (fgRate.get(`${b.finishedGoodId}|${b.lotCode}`) ?? null);
+    const fgr = b.lotFrom === "pack" ? null : (fg.get(`${b.finishedGoodId}|${b.lotCode}`) ?? null);
+    const pr = b.lotFrom === "pack" ? (packRate.get(b.lotCode) ?? null) : null;
+    const c: AllocRate = b.lotFrom === "pack" ? { rate: pr, perCan: pr } : { rate: fgr?.ratePaise ?? null, perCan: fgr?.perCanPaise ?? null };
     out.set(b.orderId, [...(out.get(b.orderId) ?? []), c]);
   }
   return out;
@@ -3181,6 +3192,8 @@ const orderDetails: ScreenModule = {
           if (d.verification !== "Verified") flags.push(d.invoiceCheck === "Approved" ? "invoiceApproved" : d.invoiceCheck === "Rejected" ? "invoiceRejected" : "invoiceToCheck");
           if (d.verification === "Verified" && !d.vehicleNo) flags.push("noVehicle");
           if (r.monthId && targetReached(monthSale, target)) flags.push("targetReached");
+          /* Only somebody who may see the cost is told the margin went below zero. */
+          if (cost && r.margin != null && r.margin < 0) flags.push("marginNegative");
           const verifiable = !d.verification || d.verification === "Pending";
           /* The invoice check is required before dispatch: a pending check holds the goods as a rejected one does. */
           const approved = d.invoiceCheck === "Approved";
@@ -3268,7 +3281,7 @@ const orderDetails: ScreenModule = {
               ...(amounts ? [{ l: "Final amount", v: r.final == null ? "—" : inr(r.final), der: true }] : []),
               ...(cost
                 ? [
-                    { l: "Lot-code costing", v: r.costing == null ? "—" : r.costSource === "sheet" ? `${inr(r.costing)} · from the old order sheet` : inr(r.costing), der: true },
+                    { l: "Lot-code costing", v: r.costing == null ? `Not costed — ${r.notCostedWhy ?? "no cost"}` : r.costSource === "sheet" ? `${inr(r.costing)} · from the old order sheet` : inr(r.costing), der: true },
                     { l: "Cost price per can", v: r.costing == null ? "—" : inr(Math.round(r.costing / l.o.qtyCans)), der: true },
                     { l: "Credit note amount (before GST)", v: r.creditNote == null ? "—" : inr(r.creditNote) },
                   ]

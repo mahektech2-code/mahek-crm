@@ -75,10 +75,17 @@ export function billFigures(p: {
  * cans (or litres for a drum), plus extra freight (spec §11.6 "Lotcode Costing").
  */
 export function lotCosting(p: { type: OrderType; qtyCans: number; litres: number; costs: (number | null)[]; extraPaise: number | null }): number | null {
-  if (!p.costs.length || p.costs.some((c) => c == null)) return null;
+  /* A lot whose rate came out at zero or below was built from an input with no
+     price (or an over-booked adjustment) — not free goods. Read as a real cost
+     it showed "Lot-code costing ₹0" and a margin of the whole sale (FB-14), so
+     it is "not costed", the same as a lot with no rate at all. */
+  if (!p.costs.length || p.costs.some((c) => c == null || c <= 0)) return null;
   const avg = (p.costs as number[]).reduce((a, c) => a + c, 0) / p.costs.length;
   return Math.round(avg * (p.type === "Drum" ? p.litres : p.qtyCans) + (p.extraPaise ?? 0));
 }
+
+/** A costed rate, or null: zero and below are not a cost (see lotCosting). */
+export const costedRate = (c: number | null | undefined): number | null => (c != null && c > 0 ? c : null);
 
 export function margin(p: { amountPaise: number | null; discountedPaise: number | null; costingPaise: number | null; creditNotePaise: number | null }): number | null {
   if (p.amountPaise == null || p.costingPaise == null) return null;

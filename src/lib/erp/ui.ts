@@ -869,6 +869,7 @@ export const FLAG: Record<string, [string, Tone]> = {
   ratePresent: ["Rate present", "success"],
   notVerified: ["Not dispatch-verified", "warn"],
   targetReached: ["Sales target reached", "success"],
+  marginNegative: ["Margin below zero — check the lot costing", "danger"],
   today: ["Transferred today", "brand"],
   lost: ["Lost stock", "danger"],
   orderPlaced: ["Order Placed", "info"],
