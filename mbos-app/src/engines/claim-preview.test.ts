@@ -237,3 +237,28 @@ test('an unpriced hotel night is not a spent budget', () => {
   assert.equal(p.remainingBeforePaise, null);
   assert.doesNotMatch(p.line, /Nothing left/);
 });
+
+/* "Bills OR travel logs" — the standard policy pays local travel on a trip the
+   app recorded, and the claim sheet demanded a bill for every claim anyway. */
+test('a recorded trip stands as the bill where the policy says it does, and only there', () => {
+  const rules = (travelLogCounts: boolean) =>
+    policyOf([
+      { ...ANY, kind: 'proof_threshold', scopeKey: 'category:local_transport', atPaise: 0, travelLogCounts },
+      { ...ANY, kind: 'actuals', scopeKey: 'category:local_transport', capPerInstancePaise: null, capPerDayPaise: null },
+    ]);
+  const ask = (travelLogCounts: boolean, recordedTrip: boolean) =>
+    previewClaim({
+      policy: rules(travelLogCounts),
+      kind: 'local_transport',
+      claimedPaise: 8000,
+      hasBill: false,
+      day: DAY,
+      alreadyClaimed: [],
+      recordedTrip,
+    });
+  assert.equal(ask(true, true).tripStandsAsProof, true);
+  assert.equal(ask(true, true).proofRequired, false);
+  assert.equal(ask(true, false).tripStandsAsProof, false, 'no trip, no stand-in');
+  assert.equal(ask(true, false).proofRequired, true);
+  assert.equal(ask(false, true).tripStandsAsProof, false, 'a policy that wants bills gets bills');
+});

@@ -212,6 +212,17 @@ function MonthCard({ m }: { m: SalaryMonth }) {
         {!m.daysOnLeave ? <View style={{ flex: 1 }} /> : null}
         {!m.reimbursedPaise ? <View style={{ flex: 1 }} /> : null}
       </View>
+      {/* WHAT WAS ACTUALLY PAID BACK, off the payouts ledger — the half
+          "approved to pay back" could never say. A transfer covers a week, so
+          it is the month's money handed over, not one expense's. */}
+      {m.paidBackPaise != null && (m.paidBackPaise > 0 || (m.reimbursedPaise ?? 0) > 0) ? (
+        <T
+          style={{ fontSize: 12.5, lineHeight: 17, color: m.paidBackPaise > 0 ? C.success : C.muted, marginTop: 10 }}>
+          {m.paidBackPaise > 0
+            ? 'Paid back to you this month: ' + inrFromPaise(m.paidBackPaise)
+            : 'Nothing paid back to you yet this month'}
+        </T>
+      ) : null}
     </Card>
   );
 }
