@@ -58,3 +58,30 @@ test('a lead the office sends is written live, and an archived lead holds no sho
   );
   assert.match(src, /entity === 'leads'[\s\S]{0,120}SET archived = 1/, 'a leads tombstone archives');
 });
+
+test('a shop edit on its way holds his contact and pin against the pull, and nothing else', async () => {
+  const { pendingShopEdit, SHOP_EDIT_COLUMNS, upsertSets } = await import('./pending');
+  const db = handset();
+  db.prepare(
+    `INSERT INTO customers (id, name, contactPerson, gpsLat, gpsLng, outstandingPaise) VALUES ('c1', 'Sai Paints', 'Ramesh (his fix)', 21.1, 79.1, 0)`,
+  ).run();
+  queue(db, 'q1', 'customer', 'c1', JSON.stringify({ customerId: 'c1', contactPerson: 'Ramesh (his fix)' }));
+  const cols = ['id', 'name', 'contactPerson', 'gpsLat', 'gpsLng', 'outstandingPaise'];
+  const sets = upsertSets('customers', cols, 'id', { cols: SHOP_EDIT_COLUMNS, while: pendingShopEdit('customers') });
+  const pull = db.prepare(
+    `INSERT INTO customers (${cols.join(',')}) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET ${sets}`,
+  );
+  pull.run('c1', 'Sai Paints', 'Office contact', null, null, 50000);
+  const held = { ...(db.prepare('SELECT contactPerson, gpsLat, outstandingPaise FROM customers WHERE id = ?').get('c1') as Record<string, unknown>) };
+  assert.deepEqual(held, { contactPerson: 'Ramesh (his fix)', gpsLat: 21.1, outstandingPaise: 50000 }, 'the money lands; his fix stands');
+
+  db.prepare(`UPDATE sync_queue SET state = 'synced' WHERE id = 'q1'`).run();
+  pull.run('c1', 'Sai Paints', 'Office contact', 21.2, 79.2, 50000);
+  const after = { ...(db.prepare('SELECT contactPerson, gpsLat FROM customers WHERE id = ?').get('c1') as Record<string, unknown>) };
+  assert.deepEqual(after, { contactPerson: 'Office contact', gpsLat: 21.2 }, 'once heard, the office is the newer fact');
+});
+
+test('pull.ts holds the shop-edit columns on the customers upsert', () => {
+  const src = readFileSync(`${import.meta.dirname}/pull.ts`, 'utf8');
+  assert.match(src, /function upsertCustomers[\s\S]{0,400}SHOP_EDIT_COLUMNS[\s\S]{0,80}pendingShopEdit\('customers'\)/);
+});

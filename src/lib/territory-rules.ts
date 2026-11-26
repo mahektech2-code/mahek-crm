@@ -325,6 +325,11 @@ export type LeadPlace = {
   state?: string | null;
   /** The state the book most often files this city under, if any. */
   bookState?: string | null;
+  /**
+   * The DISTRICT he picked the area under, where his build sends it — the
+   * district chip on the lead form, with the town typed beside it.
+   */
+  district?: string | null;
 };
 
 /** A place as `matchesTerritory` reads it: what was typed, and where the tree puts it. */
@@ -339,7 +344,16 @@ export type MatchPlace = {
 };
 
 export type LeadPlacement =
-  | { ok: true; state: string | null }
+  | {
+      ok: true;
+      state: string | null;
+      /**
+       * Where the row is to be FILED on the tree when the typed town is not on
+       * it — the district he picked, as ids. Absent whenever the ordinary
+       * placement (`placeShopsNow`) will put the row where it belongs.
+       */
+      filedUnder?: { district: string; stateId: string; districtId: string };
+    }
   | { ok: false; reason: "no_area" | "outside"; areas: string[] };
 
 const same = (a: string | null | undefined, b: string | null | undefined) =>
@@ -447,6 +461,43 @@ export function placeNewLead(
     town: onTree?.town ?? null,
   };
   if (territories.some((t) => matchesTerritory(t, resolved))) return { ok: true, state };
+
+  /*
+   * A TOWN THE TREE HAS NEVER HEARD OF, IN A DISTRICT THAT IS HIS.
+   *
+   * The lead form offers a district as a chip and asks him to TYPE the town,
+   * because a district holds hundreds of villages and the tree holds only the
+   * ones a shop has ever been reviewed in. The district row is matched on the
+   * tree's own place, so a town it cannot place matched nothing and the lead
+   * was refused as outside his area — after the shop, the photograph and the
+   * pin, about a shop standing in the district he was allocated. What he
+   * picked IS the answer to "which district": it is filed under that district
+   * and the typed town stays as text, which is the honest state of what is
+   * known. Only where the tree did NOT place the town — a town it places in
+   * another district is outside, and stays refused.
+   *
+   * An older build sends no district. Then the one district of his in that
+   * state is the one he picked (a district chip is the only way a typed town
+   * reaches here with a state); with two or more it cannot be said which, and
+   * the refusal stands rather than a guess.
+   */
+  if (index && state && !onTree?.district) {
+    const stateNode = index.stateByKey.get(placeKey(canonicalState(state)));
+    const inState = territories.filter((t) => t.kind === "district" && sameState(state, t.parent));
+    const picked = place.district?.trim()
+      ? inState.filter((t) => samePlace(place.district, t.value))
+      : inState;
+    if (stateNode && picked.length === 1) {
+      const hits = index.underState.get(`${stateNode.id}|district|${placeKey(picked[0].value)}`) ?? [];
+      if (hits.length === 1) {
+        return {
+          ok: true,
+          state,
+          filedUnder: { district: hits[0].name, stateId: stateNode.id, districtId: hits[0].id },
+        };
+      }
+    }
+  }
 
   return {
     ok: false,

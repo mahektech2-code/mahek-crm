@@ -37,3 +37,44 @@ export function noPendingLead(table = 'leads'): string {
         AND ${field('customerId')} = ${table}.id
         AND (${field('suspectDecision')} IS NOT NULL OR ${field('suspectReason')} IS NOT NULL))`;
 }
+
+/**
+ * THE COLUMNS A SALESMAN EDITS ON A SHOP, held against the pull while his edit
+ * is on its way.
+ *
+ * `customers` is reference data and every pull wrote the office's copy over
+ * it whole — so a contact, a number or a pin he had just corrected on the card
+ * (`editShop`) went back to the office's older value on the very next pull,
+ * before the edit had even left, and the card read as though he had saved
+ * nothing. Only these columns are held, and only while a `customer` item for
+ * this shop is pending: the office's credit, outstanding and health go on
+ * arriving, because a refused edit must never freeze a shop's money.
+ */
+export const SHOP_EDIT_COLUMNS = ['contactPerson', 'phone', 'gpsLat', 'gpsLng', 'gpsAccuracyM'] as const;
+
+/** A shop edit (or create) of this row still on its way to the office. */
+export function pendingShopEdit(table = 'customers'): string {
+  return `EXISTS (SELECT 1 FROM sync_queue q WHERE q.entityId = ${table}.id AND q.entityType = 'customer' AND q.state IN ${PENDING_STATES})`;
+}
+
+/**
+ * The `ON CONFLICT … DO UPDATE SET` list for an upsert, with `hold` columns
+ * keeping their local value while `hold.while` is true. Pure, so the clause
+ * runs against a real SQLite in `pending.test.ts`.
+ */
+export function upsertSets(
+  table: string,
+  cols: string[],
+  key: string,
+  hold?: { cols: readonly string[]; while: string },
+): string {
+  const held = new Set(hold?.cols ?? []);
+  return cols
+    .filter((c) => c !== key)
+    .map((c) =>
+      hold && held.has(c)
+        ? `${c} = CASE WHEN ${hold.while} THEN ${table}.${c} ELSE excluded.${c} END`
+        : `${c} = excluded.${c}`,
+    )
+    .join(', ');
+}

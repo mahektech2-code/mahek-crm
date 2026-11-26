@@ -120,6 +120,7 @@ import {
 import { territoriesFor } from "../services/territory-service";
 import { placeIndexFor, placeShopsNow } from "../services/place-tree-service";
 import { placeNewLead } from "../territory-rules";
+import { newNoteText, survivesConversion } from "../mbos/converted-lead-note";
 import { TERRITORY_REGION_SQL } from "../territory-sql";
 import {
   LEAVE_TYPES,
@@ -1094,7 +1095,7 @@ export async function scopedCustomer(
       ok: false,
       value: reject(
         "validation",
-        "That customer is not on MahekOne. Raise them as a lead and convert it, rather than ordering against a record that does not exist.",
+        "That shop is not on MahekOne. Raise it as a lead and take the order on the lead — its first order makes it a customer. Nothing here needs converting by hand.",
       ),
     };
   }
@@ -1329,8 +1330,12 @@ async function leadWriteRefusal(
     salesAmId: string | null;
     backOfficeAmId: string | null;
   },
+  /* True for the one write a converted lead still takes — a note or a next
+     action, kept on the customer's timeline (`noteOnConvertedLead`). The
+     seats are asked exactly as for a lead. */
+  opts: { asCustomer?: boolean } = {},
 ): Promise<Rejection | null> {
-  if (lead.kind !== "lead") {
+  if (lead.kind !== "lead" && !opts.asCustomer) {
     return reject(
       "validation",
       `${lead.name} is a customer now, not a lead, so this lead change was not applied. Open it from Customers.`,
@@ -4801,6 +4806,12 @@ const leadSchema = z.object({
    */
   state: z.string().max(80).nullish(),
   /*
+   * The DISTRICT the area was picked under, on builds that offer a district
+   * chip with the town typed beside it. Read only at create, by
+   * `placeNewLead`, to file a lead whose typed town the tree does not know.
+   */
+  district: z.string().max(120).nullish(),
+  /*
    * A STRING, AND THE LIST IS `leads.sources`.
    *
    * It was a seven-value enum typed out here, and `leads.sources` is ten codes
@@ -5086,6 +5097,47 @@ const leadSchema = z.object({
  * mobile are required to CREATE a lead and are not resent to change its stage,
  * so the create schema refused all five of the handset's edits.
  */
+/**
+ * What a salesman said about a lead that was a customer by the time it arrived:
+ * the new note and the next action, as dated lines on the customer's timeline.
+ * Nothing on the customer row is touched — the lead columns mean nothing on
+ * it — and the natural key is the outbox item's own, so a resend writes no
+ * second line.
+ */
+async function noteOnConvertedLead(
+  principal: MbosPrincipal,
+  existing: NonNullable<Awaited<ReturnType<typeof leadRow>>>,
+  item: SyncItem,
+  p: { notes?: string | null; nextAction?: { action: string; date: string } | null },
+): Promise<Handled> {
+  const refused = await leadWriteRefusal(principal, existing, { asCustomer: true });
+  if (refused) return { kind: "rejected", value: refused };
+
+  const [stored] = await db
+    .select({ notes: customers.leadNotes })
+    .from(customers)
+    .where(eq(customers.id, existing.id))
+    .limit(1);
+  const said = newNoteText(stored?.notes ?? null, p.notes ?? null);
+  const at = new Date(item.clientCreatedAt || Date.now());
+  const lines: { key: string; summary: string }[] = [];
+  if (said) lines.push({ key: "note", summary: `Note: ${said}`.slice(0, 500) });
+  if (p.nextAction?.action?.trim()) {
+    lines.push({ key: "next", summary: `Next: ${p.nextAction.action.trim()} (${p.nextAction.date})`.slice(0, 500) });
+  }
+  for (const line of lines) {
+    await writeTimeline(db, {
+      customerId: existing.id,
+      eventType: MBOS_EVENT.fieldNote,
+      sourceRecordId: `${item.idempotencyKey}:${line.key}`,
+      occurredAt: at,
+      actorUserId: principal.user.id,
+      summary: line.summary,
+    });
+  }
+  return { kind: "accepted", value: { serverId: existing.id } };
+}
+
 async function handleLeadUpdate(
   principal: MbosPrincipal,
   item: SyncItem,
@@ -5127,6 +5179,14 @@ async function handleLeadUpdate(
       message:
         "That lead has not reached the office yet, so there is nothing to change. It will be tried again once it has.",
     };
+  }
+
+  /* A NOTE OR A NEXT ACTION ON A LEAD THAT HAS SINCE BECOME A CUSTOMER is
+     kept on the customer's timeline rather than refused — see
+     `lib/mbos/converted-lead-note.ts`. Anything else still meets the refusal
+     below. */
+  if (existing.kind !== "lead" && survivesConversion(item.payload)) {
+    return noteOnConvertedLead(principal, existing, item, p);
   }
 
   /* WHOSE LEAD IT IS, before a single column is written — see
@@ -5978,6 +6038,7 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
    * already been placed, and refusing an edit would strand the record.
    */
   let leadState: string | null = null;
+  let filedUnder: { stateId: string; districtId: string } | null = null;
   if (item.op === "create") {
     const [book] = await db.execute<{ state: string | null }>(sql`
       select ${sql.raw(TERRITORY_REGION_SQL)} as state
@@ -5990,7 +6051,7 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
     const territories = await territoriesFor(principal.user.id);
     const placement = placeNewLead(
       territories,
-      { city: p.city, area: p.area, state: p.state, bookState: book?.state ?? null },
+      { city: p.city, area: p.area, state: p.state, bookState: book?.state ?? null, district: p.district },
       territoryExempt(principal),
       await placeIndexFor(territories),
     );
@@ -6006,6 +6067,7 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
       };
     }
     leadState = placement.state;
+    filedUnder = placement.filedUnder ?? null;
   }
 
   const day = await today();
@@ -6227,6 +6289,28 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
      next pull — the gate above let it in on the strength of that same match.
      Never fails the write: a lead is not lost to its town not being found. */
   if (item.op === "create") await placeShopsNow([item.entityId]);
+
+  /* AND FILED UNDER HIS DISTRICT where the tree does not know the town — see
+     `placeNewLead`. The typed pass above leaves such a row at its state, and a
+     district allocation reaches a shop only through `resolved_district_id`,
+     so without this the lead the gate just let in would leave his handset on
+     the next pull. `place_source = 'field'` keeps the nightly typed pass off
+     it (that pass re-reads only `sheet` rows) while a geocode of its pin may
+     still refine it; nobody DECIDED it, so `place_decided_at` stays null. The
+     town he typed stays in `city` as text. */
+  if (filedUnder) {
+    await db.execute(sql`
+      update customers
+         set resolved_state_id = ${filedUnder.stateId},
+             resolved_district_id = ${filedUnder.districtId},
+             resolved_city_id = null,
+             resolved_area_id = null,
+             place_source = 'field',
+             place_resolved_at = now()
+       where id = ${item.entityId}
+         and place_decided_at is null
+    `);
+  }
 
   /*
    * §R — where the account began. Outside the insert's own transaction and
@@ -9695,7 +9779,10 @@ async function handleCustomerCreate(
   await notifyManagers(
     principal.user.id,
     "A new account was opened in the field",
-    `${principal.user.name} converted ${p.name} in ${p.city} from a lead. It has no credit limit or terms yet — accounts decide those.`,
+    /* Not "converted from a lead": this path opens a new shop at the counter
+       (a third-party shop billed through a distributor), and a conversion is
+       refused above — the first order on a lead is what makes it a customer. */
+    `${principal.user.name} opened ${p.name} in ${p.city} from the field. It has no credit limit or terms yet — accounts decide those.`,
   );
 
   return { kind: "accepted", value: { serverId: item.entityId } };
@@ -9758,14 +9845,41 @@ async function handleCustomerEdit(
     changed.potentialEstimatedById = principal.user.id;
   }
   if (p.visitFrequencyDays !== undefined) changed.visitFrequencyDays = p.visitFrequencyDays;
-  if (p.gpsLat !== undefined) changed.gpsLat = p.gpsLat;
-  if (p.gpsLng !== undefined) changed.gpsLng = p.gpsLng;
-  if (p.gpsAccuracyM !== undefined) changed.gpsAccuracyM = p.gpsAccuracyM;
+  /*
+   * A PIN IS SET FROM THE FIELD, NEVER MOVED — the rule `editShop` states on
+   * the phone, now stated where it can be relied on. The pin decides the
+   * check-in radius; a handset that could move it (an older build, a phone
+   * whose copy of the shop predates the office pinning it, or anything that
+   * can post to this endpoint) could stand anywhere and never be refused
+   * there again. Moving a wrong pin is a manager's answer to the request a
+   * refused check-in offers. So the coordinates land only on a shop with none.
+   */
+  const pinned = before?.gpsLat != null && before?.gpsLng != null;
+  const pinSent = p.gpsLat !== undefined || p.gpsLng !== undefined || p.gpsAccuracyM !== undefined;
+  if (pinSent && !pinned) {
+    if (p.gpsLat !== undefined) changed.gpsLat = p.gpsLat;
+    if (p.gpsLng !== undefined) changed.gpsLng = p.gpsLng;
+    if (p.gpsAccuracyM !== undefined) changed.gpsAccuracyM = p.gpsAccuracyM;
+  }
+  const samePin =
+    pinned && p.gpsLat === before?.gpsLat && p.gpsLng === before?.gpsLng;
 
   if (!Object.keys(changed).length) {
+    /* A pin alone, onto a shop already pinned somewhere else, is refused in
+       words: accepting it silently would tell him the shop moved. The same
+       pin again is a resend and passes. */
+    if (pinSent && pinned && !samePin) {
+      return {
+        kind: "rejected",
+        value: reject(
+          "not_permitted",
+          `${customer.name} already has a pin, so it was not moved. If it is in the wrong place, say so when you check in there — a manager moves it.`,
+        ),
+      };
+    }
     return { kind: "accepted", value: { serverId: customer.id } };
   }
-  if (p.gpsLat != null && p.gpsLng != null) changed.gpsCapturedAt = new Date();
+  if (changed.gpsLat != null && changed.gpsLng != null) changed.gpsCapturedAt = new Date();
 
   /* Latest-write-wins on SERVER-RECEIVED time, never on device time — a
    * handset's clock is wrong and its owner can set it. This edit is arriving

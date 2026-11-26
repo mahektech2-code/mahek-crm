@@ -164,7 +164,8 @@ export function normaliseMobile(raw: string | null | undefined): string {
   return digits;
 }
 
-export type DuplicateMatch = { kind: 'customer' | 'lead'; id: string; name: string };
+/** `filed` — a lead filed away (lost or archived), which opens the lead record to be brought back. */
+export type DuplicateMatch = { kind: 'customer' | 'lead'; id: string; name: string; filed?: boolean };
 
 /**
  * Whoever already has this number.
@@ -177,8 +178,8 @@ export type DuplicateMatch = { kind: 'customer' | 'lead'; id: string; name: stri
  */
 export function matchDuplicate(
   mobile: string,
-  customers: { id: string; name: string; phone: string | null; isLead?: number | boolean | null }[],
-  leads: { id: string; name: string; mobile: string | null }[],
+  customers: { id: string; name: string; phone: string | null; isLead?: number | boolean | null; isFiled?: number | boolean | null }[],
+  leads: { id: string; name: string; mobile: string | null; isFiled?: number | boolean | null }[],
 ): DuplicateMatch | null {
   const wanted = normaliseMobile(mobile);
   if (wanted.length < 10) return null;
@@ -187,10 +188,13 @@ export function matchDuplicate(
      reported as the lead it is — "already a customer" sends him to serve a
      shop he should still be selling to. */
   const customer = customers.find((c) => normaliseMobile(c.phone) === wanted);
-  if (customer) return { kind: customer.isLead ? 'lead' : 'customer', id: customer.id, name: customer.name };
+  if (customer) {
+    if (customer.isFiled) return { kind: 'lead', id: customer.id, name: customer.name, filed: true };
+    return { kind: customer.isLead ? 'lead' : 'customer', id: customer.id, name: customer.name };
+  }
 
   const lead = leads.find((l) => normaliseMobile(l.mobile) === wanted);
-  if (lead) return { kind: 'lead', id: lead.id, name: lead.name };
+  if (lead) return lead.isFiled ? { kind: 'lead', id: lead.id, name: lead.name, filed: true } : { kind: 'lead', id: lead.id, name: lead.name };
 
   return null;
 }

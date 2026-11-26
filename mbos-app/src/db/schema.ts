@@ -2210,6 +2210,32 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE orders ADD COLUMN duplicateOfToNo INTEGER;`,
   ],
 
+  /*
+   * A SHOP HE ADDED, AND WHAT THE OFFICE SAID ABOUT IT.
+   *
+   * `customers` is reference data, so it had no sync state — and a shop he
+   * opened at a counter is the one customers row he AUTHORS. The office
+   * refusing it (a duplicate number, no distributor) reached the outbox and
+   * nothing else: the card looked like every other shop for ever and took
+   * orders that could only be blocked. `syncState` and `syncMessage` are the
+   * pair every owned table carries; 'synced' by default, because every row
+   * already here came from the office. `serverCreatedAt` is the third column
+   * `setEntityState` writes on an accept — without it the accept would throw
+   * inside the push loop (`mbos-wire.test.ts` says how that went last time).
+   *
+   * `address` is the office's written address, which a lead carried down its
+   * own channel and lost the day it converted. `serverUpdatedAt` is the
+   * office's clock on the row (epoch ms), sent back as `baseUpdatedAt` on a
+   * shop edit so a desk's newer change is seen as a conflict.
+   */
+  [
+    `ALTER TABLE customers ADD COLUMN syncState TEXT NOT NULL DEFAULT 'synced';`,
+    `ALTER TABLE customers ADD COLUMN syncMessage TEXT;`,
+    `ALTER TABLE customers ADD COLUMN serverCreatedAt INTEGER;`,
+    `ALTER TABLE customers ADD COLUMN address TEXT;`,
+    `ALTER TABLE customers ADD COLUMN serverUpdatedAt INTEGER;`,
+  ],
+
 ];
 
 /**
