@@ -1,11 +1,12 @@
 import { all, newId, one, run, tx } from '../db';
 import { enqueue } from '../sync/queue';
+import { whereNow } from '../native/where';
 import { insertLocal, stamp } from './write';
 import { getConfig } from './config';
 import { notify } from './notifications';
 import { cashPosition, collectionMode } from '../engines/cash';
 import { createTask } from './tasks';
-import { isoDate } from '../lib/format';
+import { todayIst } from '../lib/format';
 
 /**
  * Collecting money.
@@ -73,6 +74,7 @@ export async function collectPayment(args: {
 
   const depositSlaDueAt = args.mode === 'Cash' ? Date.now() + slaHours * 3_600_000 : null;
 
+  const where = await whereNow().catch(() => undefined);
   await tx(async () => {
     await run(
       `INSERT INTO payments (id, customerId, userId, visitId, amountPaise, mode, chequeNumber, bank, chequeDate,
@@ -104,40 +106,44 @@ export async function collectPayment(args: {
       actor: 'You',
       summary: `${args.mode} collected`,
     });
-  });
-
-  await enqueue({
-    entityType: 'payment',
-    entityId: base.id,
-    op: 'create',
-    /* PROTOCOL.md §4.1. Two of these mattered more than the names suggest:
-       `billRefs` reached a server reading `billIds`, so every collection was
-       spread oldest-first however carefully the salesman had named the bills;
-       and the cheque number went as `chequeNumber` to a field called
-       `reference`, which is the string accounts match against the bank
-       statement — so the one thing that identifies the money was dropped. */
-    payload: {
-      id: base.id,
-      customerId: args.customerId,
-      customerName: args.customerName,
-      amountPaise: args.amountPaise,
-      mode: args.mode,
-      /* What identifies this money to whoever holds the statement: the cheque
-         number where there is one, the transfer reference otherwise. */
-      reference: args.chequeNumber?.trim() || args.reference?.trim() || undefined,
-      note: collectionNote(args),
-      /* The date written across a cheque, in its own field — it is what
-         decides whether accounts can bank it this morning. */
-      instrumentDate: args.chequeDate ?? undefined,
-      chequePhotoId: args.chequePhotoId ?? undefined,
-      billIds: args.billRefs ?? undefined,
-      receivedAt: isoDate(new Date()),
-      visitId: args.visitId ?? undefined,
-      localReceiptRef: receiptRef,
-      deviceId: base.deviceId,
-      clientCreatedAt: base.clientCreatedAt,
-    },
-    /* Not behind the visit — see the same note in `saveOrder`. */
+    /* IN THE SAME TRANSACTION AS THE ROW — see `insertAndQueue` in
+       `write.ts`. The location was read before the transaction opened. */
+    await enqueue({
+      where,
+      entityType: 'payment',
+      entityId: base.id,
+      op: 'create',
+      /* Behind its shop, where the shop was added on this phone — as orders and visits are. */
+      dependsOn: [args.customerId],
+      /* PROTOCOL.md §4.1. Two of these mattered more than the names suggest:
+         `billRefs` reached a server reading `billIds`, so every collection was
+         spread oldest-first however carefully the salesman had named the bills;
+         and the cheque number went as `chequeNumber` to a field called
+         `reference`, which is the string accounts match against the bank
+         statement — so the one thing that identifies the money was dropped. */
+      payload: {
+        id: base.id,
+        customerId: args.customerId,
+        customerName: args.customerName,
+        amountPaise: args.amountPaise,
+        mode: args.mode,
+        /* What identifies this money to whoever holds the statement: the cheque
+           number where there is one, the transfer reference otherwise. */
+        reference: args.chequeNumber?.trim() || args.reference?.trim() || undefined,
+        note: collectionNote(args),
+        /* The date written across a cheque, in its own field — it is what
+           decides whether accounts can bank it this morning. */
+        instrumentDate: args.chequeDate ?? undefined,
+        chequePhotoId: args.chequePhotoId ?? undefined,
+        billIds: args.billRefs ?? undefined,
+        receivedAt: todayIst(),
+        visitId: args.visitId ?? undefined,
+        localReceiptRef: receiptRef,
+        deviceId: base.deviceId,
+        clientCreatedAt: base.clientCreatedAt,
+      },
+      /* Not behind the visit — see the same note in `saveOrder`. */
+    });
   });
 
   if (notifyThreshold > 0 && args.amountPaise >= notifyThreshold) {
@@ -298,7 +304,7 @@ export async function markBounced(paymentId: string, reason?: string): Promise<v
       (reason?.trim() ? ` (${reason.trim()})` : ''),
     customerId: payment.customerId,
     priority: 'High',
-    dueDate: isoDate(new Date()),
+    dueDate: todayIst(),
   });
 
   await notify({
@@ -337,6 +343,13 @@ export type CollectedPayment = {
   syncState: string;
   /** Why the office would not take it, where it would not. */
   syncMessage: string | null;
+  /** The office's own receipt number, once it has issued one — `TMP-…` is ours until then. */
+  receiptNumber: string | null;
+  /** Accounts' word on it (`myPayments`): reported, held, confirmed, rejected, reversed. */
+  officeStatus: string | null;
+  officeReason: string | null;
+  /** The shop's number, to send the receipt again. */
+  customerPhone: string | null;
 };
 
 /**
@@ -352,10 +365,11 @@ export type CollectedPayment = {
  * Capped like every other read of a list that grows for ever.
  */
 export async function listPayments(customerId?: string): Promise<CollectedPayment[]> {
-  const select = `SELECT p.id, p.customerId, c.name AS customerName, p.amountPaise, p.mode,
-                         p.chequeNumber, p.chequeDate, p.collectedAt, p.localReceiptRef,
+  const select = `SELECT p.id, p.customerId, c.name AS customerName, c.phone AS customerPhone, p.amountPaise, p.mode,
+                         p.chequeNumber, p.chequeDate, p.collectedAt, p.localReceiptRef, p.receiptNumber,
                          p.deposited, p.depositedAt, p.depositSlaDueAt,
-                         p.bounced, p.bouncedAt, p.syncState, p.syncMessage
+                         p.bounced, p.bouncedAt, p.syncState, p.syncMessage,
+                         p.officeStatus, p.officeReason
                     FROM payments p LEFT JOIN customers c ON c.id = p.customerId`;
   return customerId
     ? all<CollectedPayment>(
@@ -363,4 +377,25 @@ export async function listPayments(customerId?: string): Promise<CollectedPaymen
         [customerId],
       )
     : all<CollectedPayment>(`${select} ORDER BY p.collectedAt DESC LIMIT 100`);
+}
+
+/**
+ * THE REFUSED COLLECTION, read back off the outbox so "Collect it again" opens
+ * on the same shop with the same amount and mode. The refused entry is let go
+ * only once the new receipt is saved (`finishRetake`).
+ */
+export async function refusedPayment(queueId: string): Promise<{ customerId: string; amountPaise: number | null; mode: string | null } | null> {
+  const item = await one<{ payload: string; entityType: string; op: string }>(
+    'SELECT payload, entityType, op FROM sync_queue WHERE id = ?',
+    [queueId],
+  );
+  if (!item || item.entityType !== 'payment' || item.op !== 'create') return null;
+  try {
+    const p = JSON.parse(item.payload) as { customerId?: string; amountPaise?: number; mode?: string };
+    return p.customerId
+      ? { customerId: p.customerId, amountPaise: typeof p.amountPaise === 'number' ? p.amountPaise : null, mode: p.mode ?? null }
+      : null;
+  } catch {
+    return null;
+  }
 }

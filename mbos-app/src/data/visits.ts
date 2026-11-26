@@ -8,6 +8,7 @@ import { wireOutcome } from '../lib/wire';
 import { foldStage, nextStage } from '../engines/funnel/lead-ladder';
 import type { LeadStage } from '../engines/funnel/lead-labels';
 import { FOLLOW_UP_MODES, type FollowUpMode } from './fixtures';
+import { PIN_UNPINNED_SHOP_SQL } from './day-shape';
 
 function followUpVerb(mode: FollowUpMode | undefined): string {
   return FOLLOW_UP_MODES.find((m) => m.k === (mode ?? 'visit'))?.task ?? 'Visit';
@@ -129,6 +130,15 @@ export type SaveVisitArgs = {
    * which is how anybody learns whether the assistant is right.
    */
   aiDraftId?: string | null;
+  /**
+   * The fix the check-in gate accepted on a shop with NO pin — the one the
+   * office will pin it from. Null everywhere else, an overridden check-in
+   * included (an override exists because a pin is there and wrong). Written
+   * onto the phone's copy of the shop in the same transaction as the visit.
+   */
+  pinShopAt?: { lat: number; lng: number; accuracyM: number | null } | null;
+  /** His answer to a "you left" reading he says is wrong — see `Arrival`. */
+  leftShopDispute?: { reason: string; seenAt: number; metres: number | null } | null;
 };
 
 export async function saveVisit(args: SaveVisitArgs): Promise<string> {
@@ -215,6 +225,8 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
         customerId: args.customerId,
         priority: 'Normal',
         dueDate: args.nextFollowUpDate,
+        /* This save's transaction is open; `tx()` does not nest. */
+        inTransaction: true,
       });
     }
 
@@ -237,6 +249,17 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
     });
 
     await run('UPDATE customers SET lastVisitDate = ? WHERE id = ?', [isoDate(new Date()), args.customerId]);
+
+    /* The shop's first pin, where the gate let him in on a fix that may
+       become one — see `PIN_UNPINNED_SHOP_SQL`. */
+    if (args.pinShopAt) {
+      await run(PIN_UNPINNED_SHOP_SQL, [
+        args.pinShopAt.lat,
+        args.pinShopAt.lng,
+        args.pinShopAt.accuracyM == null ? null : Math.round(args.pinShopAt.accuracyM),
+        args.customerId,
+      ]);
+    }
 
     /* The decision, mirrored locally so the lead card is right the moment the
        visit closes rather than after the next pull. `visitsHere` counts the
@@ -341,6 +364,14 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
       entityType: 'visit',
       entityId: base.id,
       op: 'create',
+      /* BEHIND ITS SHOP, where the shop is still on its way up. A lead (or a
+         shop) added on this phone and visited at once would otherwise reach
+         the office before the shop it is a visit to, and be refused for an
+         unknown customer. A shop the office already has has nothing in the
+         outbox, and a dependency with nothing waiting counts as landed — so
+         for every ordinary visit this changes nothing. A shop the office
+         REFUSED blocks the visit rather than sending it to be refused too. */
+      dependsOn: [args.customerId],
       /* Spelled out rather than spread — see PROTOCOL.md §4.1. Spreading `args`
          sent the handset's own shapes, so a `checkIn: { lat, lng, at }` reached
          a server reading `checkInLat`, `checkInLng`, `checkInAt` and every fix,
@@ -381,6 +412,9 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
         aiDraftId: args.aiDraftId ?? undefined,
         /* His own sentence for saving it as not checked — see the type. */
         fieldUnverifiedReason: args.savedAnywayReason?.trim() || undefined,
+        /* "I did not leave", against the reading that said he had — see
+           `Arrival.leftShopDispute`. */
+        leftShopDispute: args.leftShopDispute ?? undefined,
         clientCreatedAt: base.clientCreatedAt,
         deviceId: base.deviceId,
       },

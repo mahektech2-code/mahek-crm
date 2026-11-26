@@ -80,3 +80,24 @@ sends to them only from `SOUND_CHANNELS_FROM` (1.16.0), reading
 test reads the handset's `push.ts` and fails if either side's spelling of a
 channel drifts, because a misspelt channel does not fail — it falls back to
 Expo's generic one and just loses its sound.
+
+**A TAP WAITS FOR THE RECORD, BRIEFLY.** `openFrom` asks for one sync pass and
+waits on it up to four seconds before routing, so a push tapped the moment it
+lands opens on the decision rather than the old state; then it marks the
+notification read, here and at the office (`notification_read`). Every pull
+that lands bumps `pullSeq` in the store (`whenPulled` in `sync/engine.ts`), and
+Tasks and Notifications re-read on it, so a record that arrives after the screen
+opened still appears. A refused ORDER rings once: the office's push
+(`raiseRejectionTask`) is the bell, and `onRejection` no longer raises a local
+one for orders.
+
+**A SIGN-OUT WITH NO SIGNAL STILL LETS GO OF THE PUSH TOKEN.** `clearPushToken`
+keeps the token aside when its request fails, and the next app open with nobody
+signed in sends it to `DELETE /api/mbos/push-token` (device AND token must
+match, no session). A different person signing in on the phone starts with no
+token server-side regardless (`mbosLogin`'s upsert).
+
+**Route points survive a sign-out for the same person.** The native buffer is
+moved into `positions` at sign-out rather than deleted, the confirm counts
+them, and a different person signing in empties them with the rest of the last
+person's day (`forgetLastPerson`).

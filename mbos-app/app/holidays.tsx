@@ -5,7 +5,7 @@ import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFram
 import { Badge, Card, T } from '../src/components/ui/primitives';
 import { Stagger } from '../src/components/ui/motion';
 import { color as C, weight, tabular } from '../src/theme/tokens';
-import { isoDate } from '../src/lib/format';
+import { todayIst } from '../src/lib/format';
 import { listHolidays, type HolidayItem } from '../src/data/attendance';
 import { GLYPH, Glyph, type GlyphShape } from '../src/components/me/kit';
 
@@ -33,7 +33,8 @@ function dayLine(iso: string): string {
 
 export default function HolidaysScreen() {
   const back = useCameFrom('more');
-  const todayIso = isoDate(new Date());
+  /* The office's day, read once rather than on every render. */
+  const [todayIso] = React.useState(todayIst);
   const [year, setYear] = React.useState(Number(todayIso.slice(0, 4)));
   const [rows, setRows] = React.useState<HolidayItem[] | null>(null);
   const [showOthers, setShowOthers] = React.useState(false);

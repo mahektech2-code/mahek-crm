@@ -932,6 +932,19 @@ const DESCRIBE: Record<string, Describer> = {
     note: str(c.a.reason),
     changes: false,
   }),
+  "mbos.visit.left_shop_disputed": (c) => ({
+    says: ["said they did not leave", c.customer(c.a.customerId, "a customer"), "when the phone thought they had"],
+    note: str(c.a.reason),
+    changes: false,
+  }),
+  "mbos.work_after_reassignment": (c) => ({
+    says: [
+      "sent work on",
+      c.customer(c.a.customerId, "a customer"),
+      "made before it moved out of their book. It was accepted, and the new holder was told",
+    ],
+    changes: false,
+  }),
   "mbos.journey.period": (c) => ({ says: ["planned the journey of", c.user(c.e.entityId, str(c.a.salesman) ?? "a salesman"), journeyDates(c)], changes: false }),
   "mbos.salesman.territories": (c) => ["changed the area", c.user(c.e.entityId, "a salesman"), "works"],
   "mbos.salesman.geo_territories": (c) => ["changed the official areas", c.user(c.e.entityId, "a salesman"), "works in"],
@@ -984,6 +997,7 @@ const DESCRIBE: Record<string, Describer> = {
   "mbos.visit.pin.accept": (c) => ({ says: ["moved the map pin of", c.subject(), "to where the salesman checked in"], changes: false }),
   "mbos.visit.pin.reject": (c) => ({ says: ["kept the map pin of", c.subject(), "where it was"], changes: false }),
   "mbos.visit.ask": () => ({ says: ["asked a salesman about a visit"], changes: false }),
+  "mbos.visit.stop_relinked": () => ({ says: ["saved a visit whose journey stop had since been removed or replaced"], changes: false }),
   "leave.entitlement.set": (c) => ({ says: ["set the leave entitlement of", c.user(c.e.entityId), "to", strong(plural(num(c.a.days) ?? 0, "day")), "for", strong(str(c.a.year) ?? "")], changes: false }),
   "employee.reporting_set": (c) => ({ says: ["made", c.employee(c.e.entityId), "report to", c.employee(c.a.managerId)], changes: false }),
   "employee.reporting_moved": (c) => ({ says: ["moved", c.employee(c.e.entityId), "from reporting to", c.employee(c.b.managerId), "to", c.employee(c.a.managerId)], changes: false }),

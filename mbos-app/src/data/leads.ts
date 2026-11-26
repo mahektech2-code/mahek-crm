@@ -1,5 +1,6 @@
 import { all, one, run } from '../db';
 import { insertAndQueue, stamp, updateAndQueue } from './write';
+import { DUPLICATE_REFUSAL_SQL, LEAD_CREATE_REFUSED_SQL, LEAD_SHOP_SQL, leadShopParams, leadVisitRefusal, type LeadShopInput } from './lead-shop';
 import { getConfig } from './config';
 import { isoDate } from '../lib/format';
 import { wireNotes, wireSource } from '../lib/wire';
@@ -15,9 +16,9 @@ import {
 } from '../engines/leads';
 import {
   CONVERTED_LEAD,
-  customerRowSettled,
+  DUPLICATE_CUSTOMERS_SQL,
+  DUPLICATE_LEADS_SQL,
   LEAD_PAGE,
-  leadRowConverted,
   leadBookQuery,
   leadCountQuery,
   rungCountsQuery,
@@ -496,21 +497,20 @@ export async function findDuplicate(mobile: string, exceptLeadId?: string): Prom
    * already in your list" — the wrong sentence for a shop he should be
    * opening on the funnel, not serving. `isLead` is the office's kind or a
    * live lead row, and never where the mark or the ledger settles it.
-   * ARCHIVED lead rows are not asked at all: a lead filed out of the way is
-   * not one he would be told to open.
+   *
+   * A lead FILED AWAY is a lead too, and that is a reversal. Its row was left
+   * out here, while the Customers list showed the same shop as a customer —
+   * so the two disagreed about one shop, and a lost lead could be raised a
+   * second time on the same number as though nobody had ever worked it. The
+   * Customers list now labels it "Lost / filed lead" and opens the lead
+   * record; this sends him to the same record, to bring it back.
    */
+  /* ONE RULE with the Customers list: a live lead or a filed one is a lead
+     (and opens the lead record), anything else is a customer — see
+     `DUPLICATE_CUSTOMERS_SQL`. */
   const [customers, leads] = await Promise.all([
-    all<{ id: string; name: string; phone: string | null; isLead: number }>(
-      `SELECT id, name, phone,
-              (NOT ${customerRowSettled('customers')}
-               AND (COALESCE(customers.kind, '') = 'lead'
-                    OR EXISTS (SELECT 1 FROM leads l WHERE l.id = customers.id AND l.archived = 0
-                                 AND NOT ${leadRowConverted('l')}))) AS isLead
-         FROM customers WHERE phone IS NOT NULL`,
-    ),
-    all<{ id: string; name: string; mobile: string | null }>(
-      'SELECT id, name, mobile FROM leads WHERE mobile IS NOT NULL AND archived = 0',
-    ),
+    all<{ id: string; name: string; phone: string | null; isLead: number; isFiled: number }>(DUPLICATE_CUSTOMERS_SQL),
+    all<{ id: string; name: string; mobile: string | null; isFiled: number }>(DUPLICATE_LEADS_SQL),
   ]);
 
   /* The lead being edited is a customers row under the same id, so it is left
@@ -535,6 +535,10 @@ export async function createLead(args: {
      travels to the office, which files the lead under it so that it lands in
      his territory (`handleLead`). */
   state?: string | null;
+  /* The district, where the area he picked was a district chip — travels to
+     the office so a town it has never heard of is filed under the district he
+     picked rather than refused (`placeNewLead`). Not a column here. */
+  district?: string | null;
   source?: string | null;
   /* WHAT "OTHER" HAS TO SAY, and it used to ride in the note.
      `customers.lead_source_detail` is the server's column and `handleLead`
@@ -589,7 +593,9 @@ export async function createLead(args: {
       message:
         duplicate.kind === 'customer'
           ? duplicate.name + ' already has this number. This customer is already in your list.'
-          : duplicate.name + ' is already a lead on this number.',
+          : duplicate.filed
+            ? duplicate.name + ' is a lost or filed lead on this number. Open it and bring it back rather than adding it again.'
+            : duplicate.name + ' is already a lead on this number.',
     };
   }
 
@@ -653,6 +659,7 @@ export async function createLead(args: {
       source: wireSource(args.source),
       sourceDetail: args.sourceDetail?.trim() || undefined,
       state: args.state?.trim() || undefined,
+      district: args.district?.trim() || undefined,
       contactPerson: args.contactPerson?.trim() || undefined,
     },
     row: {
@@ -700,7 +707,43 @@ export async function createLead(args: {
     await run('UPDATE media_queue SET parentId = ? WHERE id = ?', [id, args.shopPhotoId]);
   }
 
+  await ensureLeadShop({
+    id,
+    name: args.name,
+    company: args.company ?? null,
+    contactPerson: args.contactPerson ?? null,
+    mobile: mobile || null,
+    city: args.city ?? null,
+    area: args.area ?? null,
+    customerType: args.customerType ?? null,
+    gpsLat: fix?.lat ?? null,
+    gpsLng: fix?.lng ?? null,
+  });
+
   return { ok: true, value: id };
+}
+
+/** Write the lead's shop row on this phone — see `lead-shop.ts`. */
+export async function ensureLeadShop(l: LeadShopInput): Promise<void> {
+  await run(LEAD_SHOP_SQL, leadShopParams(l));
+}
+
+export { leadVisitRefusal };
+
+/** Read off the outbox, not the row: an edit re-queues the row and would wipe the refusal. */
+export async function leadCreateRefused(id: string): Promise<boolean> {
+  return !!(await one<{ refused: number }>(LEAD_CREATE_REFUSED_SQL, [id]));
+}
+
+/**
+ * The shop the office meant when it refused this lead as a duplicate, where
+ * it is on this phone — so the refusal can open it. Null for any other refusal,
+ * or where the shop it names has not reached this phone.
+ */
+export async function shopThatRefusedLead(id: string, mobile: string | null): Promise<DuplicateMatch | null> {
+  const refusal = await one<{ code: string | null }>(DUPLICATE_REFUSAL_SQL, [id]);
+  if (refusal?.code !== 'duplicate' || !mobile) return null;
+  return findDuplicate(mobile, id);
 }
 
 /* `setStage` was here — the six-word ladder's own move, written before the

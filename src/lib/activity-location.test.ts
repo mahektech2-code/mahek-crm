@@ -1246,14 +1246,17 @@ describe("The pull delta runs — with a cursor, which is every pull after sign-
 
     /*
      * A date the office has already proposed. The unique index on
-     * (user_id, plan_date) is what stops the second row, and the salesman has
-     * to be told which day it is rather than watching the create fail quietly.
+     * (user_id, plan_date) is what stops the second row. The create is no
+     * longer refused: a refusal stranded the shops he had picked under the
+     * phone's id, retrying for ever. It is accepted with the OFFICE'S id, which
+     * the handset adopts and moves its picks onto (adoptClashingDay).
      */
-    test("a day the office already proposed is refused, not duplicated", async () => {
+    test("a day the office already proposed is adopted, not duplicated", async () => {
       const day = tomorrow();
+      const officeId = id("mbos_plan");
       await db.execute(sql`
         insert into mbos_journey_plans (id, user_id, plan_date, city, day_state, proposed_by_id)
-        values (${id("mbos_plan")}, ${salesman.id}, ${day}::date, 'Wardha', 'proposed', ${salesman.id})
+        values (${officeId}, ${salesman.id}, ${day}::date, 'Wardha', 'proposed', ${salesman.id})
       `);
 
       const [result] = await ingestSyncBatch(principal, [
@@ -1265,7 +1268,8 @@ describe("The pull delta runs — with a cursor, which is every pull after sign-
         }),
       ]);
 
-      assert.equal(result.status, "rejected", JSON.stringify(result));
+      assert.equal(result.status, "accepted", JSON.stringify(result));
+      assert.equal(result.serverId, officeId, "the handset is handed the office's day to adopt");
 
       const rows = await db.execute<{ n: number }>(sql`
         select count(*)::int as n from mbos_journey_plans
@@ -1520,23 +1524,29 @@ describe("The pull delta runs — with a cursor, which is every pull after sign-
    * the whole ledger is 10,815 bills. Without a bound, every handset would
    * carry every bill ever raised against every shop in its territory.
    */
-  test("a bill older than the statement window does not come down", async () => {
+  /* Since Nov 2026 the window bounds the STATEMENT, not the debt: an old
+     bill still owed is the first one a collector chases, so it comes down
+     whatever its age (customerBills). An old SETTLED bill still does not. */
+  test("a settled bill older than the statement window does not come down; an open one does", async () => {
     const old = id("bill");
+    const oldOpen = id("bill");
     const recent = id("bill");
     await db.execute(sql`
       insert into bills (id, customer_id, bill_no, bill_date, amount, paid_amount)
       values
-        (${old},    ${shop.id}, 'MMI/20-21/0001', (now() - interval '5 years')::date, 100000, 0),
-        (${recent}, ${shop.id}, 'MMI/26-27/9201', (now() at time zone 'Asia/Kolkata')::date, 100000, 0)
+        (${old},     ${shop.id}, 'MMI/20-21/0001', (now() - interval '5 years')::date, 100000, 100000),
+        (${oldOpen}, ${shop.id}, 'MMI/20-21/0002', (now() - interval '5 years')::date, 100000, 0),
+        (${recent},  ${shop.id}, 'MMI/26-27/9201', (now() at time zone 'Asia/Kolkata')::date, 100000, 0)
     `);
 
     const payload = await buildBootstrap(principal);
     const rows = payload.customerBills as Array<Record<string, unknown>>;
     assert.ok(rows.find((b) => b.id === recent), "this month's bill has to be there");
+    assert.ok(rows.find((b) => b.id === oldOpen), "a five-year-old bill still owed is the one to chase");
     assert.equal(
       rows.find((b) => b.id === old),
       undefined,
-      "a five-year-old bill is the office's, not a phone's",
+      "a five-year-old settled bill is the office's, not a phone's",
     );
 
     /*
@@ -2193,5 +2203,227 @@ describe("Starting the day again after checking out", () => {
       null,
       "a second resume the same day did not reopen the row",
     );
+  });
+});
+
+/* --------------------------------- a visit whose journey stop has changed */
+
+describe("a visit whose journey stop was removed or recreated", () => {
+  /* 11:00 in India today, so the check-in date and the plan date agree. */
+  const day = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
+  const checkInAt = () => Date.parse(`${day()}T11:00:00+05:30`);
+
+  async function plan(userId: string, customerIds: string[], date = day()) {
+    const planId = id("mbos_plan");
+    await db.execute(sql`
+      insert into mbos_journey_plans (id, user_id, plan_date, city, day_state)
+      values (${planId}, ${userId}, ${date}::date, 'Nagpur', 'planned')`);
+    const ids: string[] = [];
+    for (const [i, customerId] of customerIds.entries()) {
+      const stopId = id("mbos_stop");
+      await db.execute(sql`
+        insert into mbos_journey_stops (id, plan_id, customer_id, sequence, status)
+        values (${stopId}, ${planId}, ${customerId}, ${i + 1}, 'planned')`);
+      ids.push(stopId);
+    }
+    return { planId, ids };
+  }
+
+  const visitItem = (journeyPlanStopId: string, entityId = id("mbos_visit")) =>
+    item({
+      entityType: "visit",
+      entityId,
+      payload: {
+        id: entityId,
+        customerId: shop.id,
+        checkInAt: checkInAt(),
+        checkOutAt: checkInAt() + 15 * 60_000,
+        outcome: "visited",
+        notes: "Spoke to the owner about the new range.",
+        wasPlanned: true,
+        journeyPlanStopId,
+      },
+    });
+
+  const saved = async (visitId: string) =>
+    (
+      await db.execute<{
+        stop: string | null;
+        customerId: string;
+        salesmanId: string;
+        checkInMs: number;
+        notes: string;
+        outcome: string;
+        wasPlanned: boolean;
+      }>(sql`
+        select journey_plan_stop_id as stop, customer_id as "customerId", salesman_id as "salesmanId",
+               (extract(epoch from check_in_at) * 1000)::double precision as "checkInMs",
+               notes, outcome::text as outcome, was_planned as "wasPlanned"
+          from mbos_visits where id = ${visitId}`)
+    )[0];
+
+  const stopRow = async (stopId: string) =>
+    (
+      await db.execute<{ status: string; at: string | null }>(sql`
+        select status::text as status, actual_visit_at::text as at from mbos_journey_stops where id = ${stopId}`)
+    )[0];
+
+  const relinks = async (visitId: string) =>
+    (
+      await db.execute<{ n: number }>(sql`
+        select count(*)::int as n from audit_log
+         where action = 'mbos.visit.stop_relinked' and entity_id = ${visitId}`)
+    )[0].n;
+
+  const assertKept = (row: Awaited<ReturnType<typeof saved>>) => {
+    assert.equal(row.customerId, shop.id);
+    assert.equal(row.salesmanId, salesman.id);
+    assert.equal(row.checkInMs, checkInAt());
+    assert.equal(row.notes, "Spoke to the owner about the new range.");
+    assert.equal(row.outcome, "visited");
+    assert.equal(row.wasPlanned, true);
+  };
+
+  test("REMOVED: the visit saves with every detail and no stop link", async () => {
+    const { ids } = await plan(salesman.id, [shop.id]);
+    await db.execute(sql`delete from mbos_journey_stops where id = ${ids[0]}`);
+
+    const sending = visitItem(ids[0]);
+    const [result] = await ingestSyncBatch(principal, [sending]);
+
+    assert.equal(result.status, "accepted", JSON.stringify(result));
+    const row = await saved(sending.entityId);
+    assert.equal(row.stop, null);
+    assertKept(row);
+    assert.equal(await relinks(sending.entityId), 1);
+  });
+
+  test("RECREATED: it is linked to the same shop's new stop on that day, which is marked visited", async () => {
+    const { planId, ids } = await plan(salesman.id, [shop.id]);
+    await db.execute(sql`delete from mbos_journey_stops where id = ${ids[0]}`);
+    const fresh = id("mbos_stop");
+    await db.execute(sql`
+      insert into mbos_journey_stops (id, plan_id, customer_id, sequence, status)
+      values (${fresh}, ${planId}, ${shop.id}, 3, 'planned')`);
+
+    const sending = visitItem(ids[0]);
+    const [result] = await ingestSyncBatch(principal, [sending]);
+
+    assert.equal(result.status, "accepted", JSON.stringify(result));
+    const row = await saved(sending.entityId);
+    assert.equal(row.stop, fresh);
+    assertKept(row);
+    assert.equal((await stopRow(fresh)).status, "visited");
+    const [log] = await db.execute<{ before: string; after: string }>(sql`
+      select before_state->>'journeyPlanStopId' as before, after_state->>'journeyPlanStopId' as after
+        from audit_log where action = 'mbos.visit.stop_relinked' and entity_id = ${sending.entityId}`);
+    assert.deepEqual([log.before, log.after], [ids[0], fresh]);
+  });
+
+  test("RETRY: sending it again, same key or a new one, makes no second visit", async () => {
+    const { planId, ids } = await plan(salesman.id, [shop.id]);
+    await db.execute(sql`delete from mbos_journey_stops where id = ${ids[0]}`);
+
+    const sending = visitItem(ids[0]);
+    await ingestSyncBatch(principal, [sending]);
+    const [replayed] = await ingestSyncBatch(principal, [sending]);
+    assert.equal(replayed.status, "accepted", JSON.stringify(replayed));
+
+    /* The reply was lost AND the day has since been given the shop again. */
+    const later = id("mbos_stop");
+    await db.execute(sql`
+      insert into mbos_journey_stops (id, plan_id, customer_id, sequence, status)
+      values (${later}, ${planId}, ${shop.id}, 1, 'planned')`);
+    const [again] = await ingestSyncBatch(principal, [{ ...sending, idempotencyKey: `${sending.entityId}:again` }]);
+    assert.equal(again.status, "accepted", JSON.stringify(again));
+
+    const [count] = await db.execute<{ n: number }>(sql`
+      select count(*)::int as n from mbos_visits where customer_id = ${shop.id}`);
+    assert.equal(count.n, 1);
+    assert.equal((await saved(sending.entityId)).stop, null, "a saved visit was relinked by a resend");
+    assert.equal((await stopRow(later)).status, "planned");
+    assert.equal(await relinks(sending.entityId), 1);
+  });
+
+  test("WRONG SHOP OR SALESMAN: a stop id that is not theirs is neither linked nor touched", async () => {
+    const [other] = await db
+      .insert(customers)
+      .values({ id: id("cus"), name: "Another Shop", phone: "9822200099", city: "Nagpur", region: "Maharashtra", kind: "customer", ownerId: salesman.id, salesAmId: salesman.id })
+      .returning();
+    const [colleague] = await db
+      .insert(users)
+      .values({ id: id("usr"), name: "Colleague", email: "colleague@test.local", passwordHash: "x", role: "associate", initials: "CO" })
+      .returning();
+    const wrongShop = (await plan(salesman.id, [other.id])).ids[0];
+    const theirs = (await plan(colleague.id, [shop.id])).ids[0];
+
+    for (const claimed of [wrongShop, theirs]) {
+      const sending = visitItem(claimed);
+      const [result] = await ingestSyncBatch(principal, [sending]);
+      assert.equal(result.status, "accepted", JSON.stringify(result));
+      assert.equal((await saved(sending.entityId)).stop, null);
+      assert.deepEqual(await stopRow(claimed), { status: "planned", at: null });
+    }
+  });
+
+  test("another DAY's stop for the same shop is not used", async () => {
+    const yesterday = new Date(checkInAt() - 86_400_000).toISOString().slice(0, 10);
+    const old = (await plan(salesman.id, [shop.id], yesterday)).ids[0];
+
+    const sending = visitItem(id("mbos_stop"));
+    const [result] = await ingestSyncBatch(principal, [sending]);
+
+    assert.equal(result.status, "accepted", JSON.stringify(result));
+    assert.equal((await saved(sending.entityId)).stop, null);
+    assert.equal((await stopRow(old)).status, "planned");
+  });
+
+  test("an already visited stop keeps its history when an older visit arrives for it", async () => {
+    const { ids } = await plan(salesman.id, [shop.id]);
+    await db.execute(sql`
+      update mbos_journey_stops set status = 'visited', actual_visit_at = ${`${day()}T04:00:00Z`} where id = ${ids[0]}`);
+    const before = await stopRow(ids[0]);
+
+    const sending = visitItem(id("mbos_stop"));
+    await ingestSyncBatch(principal, [sending]);
+
+    assert.equal((await saved(sending.entityId)).stop, ids[0]);
+    assert.deepEqual(await stopRow(ids[0]), before);
+  });
+
+  test("ORDER BEHIND THE VISIT: both land when the visit's stop is gone", async () => {
+    const [sku] = await db
+      .insert(products)
+      .values({
+        id: id("prd"),
+        name: `Test Thinner - 5 Liter (Loose) ${randomUUID().slice(0, 6)}`,
+        packing: "Loose",
+        millilitresPerCan: 5000,
+        cansPerBox: 1,
+      })
+      .returning({ id: products.id });
+    const { ids } = await plan(salesman.id, [shop.id]);
+    await db.execute(sql`delete from mbos_journey_stops where id = ${ids[0]}`);
+
+    const sending = visitItem(ids[0]);
+    const orderId = id("mbos");
+    const results = await ingestSyncBatch(principal, [
+      sending,
+      item({
+        entityType: "order",
+        entityId: orderId,
+        dependsOn: [sending.entityId],
+        payload: {
+          id: orderId,
+          customerId: shop.id,
+          visitId: sending.entityId,
+          orderedAt: checkInAt(),
+          totalAmountPaise: 100_00,
+          lines: [{ productId: sku.id, quantityCans: 2 }],
+        },
+      }),
+    ]);
+
+    assert.deepEqual(results.map((r) => r.status), ["accepted", "accepted"], JSON.stringify(results));
   });
 });

@@ -107,9 +107,12 @@ export async function createTask(args: {
   customerId?: string | null;
   priority?: string;
   dueDate: string;
+  /** Called from inside another save's transaction — the visit's follow-up. */
+  inTransaction?: boolean;
 }): Promise<string> {
   const base = await stamp('task');
   return insertAndQueue({
+    inTransaction: args.inTransaction,
     table: 'tasks',
     entityType: 'task',
     row: {

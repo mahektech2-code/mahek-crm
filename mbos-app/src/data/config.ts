@@ -150,7 +150,15 @@ const DEFAULTS: Record<string, unknown> = {
   /* orders and credit */
   'mbos.orders.approvalThresholdPaise': 20_000_000,
   'mbos.orders.secondTierThresholdPaise': 50_000_000,
-  'mbos.credit.overdueDaysBlockOrders': 90,
+  /* THE OFFICE'S THREE REFUSALS, so the order screen says them in the shop
+     (`engines/order-gates.ts`). Each is the registry's own default: this key
+     said 90 here while the office shipped 0 (off), so a phone that had never
+     pulled would have stopped orders the office would take. */
+  'mbos.credit.overdueDaysBlockOrders': 0,
+  'mbos.credit.blockOnLimitExceeded': true,
+  'mbos.orders.minimumQuantityCans': 0,
+  /* Empty until the office sets one: no number, no "Call accounts" button. */
+  'mbos.credit.accountsPhone': '',
 
   /* payments */
   'mbos.payments.cashDepositSlaHours': 36,
@@ -215,6 +223,7 @@ const DEFAULTS: Record<string, unknown> = {
   'mbos.sync.imageQualityPercent': 70,
   'mbos.sync.mediaWifiOnly': false,
   'mbos.sync.offlineLoginValidityDays': 7,
+  'mbos.sync.handoverIgnoreDays': 14,
 
   /* ai */
   'mbos.ai.retainAudioAfterTranscription': false,

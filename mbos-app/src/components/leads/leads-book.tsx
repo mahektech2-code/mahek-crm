@@ -864,6 +864,7 @@ export function LeadsBook({
         city: pickedArea?.city ?? city,
         area: pickedArea?.area ?? null,
         state: pickedArea?.state ?? null,
+        district: pickedArea?.district ?? null,
         source,
         /* Where it actually came from, on its own column at both ends —
            `customers.lead_source_detail` on the server and `leads.sourceDetail`

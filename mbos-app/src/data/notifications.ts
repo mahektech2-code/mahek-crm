@@ -63,8 +63,19 @@ export async function unreadCount(): Promise<number> {
   return row?.n ?? 0;
 }
 
+/**
+ * Read, here AND at the office. The office's copy stayed unread for ever, so
+ * the web bell of anybody who holds both kept counting what the phone had
+ * already opened. Only a notification the office sent goes up — one this phone
+ * raised for itself has no row there.
+ */
 export async function markRead(id: string): Promise<void> {
+  const row = await one<{ readAt: number | null }>('SELECT readAt FROM notifications WHERE id = ?', [id]);
   await run('UPDATE notifications SET readAt = ? WHERE id = ? AND readAt IS NULL', [Date.now(), id]);
+  if (row && row.readAt == null && !id.startsWith('mbos_notif_')) {
+    const { enqueue } = await import('../sync/queue');
+    await enqueue({ entityType: 'notification_read', entityId: id, op: 'update', payload: { id }, location: false }).catch(() => undefined);
+  }
 }
 
 export async function markAllRead(): Promise<void> {

@@ -3225,10 +3225,30 @@ export const SETTINGS = [
     category: "mbos-credit",
     label: "Days overdue that block new orders",
     description:
-      "A customer with a bill this far past its due date stops being offered new orders in the field. 0 switches the rule off. This is a policy about debt, not about the credit limit — an account inside its limit can still be months late.",
+      "A customer with a bill this far past its due date stops being offered new orders in the field. 0 switches the rule off. This is a policy about debt, not about the credit limit — an account inside its limit can still be months late. The handset says so before the order is taken, and `handleOrder` refuses one that gets through with `overdue_blocked`. Unstated and disputed bills never block.",
     default: 0,
     min: 0,
     max: 365,
+  },
+  {
+    key: "mbos.credit.openOrderWindowDays",
+    type: "integer",
+    category: "mbos-credit",
+    label: "Open orders counted against credit for",
+    description:
+      "Days. What a billing party has ORDERED and not yet been billed for — field and CRM orders pending approval or approved, with no bill against them — is sent to the handset and added to what they owe when an order is judged against the limit. Orders older than this are left out, so one that was never billed does not count against the shop for ever.",
+    default: 60,
+    min: 1,
+    max: 365,
+  },
+  {
+    key: "mbos.credit.accountsPhone",
+    type: "text",
+    category: "mbos-credit",
+    label: "Accounts phone number for the field",
+    description:
+      "The number a salesman's handset rings from \"Call accounts\" when an order is stopped — a credit block, the limit or an overdue bill. Empty hides the button and the screen says to ring accounts instead.",
+    default: "",
   },
 
   /* ------------------------------------------------------------ payments */
@@ -3664,6 +3684,17 @@ export const SETTINGS = [
     max: 90,
   },
   {
+    key: "mbos.sync.reassignedWorkGraceHours",
+    type: "integer",
+    category: "mbos-sync",
+    label: "Work accepted after a shop moves away",
+    description:
+      "A visit, order or payment on a shop that has since been reassigned away from the salesman is accepted — and the new owner and his manager are told — when it was done before the move, or within this many hours after it. The hours cover a phone that had not synced yet when the office moved the shop, and a handset clock that runs a little wrong. A shop that was never his is refused whatever this says. 0 accepts only work dated before the move.",
+    default: 24,
+    min: 0,
+    max: 168,
+  },
+  {
     key: "mbos.sync.retryBackoffSeconds",
     type: "structured",
     category: "mbos-sync",
@@ -3693,6 +3724,17 @@ export const SETTINGS = [
     default: 50,
     min: 1,
     max: 500,
+  },
+  {
+    key: "mbos.sync.handoverIgnoreDays",
+    type: "integer",
+    category: "mbos-sync",
+    label: "Stuck entries ignored at handover after",
+    description:
+      "Days after which an entry the phone gave up on (failed, or blocked behind one) no longer stops somebody else signing in on that phone. Entries the phone is still sending always count.",
+    default: 14,
+    min: 1,
+    max: 365,
   },
   {
     key: "mbos.sync.accessTokenMinutes",
@@ -7628,6 +7670,8 @@ export type Config = {
   "mbos.credit.blockOnLimitExceeded": boolean;
   "mbos.credit.outstandingStaleHours": number;
   "mbos.credit.overdueDaysBlockOrders": number;
+  "mbos.credit.accountsPhone": string;
+  "mbos.credit.openOrderWindowDays": number;
 
   "mbos.payments.cashDepositSlaHours": number;
   "mbos.payments.managerNotifyThresholdPaise": number;
@@ -7669,9 +7713,11 @@ export type Config = {
   "mbos.sync.imageMaxDimensionPx": number;
   "mbos.sync.imageQualityPercent": number;
   "mbos.sync.offlineLoginValidityDays": number;
+  "mbos.sync.reassignedWorkGraceHours": number;
   "mbos.sync.retryBackoffSeconds": number[];
   "mbos.sync.statementMonths": number;
   "mbos.sync.maxItemsPerRequest": number;
+  "mbos.sync.handoverIgnoreDays": number;
   "mbos.sync.accessTokenMinutes": number;
 
   "mbos.devices.onePerPerson": boolean;

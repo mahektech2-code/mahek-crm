@@ -327,3 +327,79 @@ handset for the same reason. Lost asks for a reason because nobody will look
 again; this one asks because somebody will, and "back after Diwali" is what
 tells them when. `lead_hold_reason` is one column for both that question and
 "why is this still a Suspect", because they are the same question.
+
+## The edges of the day (mbos/day-shape-edge-cases)
+
+The pure rules behind these live in `mbos-app/src/data/day-shape.ts` and
+`lib/visit.ts`, tested against the real handset schema in `day-shape.test.ts`.
+
+**AN ARRIVAL HAS THREE ANSWERS, not one.** Check in, Not yet, and NOT GOING IN.
+Until the third existed a shop found shut was a visit opened, a clock run up to
+the dwell floor and a record saved "not checked" — or an arrival left on the
+bar he cannot dismiss with `TravelGate` refusing every other journey. Not going
+in asks a reason, KEEPS the trip (`walkAway` notes the reason on the leg; it is
+not `closeAbandoned`, which would reset the closing reading and pay nothing for
+a ride he made), and clears the arrival. `arrivedLegFor` skips such a leg so a
+later visit to the same shop does not inherit it.
+
+**A SHUT SHOP OWES NO DWELL.** `outcomeNeedsDwell`: Shop closed and Owner away
+are exempt from `mbos.visits.minimumDwellSeconds`, because there is nobody
+inside to have spent the time with and the gate already proved he was at the
+door. Everybody spoken to still owes it.
+
+**MIDNIGHT DOES NOT ERASE AN ARRIVAL HE IS STILL WORKING.** `arrivalIsCurrent`
+keeps an arrival that is checked in (a visit is ended only by its check-out)
+and one made after the start of the punch-in still running (read off
+`attendance_days` inside `mbos.location.serviceMaxDayHours`). Only an arrival
+he never went into, from a stretch that has ended, is rubbed out —
+`runDayBoundaryWork`'s rule, one record along.
+
+**A SYNC NEVER TAKES THE SHOP HE IS STANDING IN.** `reconcileBook` and customer
+tombstones keep `shopsInFlight()` — the open arrival's shop and any shop with
+an open trip, or a closed one not yet spent on a visit within a day. A noon
+reassignment used to delete the row and Check out then did nothing at all. The
+visit screen also saves against the arrival's own id and name where the row is
+missing, and Check out never returns without a sentence. (The office accepting
+that work is H7 in `account-seats-and-reassignment.md`.)
+
+**PUNCHING OUT ASKS ABOUT THE SHOP FIRST.** With an arrival open, Punch out
+sends him to check out (or say he is not going in) before the selfie camera
+opens; a trip he never arrived from is closed with the punch-out, at its own
+reading, named. The closing meter is asked only for a session opened inside
+the stretch being ended (`openSessionLeg(userId, runningSince)`) — a bus day
+opens no session, and yesterday's bike session left open was being read as
+today's.
+
+**A MISSING READING SAYS WHICH.** `getFix` carries a `cause` — `permission`,
+`services_off` (asked of `hasServicesEnabledAsync` before the radio waits),
+`no_signal`, `error` — and `checkInVerdict` takes it, so the refusal no longer
+says "step outside" to somebody whose switch is off. The refusal card offers
+`openLocationSettings` for the two a switch cures; Near me offers it too, and
+Try again. The failure sentences no longer promise a save "marked for your
+manager", which the gate has refused since it became a gate.
+
+**THE FIRST CHECK-IN PINS THE SHOP ON THE PHONE TOO**, in `saveVisit`'s
+transaction, guarded by `gpsLat IS NULL` exactly as the office's statement is,
+from the arrival's `checkInFix` and never on an override.
+
+**THE VISIT'S CART IS SET ASIDE, NOT CLEARED, while another shop is open**
+(`moveDraft`) and comes back when he returns; the persisted draft keeps the
+set-aside cart. With no visit running the old clear-on-shop-change stands.
+
+**QUICK-ACTION START VISIT NAMES THE SHOP AND ASKS.** It used to set off for
+whichever shop was opened last; with none open it sends him to Customers.
+
+**"I DID NOT LEAVE" ANSWERS A WRONG LEFT-SHOP READING.** It clears
+`leftShopAt`, keeps `leftShopDispute` (reason, the instant disputed, the
+metres) on the arrival, stops the reminder for that visit, and rides on the
+visit payload; the office writes `mbos.visit.left_shop_disputed` and tells his
+manager. It never refuses the visit.
+
+**Smaller edges.** Start visit shows "Starting trip to X…" while the departure
+fix is taken. Retaking a shop or owner photo drops the queued one it replaces
+(as the voice note did). Metered days closed with no punch-out are a LIST
+(`parseUnpaidMeters`; an older single-object value still reads): only the
+newest is offered the camera — the meter has moved since the others — and the
+earlier days are named on the card so he can ask the office. A cold-start tap
+on the check-out reminder restores the visit draft before setting the arrival,
+or the draft writer saved an empty form over the one on disk.

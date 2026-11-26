@@ -17,8 +17,12 @@ import { RelationshipChain } from '../src/components/leads/relationship-chain';
 import { ReasonSheet } from '../src/components/leads/reason-sheet';
 import { color as C, weight, type BadgeTone } from '../src/theme/tokens';
 import {
+  ensureLeadShop,
+  leadCreateRefused,
   leadThresholds,
+  leadVisitRefusal,
   setArchived,
+  shopThatRefusedLead,
   touchLead,
   type Lead,
 } from '../src/data/leads';
@@ -49,7 +53,7 @@ import {
   type LeadFunnelView,
 } from '../src/data/lead-funnel';
 import { currentSession } from '../src/data/session';
-import { gateAsRun, leadAlert, type LeadThresholds } from '../src/engines/leads';
+import { gateAsRun, leadAlert, type DuplicateMatch, type LeadThresholds } from '../src/engines/leads';
 import {
   bandOf,
   findingLabel,
@@ -69,7 +73,7 @@ import {
   type LeadSalesType,
   type LeadStage,
 } from '../src/engines/funnel';
-import { compactInrFromPaise, dmy, inrFromPaise, isoDate, plural, pretty } from '../src/lib/format';
+import { compactInrFromPaise, dmy, hhmm, inrFromPaise, isoDate, plural, pretty } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 import { Appear, Pop, Presence, Stagger, useShake } from '../src/components/ui/motion';
 import { feedback } from '../src/components/ui/feedback';
@@ -147,6 +151,8 @@ export default function LeadRecord() {
   const back = useCameFrom('leads');
   const notify = useStore((s) => s.notify);
   const set = useStore((s) => s.set);
+  const arrival = useStore((s) => s.arrival);
+  const askTravel = useStore((s) => s.askTravel);
 
   const [view, setView] = React.useState<LeadFunnelView | null>(null);
   const [events, setEvents] = React.useState<LeadEvent[]>([]);
@@ -233,6 +239,9 @@ export default function LeadRecord() {
      reading "nothing sent" over a record that has had six would be worse than
      drawing nothing for a moment. */
   const [comms, setComms] = React.useState<CommunicationLog | null>(null);
+  /* The shop the office meant when it refused this lead as a duplicate, where
+     it is on this phone — the refusal offers to open it. */
+  const [existingShop, setExistingShop] = React.useState<DuplicateMatch | null>(null);
 
   const load = React.useCallback(() => {
     let live = true;
@@ -264,6 +273,9 @@ export default function LeadRecord() {
       setFieldChecks(verifications);
       setPhoto(shot);
       setComms(reach);
+      void shopThatRefusedLead(id, v?.lead.mobile ?? null).then((m) => {
+        if (live) setExistingShop(m);
+      });
     });
     return () => {
       live = false;
@@ -478,6 +490,18 @@ export default function LeadRecord() {
   const ladder = ladderFor(salesType);
 
   const refused = lead.syncState === 'rejected' || lead.syncState === 'blocked';
+  const visitRefusal = leadVisitRefusal(lead);
+  const startLeadVisit = async () => {
+    if (visitRefusal) return notify(visitRefusal, 'warn');
+    /* The row's own state is reset by any edit since; the outbox keeps the office's answer. */
+    if (await leadCreateRefused(lead.id)) return notify(leadVisitRefusal({ archived: 0, syncState: 'rejected' }) ?? 'The office did not take this lead.', 'warn');
+    if (arrival && arrival.checkedInAt == null) return notify(`Check in at ${arrival.customerName} first. You reached there at ${hhmm(arrival.arrivedAt)}.`, 'error');
+    if (arrival && arrival.checkedInAt != null) return notify(`Check out of ${arrival.customerName} first. You are still in that visit.`, 'error');
+    /* A lead created before this build has no shop row on the phone yet. */
+    await ensureLeadShop({ id: lead.id, name: lead.name, company: lead.company, mobile: lead.mobile, city: lead.city, area: null, customerType: lead.customerType, gpsLat: lead.gpsLat, gpsLng: lead.gpsLng });
+    set({ custId: lead.id });
+    askTravel({ customerId: lead.id, customerName: title });
+  };
   const hero = (
     <View style={{ marginTop: 16 }}>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
@@ -603,8 +627,27 @@ export default function LeadRecord() {
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={[{ fontSize: 14, lineHeight: 19, color: C.danger }, weight(700)]}>Office did not accept this lead</Text>
             <Text style={[{ marginTop: 2, fontSize: 12, lineHeight: 17, color: C.danger }, weight(400)]}>
-              Anything you add here will not reach them. See why on Not accepted.
+              {existingShop
+                ? `This number is already ${existingShop.name}. Work that one — anything you add here will not reach them.`
+                : 'Anything you add here will not reach them. See why on Not accepted.'}
             </Text>
+            {existingShop ? (
+              <Pressable
+                onPress={() => {
+                  if (existingShop.kind === 'customer') {
+                    set({ custId: existingShop.id, pTab: 0 });
+                    router.push('/customer');
+                  } else {
+                    router.push(`/lead?id=${existingShop.id}&from=lead`);
+                  }
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={'Open the existing shop, ' + existingShop.name}
+                hitSlop={6}
+                style={({ pressed }) => ({ alignSelf: 'flex-start', marginTop: 8, minHeight: 36, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 18, backgroundColor: pressed ? C.wash : C.surface, justifyContent: 'center' })}>
+                <Text style={[{ fontSize: 12, lineHeight: 17, color: C.danger }, weight(700)]}>{'Open ' + existingShop.name}</Text>
+              </Pressable>
+            ) : null}
           </View>
           <Pressable
             onPress={() => router.push('/rejections?from=leads')}
@@ -615,6 +658,22 @@ export default function LeadRecord() {
             <Text style={[{ fontSize: 12, lineHeight: 17, color: C.danger }, weight(700)]}>Open</Text>
           </Pressable>
         </View>
+      ) : null}
+
+      {/* ------------------------------------------------- visit the shop --
+
+          A lead is a shop he walks into, and this screen had no way in: the
+          only door to a visit was the customer card, which a lead added on
+          this phone did not have until a sync had gone both ways. The same
+          rules as the quick action — one shop and one visit at a time — and
+          the same question about how he is getting there (`TravelGate`). */}
+      {!lead.convertedCustomerId ? (
+        <PrimaryButton
+          label="Start visit"
+          disabled={!!visitRefusal}
+          whyDisabled={visitRefusal ?? undefined}
+          onPress={() => void startLeadVisit()}
+        />
       ) : null}
 
       {/* ---------------------------------------------------- the figures */}

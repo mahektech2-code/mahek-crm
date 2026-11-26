@@ -85,6 +85,7 @@
       "./plugins/withKeptNotificationSounds.js",
       "./plugins/withCredentialBackupRules.js",
       "./plugins/withNoForceDark.js",
+      "./plugins/withNavigationQueries.js",
       "@maplibre/maplibre-react-native",
       "expo-status-bar"
     ],

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { ENTITY_LABEL, describePayload, entityLabel, readPayload } from './labels';
+import { ENTITY_LABEL, complaintStatusBadge, describePayload, entityLabel, readPayload, syncBadge } from './labels';
 
 /** Every `entityType: '…'` the app writes, read off the source. */
 function writtenTypes(): Set<string> {
@@ -35,4 +35,14 @@ test('a malformed payload is an empty object, not a crash', () => {
   assert.deepEqual(readPayload('{not json'), {});
   assert.deepEqual(readPayload('null'), {});
   assert.equal(describePayload('{oops', 'mbos_order_abcdef123456'), '123456');
+});
+
+test('a refused record never reads as waiting, and one the office holds shows its own status', () => {
+  assert.equal(syncBadge('rejected')?.label, 'Not accepted');
+  assert.equal(syncBadge('failed')?.tone, 'danger');
+  assert.equal(syncBadge('queued')?.label, 'Not sent yet');
+  assert.equal(syncBadge('synced'), null);
+  assert.equal(complaintStatusBadge('resolved').label, 'Closed');
+  assert.equal(complaintStatusBadge('open').label, 'Open');
+  assert.equal(complaintStatusBadge('rejected').tone, 'danger');
 });

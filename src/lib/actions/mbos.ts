@@ -12,6 +12,7 @@ import {
   bills,
   callAiDrafts,
   complaints,
+  customerAmChanges,
   customerDistributors,
   distributorProfiles,
   customers,
@@ -98,6 +99,9 @@ import { financialYearOf } from "../financial-year";
 import { metresBetween } from "../geo";
 import { today, recomputeOutstanding, recomputeLastContact, salesManagerForOwner } from "../recompute";
 import { allocate, type AllocatableBill } from "../engines/allocation";
+import { planFieldCollection } from "../engines/field-collection";
+import { overdueBlockingBill } from "../engines/field-order-gates";
+import { listBills } from "../services/payment-service";
 import { computeHealth, type HealthFacts } from "../engines/health";
 import { fileStorage } from "../storage";
 import { classOfCity } from "../services/expense-policy-service";
@@ -106,6 +110,7 @@ import { refreshDayMoney } from "../services/expense-submit-service";
 import { transcribeSpeech } from "../dictation";
 import { sniffContentType, ACCEPTED_AUDIO_TYPES } from "../file-types";
 import { issueToken, verifyToken, signingKeyPresent } from "../mbos/token";
+import { taskUpdateVerdict } from "../mbos/task-update-rules";
 import {
   checkDeviceBinding,
   loadPrincipal,
@@ -119,6 +124,7 @@ import {
 import { territoriesFor } from "../services/territory-service";
 import { placeIndexFor, placeShopsNow } from "../services/place-tree-service";
 import { placeNewLead } from "../territory-rules";
+import { newNoteText, survivesConversion } from "../mbos/converted-lead-note";
 import { TERRITORY_REGION_SQL } from "../territory-sql";
 import {
   LEAVE_TYPES,
@@ -144,6 +150,7 @@ import {
 } from "../task-form";
 import { applyLinkedAnswers, linkContexts, settleLinkedTasks } from "../services/task-link-service";
 import { kmSchema, litresSchema } from "../decimal-schemas";
+import { stopSkipVerdict, workPredatesMove } from "../engines/field-day-rules";
 
 /* ---------------------------------------------------------------------------
  * MBOS — every write the handset makes.
@@ -273,6 +280,10 @@ export async function mbosLogin(input: {
       target: mbosDevices.deviceId,
       set: {
         userId: user.id,
+        /* A DIFFERENT PERSON ON THIS PHONE starts with no token. The last one
+           may have signed out with no signal, so the clear never arrived; their
+           handset registers its own token again moments after sign-in. */
+        pushToken: sql`case when ${mbosDevices.userId} = ${user.id} then ${mbosDevices.pushToken} else null end`,
         model: input.deviceLabel ?? null,
         platform: input.platform ?? null,
         /* Not `appVersion`: the heartbeat below writes it, so a sign-in on a
@@ -840,7 +851,7 @@ async function handleItem(
     }
   }
 
-  const handled = await dispatchItem(principal, item);
+  const handled = await dispatchAndRecord(principal, item);
   if (handled.kind === "accepted") {
     await recordActivityLocation(principal, item).catch(() => {});
   }
@@ -896,6 +907,19 @@ function numberOrNull(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? Math.round(v) : null;
 }
 
+async function dispatchAndRecord(
+  principal: MbosPrincipal,
+  item: SyncItem,
+): Promise<Handled> {
+  const handled = await dispatchItem(principal, item);
+  /* Work let in on a shop that has since moved away is said only once it has
+     LANDED — a visit refused for another reason must not tell a new owner
+     about work that is not there. See `recordWorkAfterMove`. */
+  if (handled.kind === "accepted") await recordWorkAfterMove(principal, item);
+  else workAfterMove.delete(item);
+  return handled;
+}
+
 async function dispatchItem(
   principal: MbosPrincipal,
   item: SyncItem,
@@ -946,12 +970,16 @@ async function dispatchItem(
       return handlePlanDay(principal, item);
     case "plan_stops":
       return handlePlanStops(principal, item);
+    case "stop_skip":
+      return handleStopSkip(principal, item);
     case "expense_day":
       return handleExpenseDay(principal, item);
     case "travel_leg":
       return handleTravelLeg(principal, item);
     case "expense_day_submit":
       return handleExpenseDaySubmit(principal, item);
+    case "notification_read":
+      return handleNotificationRead(principal, item);
     default:
       return {
         kind: "rejected",
@@ -961,6 +989,20 @@ async function dispatchItem(
         ),
       };
   }
+}
+
+/**
+ * A notification he read on the phone. Only ever his own — the user id is in
+ * the WHERE — and accepted whether or not the row still exists: a notification
+ * the office has since cleared was read all the same, and refusing it would
+ * park a tap in his outbox.
+ */
+async function handleNotificationRead(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
+  await db
+    .update(notifications)
+    .set({ read: true })
+    .where(and(eq(notifications.id, item.entityId), eq(notifications.userId, principal.user.id)));
+  return { kind: "accepted", value: { serverId: item.entityId } };
 }
 
 /* -------------------------------------------------- the customer, in scope */
@@ -1014,7 +1056,17 @@ type ScopedCustomer = {
 export async function scopedCustomer(
   principal: MbosPrincipal,
   customerId: unknown,
-): Promise<{ ok: true; customer: ScopedCustomer } | { ok: false; value: Rejection }> {
+  /**
+   * WHEN THE WORK WAS DONE, for the three records that are work done at a
+   * shop — a visit, an order, a receipt. Given, a shop that has left his book
+   * since may still take it: see `formerHolding`. Absent, this is exactly the
+   * "whose book is it now" question it always was.
+   */
+  work?: { at: number | null | undefined },
+): Promise<
+  | { ok: true; customer: ScopedCustomer; formerly?: FormerHolding }
+  | { ok: false; value: Rejection }
+> {
   if (typeof customerId !== "string" || !customerId) {
     return {
       ok: false,
@@ -1067,7 +1119,7 @@ export async function scopedCustomer(
       ok: false,
       value: reject(
         "validation",
-        "That customer is not on MahekOne. Raise them as a lead and convert it, rather than ordering against a record that does not exist.",
+        "That shop is not on MahekOne. Raise it as a lead and take the order on the lead — its first order makes it a customer. Nothing here needs converting by hand.",
       ),
     };
   }
@@ -1100,6 +1152,16 @@ export async function scopedCustomer(
         ),
       );
     if (Number(assigned?.n ?? 0) === 0) {
+      /* Work done while it WAS his — see `formerHolding`. Only for the work
+         records that pass `work`, and only on a recorded move away from him;
+         a shop that was never his falls straight through to the refusal. */
+      if (work) {
+        const formerly = await formerHolding(principal.user.id, customer.id);
+        const grace = (await getConfig())["mbos.sync.reassignedWorkGraceHours"];
+        if (formerly && workPredatesMove(work.at, formerly.movedAt.getTime(), grace)) {
+          return { ok: true, customer: customer as ScopedCustomer, formerly };
+        }
+      }
       return {
         ok: false,
         value: reject(
@@ -1112,6 +1174,156 @@ export async function scopedCustomer(
 
   return { ok: true, customer: customer as ScopedCustomer };
 }
+
+/* ------------------------------------ work done before the shop moved away */
+
+/**
+ * The record that a shop WAS his and when it stopped being.
+ *
+ * `scopedCustomer` asks whose book a shop is in NOW, and it was asked of work
+ * done hours earlier: a shop reassigned at 2 pm and visited by him at 11 am
+ * reached the office at 6 pm and was refused for ever — the visit, the order
+ * taken in it and the receipt for cash already in his pocket, all in Not
+ * accepted over a decision made at a desk after the work was done. The phone
+ * cannot have known; the pull that would have told it had not run.
+ *
+ * Two records say a shop moved AWAY from somebody, and both name him: a seat
+ * change in `customer_am_changes` with him as `from_user_id` (any seat — the
+ * sales seat is the book, and the others are what `principalBookClause` also
+ * reads), and a tombstone in `mbos_deletions` written to HIS handset for the
+ * shop. The latest of them is when it left. Nothing else counts — not a name
+ * on a sheet, not a timeline line — because this is the security boundary of
+ * the sync endpoint and a stranger's shop must stay refused.
+ *
+ * Who holds it now is the seat change's `to_user_id` where there is one, and
+ * the shop's own seats otherwise; that is who is told.
+ */
+type FormerHolding = { movedAt: Date; toUserId: string | null };
+
+async function formerHolding(userId: string, customerId: string): Promise<FormerHolding | null> {
+  const [seat] = await db
+    .select({ at: customerAmChanges.changedAt, toUserId: customerAmChanges.toUserId })
+    .from(customerAmChanges)
+    .where(and(eq(customerAmChanges.customerId, customerId), eq(customerAmChanges.fromUserId, userId)))
+    .orderBy(sql`${customerAmChanges.changedAt} desc`)
+    .limit(1);
+  const [stone] = await db
+    .select({ at: mbosDeletions.at })
+    .from(mbosDeletions)
+    .where(
+      and(
+        eq(mbosDeletions.entityId, customerId),
+        eq(mbosDeletions.userId, userId),
+        inArray(mbosDeletions.entity, ["customers", "leads"]),
+      ),
+    )
+    .orderBy(sql`${mbosDeletions.at} desc`)
+    .limit(1);
+  if (!seat && !stone) return null;
+
+  const movedAt = seat && stone ? (seat.at > stone.at ? seat.at : stone.at) : (seat?.at ?? stone!.at);
+  let toUserId = seat?.toUserId ?? null;
+  if (!toUserId) {
+    const [now] = await db
+      .select({ salesAmId: customers.salesAmId, ownerId: customers.ownerId })
+      .from(customers)
+      .where(eq(customers.id, customerId))
+      .limit(1);
+    toUserId = now?.salesAmId ?? now?.ownerId ?? null;
+  }
+  return { movedAt, toUserId: toUserId === userId ? null : toUserId };
+}
+
+/**
+ * The work that came in on a shop he no longer holds, held until the handler
+ * has said whether it landed. Keyed by the item object, which lives exactly as
+ * long as the request, so nothing here outlives it.
+ */
+const workAfterMove = new WeakMap<
+  SyncItem,
+  { customerId: string; customerName: string; what: string; formerly: FormerHolding }
+>();
+
+/**
+ * The door for the three work records: `scopedCustomer` with the work's own
+ * instant, and — where it let the work in on a former holding — a note of it
+ * kept for `recordWorkAfterMove` once the handler has accepted.
+ */
+async function scopedForWork(
+  principal: MbosPrincipal,
+  item: SyncItem,
+  customerId: unknown,
+  at: number | null | undefined,
+  what: "visit" | "order" | "payment",
+) {
+  const found = await scopedCustomer(principal, customerId, { at });
+  if (found.ok && found.formerly) {
+    workAfterMove.set(item, {
+      customerId: found.customer.id,
+      customerName: found.customer.name,
+      what,
+      formerly: found.formerly,
+    });
+  }
+  return found;
+}
+
+/**
+ * ACCEPTED, AND SAID. Work landing on somebody else's shop without a word is
+ * how a new owner finds an order on an account he was given this morning and
+ * has no idea who took it — so he is told, his manager is told, and it is
+ * written to the audit log with the instant the shop moved and the instant the
+ * work was done, which is the whole of the case for accepting it.
+ *
+ * Once per record: a resend of an accepted item must not ring the bell twice,
+ * so the audit row is the memory.
+ */
+async function recordWorkAfterMove(principal: MbosPrincipal, item: SyncItem): Promise<void> {
+  const note = workAfterMove.get(item);
+  if (!note) return;
+  workAfterMove.delete(item);
+
+  const [seen] = await db
+    .select({ id: auditLog.id })
+    .from(auditLog)
+    .where(and(eq(auditLog.action, "mbos.work_after_reassignment"), eq(auditLog.entityId, item.entityId)))
+    .limit(1);
+  if (seen) return;
+
+  await db
+    .insert(auditLog)
+    .values({
+      id: gen("aud"),
+      actorId: principal.user.id,
+      action: "mbos.work_after_reassignment",
+      entityType: item.entityType,
+      entityId: item.entityId,
+      afterState: {
+        customerId: note.customerId,
+        movedAt: note.formerly.movedAt.toISOString(),
+        sentAt: new Date(item.clientCreatedAt).toISOString(),
+        newHolderId: note.formerly.toUserId,
+      } as never,
+    })
+    .catch(() => undefined);
+
+  const Word = note.what[0].toUpperCase() + note.what.slice(1);
+  const body = `${principal.user.name} sent a ${note.what} for ${note.customerName}, made before the shop moved out of his book. It is saved against the shop. Check it.`;
+  if (note.formerly.toUserId) {
+    await notifyUsers([
+      {
+        userId: note.formerly.toUserId,
+        title: `${Word} on an account you were given`,
+        body,
+        kind: "info",
+        href: `/crm/customers/${note.customerId}`,
+        mbosHref: "/notifications",
+      },
+    ]).catch(() => {});
+  }
+  await notifyManagers(principal.user.id, `${Word} after a reassignment`, body);
+}
+
 
 /**
  * WHETHER THIS PRINCIPAL MAY WORK THIS LEAD — asked before a handset writes
@@ -1142,8 +1354,12 @@ async function leadWriteRefusal(
     salesAmId: string | null;
     backOfficeAmId: string | null;
   },
+  /* True for the one write a converted lead still takes — a note or a next
+     action, kept on the customer's timeline (`noteOnConvertedLead`). The
+     seats are asked exactly as for a lead. */
+  opts: { asCustomer?: boolean } = {},
 ): Promise<Rejection | null> {
-  if (lead.kind !== "lead") {
+  if (lead.kind !== "lead" && !opts.asCustomer) {
     return reject(
       "validation",
       `${lead.name} is a customer now, not a lead, so this lead change was not applied. Open it from Customers.`,
@@ -1208,6 +1424,22 @@ const wireBoolean = z
 const visitSchema = z.object({
   customerId: z.string(),
   checkInAt: z.number().nullish(),
+  /**
+   * "I DIDN'T LEAVE" — his answer to the phone saying he walked out without
+   * checking out. The trail can be wrong (a jump in a fix, a godown that
+   * bounces the signal across the road), and the visit is then closed at the
+   * wrong time unless he can say so. Optional, and `.catch(null)` rather than
+   * a refusal: a shape this handler cannot read costs the dispute, never the
+   * visit. Recorded in `audit_log` and to his manager — see `handleVisit`.
+   */
+  leftShopDispute: z
+    .object({
+      reason: z.string().max(1000),
+      seenAt: z.number(),
+      metres: z.number().nullish(),
+    })
+    .nullish()
+    .catch(null),
   checkOutAt: z.number().nullish(),
   checkInLat: z.number().nullish(),
   checkInLng: z.number().nullish(),
@@ -1417,12 +1649,58 @@ async function applyVisitSuspectDecision(
   return { moved: true, why: null };
 }
 
+/**
+ * The journey stop a visit may be linked to, or null.
+ *
+ * A stop is deleted when it is taken off a day, and recreated under a new id
+ * when the day's shops are saved again from the phone. A visit already on the
+ * handset still names the old one, and `journey_plan_stop_id` is a foreign key:
+ * stored as sent, the insert failed and the visit could never be saved.
+ *
+ * The id the phone sent is used where it is still this salesman's stop for this
+ * shop. Otherwise it is his stop for the SAME shop on the day he checked in, and
+ * failing that there is none — never another shop's or another salesman's, and
+ * no stop is created. A visit that named no stop is left without one.
+ *
+ * The row is locked, so an office save cannot delete it before the visit lands.
+ */
+async function visitStopFor(
+  tx: Pick<typeof db, "execute">,
+  visit: { claimed: string | null; salesmanId: string; customerId: string; day: string },
+): Promise<string | null> {
+  if (!visit.claimed) return null;
+
+  const [same] = await tx.execute<{ id: string }>(sql`
+    select s.id from mbos_journey_stops s
+      join mbos_journey_plans p on p.id = s.plan_id
+     where s.id = ${visit.claimed}
+       and s.customer_id = ${visit.customerId}
+       and p.user_id = ${visit.salesmanId}
+       for update of s
+  `);
+  if (same) return same.id;
+
+  const [replacement] = await tx.execute<{ id: string }>(sql`
+    select s.id from mbos_journey_stops s
+      join mbos_journey_plans p on p.id = s.plan_id
+     where p.user_id = ${visit.salesmanId}
+       and p.plan_date = ${visit.day}::date
+       and s.customer_id = ${visit.customerId}
+     order by (s.status = 'visited'), s.sequence
+     limit 1
+       for update of s
+  `);
+  return replacement?.id ?? null;
+}
+
 async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
   const parsed = visitSchema.safeParse(item.payload);
   if (!parsed.success) return validationRejection(parsed.error);
   const p = parsed.data;
 
-  const found = await scopedCustomer(principal, p.customerId);
+  /* The visit's own check-in instant, which is when he was in the shop — a
+     visit saved at the end of the day was still made at 11. */
+  const found = await scopedForWork(principal, item, p.customerId, p.checkInAt ?? item.clientCreatedAt, "visit");
   if (!found.ok) return { kind: "rejected", value: found.value };
   const customer = found.customer;
 
@@ -1630,6 +1908,13 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
   const checkOutAt = p.checkOutAt ? new Date(p.checkOutAt) : null;
 
   await db.transaction(async (tx) => {
+    const stopId = await visitStopFor(tx, {
+      claimed: p.journeyPlanStopId ?? null,
+      salesmanId: principal.user.id,
+      customerId: customer.id,
+      day: calendarDate(checkInAt),
+    });
+
     /*
      * What the assistant's proposal became, in the visit's own transaction —
      * a visit that landed with its draft unmarked would read as a suggestion
@@ -1656,7 +1941,7 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
           ),
         );
     }
-    await tx
+    const inserted = await tx
       .insert(mbosVisits)
       .values({
         id: item.entityId,
@@ -1681,7 +1966,7 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
         outcome: p.outcome,
         notes: p.notes ?? null,
         nextFollowUpDate: p.nextFollowUpDate ?? null,
-        journeyPlanStopId: p.journeyPlanStopId ?? null,
+        journeyPlanStopId: stopId,
         wasPlanned: p.wasPlanned ?? false,
         deviationReason: p.deviationReason ?? null,
         locationMismatch,
@@ -1695,7 +1980,8 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
         updatedById: principal.user.id,
         deviceId: principal.deviceId,
       })
-      .onConflictDoNothing({ target: mbosVisits.id });
+      .onConflictDoNothing({ target: mbosVisits.id })
+      .returning({ id: mbosVisits.id });
 
     /*
      * THE ORDER AND THE RECEIPT OFTEN GOT HERE FIRST.
@@ -1781,12 +2067,81 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
       `);
     }
 
-    if (p.journeyPlanStopId) {
+    /* The stop the phone named is marked as before. One found for it in its
+       place is marked only by the delivery that actually saved the visit, and
+       never over a stop that already records one. */
+    const asClaimed = stopId !== null && stopId === p.journeyPlanStopId;
+    if (stopId && (asClaimed || inserted.length)) {
       await tx.execute(sql`
         update mbos_journey_stops
            set status = 'visited', actual_visit_at = ${checkInAtIso}, updated_at = now()
-         where id = ${p.journeyPlanStopId}
+         where id = ${stopId}
+           ${asClaimed ? sql`` : sql`and status <> 'visited'`}
       `);
+    } else {
+      /*
+       * A VISIT THAT NAMES NO STOP CAN STILL BE ONE, and it used to count as a
+       * miss.
+       *
+       * The handset names a stop only where it holds the stop row, and stop
+       * rows are minted HERE, from the picks, and reach the phone on the next
+       * pull. So a salesman who picked his shops in a doorway with no signal
+       * and walked straight into the first of them sent a visit with no stop
+       * id — and the office marked the shop he planned and visited as planned
+       * and NOT visited, which is the one figure the journey screen is read
+       * for. The same is true of a phone whose pull is a few minutes behind
+       * an office edit to the day.
+       *
+       * So the stop is found by what it IS: his plan, on the day the visit
+       * happened in Asia/Kolkata (named — a bare cast answers in the session
+       * zone and moves a 1 am visit onto yesterday's plan), for this shop,
+       * still planned. One stop at most, the earliest in the walking order:
+       * the same shop picked twice in one day is one visit, not two. A stop
+       * already visited or skipped is left exactly as it is — the visit that
+       * named it, or the answer he gave, is the record.
+       *
+       * The visit is then bound to the stop it turned out to be, exactly as if
+       * the phone had named it, so "planned" on the visit and "visited" on the
+       * stop cannot disagree about one shop.
+       */
+      await tx.execute(sql`
+        with matched as (
+          update mbos_journey_stops
+             set status = 'visited', actual_visit_at = ${checkInAtIso}, updated_at = now(),
+                 updated_by_id = ${principal.user.id}
+           where id = (
+             select s.id
+               from mbos_journey_stops s
+               join mbos_journey_plans j on j.id = s.plan_id
+              where j.user_id = ${principal.user.id}
+                and j.plan_date = (${checkInAtIso}::timestamptz at time zone ${APP_TIMEZONE})::date
+                and s.customer_id = ${customer.id}
+                and s.status = 'planned'
+              order by s.sequence asc, s.id asc
+              limit 1
+           )
+          returning id
+        )
+        update mbos_visits v
+           set journey_plan_stop_id = matched.id, was_planned = true
+          from matched
+         where v.id = ${item.entityId}
+           and v.journey_plan_stop_id is null
+      `);
+    }
+
+    /* The phone's own stop id is kept where it could not be used: the visit row
+       can only name a stop that exists. */
+    if (inserted.length && p.journeyPlanStopId && !asClaimed) {
+      await tx.insert(auditLog).values({
+        id: `aud_${randomUUID()}`,
+        actorId: principal.user.id,
+        action: "mbos.visit.stop_relinked",
+        entityType: "mbos_visit",
+        entityId: item.entityId,
+        beforeState: { journeyPlanStopId: p.journeyPlanStopId },
+        afterState: { journeyPlanStopId: stopId, customerId: customer.id, day: calendarDate(checkInAt) },
+      });
     }
 
     /*
@@ -1874,6 +2229,47 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
         .where(eq(customers.id, customer.id));
     }
   });
+
+  /*
+   * THE DISPUTE IS WRITTEN DOWN WHERE A MANAGER READS IT, and it needs no
+   * column: the visit's own check-out instant is what he is disputing, and the
+   * audit row beside it says when the phone thought he left, how far it
+   * thought he was, and what he said. Once per visit — a resend of the same
+   * visit is the same dispute. Never allowed to cost the visit, which has
+   * already landed.
+   */
+  if (p.leftShopDispute?.reason?.trim()) {
+    const dispute = p.leftShopDispute;
+    const [seen] = await db
+      .select({ id: auditLog.id })
+      .from(auditLog)
+      .where(and(eq(auditLog.action, "mbos.visit.left_shop_disputed"), eq(auditLog.entityId, item.entityId)))
+      .limit(1);
+    if (!seen) {
+      await db
+        .insert(auditLog)
+        .values({
+          id: gen("aud"),
+          actorId: principal.user.id,
+          action: "mbos.visit.left_shop_disputed",
+          entityType: "mbos_visit",
+          entityId: item.entityId,
+          afterState: {
+            customerId: customer.id,
+            reason: dispute.reason.trim(),
+            seenAt: new Date(dispute.seenAt).toISOString(),
+            metres: dispute.metres ?? null,
+          } as never,
+        })
+        .catch(() => undefined);
+      await notifyManagers(
+        principal.user.id,
+        `${principal.user.name} says he did not leave ${customer.name}`,
+        `His phone said he walked away${dispute.metres != null ? ` (about ${Math.round(dispute.metres)} m)` : ""} without checking out. He said: ${dispute.reason.trim()}`,
+        "/sales/visits",
+      ).catch(() => undefined);
+    }
+  }
 
   let visitMoved = false;
   if (visitMove && p.suspectDecision) {
@@ -2664,8 +3060,16 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
    * The BILLING party, and it is scope-checked. Whose credit limit, term and
    * outstanding this order is judged against is this account, so a salesman
    * may only bill somebody in his own book.
+   *
+   * …or one that WAS in it when he took the order — see `formerHolding`.
    */
-  const found = await scopedCustomer(principal, p.customerId);
+  const found = await scopedForWork(
+    principal,
+    item,
+    p.customerId,
+    p.orderedAt ?? item.clientCreatedAt,
+    "order",
+  );
   if (!found.ok) return { kind: "rejected", value: found.value };
   const customer = found.customer;
   const config = await getConfig();
@@ -2769,6 +3173,27 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
     };
   }
 
+  /* --- the overdue block, `mbos.credit.overdueDaysBlockOrders`. A debt
+     policy rather than a credit one, and 0 is off. The handset asks the same
+     question of its own open bills before the order is taken
+     (`engines/order-gates.ts`), so this is the office confirming what the
+     phone already said rather than a surprise. A new order only: an edit is
+     the same order, already taken. --- */
+  const blockDays = config["mbos.credit.overdueDaysBlockOrders"];
+  if (blockDays > 0) {
+    const open = await listBills({ customerId: customer.id, openOnly: true }, principal);
+    const worst = overdueBlockingBill(open, blockDays);
+    if (worst) {
+      return {
+        kind: "rejected",
+        value: reject(
+          "overdue_blocked",
+          `${customer.name} has bill ${worst.billNo ?? ""} ${worst.overdueDays} days past its due date, and new orders stop at ${blockDays} days. The order was not accepted — collect it or ring accounts.`,
+        ),
+      };
+    }
+  }
+
   /* --- the products and the minimum. Shared with an edit and a change
      request, which put lines on the same order and must pass the same bar. --- */
   const checked = await checkOrderLines(p.lines, customer.name, config);
@@ -2847,8 +3272,10 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
    * truncates to.
    */
   const orderedAtIso = orderedAt.toISOString();
-  const day = await today();
-  const fy = financialYearOf(day);
+  /* The series is the financial year the order is FOR, not the day it
+     reached us: an order taken on 31 March and synced on 1 April belongs to
+     the year it was taken in. */
+  const fy = financialYearOf(String(orderDay));
   const prefix = seriesPrefix(config["mbos.orders.numberSeriesPrefix"], "MBOS");
 
   /* `OrderLine` is the shape the rest of MahekOne reads, with `productId`
@@ -3173,7 +3600,10 @@ async function handlePayment(principal: MbosPrincipal, item: SyncItem): Promise<
   if (!parsed.success) return validationRejection(parsed.error);
   const p = parsed.data;
 
-  const found = await scopedCustomer(principal, p.customerId);
+  /* The press of the button, not `receivedAt`, which is a day rather than an
+     instant — and the cash has been in his hand since that press, whoever the
+     shop belongs to now. See `formerHolding`. */
+  const found = await scopedForWork(principal, item, p.customerId, item.clientCreatedAt, "payment");
   if (!found.ok) return { kind: "rejected", value: found.value };
   const customer = found.customer;
 
@@ -3234,39 +3664,20 @@ async function handlePayment(principal: MbosPrincipal, item: SyncItem): Promise<
     paid: Number(b.paid),
   }));
 
-  /* A bill the handset named that has since been settled is a rejection with
-   * its own code: the money is real, but where it was going no longer exists,
-   * and silently re-allocating it is not a decision code should take. */
-  if (p.billIds?.length) {
-    const byId = new Map(allocatable.map((b) => [b.id, b]));
-    for (const billId of p.billIds) {
-      const bill = byId.get(billId);
-      if (!bill) {
-        return {
-          kind: "rejected",
-          value: reject(
-            "bill_settled",
-            `A bill this payment from ${customer.name} was against is no longer on their account. Re-enter the receipt against the bills that are open.`,
-          ),
-        };
-      }
-      if (bill.amount - bill.paid <= 0) {
-        return {
-          kind: "rejected",
-          value: reject(
-            "bill_settled",
-            `Bill ${bill.billNo} has already been settled, so ${rupees(p.amountPaise)} from ${customer.name} was not applied to it. Record it against their open bills instead.`,
-          ),
-        };
-      }
-    }
-  }
-
-  const allocation = allocate(allocatable, {
-    amount: p.amountPaise,
-    mode: p.billIds?.length ? "settle" : "auto",
-    selectedBillIds: p.billIds ?? undefined,
-  });
+  /*
+   * A BILL THE HANDSET NAMED THAT HAS SINCE BEEN SETTLED IS ACCEPTED, NOT
+   * REFUSED (Nov 2026 — a reversal). It used to be `bill_settled`: the money
+   * is real, but where it was going no longer exists. Refusing it left cash a
+   * salesman was physically holding on Not accepted, and the only way out was
+   * a second receipt for one handful of notes. The receipt is `reported`
+   * whatever happens here, so nothing counts until accounts confirm it — and
+   * confirming can re-point it. So the named bills still open are filled
+   * first, the rest go oldest first and then on account, and the receipt
+   * carries a sentence saying so (`planFieldCollection`).
+   */
+  const plan = planFieldCollection(allocatable, { amountPaise: p.amountPaise, billIds: p.billIds ?? null });
+  const allocation = allocate(allocatable, plan.request);
+  const note = [p.note ?? null, plan.flag].filter((x): x is string => !!x).join(" · ") || null;
 
   const day = await today();
   const receivedAt = p.receivedAt ?? day;
@@ -3288,9 +3699,10 @@ async function handlePayment(principal: MbosPrincipal, item: SyncItem): Promise<
       instrumentDate: p.instrumentDate ?? null,
       visitId: p.visitId ?? null,
       receiptNo: serverNumber,
-      // The note is the salesman's own sentence and nothing else. The receipt
-      // number used to be prefixed onto it for want of a column; it has one.
-      note: p.note ?? null,
+      // The note is the salesman's own sentence, plus — where a bill he named
+      // was settled meanwhile — the office's sentence saying where the money
+      // went instead, for accounts to read before confirming it.
+      note,
       // Money the customer says has arrived is not money the business has
       // seen. It sits at `reported` and moves nothing in the ledger until
       // accounts find it in the bank.
@@ -3330,7 +3742,7 @@ async function handlePayment(principal: MbosPrincipal, item: SyncItem): Promise<
       sourceRecordId: item.entityId,
       occurredAt: new Date(item.clientCreatedAt),
       actorUserId: principal.user.id,
-      summary: `${rupees(p.amountPaise)} collected in the field, receipt ${serverNumber} — reported, awaiting confirmation by accounts`,
+      summary: `${rupees(p.amountPaise)} collected in the field, receipt ${serverNumber} — reported, awaiting confirmation by accounts${plan.flag ? `. ${plan.flag}` : ""}`,
     });
 
     if (p.visitId) {
@@ -4494,6 +4906,12 @@ const leadSchema = z.object({
    */
   state: z.string().max(80).nullish(),
   /*
+   * The DISTRICT the area was picked under, on builds that offer a district
+   * chip with the town typed beside it. Read only at create, by
+   * `placeNewLead`, to file a lead whose typed town the tree does not know.
+   */
+  district: z.string().max(120).nullish(),
+  /*
    * A STRING, AND THE LIST IS `leads.sources`.
    *
    * It was a seven-value enum typed out here, and `leads.sources` is ten codes
@@ -4779,6 +5197,47 @@ const leadSchema = z.object({
  * mobile are required to CREATE a lead and are not resent to change its stage,
  * so the create schema refused all five of the handset's edits.
  */
+/**
+ * What a salesman said about a lead that was a customer by the time it arrived:
+ * the new note and the next action, as dated lines on the customer's timeline.
+ * Nothing on the customer row is touched — the lead columns mean nothing on
+ * it — and the natural key is the outbox item's own, so a resend writes no
+ * second line.
+ */
+async function noteOnConvertedLead(
+  principal: MbosPrincipal,
+  existing: NonNullable<Awaited<ReturnType<typeof leadRow>>>,
+  item: SyncItem,
+  p: { notes?: string | null; nextAction?: { action: string; date: string } | null },
+): Promise<Handled> {
+  const refused = await leadWriteRefusal(principal, existing, { asCustomer: true });
+  if (refused) return { kind: "rejected", value: refused };
+
+  const [stored] = await db
+    .select({ notes: customers.leadNotes })
+    .from(customers)
+    .where(eq(customers.id, existing.id))
+    .limit(1);
+  const said = newNoteText(stored?.notes ?? null, p.notes ?? null);
+  const at = new Date(item.clientCreatedAt || Date.now());
+  const lines: { key: string; summary: string }[] = [];
+  if (said) lines.push({ key: "note", summary: `Note: ${said}`.slice(0, 500) });
+  if (p.nextAction?.action?.trim()) {
+    lines.push({ key: "next", summary: `Next: ${p.nextAction.action.trim()} (${p.nextAction.date})`.slice(0, 500) });
+  }
+  for (const line of lines) {
+    await writeTimeline(db, {
+      customerId: existing.id,
+      eventType: MBOS_EVENT.fieldNote,
+      sourceRecordId: `${item.idempotencyKey}:${line.key}`,
+      occurredAt: at,
+      actorUserId: principal.user.id,
+      summary: line.summary,
+    });
+  }
+  return { kind: "accepted", value: { serverId: existing.id } };
+}
+
 async function handleLeadUpdate(
   principal: MbosPrincipal,
   item: SyncItem,
@@ -4820,6 +5279,14 @@ async function handleLeadUpdate(
       message:
         "That lead has not reached the office yet, so there is nothing to change. It will be tried again once it has.",
     };
+  }
+
+  /* A NOTE OR A NEXT ACTION ON A LEAD THAT HAS SINCE BECOME A CUSTOMER is
+     kept on the customer's timeline rather than refused — see
+     `lib/mbos/converted-lead-note.ts`. Anything else still meets the refusal
+     below. */
+  if (existing.kind !== "lead" && survivesConversion(item.payload)) {
+    return noteOnConvertedLead(principal, existing, item, p);
   }
 
   /* WHOSE LEAD IT IS, before a single column is written — see
@@ -5671,6 +6138,7 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
    * already been placed, and refusing an edit would strand the record.
    */
   let leadState: string | null = null;
+  let filedUnder: { stateId: string; districtId: string } | null = null;
   if (item.op === "create") {
     const [book] = await db.execute<{ state: string | null }>(sql`
       select ${sql.raw(TERRITORY_REGION_SQL)} as state
@@ -5683,7 +6151,7 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
     const territories = await territoriesFor(principal.user.id);
     const placement = placeNewLead(
       territories,
-      { city: p.city, area: p.area, state: p.state, bookState: book?.state ?? null },
+      { city: p.city, area: p.area, state: p.state, bookState: book?.state ?? null, district: p.district },
       territoryExempt(principal),
       await placeIndexFor(territories),
     );
@@ -5699,6 +6167,7 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
       };
     }
     leadState = placement.state;
+    filedUnder = placement.filedUnder ?? null;
   }
 
   const day = await today();
@@ -5920,6 +6389,28 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
      next pull — the gate above let it in on the strength of that same match.
      Never fails the write: a lead is not lost to its town not being found. */
   if (item.op === "create") await placeShopsNow([item.entityId]);
+
+  /* AND FILED UNDER HIS DISTRICT where the tree does not know the town — see
+     `placeNewLead`. The typed pass above leaves such a row at its state, and a
+     district allocation reaches a shop only through `resolved_district_id`,
+     so without this the lead the gate just let in would leave his handset on
+     the next pull. `place_source = 'field'` keeps the nightly typed pass off
+     it (that pass re-reads only `sheet` rows) while a geocode of its pin may
+     still refine it; nobody DECIDED it, so `place_decided_at` stays null. The
+     town he typed stays in `city` as text. */
+  if (filedUnder) {
+    await db.execute(sql`
+      update customers
+         set resolved_state_id = ${filedUnder.stateId},
+             resolved_district_id = ${filedUnder.districtId},
+             resolved_city_id = null,
+             resolved_area_id = null,
+             place_source = 'field',
+             place_resolved_at = now()
+       where id = ${item.entityId}
+         and place_decided_at is null
+    `);
+  }
 
   /*
    * §R — where the account began. Outside the insert's own transaction and
@@ -6715,6 +7206,8 @@ async function handleTaskUpdate(
       id: mbosTasks.id,
       title: mbosTasks.title,
       assignedToUserId: mbosTasks.assignedToUserId,
+      assignedByUserId: mbosTasks.assignedByUserId,
+      status: mbosTasks.status,
       customerId: mbosTasks.customerId,
       form: mbosTaskCampaigns.form,
     })
@@ -6733,6 +7226,20 @@ async function handleTaskUpdate(
         "That task has not reached the office yet, so there is nothing to change. It will be tried again once it has.",
     };
   }
+
+  /* HIS TASK, AND STILL OPEN — see `taskUpdateVerdict`. Any handset could
+     write to any task id it held, and a task the office had cancelled could
+     be closed as done from a phone that had not heard yet. */
+  const verdict = taskUpdateVerdict({
+    senderId: principal.user.id,
+    assigneeId: existing.assignedToUserId,
+    assignerId: existing.assignedByUserId,
+    status: existing.status,
+    title: existing.title,
+    incomingStatus: p.status ?? null,
+  });
+  if (verdict.kind === "refuse") return { kind: "rejected", value: reject(verdict.code, verdict.message) };
+  if (verdict.kind === "already") return { kind: "accepted", value: { serverId: item.entityId } };
 
   /* A task with a form is answered by the form. The answers ARE the "how",
      so they stand in for the note — written out as one, so every screen that
@@ -8342,6 +8849,112 @@ const planDaySchema = z.object({
  * shops, which is an ordinary stop write; conflating the two would let an
  * empty day claim to be a route.
  */
+/**
+ * HIS DAY LOST A RACE WITH THE OFFICE'S, and the answer is the office's id.
+ *
+ * He planned a date on the phone; between him opening the form and the create
+ * reaching here, the office proposed the same date. One row per person per day
+ * is the right rule, so his insert is dropped — and it used to be REFUSED as a
+ * duplicate. That refusal stranded everything behind it: the shops he picked
+ * went up as `plan_stops` against an id the office never held, which answers
+ * `retry` ("not on the office's plan yet") for ever, and the day on his phone
+ * kept saying "sending" over a plan that would never arrive.
+ *
+ * So it is ACCEPTED, and `serverId` is the day that already exists. A
+ * `serverId` different from the item's own id is the signal: the handset
+ * renames its local day to this id and moves whatever is queued against the
+ * old one — the picks, an answer — onto it, and from then on there is one day
+ * on both sides.
+ *
+ * **Planning the city the office proposed IS agreeing to it.** Where the
+ * office's day is still waiting on his answer and names the same city he chose
+ * (trimmed, ignoring case), the two of them have said the same thing, and
+ * making him press Agree on a day he has already planned would be the app
+ * asking a question it holds the answer to. It is recorded exactly as an
+ * answer is — the same audit action and the same note to his manager — so the
+ * calendar reads the way it would have had he agreed it by hand.
+ *
+ * **A different city is NOT an answer, and nothing about the office's day
+ * moves.** He meant to work Wardha; the office asked for Nagpur. Agreeing on
+ * his behalf would put words in his mouth, and overwriting the city would be
+ * the phone deciding a negotiation. The proposal stays waiting, his picks are
+ * refused by `plan_stops` with a sentence telling him to answer it first, and
+ * he does — on the Journey tab, where the proposal now is.
+ */
+async function adoptClashingDay(
+  principal: MbosPrincipal,
+  item: SyncItem,
+  planDate: string,
+  city: string,
+): Promise<Handled> {
+  const [existing] = await db
+    .select()
+    .from(mbosJourneyPlans)
+    .where(
+      and(
+        eq(mbosJourneyPlans.userId, principal.user.id),
+        eq(mbosJourneyPlans.planDate, planDate),
+      ),
+    )
+    .limit(1);
+
+  /* The insert did nothing and there is no day either: the clash was on
+     something other than his day, which is not a state the handset can act
+     on. Tried again rather than refused, so nothing he planned is lost. */
+  if (!existing) {
+    return {
+      kind: "retry",
+      message: `${planDate} could not be saved just now. It will be tried again.`,
+    };
+  }
+
+  const sameCity =
+    (existing.city ?? "").trim().toLowerCase() === city.trim().toLowerCase() && city.trim() !== "";
+  if (existing.dayState === "proposed" && sameCity) {
+    await db
+      .update(mbosJourneyPlans)
+      .set({
+        dayState: "agreed",
+        refusalReason: null,
+        counterCity: null,
+        respondedAt: new Date(),
+        updatedAt: new Date(),
+        updatedById: principal.user.id,
+      })
+      .where(and(eq(mbosJourneyPlans.id, existing.id), eq(mbosJourneyPlans.dayState, "proposed")));
+
+    await db
+      .insert(auditLog)
+      .values({
+        id: gen("aud"),
+        actorId: principal.user.id,
+        action: "mbos.journey.answered",
+        entityType: "mbos_journey_plan",
+        entityId: existing.id,
+        beforeState: { city: existing.city, dayState: existing.dayState } as never,
+        afterState: {
+          answer: "agreed",
+          reason: null,
+          counterCity: null,
+          planDate: existing.planDate,
+          /* Said, so a reader can tell this from a press of Agree. */
+          via: "planned_on_phone",
+          handsetDayId: item.entityId,
+        } as never,
+      })
+      .catch(() => undefined);
+
+    await notifyManagers(
+      principal.user.id,
+      `${principal.user.name} agreed ${existing.planDate}`,
+      `${existing.city ?? "The day"} is agreed. He planned it on his phone as you proposed it, and picks the shops next.`,
+      "/sales/journeys",
+    );
+  }
+
+  return { kind: "accepted", value: { serverId: existing.id } };
+}
+
 async function handlePlanDay(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
   const parsed = planDaySchema.safeParse(item.payload);
   if (!parsed.success) return validationRejection(parsed.error);
@@ -8453,13 +9066,7 @@ async function handlePlanDay(principal: MbosPrincipal, item: SyncItem): Promise<
       .limit(1);
 
     if (!landed) {
-      return {
-        kind: "rejected",
-        value: reject(
-          "duplicate",
-          `${planDate} is already on your plan — the office proposed it. Answer it on the Journey tab rather than starting a second one.`,
-        ),
-      };
+      return adoptClashingDay(principal, item, planDate, city);
     }
 
     /* The office is not asked, and is told. That is the difference between
@@ -8602,7 +9209,13 @@ async function handlePlanStops(principal: MbosPrincipal, item: SyncItem): Promis
       kind: "rejected",
       value: reject(
         "validation",
-        `${plan.planDate} has not been agreed, so there is nothing to pick shops for yet.`,
+        /* Said as what to DO. The usual way here is a day he planned on the
+           phone that turned out to be one the office had proposed for another
+           city (see `adoptClashingDay`): the proposal is waiting on the Journey
+           tab, and answering it is the step between him and these shops. */
+        plan.dayState === "proposed"
+          ? `The office has proposed ${plan.planDate}${plan.city ? ` in ${plan.city}` : ""}. Answer it on the Journey tab first, then pick the shops again.`
+          : `${plan.planDate} has not been agreed, so there is nothing to pick shops for yet. Answer the office's proposal on the Journey tab first.`,
       ),
     };
   }
@@ -8706,6 +9319,94 @@ async function handlePlanStops(principal: MbosPrincipal, item: SyncItem): Promis
         mbosHref: "/journey",
       },
     ]).catch(() => {});
+  }
+
+  return { kind: "accepted", value: { serverId: item.entityId } };
+}
+
+/* ------------------------------------------------------- skipping a stop */
+
+const stopSkipSchema = z.object({
+  /** Why he is not going. Required — see `stopSkipVerdict`. */
+  reason: z.string().max(500).nullish(),
+});
+
+/**
+ * "SKIP, WITH A REASON", sent from the Next stop card.
+ *
+ * `mbos_journey_stops.status` has carried `skipped` and `skip_reason` since
+ * the table was written, the office's day sheets draw both, and nothing on the
+ * phone could ever set them — so a stop he decided not to make (the shop is
+ * shut for a wedding, the owner rang to say not today) stayed `planned`, the
+ * Next stop card kept pointing at it, and the day closed with it counted as a
+ * miss with no sentence anywhere saying why.
+ *
+ * The decision itself is pure and in `engines/field-day-rules.ts`: a visit
+ * wins over a skip, a second skip changes nothing, and the reason is
+ * required. Here is only the scope — the stop must be on one of HIS plans,
+ * which is checked through the plan rather than trusted from the id, so a
+ * payload naming somebody else's stop finds nothing and is refused in the
+ * same words as a stop that does not exist.
+ */
+async function handleStopSkip(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
+  const parsed = stopSkipSchema.safeParse(item.payload);
+  if (!parsed.success) return validationRejection(parsed.error);
+
+  const [stop] = await db
+    .select({
+      id: mbosJourneyStops.id,
+      status: mbosJourneyStops.status,
+      customerId: mbosJourneyStops.customerId,
+      planDate: mbosJourneyPlans.planDate,
+    })
+    .from(mbosJourneyStops)
+    .innerJoin(mbosJourneyPlans, eq(mbosJourneyPlans.id, mbosJourneyStops.planId))
+    .where(and(eq(mbosJourneyStops.id, item.entityId), eq(mbosJourneyPlans.userId, principal.user.id)))
+    .limit(1);
+
+  if (!stop) {
+    return {
+      kind: "rejected",
+      value: reject(
+        "validation",
+        "That stop is not on your plan any more. The office may have changed the day. Pull to refresh and check the Journey tab.",
+      ),
+    };
+  }
+
+  const verdict = stopSkipVerdict(stop.status, parsed.data.reason);
+  if (verdict.kind === "refuse") {
+    return { kind: "rejected", value: reject("validation", verdict.message) };
+  }
+  if (verdict.kind === "noop") {
+    return { kind: "accepted", value: { serverId: item.entityId } };
+  }
+
+  /* `status = 'planned'` in the statement as well as in the verdict: a visit
+     landing between the read and this write must win, not be overwritten. */
+  const moved = await db
+    .update(mbosJourneyStops)
+    .set({
+      status: "skipped",
+      skipReason: verdict.reason,
+      updatedAt: new Date(),
+      updatedById: principal.user.id,
+    })
+    .where(and(eq(mbosJourneyStops.id, stop.id), eq(mbosJourneyStops.status, "planned")))
+    .returning({ id: mbosJourneyStops.id });
+
+  if (moved.length) {
+    const [shop] = await db
+      .select({ name: customers.name })
+      .from(customers)
+      .where(eq(customers.id, stop.customerId))
+      .limit(1);
+    await notifyManagers(
+      principal.user.id,
+      `${principal.user.name} skipped a stop`,
+      `${shop?.name ?? "A shop"} on ${stop.planDate}: ${verdict.reason}`,
+      "/sales/journeys",
+    );
   }
 
   return { kind: "accepted", value: { serverId: item.entityId } };
@@ -9194,7 +9895,10 @@ async function handleCustomerCreate(
   await notifyManagers(
     principal.user.id,
     "A new account was opened in the field",
-    `${principal.user.name} converted ${p.name} in ${p.city} from a lead. It has no credit limit or terms yet — accounts decide those.`,
+    /* Not "converted from a lead": this path opens a new shop at the counter
+       (a third-party shop billed through a distributor), and a conversion is
+       refused above — the first order on a lead is what makes it a customer. */
+    `${principal.user.name} opened ${p.name} in ${p.city} from the field. It has no credit limit or terms yet — accounts decide those.`,
   );
 
   return { kind: "accepted", value: { serverId: item.entityId } };
@@ -9257,14 +9961,41 @@ async function handleCustomerEdit(
     changed.potentialEstimatedById = principal.user.id;
   }
   if (p.visitFrequencyDays !== undefined) changed.visitFrequencyDays = p.visitFrequencyDays;
-  if (p.gpsLat !== undefined) changed.gpsLat = p.gpsLat;
-  if (p.gpsLng !== undefined) changed.gpsLng = p.gpsLng;
-  if (p.gpsAccuracyM !== undefined) changed.gpsAccuracyM = p.gpsAccuracyM;
+  /*
+   * A PIN IS SET FROM THE FIELD, NEVER MOVED — the rule `editShop` states on
+   * the phone, now stated where it can be relied on. The pin decides the
+   * check-in radius; a handset that could move it (an older build, a phone
+   * whose copy of the shop predates the office pinning it, or anything that
+   * can post to this endpoint) could stand anywhere and never be refused
+   * there again. Moving a wrong pin is a manager's answer to the request a
+   * refused check-in offers. So the coordinates land only on a shop with none.
+   */
+  const pinned = before?.gpsLat != null && before?.gpsLng != null;
+  const pinSent = p.gpsLat !== undefined || p.gpsLng !== undefined || p.gpsAccuracyM !== undefined;
+  if (pinSent && !pinned) {
+    if (p.gpsLat !== undefined) changed.gpsLat = p.gpsLat;
+    if (p.gpsLng !== undefined) changed.gpsLng = p.gpsLng;
+    if (p.gpsAccuracyM !== undefined) changed.gpsAccuracyM = p.gpsAccuracyM;
+  }
+  const samePin =
+    pinned && p.gpsLat === before?.gpsLat && p.gpsLng === before?.gpsLng;
 
   if (!Object.keys(changed).length) {
+    /* A pin alone, onto a shop already pinned somewhere else, is refused in
+       words: accepting it silently would tell him the shop moved. The same
+       pin again is a resend and passes. */
+    if (pinSent && pinned && !samePin) {
+      return {
+        kind: "rejected",
+        value: reject(
+          "not_permitted",
+          `${customer.name} already has a pin, so it was not moved. If it is in the wrong place, say so when you check in there — a manager moves it.`,
+        ),
+      };
+    }
     return { kind: "accepted", value: { serverId: customer.id } };
   }
-  if (p.gpsLat != null && p.gpsLng != null) changed.gpsCapturedAt = new Date();
+  if (changed.gpsLat != null && changed.gpsLng != null) changed.gpsCapturedAt = new Date();
 
   /* Latest-write-wins on SERVER-RECEIVED time, never on device time — a
    * handset's clock is wrong and its owner can set it. This edit is arriving

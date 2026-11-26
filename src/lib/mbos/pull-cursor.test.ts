@@ -35,3 +35,23 @@ test("an unreadable instant is ignored rather than producing an invalid cursor",
   const at = nextPullCursorAt(NOW, [new Date("nonsense")]);
   assert.equal(at.getTime(), NOW.getTime() - CURSOR_OVERLAP_MS);
 });
+
+/* THE CHANNELS THAT CAN OVERFLOW HAVE TO SAY SO. Read as text because
+   `buildPull` needs a database to run: a capped channel whose last row is not
+   in the clamp list loses everything past its page for good — tasks and the
+   journey did, at 500. */
+test("tasks and the journey hold the cursor when their page is full", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const src = readFileSync(join(process.cwd(), "src/lib/services/mbos-service.ts"), "utf8");
+  const clamp = src.slice(src.indexOf("nextPullCursorAt(now, [\n"));
+  const list = clamp.slice(0, clamp.indexOf("])"));
+  for (const name of ["taskLastAt", "journeyLastAt", "approvalLastAt", "notificationLastAt"]) {
+    assert.ok(list.includes(name), `${name} is not in the cursor clamp`);
+  }
+  assert.match(src, /taskChanges\.length === TASKS_PER_PULL/);
+  assert.match(src, /journeyRows\.length === JOURNEY_STOPS_PER_PULL/);
+  // The journey page must be ordered by its change time, or its last row is not
+  // the newest change it sent.
+  assert.match(src, /order by greatest\(s\.updated_at, p\.updated_at\) asc/);
+});

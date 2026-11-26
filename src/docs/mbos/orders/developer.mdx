@@ -111,8 +111,6 @@ Any new raw SQL in `handleOrder` takes ISO strings.
 | Gap | Where |
 |---|---|
 | Conversion is on the second order; AGENTS.md says first | `lead-conversion-service.ts` `convertLeadOnSecondOrder` |
-| `mbos.credit.overdueDaysBlockOrders` is never read | `src/lib/config/registry.ts` only |
 | No handset screen sends customer/delivery confirmation; `handleOrderProgress` is server-only in practice | `src/lib/actions/mbos.ts`; no `customerConfirmedAt` in `mbos-app/` |
-| Over-limit is an approval on the phone but a refusal on the server when `mbos.credit.blockOnLimitExceeded` is on | `engines/credit.ts` vs `handleOrder` |
 | AGENTS.md says the decline notice carries no `mbosHref`; it carries `/orders` | `order-approval-service.ts` `tellTheAuthor` |
 | The handset's fallback for `mbos.orders.approvalThresholdPaise` differs between `data/orders.ts` and `data/config.ts` | `mbos-app/src/data/orders.ts`, `mbos-app/src/data/config.ts` |

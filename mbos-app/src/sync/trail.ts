@@ -123,6 +123,11 @@ function fixId(at: number, lat: number, lng: number): string {
   return `mbos_pos_${at}_${Math.round(lat * 1e6)}_${Math.round(lng * 1e6)}`;
 }
 
+/** Keep one fix in the outbound queue — sign-out keeps the native buffer this way. */
+export async function keepFix(lat: number, lng: number, accuracyM: number | null, at: number): Promise<void> {
+  return store(lat, lng, accuracyM, at);
+}
+
 async function store(lat: number, lng: number, accuracyM: number | null, at: number): Promise<void> {
   await run(
     'INSERT OR IGNORE INTO positions (id, at, lat, lng, accuracyM) VALUES (?, ?, ?, ?, ?)',

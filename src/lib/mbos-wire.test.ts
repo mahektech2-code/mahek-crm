@@ -310,8 +310,15 @@ test("every column MBOS sends has a column on the handset to land in", () => {
  * because a query that moves is fine and a query that is deleted should fail
  * loudly rather than quietly stop being checked.
  */
-const DELTA: { anchor: string; table: string }[] = [
-  { anchor: "select s.id,", table: "journey_stops" },
+const DELTA: { anchor: string; table: string; stripped?: { name: string; by: string } }[] = [
+  /* `updatedAt` is selected to hold the cursor on a full page and taken off
+     every row before it is sent — the `by` text is asserted to be there, so
+     dropping the strip fails here rather than on a phone. */
+  {
+    anchor: "select s.id,",
+    table: "journey_stops",
+    stripped: { name: "updatedAt", by: 'journeyRows.map((r) => without(r, "updatedAt"))' },
+  },
   /*
    * FIVE ENTRIES HAVE LEFT THIS LIST, all for the same reason: the delta now
    * calls the same function the bootstrap does, so there is no second spelling
@@ -344,14 +351,15 @@ test("the delta's own queries send nothing the handset cannot hold either", () =
   const pull = service.slice(service.indexOf("export async function buildPull"));
   const faults: string[] = [];
 
-  for (const { anchor, table } of DELTA) {
+  for (const { anchor, table, stripped } of DELTA) {
     const at = pull.indexOf(anchor);
     assert.ok(at > -1, `${anchor} is gone from buildPull — this test needs updating with it`);
     const local = tables.get(table);
     assert.ok(local, `the handset has no \`${table}\` table`);
 
     const sent = selectedNames(pull.slice(at, pull.indexOf("`", at)));
-    const missing = sent.filter((c) => !local.has(c));
+    if (stripped) assert.ok(pull.includes(stripped.by), `${table}: ${stripped.name} is no longer stripped`);
+    const missing = sent.filter((c) => !local.has(c) && c !== stripped?.name);
     if (missing.length) faults.push(`${table}: ${missing.join(", ")}`);
   }
 
@@ -382,13 +390,15 @@ test("the delta's own queries send nothing the handset cannot hold either", () =
  * ------------------------------------------------------------------------- */
 
 const QUEUE = "mbos-app/src/sync/queue.ts";
+/* The map moved beside the outbox housekeeping that also reads it. */
+const OUTBOX_OPS = "mbos-app/src/sync/outbox-ops.ts";
 
 test("every table a sync verdict is written onto can hold the verdict", () => {
   const queue = readFileSync(QUEUE, "utf8");
   const tables = handsetTables();
 
-  const map = queue.match(/const ENTITY_TABLE[^=]*=\s*\{([\s\S]*?)\n\};/);
-  assert.ok(map, "ENTITY_TABLE is gone from sync/queue.ts — this test needs updating with it");
+  const map = readFileSync(OUTBOX_OPS, "utf8").match(/const ENTITY_TABLE[^=]*=\s*\{([\s\S]*?)\n\};/);
+  assert.ok(map, "ENTITY_TABLE is gone from sync/outbox-ops.ts — this test needs updating with it");
 
   /* `'visits'` in `visit: 'visits',` — the quoted half, so a comment
      mentioning a table name cannot be read as an entry. */

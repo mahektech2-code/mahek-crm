@@ -323,3 +323,41 @@ test("an older handset that sends a district as the state is not taken at its wo
     state: "Maharashtra",
   });
 });
+
+test("A TOWN THE TREE DOES NOT KNOW, IN HIS DISTRICT, is let in and filed under the district", () => {
+  /* The lead form offers a district chip and asks for the town to be typed;
+     the tree holds only towns a shop was ever reviewed in. Refusing here lost
+     the shop, the photograph and the pin over a village in his own district. */
+  const thane: Territory[] = [{ kind: "district", value: "Thane", parent: "Maharashtra" }];
+  assert.deepEqual(placeNewLead(thane, { city: "Shahapur", state: "Maharashtra", district: "Thane" }, false, TREE), {
+    ok: true,
+    state: "Maharashtra",
+    filedUnder: { district: "Thane", stateId: "mh", districtId: "mh-thane" },
+  });
+  /* An older build sends no district: the one district of his in that state
+     is the chip he picked. */
+  const old = placeNewLead(thane, { city: "Shahapur", state: "Maharashtra" }, false, TREE);
+  assert.equal(old.ok && old.filedUnder?.districtId, "mh-thane");
+});
+
+test("a known town in ANOTHER district is still outside, district picked or not", () => {
+  const thane: Territory[] = [{ kind: "district", value: "Thane", parent: "Maharashtra" }];
+  assert.equal(placeNewLead(thane, { city: "Pune", state: "Maharashtra", district: "Thane" }, false, TREE).ok, false);
+});
+
+test("an unknown town is not guessed into one of two districts, nor into one he was not given", () => {
+  const two: Territory[] = [
+    { kind: "district", value: "Thane", parent: "Maharashtra" },
+    { kind: "district", value: "Pune", parent: "Maharashtra" },
+  ];
+  assert.equal(placeNewLead(two, { city: "Shahapur", state: "Maharashtra" }, false, TREE).ok, false);
+  const picked = placeNewLead(two, { city: "Shahapur", state: "Maharashtra", district: "Pune" }, false, TREE);
+  assert.equal(picked.ok && picked.filedUnder?.districtId, "mh-pune");
+  const thane: Territory[] = [{ kind: "district", value: "Thane", parent: "Maharashtra" }];
+  assert.equal(placeNewLead(thane, { city: "Shahapur", state: "Maharashtra", district: "Pune" }, false, TREE).ok, false);
+});
+
+test("a town the tree places is placed by the tree, with nothing to file", () => {
+  const thane: Territory[] = [{ kind: "district", value: "Thane", parent: "Maharashtra" }];
+  assert.deepEqual(placeNewLead(thane, { city: "Kalyan", district: "Thane" }, false, TREE), { ok: true, state: "Maharashtra" });
+});

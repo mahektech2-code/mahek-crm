@@ -25,6 +25,20 @@ test('an arrival from an earlier day is not today’s', () => {
   assert.equal(arrivalIsCurrent(arrival, '2026-09-14'), false);
 });
 
+test('a visit he is checked into survives midnight', () => {
+  const inside = { ...arrival, checkedInAt: arrival.arrivedAt + 60_000 };
+  assert.equal(arrivalIsCurrent(inside, '2026-09-14'), true);
+});
+
+test('an arrival inside the punch-in still running survives midnight', () => {
+  /* Punched in before he arrived — the late market, the night drive. */
+  assert.equal(arrivalIsCurrent(arrival, '2026-09-14', arrival.arrivedAt - 3_600_000), true);
+  /* Punched in AFTER it: the arrival belongs to a stretch that has ended. */
+  assert.equal(arrivalIsCurrent(arrival, '2026-09-14', arrival.arrivedAt + 3_600_000), false);
+  /* Not punched in at all. */
+  assert.equal(arrivalIsCurrent(arrival, '2026-09-14', null), false);
+});
+
 test('checking in stamps the instant he walked in', () => {
   const after = withCheckIn(arrival, 1_700_000_600_000);
   assert.equal(after.checkedInAt, 1_700_000_600_000);
@@ -79,6 +93,17 @@ test('a shop found shut needs no note — there is nothing to report but the shu
   const checks = visitChecks({ ...facts, outcome: 'closed', noteChars: 0 });
   assert.equal(checks.find((c) => c.key === 'note')!.ok, true);
   assert.equal(visitVerdict(checks).complete, true);
+});
+
+test('a shut shop or an absent owner is not held to the time-in-the-shop floor', () => {
+  for (const outcome of ['closed', 'closed_now'] as const) {
+    const checks = visitChecks({ ...facts, outcome, dwellSeconds: 15, noteChars: 60 });
+    assert.equal(checks.find((c) => c.key === 'dwell')!.ok, true, outcome);
+    assert.equal(visitVerdict(checks).verified, true, outcome + ' saves as a clean visit');
+  }
+  /* Anybody actually spoken to still owes the floor. */
+  const spoken = visitChecks({ ...facts, dwellSeconds: 15 });
+  assert.equal(spoken.find((c) => c.key === 'dwell')!.ok, false);
 });
 
 test('no outcome chosen is asked first, and the note with it', () => {

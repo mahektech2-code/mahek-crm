@@ -181,3 +181,15 @@ they failed for the grace time (≤15 min) after every midnight in India, when
 yesterday's task was still in its grace and today's 00:00 task not yet past it.
 A new Tasks check of "now" goes through `tasksNow()`, never `new Date()` or
 `now()`. (`inGraceSql`, a display read, still uses `now()`.)
+
+**A FIELD TASK (`mbos_tasks`) IS CHANGED FROM A HANDSET ONLY BY ITS PERSON OR
+WHOEVER GAVE IT, AND NEVER ONCE CANCELLED.** `handleTaskUpdate` wrote whatever
+arrived for any task id, so any signed-in handset could close any task, and a
+task the office cancelled could be closed from a phone that had not heard.
+`taskUpdateVerdict` (`lib/mbos/task-update-rules.ts`, pure and tested) refuses
+a sender who is neither `assigned_to_user_id` nor `assigned_by_user_id`
+(`not_permitted`) and any change to a cancelled or done task (`validation`) —
+except "done" again on a done task, which is accepted without writing, so a
+resend whose first answer was lost is not a refusal. On the phone a refused
+Done restores the task to open (`restoreBeforeEdit`), so it does not drop off
+the list while the office still holds it open.

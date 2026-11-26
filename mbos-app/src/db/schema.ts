@@ -2210,6 +2210,65 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE orders ADD COLUMN duplicateOfToNo INTEGER;`,
   ],
 
+  /*
+   * A SHOP HE ADDED, AND WHAT THE OFFICE SAID ABOUT IT.
+   *
+   * `customers` is reference data, so it had no sync state — and a shop he
+   * opened at a counter is the one customers row he AUTHORS. The office
+   * refusing it (a duplicate number, no distributor) reached the outbox and
+   * nothing else: the card looked like every other shop for ever and took
+   * orders that could only be blocked. `syncState` and `syncMessage` are the
+   * pair every owned table carries; 'synced' by default, because every row
+   * already here came from the office. `serverCreatedAt` is the third column
+   * `setEntityState` writes on an accept — without it the accept would throw
+   * inside the push loop (`mbos-wire.test.ts` says how that went last time).
+   *
+   * `address` is the office's written address, which a lead carried down its
+   * own channel and lost the day it converted. `serverUpdatedAt` is the
+   * office's clock on the row (epoch ms), sent back as `baseUpdatedAt` on a
+   * shop edit so a desk's newer change is seen as a conflict.
+   */
+  [
+    `ALTER TABLE customers ADD COLUMN syncState TEXT NOT NULL DEFAULT 'synced';`,
+    `ALTER TABLE customers ADD COLUMN syncMessage TEXT;`,
+    `ALTER TABLE customers ADD COLUMN serverCreatedAt INTEGER;`,
+    `ALTER TABLE customers ADD COLUMN address TEXT;`,
+    `ALTER TABLE customers ADD COLUMN serverUpdatedAt INTEGER;`,
+  ],
+
+  /*
+   * MONEY, AS THE OFFICE HOLDS IT (Nov 2026).
+   *
+   * `customer_price_keys` and `price_unoffered` are the two halves of a shop's
+   * rate the tag table could not say: shops on one tag but different office
+   * price lists, and the products a list prints a dash for. Both REFERENCE,
+   * replaced whole on every pull (`sync/money-channels.ts`).
+   *
+   * `payments.office*` is Accounts' word on a receipt he took — reported,
+   * held, confirmed, rejected or reversed — and why, from `myPayments`. NULL
+   * until the office has said, which Collections reads as "sent".
+   */
+  [
+    `CREATE TABLE IF NOT EXISTS customer_price_keys (
+      customerId TEXT PRIMARY KEY,
+      priceKey TEXT NOT NULL
+    );`,
+    `CREATE TABLE IF NOT EXISTS price_unoffered (
+      priceKey TEXT NOT NULL,
+      productId TEXT NOT NULL,
+      PRIMARY KEY (priceKey, productId)
+    );`,
+    `ALTER TABLE payments ADD COLUMN officeStatus TEXT;`,
+    `ALTER TABLE payments ADD COLUMN officeReason TEXT;`,
+    `ALTER TABLE payments ADD COLUMN officeDecidedAt INTEGER;`,
+    /* The local running figure was wrong in one direction only — it grew with
+       every order and shrank with nothing — so it is let go here; the office's
+       figure lands on the first pull (`openOrdered`). */
+    `UPDATE customers SET submittedNotInvoicedPaise = 0;`,
+    /* What was paid back to him that month, off the payouts ledger. */
+    `ALTER TABLE salary ADD COLUMN paidBackPaise INTEGER;`,
+  ],
+
 ];
 
 /**
@@ -2253,6 +2312,7 @@ export const REFERENCE_TABLES = [
   'journey_stops', 'leave_balances', 'holidays', 'documents', 'courses',
   'notifications', 'performance', 'salary', 'customer_targets',
   'customer_orders', 'customer_payments', 'customer_bills',
+  'customer_price_keys', 'price_unoffered',
   /* The record of who checked a finding and what came of it. Written only by
      the office — a salesman's own checks go up through the lead save and come
      back here — so there is never a local answer for a pull to lose. */

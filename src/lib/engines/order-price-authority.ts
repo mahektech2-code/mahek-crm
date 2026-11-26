@@ -209,3 +209,94 @@ export function mergeOfficeRatesIntoTags(
   }
   return [...out.values()].sort((a, b) => (a.priceTag === b.priceTag ? a.productId.localeCompare(b.productId) : a.priceTag.localeCompare(b.priceTag)));
 }
+
+/* ------------------------------------------ the handset's rates, per shop */
+
+/**
+ * One set of office rates the handset can file under one key: the shops of a
+ * tag that all resolve to one list (key = the tag itself, as before), the
+ * shops of a tag on a list their tag-mates are NOT on (key = `tag::list`), or
+ * shops with no tag at all that a list still resolves for (key = `::list`).
+ */
+export type PhoneRateGroup = {
+  key: string;
+  /** The tag whose `mbos_price_list` rows stand in for products the list does not carry; null for an untagged group. */
+  tag: string | null;
+  /** product → the office's per-can rate, or null where the list prints a dash. */
+  rates: ReadonlyMap<string, number | null>;
+  customerIds: readonly string[];
+};
+
+/** The key a shop's rates are filed under, before the rates are read. */
+export function phoneRateKey(tag: string | null, listId: string | null, tagIsUniform: boolean): string | null {
+  const t = tag?.trim() ? tag : null;
+  if (!listId) return t;
+  if (t && tagIsUniform) return t;
+  return `${t ?? ""}::${listId}`;
+}
+
+/**
+ * EVERY RATE THE OFFICE WILL HOLD A FIELD ORDER TO, as three small tables the
+ * handset replaces wholesale (Nov 2026).
+ *
+ * The tag table alone could not say it: shops sharing a price tag but sitting
+ * on different office price lists got ONE phone rate, and `handleOrder`
+ * refused the others `price_changed` — at sync, after the shop had been told
+ * the figure. So a tag whose shops disagree is split by list, under keys the
+ * shops are pointed at (`priceKeys`), and a product a list prints a dash for
+ * is SAID (`priceUnoffered`) rather than just absent, so the order screen can
+ * mark it "not sold to this shop" instead of letting it on and the office
+ * refusing it `not_offered`.
+ *
+ * `priceList` keeps exactly its old shape and its old rows under the real
+ * tags, so a build that knows nothing of keys prices as well as it did.
+ */
+export function phonePriceTables(
+  tagRows: readonly TagRate[],
+  groups: readonly PhoneRateGroup[],
+): {
+  priceList: TagRate[];
+  priceKeys: { customerId: string; priceKey: string }[];
+  priceUnoffered: { priceKey: string; productId: string }[];
+} {
+  const uniform = new Map<string, Map<string, number | null>>();
+  for (const g of groups) if (g.tag && g.key === g.tag) uniform.set(g.key, new Map(g.rates));
+  const base = mergeOfficeRatesIntoTags(tagRows, uniform);
+  const out = new Map<string, TagRate>(base.map((r) => [`${r.priceTag}\u0000${r.productId}`, r]));
+  const tagTable = new Map<string, TagRate[]>();
+  for (const r of base) {
+    const list = tagTable.get(r.priceTag) ?? [];
+    list.push(r);
+    tagTable.set(r.priceTag, list);
+  }
+
+  const priceKeys: { customerId: string; priceKey: string }[] = [];
+  const unoffered = new Map<string, { priceKey: string; productId: string }>();
+  for (const g of groups) {
+    for (const [productId, rate] of g.rates) {
+      if (rate == null) unoffered.set(`${g.key}\u0000${productId}`, { priceKey: g.key, productId });
+    }
+    if (g.key === g.tag) continue;
+    for (const customerId of g.customerIds) priceKeys.push({ customerId, priceKey: g.key });
+    /* The tag's own rates stand in for what the list does not carry — the
+       order check's own fallback (`officeRatesFor`). */
+    if (g.tag) {
+      for (const r of tagTable.get(g.tag) ?? []) {
+        if (g.rates.has(r.productId)) continue;
+        out.set(`${g.key}\u0000${r.productId}`, { priceTag: g.key, productId: r.productId, ratePaise: r.ratePaise });
+      }
+    }
+    for (const [productId, rate] of g.rates) {
+      if (rate == null) continue;
+      out.set(`${g.key}\u0000${productId}`, { priceTag: g.key, productId, ratePaise: rate });
+    }
+  }
+  const priceList = [...out.values()].sort((a, b) =>
+    a.priceTag === b.priceTag ? a.productId.localeCompare(b.productId) : a.priceTag.localeCompare(b.priceTag),
+  );
+  return {
+    priceList,
+    priceKeys: priceKeys.sort((a, b) => a.customerId.localeCompare(b.customerId)),
+    priceUnoffered: [...unoffered.values()],
+  };
+}

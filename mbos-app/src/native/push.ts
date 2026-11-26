@@ -3,7 +3,7 @@ import * as Notifications from 'expo-notifications';
 import { AndroidImportance } from 'expo-notifications';
 import Constants from 'expo-constants';
 import * as Device from 'expo-device';
-import { registerPushToken } from '../sync/api';
+import { registerPushToken, releasePushToken, deviceId } from '../sync/api';
 import { getConfig } from '../data/config';
 import { getKv, setKv } from '../db';
 import { PhoneSetup } from '../../modules/phone-setup';
@@ -281,6 +281,10 @@ async function registerForPushOnce(): Promise<PushReadiness> {
 
     const { data } = await Notifications.getExpoPushTokenAsync({ projectId: id });
     await registerPushToken(data);
+    /* Remembered so a sign-out with no signal can still have it cleared
+       later — see `clearPushToken`. */
+    await setKv(PUSH_TOKEN_KEY, data).catch(() => undefined);
+    await setKv(PUSH_RELEASE_KEY, '').catch(() => undefined);
     return { ok: true };
   } catch {
     /* A push service that will not answer is not the salesman's problem and
@@ -312,14 +316,38 @@ export async function turnOnNotifications(): Promise<PushReadiness> {
   return registerForPush();
 }
 
-/** Called on sign-out, so a released handset stops being pushed to. */
+const PUSH_TOKEN_KEY = 'push.token';
+const PUSH_RELEASE_KEY = 'push.releasePending';
+
+/**
+ * Called on sign-out, so a released handset stops being pushed to.
+ *
+ * WITHOUT SIGNAL THE REQUEST NEVER WENT, and the server went on pushing the
+ * last person's orders and refusals to a phone nobody was signed in to — for
+ * as long as it took somebody to sign in again. So the token is kept aside and
+ * released by `releasePendingPushToken` the next time the app opens with
+ * nobody signed in and signal to send it; and the server drops it anyway the
+ * moment a different person signs in on this phone.
+ */
 export async function clearPushToken(): Promise<void> {
   try {
     await registerPushToken(null);
+    await setKv(PUSH_RELEASE_KEY, '').catch(() => undefined);
   } catch {
-    /* The device row keeps a stale token until the next registration
-       overwrites it — and the server clears it by itself the first time Expo
-       answers `DeviceNotRegistered`. Not worth failing sign-out over. */
+    const token = await getKv(PUSH_TOKEN_KEY).catch(() => null);
+    if (token) await setKv(PUSH_RELEASE_KEY, token).catch(() => undefined);
+  }
+}
+
+/** A token a signed-out phone still owes the server — sent with no session. */
+export async function releasePendingPushToken(): Promise<void> {
+  const token = await getKv(PUSH_RELEASE_KEY).catch(() => null);
+  if (!token) return;
+  try {
+    await releasePushToken(await deviceId(), token);
+    await setKv(PUSH_RELEASE_KEY, '');
+  } catch {
+    /* Still no signal; the next open tries again. */
   }
 }
 

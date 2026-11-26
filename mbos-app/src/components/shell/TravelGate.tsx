@@ -45,6 +45,14 @@ export function TravelGate() {
   const boot = useBoot();
   const userId = boot.session?.user.id ?? '';
   const starting = React.useRef(false);
+  /*
+   * WHILE THE RADIO IS ASKED, HE IS TOLD. The fix below may take its whole
+   * ten seconds, and nothing on screen changed in that time — so "Start
+   * visit" looked dead, was pressed again, and on a slow phone the second
+   * press arrived as the first was landing. A sheet that says what is
+   * happening costs nothing and is gone the moment the visit screen opens.
+   */
+  const [pending, setPending] = React.useState<string | null>(null);
 
   const close = () => set({ travelTo: null });
 
@@ -57,7 +65,15 @@ export function TravelGate() {
    * arrival on disk. Setting off from here would leave that arrival with
    * nothing left that could ever close it.
    */
-  const outstanding = arrival && arrival.checkedInAt == null ? arrival : null;
+  /* AND WHILE HE IS IN A VISIT. Only the arrival-not-checked-in case was
+     refused here, so Start visit on the Journey, Customer or Customers screen
+     went straight through while he was checked in somewhere else — and
+     `beginVisit` reset the form, the draft writer saved that empty form over
+     the open visit's draft on disk, and the note, the photographs and the
+     links to what he had punched inside were gone. One visit at a time is the
+     quick action's rule; this is now every Start visit's. */
+  const outstanding = arrival ?? null;
+  const inVisit = outstanding?.checkedInAt != null;
 
   /* The sheet below is a refusal — the journey he asked for does not start —
      with its reason on the sheet, so it gets the refusal buzz as it opens.
@@ -78,6 +94,7 @@ export function TravelGate() {
     starting.current = true;
     void (async () => {
       try {
+        setPending(to.customerName);
         const plan = visitLegPlan(await openSessionLeg(userId).then((s) =>
           s ? { modeKey: s.modeKey, odometerStartKm: s.odometerStartKm } : null,
         ));
@@ -111,6 +128,7 @@ export function TravelGate() {
         notify('Could not start this visit. Nothing is lost. Try again.', 'error');
       } finally {
         starting.current = false;
+        setPending(null);
       }
     })();
     /* `beginVisit`, `set` and `notify` are stable store actions. */
@@ -134,22 +152,38 @@ export function TravelGate() {
               <Icon name="visit" size={20} color={C.warnInk} strokeWidth={2} />
             </View>
             <T style={[{ flex: 1, fontSize: 18, lineHeight: 23, color: C.ink }, weight(800)]}>
-              {same ? 'You are already there' : `Not checked in at ${outstanding.customerName}`}
+              {inVisit ? `You are in a visit at ${outstanding.customerName}` : same ? 'You are already there' : `Not checked in at ${outstanding.customerName}`}
             </T>
           </View>
           <T style={{ fontSize: 13, lineHeight: 18, color: C.muted, marginTop: 8 }}>
-            {same
-              ? 'You have reached. Check in when you go inside.'
-              : 'One shop at a time. Check in there, or save that visit, before you go to the next shop.'}
+            {inVisit
+              ? 'One visit at a time. Check out of it, with its questions answered, before you start the next one.'
+              : same
+                ? 'You have reached. Check in when you go inside.'
+                : 'One shop at a time. Check in there, or save that visit, before you go to the next shop.'}
           </T>
           <PillButton
-            label={`Check in at ${outstanding.customerName}`}
+            label={inVisit ? `Back to ${outstanding.customerName}` : `Check in at ${outstanding.customerName}`}
             variant="navyLime"
             height={56}
             onPress={goCheckIn}
             style={{ marginTop: 14 }}
           />
           <PillButton label="Not now" variant="outline" onPress={close} style={{ marginTop: 10 }} />
+        </View>
+      </BottomSheet>
+    );
+  }
+
+  if (pending) {
+    return (
+      <BottomSheet open onClose={() => undefined}>
+        <View accessible accessibilityLiveRegion="polite" style={{ paddingBottom: 4, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <Icon name="locate" size={20} color={C.primaryDeep} strokeWidth={2} />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <T style={[{ fontSize: 18, lineHeight: 23, color: C.ink }, weight(800)]}>{'Starting trip to ' + pending + '…'}</T>
+            <T style={{ fontSize: 13, lineHeight: 18, color: C.muted, marginTop: 4 }}>Finding where you are. This takes a few seconds.</T>
+          </View>
         </View>
       </BottomSheet>
     );

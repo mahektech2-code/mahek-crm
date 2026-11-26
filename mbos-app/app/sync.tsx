@@ -13,8 +13,9 @@ import { batteryExemption } from '../src/native/phone-setup';
 import { trackerNotice, type StartFailure } from '../src/engines/tracker-notice';
 import type { BatteryExemption } from '../src/engines/phone-readiness';
 import { color as C, weight } from '../src/theme/tokens';
-import { isoDate, plural, pretty } from '../src/lib/format';
-import { listQueue, queueCounts, queueDepth, retryItem, type QueueItem } from '../src/sync/queue';
+import { isoDate, plural, pretty, todayIst } from '../src/lib/format';
+import { discardCount, discardRefused, listQueue, queueCounts, queueDepth, retryItem, type QueueItem } from '../src/sync/queue';
+import { handoverCounts } from '../src/data/session';
 import { describePayload, entityLabel } from '../src/sync/labels';
 import { pullProblems, type PullProblems } from '../src/sync/pull';
 import { mediaCounts, retryFailedMedia } from '../src/sync/media';
@@ -126,6 +127,7 @@ function when(ms: number, today: string): string {
 export default function SyncScreen() {
   const back = useCameFrom('more');
   const notify = useStore((s) => s.notify);
+  const askConfirm = useStore((s) => s.askConfirm);
   const offerUpdate = useStore((s) => s.offerUpdate);
 
   const [rows, setRows] = React.useState<QueueItem[]>([]);
@@ -133,6 +135,9 @@ export default function SyncScreen() {
   const [depth, setDepth] = React.useState(0);
   const [counts, setCounts] = React.useState<Record<string, number>>({});
   const [media, setMedia] = React.useState({ pending: 0, failed: 0 });
+  /* Stuck entries old enough that they no longer stop somebody else signing
+     in here — said, so nobody wonders why the phone could be handed over. */
+  const [handover, setHandover] = React.useState<{ ignored: number; days: number }>({ ignored: 0, days: 14 });
   /* Whether this phone has been CAUGHT killing the tracker, rather than
      merely never set up — see `stalledAt`. The two read very differently and
      only one of them is urgent. */
@@ -158,7 +163,7 @@ export default function SyncScreen() {
   const [sending, setSending] = React.useState(false);
   /* Read once rather than during render — the clock is impure, and every row
      on the list is compared against this one value. */
-  const [today] = React.useState(() => isoDate(new Date()));
+  const [today] = React.useState(todayIst);
 
   const load = React.useCallback(() => {
     let live = true;
@@ -179,7 +184,8 @@ export default function SyncScreen() {
          still warning about a battery saver he has just switched off is how
          somebody concludes the screen is wrong about his phone. */
       batteryExemption().catch<BatteryExemption>(() => 'unknown'),
-    ]).then(([q, c, m, k, d, s, x]) => {
+      handoverCounts().catch(() => ({ counted: 0, ignored: 0, days: 14 })),
+    ]).then(([q, c, m, k, d, s, x, h]) => {
       if (!live) return;
       /* After a pass, the rows that went up leave and the rest close the gap —
          which is the screen SHOWING his work going, rather than a list that is
@@ -192,6 +198,7 @@ export default function SyncScreen() {
       setDepth(d);
       setStalled(s);
       setExemption(x);
+      setHandover({ ignored: h.ignored, days: h.days });
     });
     return () => {
       live = false;
@@ -281,7 +288,34 @@ export default function SyncScreen() {
      handset whose battery manager was readably switched on was told the same
      hypothetical as one with nothing wrong with it. */
   const notice = trackerNotice({ stalled: stalled !== null, exemption, failure });
-  const rejected = counts.rejected ?? 0;
+  /* The Not accepted screen lists the refused AND the stuck — failed, or held
+     behind one — because that is where each can be removed. */
+  const rejected = (counts.rejected ?? 0) + (counts.failed ?? 0) + (counts.blocked ?? 0);
+
+  /** LET A STUCK ROW GO, saying first what goes with it. */
+  const remove = (q: QueueItem) => {
+    void discardCount(q.id)
+      .catch(() => 0)
+      .then((others) =>
+        askConfirm({
+          title: 'Remove this from your phone?',
+          body:
+            (q.op === 'create'
+              ? 'The office never got it, and it will be gone from this phone too.'
+              : 'The office keeps what it already has; this change is let go.') +
+            (others > 0 ? '\n\n' + plural(others, 'other entry', 'other entries') + ' waiting on it ' + (others === 1 ? 'goes' : 'go') + ' too.' : ''),
+          confirmLabel: others > 0 ? 'Yes, remove ' + (others + 1) : 'Yes, remove it',
+          cancelLabel: 'Cancel',
+          tone: 'danger',
+          run: () => {
+            void discardRefused(q.id).then((n) => {
+              load();
+              notify(n > 1 ? plural(n, 'entry', 'entries') + ' removed from this phone' : 'Removed from this phone', 'info');
+            });
+          },
+        }),
+      );
+  };
 
   return (
     <AppFrame
@@ -371,6 +405,27 @@ export default function SyncScreen() {
           </Text>
         </Pressable>
       </View>
+
+      {/* UNINSTALLING TAKES IT WITH IT. The outbox is this phone's storage, and a
+          salesman told to "reinstall the app" by a colleague wipes the day he
+          has not sent. Said while there is anything to lose. */}
+      {waiting > 0 ? (
+        <Text
+          accessibilityLabel="Do not uninstall or clear the app's data while work is waiting. Anything not yet sent is lost if you do."
+          style={[{ marginTop: 10, paddingHorizontal: 4, fontSize: 12, lineHeight: 17, color: C.danger }, weight(700)]}>
+          Do not uninstall the app or clear its data until this is sent — anything not sent is lost.
+        </Text>
+      ) : null}
+      {handover.ignored > 0 ? (
+        <Text style={{ marginTop: 6, paddingHorizontal: 4, fontSize: 12, lineHeight: 17, color: C.muted }}>
+          {plural(handover.ignored, 'entry', 'entries') +
+            ' stuck for over ' +
+            plural(handover.days, 'day') +
+            (handover.ignored === 1 ? ' no longer stops' : ' no longer stop') +
+            ' someone else signing in on this phone. ' +
+            (handover.ignored === 1 ? 'It stays here until you remove it.' : 'They stay here until you remove them.')}
+        </Text>
+      ) : null}
 
       {media.pending > 0 ? (
         <View
@@ -572,6 +627,22 @@ export default function SyncScreen() {
                       <Icon name="refresh" size={18} color={C.ink} strokeWidth={2.2} />
                     </Pressable>
                   ) : null}
+                  {q.state === 'failed' || q.state === 'blocked' ? (
+                    <Pressable
+                      onPress={() => remove(q)}
+                      accessibilityRole="button"
+                      accessibilityLabel={'Remove from this phone: ' + describe(q)}
+                      style={({ pressed }) => ({
+                        width: 44,
+                        height: 44,
+                        borderRadius: 22,
+                        backgroundColor: pressed ? C.hairline : C.canvas,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      })}>
+                      <Icon name="close" size={18} color={C.danger} strokeWidth={2.2} />
+                    </Pressable>
+                  ) : null}
                 </Stagger>
               );
             })}
@@ -666,7 +737,7 @@ export default function SyncScreen() {
         <Pressable
           onPress={() => router.push('/rejections?from=sync')}
           accessibilityRole="button"
-          accessibilityLabel={'Not accepted. ' + plural(rejected, 'entry', 'entries') + ' not accepted by the office. Nothing is lost.'}
+          accessibilityLabel={'Not accepted or stuck. ' + plural(rejected, 'entry', 'entries') + ' the office did not accept or the phone could not send. Nothing is lost.'}
           style={({ pressed }) => ({
             flexDirection: 'row',
             alignItems: 'center',
@@ -681,7 +752,7 @@ export default function SyncScreen() {
           <Text style={[{ fontSize: 24, lineHeight: 30, color: C.danger, minWidth: 30, textAlign: 'center' }, weight(800)]}>{rejected}</Text>
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={[{ fontSize: 15, lineHeight: 21, color: C.danger }, weight(800)]}>Not accepted</Text>
-            <Text style={{ marginTop: 2, fontSize: 12, lineHeight: 16, color: C.danger }}>by the office. Nothing is lost.</Text>
+            <Text style={{ marginTop: 2, fontSize: 12, lineHeight: 16, color: C.danger }}>or could not send. Nothing is lost.</Text>
           </View>
           <Icon name="forward" size={18} color={C.danger} strokeWidth={2} />
         </Pressable>

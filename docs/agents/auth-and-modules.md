@@ -94,3 +94,10 @@ again — ticked, or deliberately left out — is the decision: `setAccess` take
 **Revoking an app takes its module rows with it.** Left behind, they would
 silently narrow the app the day somebody granted it back — four screens of
 fourteen, with nothing on any screen saying why.
+
+**THE HANDSET'S OTP REQUEST ANSWERS THE SAME FOR A NUMBER IT DOES NOT KNOW.**
+`POST /api/mbos/auth/otp` used to answer 404 naming the number for no account,
+no field grant or an inactive one — the very enumeration the grant check was
+written to close. It now answers `{ ok: true, sentTo, expiresInMinutes }` with
+the typed number masked and sends nothing; the code he then types is refused at
+login like any wrong code.

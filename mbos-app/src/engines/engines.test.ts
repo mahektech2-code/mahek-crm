@@ -123,6 +123,26 @@ test('without a usable reading, a check-in does not start', () => {
   assert.equal(unknown.accepted, false);
 });
 
+test('no reading says WHICH kind of nothing — a switch is not a window', () => {
+  const denied = checkInVerdict(null, NAGPUR, 100, 50, 'permission');
+  assert.equal(denied.fixCause, 'permission');
+  assert.match(denied.sentence, /not allowed to use your location/);
+  assert.doesNotMatch(denied.sentence, /step outside/i);
+
+  const off = checkInVerdict(null, NAGPUR, 100, 50, 'services_off');
+  assert.equal(off.fixCause, 'services_off');
+  assert.match(off.sentence, /switched off/);
+
+  /* No cause given is the radio answering nothing: the old sentence, rightly. */
+  const quiet = checkInVerdict(null, NAGPUR, 100, 50);
+  assert.equal(quiet.fixCause, 'no_signal');
+  assert.match(quiet.sentence, /Step outside/);
+
+  /* A weak reading is a reading — no cause to name. */
+  const weak = checkInVerdict({ lat: NAGPUR.lat, lng: NAGPUR.lng, accuracyM: 400 }, NAGPUR, 100, 50, 'permission');
+  assert.equal(weak.fixCause, null);
+});
+
 test('a shop with no pin asks him to confirm, and is pinned by the check-in', () => {
   const anywhere = { lat: NAGPUR.lat + 2, lng: NAGPUR.lng, accuracyM: 9 };
   const first = checkInVerdict(anywhere, null, 100, 50);

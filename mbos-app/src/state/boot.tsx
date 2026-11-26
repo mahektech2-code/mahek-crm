@@ -1,7 +1,7 @@
 import React from 'react';
 import { AppState, Pressable, Text, View } from 'react-native';
 import { getKv, openDb, resetHandle, setKv } from '../db';
-import { recoverInterrupted } from '../sync/queue';
+import { recoverInterrupted, sweepOrphans } from '../sync/queue';
 import { startBackgroundSync, stopBackgroundSync } from '../sync/engine';
 import { registerBackgroundSync, unregisterBackgroundSync } from '../sync/background-sync-task';
 import * as trail from '../sync/trail';
@@ -61,6 +61,9 @@ export function BootProvider({ children }: { children: React.ReactNode }) {
     (async () => {
       await openDb();
       await recoverInterrupted();
+      /* A record a crash left saved but never queued says so, rather than
+         reading "Not sent yet" for ever. Never blocks boot. */
+      await sweepOrphans().catch(() => 0);
       /* The vibration and sound switches, read before the first screen so the
          first tap of the day is felt the way he set it. Never blocks boot. */
       await loadFeedbackPrefs().then(primeSounds).catch(() => {});
@@ -74,6 +77,9 @@ export function BootProvider({ children }: { children: React.ReactNode }) {
       if (existing) {
         await rememberWhoThisIs(existing);
         onSessionStarted(existing);
+      } else {
+        /* A sign-out with no signal left the push token on the server. */
+        void import('../native/push').then((m) => m.releasePendingPushToken()).catch(() => undefined);
       }
     })().catch((e: unknown) => {
       if (cancelled) return;

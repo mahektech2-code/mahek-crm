@@ -98,3 +98,20 @@ show only his own book, already narrowed to the territory he works, and nothing
 there reaches another salesman's. They sit beside the origin chips rather than
 inside the filter sheet because they change what the list IS, and a list whose
 subject is hidden behind a menu is one people misread.
+
+**A LEAD FILED AWAY IS A "LOST / FILED LEAD", ONE RULE EVERYWHERE.** A lead
+row archived on the phone (the office's tombstone for a lead lost, trashed or
+filed) and not converted is not a live lead, so it was listed under Customers,
+opened `/customer` — a page of empty ledgers — while `findDuplicate` called the
+same shop a lead. `filedLeadClause` in `data/lead-query.ts` (and `isFiledLead`
+in `lib/account-label.ts`) is the one statement: the card says
+`FILED_LEAD_WORD`, a tap opens `/lead` (`opensLeadRecord`), the record links to
+the lead, and the duplicate check finds it by number and says "lost or filed —
+bring it back" (`DUPLICATE_CUSTOMERS_SQL`, `DUPLICATE_LEADS_SQL`). That last
+part is a reversal: archived lead rows were left out of the duplicate check,
+which let a lost shop be raised again as new.
+
+**NEARBY ASKS THE SAME RULE.** It decided "is a lead" from the six-word stage
+of a joined lead row, which called a third-party or invoiced shop with a stale
+lead row a lead. It selects `leadCustomerClause` and `filedLeadClause` now and
+opens through `opensLeadRecord`, like the Customers list.

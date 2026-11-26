@@ -25,9 +25,14 @@ export type AccountFacts = {
   thirdParty: number;
   /** From `LEAD_FACTS` in `customer-query.ts`. Undefined means nobody asked. */
   isLead?: number;
+  /** From `LEAD_FACTS` too — a lead filed away on this phone (`filedLeadClause`). */
+  isFiledLead?: number;
   leadFunnelStage?: string | null;
   leadStage?: string | null;
 };
+
+/** The words for a lead filed away — lost, trashed or archived — and not converted. */
+export const FILED_LEAD_WORD = 'Lost / filed lead';
 
 export type HealthFacts = {
   status: string | null;
@@ -67,6 +72,9 @@ export function accountType(
    * and it is used exactly as before.
    */
   if (c.isLead) return 'Lead';
+  /* Filed away, not converted: neither a live lead nor a customer, and the
+     card says so rather than letting it pass for an account we bill. */
+  if (c.isFiledLead) return FILED_LEAD_WORD;
   /*
    * AND WHERE `isLead` WAS ASKED, ITS "NO" STANDS. `kind = 'lead'` alone used
    * to answer "Lead" here for a row the chips had put under Customers (an
@@ -124,8 +132,20 @@ export function leadRowConverted(lead: LeadRowFacts): boolean {
  * because it is one. `leadStage` is NOT NULL on every lead row, so its being
  * present is the proof the row exists.
  */
-export function opensLeadRecord(c: Pick<AccountFacts, 'isLead' | 'leadStage'>): boolean {
+export function opensLeadRecord(c: Pick<AccountFacts, 'isLead' | 'leadStage' | 'isFiledLead'>): boolean {
+  /* A filed lead's row IS on this phone (that is what makes it filed), and
+     its record is where its history is and where it can be brought back. */
+  if (c.isFiledLead) return true;
   return !!c.isLead && c.leadStage != null;
+}
+
+/**
+ * `filedLeadClause` in JavaScript, for a screen holding one customer and its
+ * lead row: archived, not converted, and the customer row not settled.
+ */
+export function isFiledLead(c: Pick<AccountFacts, 'kind' | 'thirdParty'>, lead: LeadRowFacts | null): boolean {
+  if (!lead || c.thirdParty || c.kind === 'customer') return false;
+  return !!lead.archived && !leadRowConverted(lead);
 }
 
 /**

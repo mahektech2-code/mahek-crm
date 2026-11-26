@@ -242,7 +242,8 @@ improve it. Naming a mode in the setting brings the rule back for it, and
 **Confirming is checked server-side, and a stale allocation is refused rather
 than moved.** If a bill a pending receipt names has been settled by something
 else since, confirming fails and says so — silently re-allocating money is not
-a decision code should take on its own.
+a decision code should take on its own. (That is CONFIRMING. A field receipt
+ARRIVING against a settled bill is no longer refused — see below.)
 
 **A collections call is logged in one place, and it is one transaction.** The
 follow-up panel opens over the worklist and never navigates away — a
@@ -379,3 +380,35 @@ statement. Each screen offers it only where `receiptForEdit` would agree:
 Accounts (`payment.confirm`) on any live payment, the recorder on their own
 while `reported`. Elsewhere Sales › Payments and Accounts › On account link to
 the customer's ledger, where Edit and Reverse live.
+
+**A FIELD COLLECTION NAMING A BILL SETTLED MEANWHILE IS ACCEPTED, AND FLAGGED
+(Nov 2026 — a reversal).** `handlePayment` refused the whole receipt
+`bill_settled`, so cash a salesman was holding sat on Not accepted and the only
+way out was a second receipt for one handful of notes. `planFieldCollection`
+(`engines/field-collection.ts`, pure) fills the named bills still open first,
+then the customer's other open bills oldest first, then on account — and writes
+a sentence into the receipt's note and its timeline line saying which bill was
+already settled and where the money went. Safe because the receipt is
+`reported`: nothing counts until accounts confirm, and confirming can re-point
+it. Where every named bill is open nothing changes (`settle`).
+
+**THE PICKER OFFERS NO UNSTATED BILL.** `openCustomerBills` leaves out
+`paymentPosition = 'unstated'` — its balance is the full amount only because
+nobody has said whether it is owed, and the office keeps it out of outstanding.
+
+**MONEY AT A THIRD-PARTY SHOP GOES ON THE BILLER'S ACCOUNT.** `pay.tsx` asks
+`billingChoicesFor` as the order screen does and files the receipt (and reads
+the bills) on the distributor, with a chooser where there is more than one; the
+visit and the receipt's phone stay the shop's.
+
+**COLLECTIONS SAYS WHAT ACCOUNTS DECIDED.** `myReceiptStates` sends his own
+receipts' status, reason (reject/hold) and real receipt number on `myPayments`
+(bootstrap: ninety days; delta: what moved); the handset writes them onto his
+`payments` row (`officeStatus`, `officeReason`, `receiptNumber`). The row shows
+Confirmed / Being checked / Not found / Taken back with accounts' words, the
+real number replaces `TMP-…`, and "Send receipt <no>" resends it
+(`receiptMessage` `numbered`). A receipt accounts rejected or reversed is not
+offered "I banked it" or "It bounced".
+
+**ANY DATED MODE CAN BE HANDED IN OR BOUNCE**, not only the literal "Cheque":
+`payments.datedModes` decides, as it does on the form.

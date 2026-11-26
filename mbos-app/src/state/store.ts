@@ -9,6 +9,7 @@ import { unreadCount } from '../data/notifications';
 import { daysAwaitingAnswer } from '../data/journey';
 import { pendingCount } from '../sync/queue';
 import { isoDate } from '../lib/format';
+import { moveDraft, type DraftCart } from '../data/day-shape';
 import type { FollowUpMode, OutcomeKey } from '../data/fixtures';
 import type { ToastTone } from '../components/ui/overlays';
 import type { UpdateOffer } from '../engines/refresh';
@@ -115,6 +116,10 @@ export type Confirm = {
 } | null;
 
 type State = {
+  /** Bumped every time a pull lands. A screen a push opened re-reads on it, so
+      the record the push was about appears when it arrives rather than on the
+      next visit. See `whenPulled`. */
+  pullSeq: number;
   /* ---- session ---- */
   signedIn: boolean;
   method: LoginMethod;
@@ -234,6 +239,8 @@ type State = {
    * differently.
    */
   cartFor: string;
+  /** The checked-in visit's cart, set aside while another shop is open. See `moveDraft`. */
+  visitCartStash: DraftCart | null;
 
   /* ---- people ---- */
   catQ: string;
@@ -300,10 +307,14 @@ const NO_DATE_YET = '';
  *
  * Changing shop clears the draft; setting the SAME id again changes nothing,
  * because that is exactly the navigation the draft exists to survive.
+ *
+ * EXCEPT THE SHOP HE IS CHECKED INTO, whose cart is set aside rather than
+ * cleared and comes back when he returns — see `moveDraft`, which is pure and
+ * tested in `data/day-shape.test.ts`.
  */
-function draftMovedShop(nextCustId: string, cartFor: string): Partial<State> {
-  if (nextCustId === cartFor) return {};
-  return { cartFor: nextCustId, cart: {}, oQ: '', payMode: null, payAmt: '', payChq: '' };
+function draftMovedShop(nextCustId: string, s: State): Partial<State> {
+  const visitShopId = s.arrival && s.arrival.checkedInAt != null ? s.arrival.customerId : null;
+  return moveDraft(s, nextCustId, visitShopId) as Partial<State>;
 }
 
 /**
@@ -409,6 +420,7 @@ export async function restoreOffPlanReason(): Promise<void> {
 }
 
 export const useStore = create<State & Actions>((set, get) => ({
+  pullSeq: 0,
   signedIn: false,
   method: 'password',
   mob: '',
@@ -460,6 +472,7 @@ export const useStore = create<State & Actions>((set, get) => ({
   payAmt: '',
   payChq: '',
   cartFor: '',
+  visitCartStash: null,
 
   catQ: '',
 
@@ -483,7 +496,7 @@ export const useStore = create<State & Actions>((set, get) => ({
       p = { ...given, offPlanReasonAt: at };
     }
     const custId = p.custId;
-    set(custId !== undefined ? { ...p, ...draftMovedShop(custId, get().cartFor) } : p);
+    set(custId !== undefined ? { ...p, ...draftMovedShop(custId, get()) } : p);
   },
 
   notify: (msg, tone = 'success') => set({ toast: msg, toastTone: tone }),
@@ -511,7 +524,7 @@ export const useStore = create<State & Actions>((set, get) => ({
       /* This writes `custId` through zustand's own setter rather than the
          action above, so it has to ask the same question itself — starting a
          visit at the next shop is the commonest way the cart moved. */
-      ...draftMovedShop(custId, get().cartFor),
+      ...draftMovedShop(custId, get()),
       gps: 'acquiring',
       shots: {},
       voice: 'none',
@@ -702,6 +715,13 @@ type DraftKey = (typeof DRAFT_KEYS)[number];
 function draftOf(s: State): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const k of DRAFT_KEYS) out[k] = s[k];
+  /* He is looking at another shop: the visit's cart is the one set aside,
+     and that is the one the visit's draft keeps. */
+  const stash = s.visitCartStash;
+  if (stash && s.arrival && stash.cartFor === s.arrival.customerId) {
+    out.cart = stash.cart;
+    out.cartFor = stash.cartFor;
+  }
   return out;
 }
 
