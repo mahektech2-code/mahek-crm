@@ -174,6 +174,7 @@ test("the pull says what is ordered and not yet billed, the office's word on his
     receiptNo: "MRCP/26-27/7",
     reportedById: principal.user.id,
     source: "mbos",
+    idempotencyKey: `${receiptId}:create`,
   } as never);
 
   const pull = await buildPull(principal, encodeCursor(new Date(Date.now() - 60_000)));
