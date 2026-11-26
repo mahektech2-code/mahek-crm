@@ -18,6 +18,7 @@ import { ReasonSheet } from '../src/components/leads/reason-sheet';
 import { color as C, weight, type BadgeTone } from '../src/theme/tokens';
 import {
   ensureLeadShop,
+  leadCreateRefused,
   leadThresholds,
   leadVisitRefusal,
   setArchived,
@@ -485,6 +486,8 @@ export default function LeadRecord() {
   const visitRefusal = leadVisitRefusal(lead);
   const startLeadVisit = async () => {
     if (visitRefusal) return notify(visitRefusal, 'warn');
+    /* The row's own state is reset by any edit since; the outbox keeps the office's answer. */
+    if (await leadCreateRefused(lead.id)) return notify(leadVisitRefusal({ archived: 0, syncState: 'rejected' }) ?? 'The office did not take this lead.', 'warn');
     if (arrival && arrival.checkedInAt == null) return notify(`Check in at ${arrival.customerName} first. You reached there at ${hhmm(arrival.arrivedAt)}.`, 'error');
     if (arrival && arrival.checkedInAt != null) return notify(`Check out of ${arrival.customerName} first. You are still in that visit.`, 'error');
     /* A lead created before this build has no shop row on the phone yet. */

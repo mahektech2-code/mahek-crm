@@ -57,7 +57,15 @@ export function TravelGate() {
    * arrival on disk. Setting off from here would leave that arrival with
    * nothing left that could ever close it.
    */
-  const outstanding = arrival && arrival.checkedInAt == null ? arrival : null;
+  /* AND WHILE HE IS IN A VISIT. Only the arrival-not-checked-in case was
+     refused here, so Start visit on the Journey, Customer or Customers screen
+     went straight through while he was checked in somewhere else — and
+     `beginVisit` reset the form, the draft writer saved that empty form over
+     the open visit's draft on disk, and the note, the photographs and the
+     links to what he had punched inside were gone. One visit at a time is the
+     quick action's rule; this is now every Start visit's. */
+  const outstanding = arrival ?? null;
+  const inVisit = outstanding?.checkedInAt != null;
 
   /* The sheet below is a refusal — the journey he asked for does not start —
      with its reason on the sheet, so it gets the refusal buzz as it opens.
@@ -134,16 +142,18 @@ export function TravelGate() {
               <Icon name="visit" size={20} color={C.warnInk} strokeWidth={2} />
             </View>
             <T style={[{ flex: 1, fontSize: 18, lineHeight: 23, color: C.ink }, weight(800)]}>
-              {same ? 'You are already there' : `Not checked in at ${outstanding.customerName}`}
+              {inVisit ? `You are in a visit at ${outstanding.customerName}` : same ? 'You are already there' : `Not checked in at ${outstanding.customerName}`}
             </T>
           </View>
           <T style={{ fontSize: 13, lineHeight: 18, color: C.muted, marginTop: 8 }}>
-            {same
-              ? 'You have reached. Check in when you go inside.'
-              : 'One shop at a time. Check in there, or save that visit, before you go to the next shop.'}
+            {inVisit
+              ? 'One visit at a time. Check out of it, with its questions answered, before you start the next one.'
+              : same
+                ? 'You have reached. Check in when you go inside.'
+                : 'One shop at a time. Check in there, or save that visit, before you go to the next shop.'}
           </T>
           <PillButton
-            label={`Check in at ${outstanding.customerName}`}
+            label={inVisit ? `Back to ${outstanding.customerName}` : `Check in at ${outstanding.customerName}`}
             variant="navyLime"
             height={56}
             onPress={goCheckIn}

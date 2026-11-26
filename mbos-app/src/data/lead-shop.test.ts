@@ -61,3 +61,20 @@ test('the lead record says why it cannot be visited, and nothing for an open lea
   assert.match(leadVisitRefusal({ archived: 0, syncState: 'rejected' }) ?? '', /already in the book/);
   assert.match(leadVisitRefusal({ archived: 1, syncState: 'synced' }) ?? '', /filed/);
 });
+
+test("a refused lead's phone-only shop goes; one the office sent stays", async () => {
+  const { DROP_PHONE_LEAD_SHOP_SQL, LEAD_CREATE_REFUSED_SQL } = await import('./lead-shop');
+  const db = handset();
+  db.prepare(LEAD_SHOP_SQL).run(...leadShopParams(lead));
+  db.prepare("INSERT INTO customers (id, name, kind, lastSyncedAt) VALUES ('office_lead', 'Office Lead', 'lead', 5)").run();
+  db.prepare(DROP_PHONE_LEAD_SHOP_SQL).run(lead.id);
+  db.prepare(DROP_PHONE_LEAD_SHOP_SQL).run('office_lead');
+  const ids = (db.prepare('SELECT id FROM customers ORDER BY id').all() as { id: string }[]).map((r) => r.id);
+  assert.deepEqual(ids, ['office_lead']);
+  db.prepare(
+    `INSERT INTO sync_queue (id, entityType, entityId, op, payload, dependsOn, idempotencyKey, nextAttemptAt, state, createdAt)
+     VALUES ('q1', 'lead', ?, 'create', '{}', '[]', 'k1', 0, 'rejected', 0)`,
+  ).run(lead.id);
+  assert.ok(db.prepare(LEAD_CREATE_REFUSED_SQL).get(lead.id), 'the refusal is read off the outbox');
+  assert.equal(db.prepare(LEAD_CREATE_REFUSED_SQL).get('someone_else'), undefined);
+});

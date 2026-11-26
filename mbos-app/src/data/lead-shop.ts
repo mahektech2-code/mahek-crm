@@ -44,3 +44,15 @@ export function leadVisitRefusal(l: { archived: number; syncState: string }): st
   if (l.archived) return 'This lead is filed. Bring it back to visit it.';
   return null;
 }
+
+/**
+ * A REFUSED lead's phone-only shop row goes. The office did not take the lead —
+ * most often because the shop is already in the book — so the row this phone
+ * wrote for it is a second copy of a real shop in Customers, Nearby and the
+ * journey picker. Only the phone's own copy (`lastSyncedAt = 0`, `kind = 'lead'`)
+ * is removed; a row the office ever sent is left to the reconcile.
+ */
+export const DROP_PHONE_LEAD_SHOP_SQL = `DELETE FROM customers WHERE id = ? AND kind = 'lead' AND lastSyncedAt = 0`;
+
+/** Whether this lead's create was refused, read off the outbox — an edit since does not clear it. */
+export const LEAD_CREATE_REFUSED_SQL = `SELECT 1 AS refused FROM sync_queue WHERE entityId = ? AND entityType = 'lead' AND op = 'create' AND state = 'rejected' LIMIT 1`;

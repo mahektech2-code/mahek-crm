@@ -1,6 +1,6 @@
 import { all, one, run } from '../db';
 import { insertAndQueue, stamp, updateAndQueue } from './write';
-import { LEAD_SHOP_SQL, leadShopParams, leadVisitRefusal, type LeadShopInput } from './lead-shop';
+import { LEAD_CREATE_REFUSED_SQL, LEAD_SHOP_SQL, leadShopParams, leadVisitRefusal, type LeadShopInput } from './lead-shop';
 import { getConfig } from './config';
 import { isoDate } from '../lib/format';
 import { wireNotes, wireSource } from '../lib/wire';
@@ -723,6 +723,11 @@ export async function ensureLeadShop(l: LeadShopInput): Promise<void> {
 }
 
 export { leadVisitRefusal };
+
+/** Read off the outbox, not the row: an edit re-queues the row and would wipe the refusal. */
+export async function leadCreateRefused(id: string): Promise<boolean> {
+  return !!(await one<{ refused: number }>(LEAD_CREATE_REFUSED_SQL, [id]));
+}
 
 /* `setStage` was here — the six-word ladder's own move, written before the
    funnel and called by nothing since `advanceStage` and `markLost` replaced it.
