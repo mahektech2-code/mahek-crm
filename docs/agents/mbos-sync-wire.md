@@ -214,3 +214,12 @@ record that would never land, with the office seeing nothing and the handset
 saying only that it was still trying. It was found by sending a real visit
 payload through the HTTP endpoint rather than the service, which is the only
 way any of these three ever show up.
+
+**FOUR MONEY CHANNELS, ALL OPTIONAL, ALL HAND-APPLIED (Nov 2026).**
+`openOrdered`, `priceKeys`, `priceUnoffered` and `myPayments` are applied by
+`sync/money-channels.ts`, which returns plain statements so
+`order-money.test.ts` runs them against the real schema. Each is absent from an
+older server and absent changes nothing; `openOrdered` is sent whole and zeroes
+what it does not list. `customerOrders` can now carry `<order id>@<shop id>`
+rows (an order delivered to a shop in the book) — anything de-duplicating
+`customer_orders` against `orders` by id strips the suffix.

@@ -136,7 +136,9 @@ for itself.
 a balance above zero, and `pay.tsx` reads that rather than `customerBills`. A
 settled bill offered there is one the salesman names, `handlePayment` refuses
 with `bill_settled`, and the refusal reads as the app being wrong rather than
-the phone being stale.
+the phone being stale. (Since Nov 2026 `handlePayment` accepts it and spreads
+it instead — see payments-and-collections.md — but the picker still offers only
+open, stated bills.)
 
 **WHAT WAS ON A BILL RIDES ON THE BILL, as JSON text.** A bill IS the order, so
 the lines are the order's — and an order records them in one of two ways: the
@@ -184,3 +186,80 @@ already puts above its own ledger for the same account.
 than off the window the office sent. A shop billed for three months reaches
 back three months, not thirteen, and a screen claiming otherwise over a list
 that starts in June is one nobody trusts twice.
+
+**THE PHONE SAYS WHAT THE OFFICE WILL REFUSE, BEFORE HE PROMISES IT (Nov
+2026).** `handleOrder` has three refusals the handset never asked about, so
+"Send for approval" saved an order that came back Not accepted hours later:
+the limit with `mbos.credit.blockOnLimitExceeded` on (outstanding + this order
+over the limit, no tolerance, no other open orders; an edit only where it
+RAISES the value), `mbos.credit.overdueDaysBlockOrders` (now real on BOTH
+sides — a new order is refused `overdue_blocked` where the billing party has a
+bill that many days past due; 0 is off; `unstated` and disputed bills never
+block; `engines/field-order-gates.ts` on the server, `engines/order-gates.ts`
+on the phone) and `mbos.orders.minimumQuantityCans`. `assessCart` returns
+`officeRefusal`; the dock says it in the office's terms, holds the button, and
+— like the credit-block card — offers Call accounts (`mbos.credit.accountsPhone`,
+empty hides it) and Collect payment against the BILLER. The handset's fallback
+for the overdue key was 90 while the registry's is 0; it is 0. A change request
+after approval is held to the minimum only, as `handleOrderChangeRequest` is.
+
+**ORDERED, NOT YET INVOICED IS THE OFFICE'S FIGURE.** The phone kept
+`submittedNotInvoicedPaise` itself — up on every save, down only on an edit or
+cancel — so a billed, declined or refused order counted for ever.
+`openOrderedFor` (mbos-service) defines it once: `mbos`/`crm` orders BILLED TO
+the party, `pending_approval` or approved, with no bill against them, ordered
+inside `mbos.credit.openOrderWindowDays`, at `orderValueSql`. It rides its own
+channel, `openOrdered`, sent WHOLE every pull (the handset zeroes a shop not
+listed) — the customers channel is `updated_at`-gated and an order or a bill
+moves no customer row. The phone adds only orders whose CREATE is still in its
+outbox (`UNSENT_ORDERS_PAISE_SQL`); once the create has gone the order is in the
+office's figure. The migration zeroes the old local figure.
+
+**A RATE PER SHOP, NOT PER TAG.** Shops sharing a tag but resolving to
+different office price lists got one phone rate and the office refused one of
+them `price_changed`. `phonePriceTables` splits such a tag by list under keys
+`tag::list` (and an untagged shop a list resolves for under `::list`), sends
+`priceKeys` (shop → key) and `priceUnoffered` (what a list prints a dash for);
+both replaced whole, `priceList` keeps its old rows under the real tags so an
+older build prices as before. The order screen prices off the BILLER's key
+(`priceKeyFor`) and marks a dashed product "Not sold to this account", refusing
+to add it — the office would refuse it `not_offered`.
+
+**TAKING A REFUSED ORDER AGAIN KEEPS IT UNTIL THE NEW ONE IS SAVED.** "Take the
+order again" let the refused entry go first and opened an empty form on the
+BILLER (the distributor). It now opens `/order?retake=<queue id>`:
+`refusedOrder` reads the payload, the form opens on the DELIVERY shop with the
+biller chosen and the lines in the cart, and `finishRetake` lets the refused
+entry go only after `saveOrder` returns. Collect it again works the same way
+(`refusedPayment`).
+
+**AN EDIT NEVER DROPS A LINE QUIETLY, AND NEVER LEAVES ITS LINES BEHIND.** A
+line whose product is retired, or which has no product id, cannot come across;
+it is listed on the form and saving asks first. Opening an edit, a change or a
+retake sets the shop's own draft aside and puts it back on leaving unsaved.
+
+**AN ORDER STILL IN THE OUTBOX IS REMOVED, NOT CANCELLED.** The office has no
+TO to cancel, so `cancelTo` blamed Accounts for a decision nobody made.
+`discardUnsentOrder` removes it — its queue rows, anything queued behind it,
+its lines and row — while the create is `queued`, `failed` or `blocked`, never
+while `syncing`. Your orders offers Edit and "Remove — not sent".
+
+**THE ORDERS TAB HAS WHAT WAS DELIVERED THERE, AND WHAT HE JUST TOOK.**
+`recentOrders` also sends each order DELIVERED to a shop in the book, under
+`<order id>@<shop id>` (the handset table is one row per id; the journey strips
+the suffix when it de-duplicates). The tab merges his own orders not yet
+accepted (`LOCAL_ORDERS_FOR_SHOP_SQL`), marked "Not sent yet".
+
+**A LEAD WITH BILLS SHOWS THEM.** The Account tab's "nothing billed to a lead"
+is drawn only when there are no bills and no receipts.
+
+**THE ORDER NUMBER'S YEAR IS THE ORDER'S.** `handleOrder` took the financial
+year from the sync day; an order taken on 31 March and synced on 1 April was
+numbered into the next year. It is `financialYearOf(orderDay)`.
+
+**EVERY OPEN BILL IS ON THE PHONE, WHATEVER ITS AGE.** The statement window
+(`mbos.sync.statementMonths`) took a fourteen-month-old unpaid bill — the oldest
+debt, the one being chased — off the collection picker. `customerBills` sends
+"in the window OR open" on a first send and any bill that MOVED on a delta; the
+handset prunes only settled bills past the window and keeps the window in `kv`
+so the statement's running balance still starts where its receipts do.
