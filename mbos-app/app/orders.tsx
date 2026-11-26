@@ -12,6 +12,7 @@ import { PillButton } from '../src/components/ui/v3';
 import { SkuChip } from '../src/components/ui/sku';
 import {
   cancelTo,
+  discardUnsentOrder,
   editableStatus,
   journeyStepsOf,
   latestChangeRequests,
@@ -23,7 +24,7 @@ import {
   type PunchedLine,
   type PunchedOrder,
 } from '../src/data/orders';
-import { dmy, inrFromPaise, isoDate, plural } from '../src/lib/format';
+import { dmy, inrFromPaise, istDate, plural } from '../src/lib/format';
 import { color as C, tabular, weight, type BadgeTone } from '../src/theme/tokens';
 import { Stagger, animateLayoutFor } from '../src/components/ui/motion';
 
@@ -115,6 +116,26 @@ export default function OrdersScreen() {
   const [cancelReason, setCancelReason] = React.useState('');
   const [cancelBusy, setCancelBusy] = React.useState(false);
   const notify = useStore((s) => s.notify);
+  const askConfirm = useStore((s) => s.askConfirm);
+
+  /* An order whose create has not left the phone is taken back here rather
+     than cancelled at the office, which has nothing to cancel. */
+  const removeUnsent = (o: PunchedOrder) =>
+    askConfirm({
+      title: 'Remove this order?',
+      body: 'It has not been sent yet, so the office never hears of it. Tell the shop it is not coming.',
+      subtitle: o.customerName ?? undefined,
+      confirmLabel: 'Yes, remove it',
+      cancelLabel: 'Keep it',
+      tone: 'danger',
+      run: () => {
+        void discardUnsentOrder(o.id).then((r) => {
+          if (!r.ok) return notify(r.message, 'error');
+          notify('Order removed from this phone', 'info');
+          load();
+        });
+      },
+    });
 
   const confirmCancel = async () => {
     if (!cancelling) return;
@@ -266,7 +287,7 @@ export default function OrdersScreen() {
                     <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                       <T numberOfLines={1} style={{ flexShrink: 1, fontSize: 12, lineHeight: 16, color: C.muted }}>
                         {[
-                          dmy(isoDate(new Date(o.orderedAt))),
+                          dmy(istDate(o.orderedAt)),
                           orderTitle(o) ?? o.orderNumber,
                           o.erpOrderNo != null && o.toNo != null ? 'was TO-' + o.toNo : null,
                           o.deliveryDate ? 'for ' + dmy(o.deliveryDate) : null,
@@ -321,6 +342,19 @@ export default function OrdersScreen() {
                   {/* WHAT HE MAY DO, on the card: change or cancel a TO until
                       Accounts approve it, correct and send one they sent
                       back; after approval it is the office's to change. */}
+                  {/* NOT SENT YET: nothing at the office to cancel, so it is
+                      changed or taken back here. */}
+                  {!refused && !o.journeyState && o.syncState !== 'synced' && editableStatus(o.status) ? (
+                    <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                      <View style={{ flex: 1 }}>
+                        <RowAction label="Edit" icon="note" onPress={() => router.push(`/order?edit=${o.id}&from=orders`)} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <RowAction label="Remove — not sent" onPress={() => removeUnsent(o)} />
+                      </View>
+                    </View>
+                  ) : null}
+
                   {!refused && o.journeyState && canEdit(o) ? (
                     o.journeyState === 'correction' ? (
                       <RowAction label="Correct and send" icon="note" onPress={() => router.push(`/order?edit=${o.id}&from=orders`)} />
@@ -451,7 +485,7 @@ function Ladder({ steps }: { steps: JourneyStep[] }) {
             </T>
             {st.at || st.note ? (
               <T style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>
-                {[st.at ? dmy(isoDate(new Date(st.at))) : null, st.note].filter(Boolean).join(' · ')}
+                {[st.at ? dmy(istDate(Date.parse(st.at))) : null, st.note].filter(Boolean).join(' · ')}
               </T>
             ) : null}
           </View>

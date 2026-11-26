@@ -35,7 +35,8 @@ import { Stagger, animateLayoutFor } from '../src/components/ui/motion';
  */
 const WHAT_TO_DO: Record<string, string> = {
   credit_blocked: 'Accounts have stopped this shop. Call accounts before you promise anything more.',
-  credit_exceeded: 'This account is over its credit limit. Collect old bills first, or ask your manager to approve.',
+  credit_exceeded: 'This account is over its credit limit. Collect old bills first, or ask accounts to raise the limit, then take it again.',
+  overdue_blocked: 'A bill on this account is too far overdue for new orders. Collect it, or ring accounts, then take the order again.',
   product_inactive: 'A product on this is not sold any more. Take the order again with the new product, then remove this one.',
   price_changed: 'The rate changed after you wrote this. Tell the shop the new rate, take the order again, then remove this one.',
   /* NOT "the office already got this payment". The office refused to apply
@@ -258,12 +259,7 @@ export default function Rejections() {
                         tone: 'navy',
                         subtitle: payload.customerName,
                         run: () => {
-                          void (async () => {
-                            await discardRefused(row.id);
-                            if (payload.customerId) useStore.getState().set({ custId: payload.customerId });
-                            load(true);
-                            router.push(again.route);
-                          })();
+                          router.push(again.route);
                         },
                       })
                     }
@@ -397,18 +393,20 @@ function label(entityType: string): string {
 /** Where taking a refused entry again leads, where there is somewhere. */
 function retake(row: QueueItem): { label: string; body: string; route: string } | null {
   if (row.op !== 'create') return null;
+  /* The refused entry is let go by the form once the new one is SAVED — never
+     before, or backing out of the form lost both. */
   if (row.entityType === 'payment') {
     return {
       label: 'Collect it again',
-      body: 'Opens a new payment for the same shop. This refused one is removed from your phone.',
-      route: '/pay?from=rejections',
+      body: 'Opens a new payment for the same shop and amount. This refused one is removed once the new one is saved.',
+      route: `/pay?from=rejections&retake=${row.id}`,
     };
   }
   if (row.entityType === 'order') {
     return {
       label: 'Take the order again',
-      body: 'Opens a new order for the same shop. This refused one is removed from your phone.',
-      route: '/order?from=rejections',
+      body: 'Opens the same order again for the shop it was for, with its lines. This refused one is removed once the new one is saved.',
+      route: `/order?from=rejections&retake=${row.id}`,
     };
   }
   return null;
