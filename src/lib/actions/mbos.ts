@@ -2078,7 +2078,9 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
          where id = ${stopId}
            ${asClaimed ? sql`` : sql`and status <> 'visited'`}
       `);
-    } else {
+    } else if (inserted.length || !p.journeyPlanStopId) {
+      /* Not for a re-delivery of a visit that named a stop: that visit is
+         already saved, and matching again would move it onto a newer stop. */
       /*
        * A VISIT THAT NAMES NO STOP CAN STILL BE ONE, and it used to count as a
        * miss.
