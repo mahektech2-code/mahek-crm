@@ -44,6 +44,7 @@ export async function billingViewFor(ctx: ErpContext, lineIds: string[]): Promis
     billed: l.inDetails,
     transporter: l.o.transporter ?? l.delivery.p?.transporter ?? null,
     creditDays: l.billing.creditDays,
+    standingInstructions: l.si,
   }));
   return billingSheets(lines, { rates: ctx.powers.has("viewSalesRate"), amounts: ctx.powers.has("viewSalesAmounts") });
 }
