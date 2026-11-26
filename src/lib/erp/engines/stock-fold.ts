@@ -81,3 +81,22 @@ export function foldRmLots<L extends FoldLot>(lots: L[]): FoldedRow<L>[] {
   }
   return out;
 }
+
+/**
+ * Whether the Raw material tab lists a row (FB-12). A lot below `hideBelow`
+ * of its own unit — a litre's leftover at the bottom of a drum — is a
+ * remainder, not stock anybody acts on. An item drawn BELOW zero is always
+ * listed, because that is a fault somebody has to see.
+ */
+export function rmRowShown<L extends FoldLot>(r: FoldedRow<L>, hideBelow: number): boolean {
+  const line = hideBelow > 0 ? hideBelow : Number.MIN_VALUE;
+  return r.kind === "lot" ? r.lot.stock >= line : r.stock < 0 || r.stock >= line;
+}
+
+/**
+ * Cans, boxes and pieces are counted in whole units (AGENTS.md: they stay
+ * whole); a fraction on one is an artefact of a litre-based adjustment, so the
+ * Raw material tab shows them whole. Chemicals keep their fraction — a litre
+ * or a kilogram takes one.
+ */
+export const shownQuantity = (stock: number, byLot: boolean): number => (byLot ? stock : Math.round(stock));

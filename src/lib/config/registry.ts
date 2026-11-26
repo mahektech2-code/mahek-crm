@@ -5146,6 +5146,17 @@ export const SETTINGS = [
     max: 720,
   },
   {
+    key: "erp.purchase.rmStockHideBelow",
+    type: "decimal",
+    category: "erp",
+    label: "Raw material stock · hide what is below",
+    description:
+      "On Stock on hand → Raw material, a lot (or a can/box item's total) holding less than this, in its own unit, is a remainder rather than stock to act on and is not listed — it still counts in every total and in an item's lots. An item drawn below zero is always shown. 0 lists everything above zero.",
+    default: 1,
+    min: 0,
+    max: 1000,
+  },
+  {
     key: "erp.purchase.poWatiTemplate",
     type: "text",
     category: "erp",
@@ -7395,6 +7406,7 @@ export type Config = {
   "erp.purchase.ownVehicleRatePerKmPaise": number;
   "erp.purchase.receiptTolerancePercent": number;
   "erp.purchase.testWaitingHours": number;
+  "erp.purchase.rmStockHideBelow": number;
   "erp.purchase.poWatiTemplate": string;
   "erp.purchase.poGstPercent": number;
   "erp.money.approvalAbovePaise": number;
