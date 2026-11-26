@@ -95,6 +95,17 @@ test('a shop found shut needs no note — there is nothing to report but the shu
   assert.equal(visitVerdict(checks).complete, true);
 });
 
+test('a shut shop or an absent owner is not held to the time-in-the-shop floor', () => {
+  for (const outcome of ['closed', 'closed_now'] as const) {
+    const checks = visitChecks({ ...facts, outcome, dwellSeconds: 15, noteChars: 60 });
+    assert.equal(checks.find((c) => c.key === 'dwell')!.ok, true, outcome);
+    assert.equal(visitVerdict(checks).verified, true, outcome + ' saves as a clean visit');
+  }
+  /* Anybody actually spoken to still owes the floor. */
+  const spoken = visitChecks({ ...facts, dwellSeconds: 15 });
+  assert.equal(spoken.find((c) => c.key === 'dwell')!.ok, false);
+});
+
 test('no outcome chosen is asked first, and the note with it', () => {
   const checks = visitChecks({ ...facts, outcome: null, noteChars: 0 });
   assert.deepEqual(unansweredQuestions(checks).map((c) => c.key), ['outcome', 'note']);

@@ -131,11 +131,27 @@ export function outcomeNeedsNote(outcome: OutcomeKey | null): boolean {
   return outcome !== 'closed';
 }
 
+/**
+ * Whether the time-in-the-shop floor applies to this outcome at all.
+ *
+ * The floor exists to stop a two-second visit being counted as a call on the
+ * customer. A shutter that is down, or an owner who is out, is answered in
+ * the time it takes to read the board — and holding the save until two
+ * minutes had passed forced every such visit to save "not checked", which
+ * put an honest closed shop in front of his manager as a doubtful one. The
+ * gate at the door has already proved he was there; there is nobody inside
+ * to have spent time with.
+ */
+export function outcomeNeedsDwell(outcome: OutcomeKey | null): boolean {
+  return outcome !== 'closed' && outcome !== 'closed_now';
+}
+
 export function visitChecks(f: VisitFacts): VisitCheck[] {
   const fo = f.outcome ? FOLLOW_ON[f.outcome] : undefined;
   const mins = Math.floor(f.dwellSeconds / 60);
   const secs = f.dwellSeconds % 60;
-  const dwellOk = f.dwellSeconds >= f.minimumDwellSeconds;
+  const dwellExempt = !outcomeNeedsDwell(f.outcome);
+  const dwellOk = dwellExempt || f.dwellSeconds >= f.minimumDwellSeconds;
   const floor =
     f.minimumDwellSeconds >= 60
       ? plural(Math.round(f.minimumDwellSeconds / 60), 'minute')
@@ -163,7 +179,9 @@ export function visitChecks(f: VisitFacts): VisitCheck[] {
     {
       key: 'dwell',
       ok: dwellOk,
-      line: dwellOk
+      line: dwellExempt && f.dwellSeconds < f.minimumDwellSeconds
+        ? 'Nobody to meet. No minimum time'
+        : dwellOk
         ? `In the shop ${mins}m ${secs}s`
         : `Only ${f.dwellSeconds}s so far. A visit needs ${floor}`,
       /* The floor is configuration, so the sentence says the configured one —

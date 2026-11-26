@@ -640,8 +640,10 @@ export async function arrivedLegFor(userId: string, customerId: string): Promise
     `SELECT * FROM travel_legs
       WHERE userId = ? AND customerId = ? AND origin = 'visit'
         AND endedAt IS NOT NULL AND visitId IS NULL
+        AND COALESCE(note, '') NOT LIKE ?
       ORDER BY endedAt DESC LIMIT 1`,
-    [userId, customerId],
+    /* Not a journey he walked away from — see `walkAway`. */
+    [userId, customerId, `%${NOT_GOING_IN}%`],
   );
 }
 
@@ -753,6 +755,44 @@ export async function abandonLeg(legId: string, reason: string): Promise<{ ok: b
   const leg = await one<TravelLeg>('SELECT * FROM travel_legs WHERE id = ?', [legId]);
   if (!leg) return { ok: false };
   await closeAbandoned(leg, reason);
+  return { ok: true };
+}
+
+/**
+ * WHAT A "NOT GOING IN" IS WRITTEN AS on the journey that got him there.
+ *
+ * Public so `arrivedLegFor` can recognise it — see `walkAway`.
+ */
+export const NOT_GOING_IN = 'Arrived and did not go in';
+
+/**
+ * He got there and is not going in — the shutter is down, the owner has gone
+ * to Pune, the godown is shut for stock-taking.
+ *
+ * Until this existed an arrival had exactly one way out: checking in. So a
+ * shop found shut was a visit opened, a clock run up to the dwell floor and a
+ * record saved "not checked" — or an arrival left on the one bar he cannot
+ * dismiss, with `TravelGate` refusing every other journey for the rest of the
+ * day.
+ *
+ * **The journey is KEPT, not called off.** He really rode there: the leg is
+ * already closed at its arrival reading and its meter photograph, and those
+ * kilometres are owed to him exactly as any other ride's. What changes is the
+ * sentence on it, which is why it is a note and not `closeAbandoned` — that
+ * resets the closing reading to the opening one and would pay him nothing for
+ * a ride he made. And it is marked so `arrivedLegFor` does not hand the same
+ * journey to a visit he makes to this shop later in the day.
+ */
+export async function walkAway(legId: string, reason: string): Promise<{ ok: boolean }> {
+  const leg = await one<TravelLeg>('SELECT * FROM travel_legs WHERE id = ?', [legId]);
+  if (!leg) return { ok: false };
+  const said = `${NOT_GOING_IN}: ${reason.trim()}`;
+  await patchLeg(leg, {
+    /* Normally closed already, at the arrival. Closed here only if somehow
+       still open, at NOW with no meter — never at its start reading. */
+    endedAt: leg.endedAt ?? Date.now(),
+    note: leg.note ? `${leg.note} · ${said}` : said,
+  });
   return { ok: true };
 }
 

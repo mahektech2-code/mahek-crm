@@ -17,6 +17,7 @@ import {
   bindLegToVisit,
   openLegOf,
   travelModes,
+  walkAway,
   type TravelLeg,
   type TravelMode,
 } from '../src/data/travel';
@@ -1453,6 +1454,43 @@ export default function Visit() {
                 notify('Check in when you go inside. The bar at the bottom brings you back.', 'info');
                 router.replace('/journey');
               }}
+              style={{ marginTop: 10 }}
+            />
+            {/* THE THIRD ANSWER, and until it existed the only way out of an
+                arrival was checking in. A shop found shut became a visit
+                opened, a clock run and a record saved "not checked" — or an
+                arrival left on the bar he cannot dismiss, with every other
+                journey refused behind it. The trip is KEPT with his reason on
+                it (`walkAway`): he did ride there, and those kilometres are
+                his. Nothing about a visit is written, because none happened. */}
+            <Btn
+              label="Not going in"
+              a11y="Not going in. Say why, and the trip is kept"
+              look="dashed"
+              onPress={() =>
+                askConfirm({
+                  title: 'Not going in?',
+                  body: 'The trip stays on your record with your reason. No visit is saved. You can start another trip.',
+                  reasonLabel: 'Why · needed',
+                  placeholder: 'Shop shut. Owner out of town.',
+                  confirmLabel: 'Not going in',
+                  cancelLabel: 'Back',
+                  tone: 'navy',
+                  run: (reason) => {
+                    void (async () => {
+                      try {
+                        if (arrival.legId) await walkAway(arrival.legId, reason);
+                        await clearArrival();
+                        setArrival(null);
+                        notify('Trip kept. No visit saved.');
+                        router.replace('/journey');
+                      } catch {
+                        notify('That could not be saved on this phone. Try again.', 'error');
+                      }
+                    })();
+                  },
+                })
+              }
               style={{ marginTop: 10 }}
             />
           </Panel>
