@@ -11,6 +11,7 @@ import { color as C, weight } from '../src/theme/tokens';
 import {
   JOURNEY_HISTORY_DAYS,
   journeyDays,
+  pickedShops,
   stopsOn,
   type JourneyDay,
   type JourneyStop,
@@ -126,6 +127,10 @@ export default function JourneysScreen() {
   const [requests, setRequests] = React.useState<TerritoryRequest[]>([]);
   const [open, setOpen] = React.useState<JourneyDay | null>(null);
   const [stops, setStops] = React.useState<(JourneyStop & { city: string | null })[]>([]);
+  /* What he picked for the day, where the office has not issued the stops
+     yet — see `openDay`. */
+  const [picked, setPicked] = React.useState<{ customerId: string; name: string; area: string | null }[]>([]);
+  const askTravel = useStore((s) => s.askTravel);
   const [asking, setAsking] = React.useState(false);
 
   const load = React.useCallback(() => {
@@ -150,7 +155,18 @@ export default function JourneysScreen() {
     if (d.planDate > today && d.dayState === 'planned') return setPlannedOpen(d);
     setOpen(d);
     setStops([]);
-    void stopsOn(d.planDate).then(setStops);
+    setPicked([]);
+    /*
+     * NO STOPS IS NOT NO SHOPS. Picks made without signal wait on the day row
+     * until the office mints the stops, and this sheet read only the stops —
+     * so a day with twelve shops picked said "No shops picked yet" and
+     * offered nothing. The picks are read where the stops are missing, and
+     * the sheet offers what the Journey tab does with them.
+     */
+    void stopsOn(d.planDate).then((rows) => {
+      setStops(rows);
+      if (!rows.length) void pickedShops(d.id).then(setPicked).catch(() => undefined);
+    });
   };
 
   const upcoming = days.filter((d) => d.planDate >= today);
@@ -232,7 +248,16 @@ export default function JourneysScreen() {
       <DaySheet
         day={open}
         stops={stops}
+        picked={picked}
         today={today}
+        onStartVisit={(shop) => {
+          setOpen(null);
+          askTravel({ customerId: shop.customerId, customerName: shop.name });
+        }}
+        onChangePicks={(dayId) => {
+          setOpen(null);
+          router.push({ pathname: '/pick', params: { day: dayId } });
+        }}
         onClose={() => setOpen(null)}
         onOpenShop={(id) => {
           set({ custId: id });
@@ -622,13 +647,19 @@ function MonthCalendar({
 function DaySheet({
   day,
   stops,
+  picked,
   today,
+  onStartVisit,
+  onChangePicks,
   onClose,
   onOpenShop,
 }: {
   day: JourneyDay | null;
   stops: (JourneyStop & { city: string | null })[];
+  picked: { customerId: string; name: string; area: string | null }[];
   today: string;
+  onStartVisit: (shop: { customerId: string; name: string }) => void;
+  onChangePicks: (dayId: string) => void;
   onClose: () => void;
   onOpenShop: (customerId: string) => void;
 }) {
@@ -702,6 +733,30 @@ function DaySheet({
             <StopStatus stop={s} future={future} />
           </Pressable>
         ))
+      ) : picked.length ? (
+        <View>
+          <T style={{ fontSize: 13, lineHeight: 18, color: C.muted, marginTop: 2 }}>
+            {plural(picked.length, 'shop') + ' picked · with the office'}
+          </T>
+          {picked.map((shop) => (
+            <View key={shop.customerId} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 56, paddingVertical: 6 }}>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <T numberOfLines={1} style={[{ fontSize: 15, color: C.ink }, weight(600)]}>{shop.name}</T>
+                {shop.area ? <T numberOfLines={1} style={{ fontSize: 12, lineHeight: 16, color: C.muted }}>{shop.area}</T> : null}
+              </View>
+              {/* Only on the day itself — a visit is made today or not at all. */}
+              {day.planDate === today ? (
+                <PillButton
+                  label="Start visit"
+                  variant="lime"
+                  a11y={'Start visit to ' + shop.name}
+                  onPress={() => onStartVisit(shop)}
+                />
+              ) : null}
+            </View>
+          ))}
+          <PillButton label="Change the shops" variant="outline" onPress={() => onChangePicks(day.id)} style={{ marginTop: 8 }} />
+        </View>
       ) : (
         <T style={{ fontSize: 13, lineHeight: 18, color: C.muted, marginTop: 4 }}>
           {day.dayState === 'planned'
