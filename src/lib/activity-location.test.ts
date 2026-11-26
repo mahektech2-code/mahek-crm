@@ -1520,23 +1520,29 @@ describe("The pull delta runs — with a cursor, which is every pull after sign-
    * the whole ledger is 10,815 bills. Without a bound, every handset would
    * carry every bill ever raised against every shop in its territory.
    */
-  test("a bill older than the statement window does not come down", async () => {
+  /* Since Nov 2026 the window bounds the STATEMENT, not the debt: an old
+     bill still owed is the first one a collector chases, so it comes down
+     whatever its age (customerBills). An old SETTLED bill still does not. */
+  test("a settled bill older than the statement window does not come down; an open one does", async () => {
     const old = id("bill");
+    const oldOpen = id("bill");
     const recent = id("bill");
     await db.execute(sql`
       insert into bills (id, customer_id, bill_no, bill_date, amount, paid_amount)
       values
-        (${old},    ${shop.id}, 'MMI/20-21/0001', (now() - interval '5 years')::date, 100000, 0),
-        (${recent}, ${shop.id}, 'MMI/26-27/9201', (now() at time zone 'Asia/Kolkata')::date, 100000, 0)
+        (${old},     ${shop.id}, 'MMI/20-21/0001', (now() - interval '5 years')::date, 100000, 100000),
+        (${oldOpen}, ${shop.id}, 'MMI/20-21/0002', (now() - interval '5 years')::date, 100000, 0),
+        (${recent},  ${shop.id}, 'MMI/26-27/9201', (now() at time zone 'Asia/Kolkata')::date, 100000, 0)
     `);
 
     const payload = await buildBootstrap(principal);
     const rows = payload.customerBills as Array<Record<string, unknown>>;
     assert.ok(rows.find((b) => b.id === recent), "this month's bill has to be there");
+    assert.ok(rows.find((b) => b.id === oldOpen), "a five-year-old bill still owed is the one to chase");
     assert.equal(
       rows.find((b) => b.id === old),
       undefined,
-      "a five-year-old bill is the office's, not a phone's",
+      "a five-year-old settled bill is the office's, not a phone's",
     );
 
     /*
