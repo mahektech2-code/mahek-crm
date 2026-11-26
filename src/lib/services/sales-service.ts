@@ -36,6 +36,7 @@ import { NOBODY, type TerritorySeat } from "@/lib/territory-seats";
 import { dropInaccurateFixes } from "../engines/trail-gaps";
 import { leaveDebitDays } from "@/lib/engines/leave";
 import { expenseStateSql } from "@/lib/expense-money-sql";
+import { shopNameSql } from "./shop-name-sql";
 
 /* ---------------------------------------------------------------------------
  * Every read the Sales Dashboard makes.
@@ -1340,7 +1341,7 @@ function visitSelect(): SQL {
     select v.id, v.salesman_id as "salesmanId",
            (v.check_in_at ${IST_DAY})::date::text as "day",
            v.journey_plan_stop_id as "journeyPlanStopId", u.name as "salesmanName", u.initials,
-           c.id as "customerId", c.name as "customerName",
+           c.id as "customerId", ${shopNameSql("c")} as "customerName",
            c.kind::text as "customerKind", c.third_party as "customerThirdParty",
            ${placeNameSql("c", "city", "city")} as "customerCity",
            v.check_in_at as "checkInAt", v.duration_seconds as "durationSeconds",
@@ -4076,7 +4077,7 @@ export async function lastKnownPositionsFor(
         cross join lateral (
           select * from (
             (select v.check_in_lat as lat, v.check_in_lng as lng, v.check_in_at as at,
-                    c.name as place, v.check_in_accuracy_m as acc
+                    ${shopNameSql("c")} as place, v.check_in_accuracy_m as acc
                from mbos_visits v
                join customers c on c.id = v.customer_id
               where v.salesman_id = pe.id and v.check_in_at >= b.lo and v.check_in_at < b.hi
@@ -4190,7 +4191,7 @@ export async function trackForDay(salesmanId: string, day: string): Promise<Trac
      where p.user_id = ${salesmanId}
        and (p.at ${IST_DAY})::date = ${day}::date
     union all
-    select v.check_in_lat, v.check_in_lng, v.check_in_at, v.check_in_accuracy_m, c.name
+    select v.check_in_lat, v.check_in_lng, v.check_in_at, v.check_in_accuracy_m, ${shopNameSql("c")}
       from mbos_visits v
       join customers c on c.id = v.customer_id
      where v.salesman_id = ${salesmanId}
@@ -4269,7 +4270,7 @@ export async function tracksForDay(
     ),
     visits as (
       select v.salesman_id as "salesmanId", v.check_in_lat as lat, v.check_in_lng as lng,
-             v.check_in_at as at, v.check_in_accuracy_m as "accuracyM", c.name as place
+             v.check_in_at as at, v.check_in_accuracy_m as "accuracyM", ${shopNameSql("c")} as place
         from mbos_visits v
         join customers c on c.id = v.customer_id
        where (v.check_in_at ${IST_DAY})::date = ${day}::date
@@ -4350,7 +4351,7 @@ const ACTIVITY_COLUMNS = sql`
   a.entity_id as "entityId", a.lat, a.lng,
   a.accuracy_m as "accuracyM", a.captured_at as "capturedAt",
   a.age_seconds as "ageSeconds", a.source,
-  v.customer_id as "customerId", c.name as "customerName",
+  v.customer_id as "customerId", ${shopNameSql("c")} as "customerName",
   c.kind::text as "customerKind", c.third_party as "thirdParty",
   v.check_in_at as "visitStartAt", v.check_out_at as "visitEndAt",
   v.duration_seconds as "durationSeconds", v.outcome::text as "visitOutcome"
@@ -4517,7 +4518,7 @@ export async function liveDeltaFor(
           -- server_created_at is the arrival mark here, for the same reason
           -- created_at is above: check_in_at is the handset's own clock.
           select v.salesman_id, v.check_in_lat, v.check_in_lng, v.check_in_at,
-                 v.check_in_accuracy_m, c.name
+                 v.check_in_accuracy_m, ${shopNameSql("c")}
             from mbos_visits v
             join customers c on c.id = v.customer_id
            where v.check_in_at >= ${dayStart} and v.check_in_at < ${dayEnd}

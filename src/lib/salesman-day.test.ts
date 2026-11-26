@@ -207,6 +207,31 @@ describe("A salesman's day", () => {
     assert.ok(day.trail.length >= 4);
   });
 
+  test("FB-15: a lead from the handset is named by its SHOP, not the person spoken to", async () => {
+    /* The handset keeps "Who you spoke to" in name and "Shop name" in company_name. */
+    const [handsetLead] = await db
+      .insert(customers)
+      .values({ id: id("cus"), name: "Suresh Patil", companyName: "Patil Hardware", phone: "9822200013", city: "Nagpur", kind: "lead", ownerId: salesman.id })
+      .returning();
+    const planId = id("plan");
+    await db.insert(mbosJourneyPlans).values({ id: planId, userId: salesman.id, planDate: DAY, city: "Nagpur" } as typeof mbosJourneyPlans.$inferInsert);
+    await db.insert(mbosJourneyStops).values([
+      { id: id("stop"), planId, customerId: handsetLead.id, sequence: 1 },
+      { id: id("stop"), planId, customerId: shop.id, sequence: 2 },
+    ] as (typeof mbosJourneyStops.$inferInsert)[]);
+    await db.insert(mbosVisits).values({ id: id("vis"), salesmanId: salesman.id, customerId: handsetLead.id, checkInAt: at("12:00"), outcome: "visited", verified: true, checkInLat: 21.16, checkInLng: 79.08 } as typeof mbosVisits.$inferInsert);
+    const sampleId = id("smp");
+    await db.insert(mbosSamples).values({ id: sampleId, customerId: handsetLead.id, salesmanId: salesman.id, quantityCans: 1 } as typeof mbosSamples.$inferInsert);
+    await db.insert(mbosActivityLocations).values({ id: id("loc"), entityType: "sample", entityId: sampleId, userId: salesman.id, lat: 21.17, lng: 79.09, capturedAt: at("12:10") } as typeof mbosActivityLocations.$inferInsert);
+
+    const day = await salesmanDay(salesman.id, DAY);
+    assert.ok(day);
+    assert.equal(day.plan?.stops[0].customerName, "Patil Hardware");
+    assert.equal(day.plan?.stops[1].customerName, "Sai Paint Depot", "a customer with no company name keeps its name");
+    assert.equal(day.visits[0].customerName, "Patil Hardware");
+    assert.equal(day.acts.find((a) => a.entityType === "sample")?.customerName, "Patil Hardware");
+  });
+
   test("a salesman with nothing recorded still has a day; somebody unknown has none", async () => {
     const empty = await salesmanDay(other.id, DAY);
     assert.ok(empty);
