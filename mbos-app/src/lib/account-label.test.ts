@@ -5,6 +5,8 @@ import {
   accountLine,
   accountType,
   customerStage,
+  FILED_LEAD_WORD,
+  isFiledLead,
   isLiveLead,
   opensLeadRecord,
   type LeadRowFacts,
@@ -185,4 +187,24 @@ test('the lead facts bind no parameters, so the placeholder order is unchanged',
   const near = customerPageQuery({ query: 'sai', origin: { lat: 21.16, lng: 79.08 } });
   assert.equal((plain.sql.match(/\?/g) ?? []).length, plain.params.length);
   assert.equal((near.sql.match(/\?/g) ?? []).length, near.params.length);
+});
+
+test('A LOST OR FILED LEAD says so, and opens the lead record rather than empty ledgers', () => {
+  const filed = { kind: 'lead', thirdParty: 0, isLead: 0, isFiledLead: 1 };
+  assert.equal(accountType(filed), FILED_LEAD_WORD);
+  assert.equal(accountLine(filed), FILED_LEAD_WORD);
+  assert.equal(opensLeadRecord({ ...filed, leadStage: null }), true);
+  assert.equal(opensLeadRecord({ isLead: 0, isFiledLead: 0, leadStage: null }), false);
+  const row = (o: Partial<LeadRowFacts>): LeadRowFacts => ({ archived: 1, funnelStage: 'lost', stage: 'Lost', ...o });
+  assert.equal(isFiledLead({ kind: 'lead', thirdParty: 0 }, row({})), true);
+  assert.equal(isFiledLead({ kind: 'lead', thirdParty: 0 }, row({ archived: 0 })), false, 'live, not filed');
+  assert.equal(isFiledLead({ kind: 'customer', thirdParty: 0 }, row({})), false, 'billed: a customer');
+  assert.equal(isFiledLead({ kind: 'lead', thirdParty: 0 }, row({ funnelStage: 'won' })), false, 'converted');
+  assert.equal(isFiledLead({ kind: 'lead', thirdParty: 0 }, null), false);
+});
+
+test('both halves of the list select whether a row is a filed lead', () => {
+  for (const view of ['customers', 'leads', undefined] as const) {
+    assert.match(customerPageQuery({ query: '', view }).sql, /AS isFiledLead/);
+  }
 });

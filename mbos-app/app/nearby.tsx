@@ -1,4 +1,5 @@
 import React from 'react';
+import { opensLeadRecord } from '../src/lib/account-label';
 import { Pressable, View } from 'react-native';
 import { router } from 'expo-router';
 import { AppFrame, useCameFrom } from '../src/components/shell/AppFrame';
@@ -80,17 +81,16 @@ export default function Nearby() {
   /* A lead opens `/lead`, where its ladder and gates are — the same rule the
      Customers list follows. This opened the customer record for every shop,
      which for a lead is a page of empty ledgers. */
-  const open = (shop: { id: string; leadStage: string | null }) => {
+  /* THE LIST'S OWN RULE — `opensLeadRecord` over `leadCustomerClause` and
+     `filedLeadClause` — rather than a reading of the six-word stage, which
+     called a third-party or invoiced shop with a stale lead row a lead. */
+  const open = (shop: { id: string; leadStage: string | null; isLead: number; isFiledLead: number }) => {
     set({ custId: shop.id, pTab: 0 });
-    const stage = shop.leadStage?.toLowerCase() ?? '';
-    if (stage && stage !== 'converted' && stage !== 'won') router.push(`/lead?id=${shop.id}&from=nearby`);
+    if (opensLeadRecord(shop)) router.push(`/lead?id=${shop.id}&from=nearby`);
     else router.push('/customer');
   };
 
-  const isLead = (shop: { leadStage: string | null }) => {
-    const stage = shop.leadStage?.toLowerCase() ?? '';
-    return !!stage && stage !== 'converted' && stage !== 'won';
-  };
+  const isLead = (shop: { leadStage: string | null; isLead: number; isFiledLead: number }) => opensLeadRecord(shop);
 
   const hero = (
     /* The radii the office configured, not a list written into this screen. */

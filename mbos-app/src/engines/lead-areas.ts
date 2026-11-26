@@ -24,6 +24,12 @@ export type AreaChoice = {
   /** The locality, for a beat. */
   area: string | null;
   state: string | null;
+  /**
+   * The DISTRICT, on a district chip only — the town is typed beside it, and
+   * the office files a town its tree does not know under this district rather
+   * than refusing it as outside his area (`placeNewLead`).
+   */
+  district?: string;
 };
 
 /** What the form should do, given what the office last said about him. */
@@ -59,7 +65,7 @@ export function areaRule(
         : t.kind === 'town'
           ? { key: '', label: townDistrict ? `${t.value} · ${townDistrict}` : t.value, city: t.value, area: null, state: townState }
           : t.kind === 'district'
-            ? { key: '', label: parent ? `${t.value} district · ${parent}` : `${t.value} district`, city: null, area: null, state: parent }
+            ? { key: '', label: parent ? `${t.value} district · ${parent}` : `${t.value} district`, city: null, area: null, state: parent, district: t.value }
             : t.kind === 'beat'
               ? { key: '', label: parent ? `${t.value} · ${parent}` : t.value, city: parent, area: t.value, state: null }
               : { key: '', label: t.value, city: null, area: null, state: t.value };

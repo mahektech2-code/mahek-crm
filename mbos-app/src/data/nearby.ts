@@ -3,6 +3,7 @@ import { getConfig } from './config';
 import { isoDate } from '../lib/format';
 import { nearby, nextBestVisit, type NearbyInput, type NearbyResult } from '../engines/nearby';
 import { measureFrom } from '../native/where';
+import { filedLeadClause, leadCustomerClause } from './lead-query';
 
 /**
  * §E, §F and §G of the mapping brief — without the map.
@@ -17,7 +18,7 @@ import { measureFrom } from '../native/where';
  * is the moment they have one bar.
  */
 
-export type NearbyShop = NearbyResult<NearbyInput & { phone: string | null }>;
+export type NearbyShop = NearbyResult<NearbyInput & { phone: string | null; isLead: number; isFiledLead: number }>;
 
 export type NearbyAnswer = {
   /** Null where the phone has no fix — the screen says so rather than guessing. */
@@ -69,11 +70,21 @@ export async function whatIsNearby(radiusMetres?: number): Promise<NearbyAnswer>
     cycleDays: number | null;
     lastVisitDate: string | null;
     leadStage: string | null;
+    isLead: number;
+    isFiledLead: number;
     openTasks: number;
   }>(
+    /* WHAT IS A LEAD is the Customers list's own rule (`leadCustomerClause`,
+       `filedLeadClause`), not a reading of the six-word stage of its own: that
+       called a third-party shop or an invoiced one with a stale lead row a
+       lead, and opened `/lead` for it, where the list beside it opened the
+       record. The rung is still read — the engine weighs an open lead — but
+       only for a row the rule says is one. */
     `SELECT c.id, c.name, c.phone, c.gpsLat, c.gpsLng,
             c.outstandingPaise, c.lastOrderDate, c.cycleDays, c.lastVisitDate,
             l.stage AS leadStage,
+            ${leadCustomerClause('c')} AS isLead,
+            ${filedLeadClause('c')} AS isFiledLead,
             (SELECT COUNT(*) FROM tasks t
               WHERE t.customerId = c.id AND t.status = 'open') AS openTasks
        FROM customers c
@@ -90,7 +101,9 @@ export async function whatIsNearby(radiusMetres?: number): Promise<NearbyAnswer>
     lastOrderDate: r.lastOrderDate,
     cycleDays: r.cycleDays,
     lastVisitDate: r.lastVisitDate,
-    leadStage: r.leadStage,
+    leadStage: r.isLead ? r.leadStage : null,
+    isLead: Number(r.isLead ?? 0),
+    isFiledLead: Number(r.isFiledLead ?? 0),
     hasOpenTask: Number(r.openTasks ?? 0) > 0,
   }));
 

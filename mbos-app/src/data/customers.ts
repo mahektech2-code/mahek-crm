@@ -13,6 +13,7 @@ import {
 } from './customer-query';
 import { enqueue } from '../sync/queue';
 import { insertAndQueue, insertLocal, stamp } from './write';
+import { SHOP_CREATE_REFUSED_SQL, shopOrderRefusal } from './shop-refusal';
 
 /*
  * WHAT A CARD SAYS ABOUT A ROW lives in `lib/account-label.ts` and is
@@ -122,6 +123,19 @@ export type Customer = {
   dist2?: number | null;
   /** `customer` or `lead`. Null on a row synced before migration v12. */
   kind?: string | null;
+  /**
+   * A shop he ADDED here, as the outbox left it — 'synced' on every row the
+   * office sent. 'rejected' or 'blocked' is the office having refused it, and
+   * `syncMessage` says why. Optional: a build's own query may not select it.
+   */
+  syncState?: string;
+  syncMessage?: string | null;
+  /** The office's written address — see the customers migration that added it. */
+  address?: string | null;
+  /** The office's clock on this row (epoch ms), returned as `baseUpdatedAt` on an edit. */
+  serverUpdatedAt?: number | null;
+  /** A lead filed away on this phone (archived, not converted) — see `filedLeadClause`. */
+  isFiledLead?: number;
 };
 
 export type CustomerPage = {
@@ -787,6 +801,15 @@ export async function addFieldShop(args: {
     distributors: JSON.stringify([
       { id: args.distributorCustomerId, name: args.distributorName, isPrimary: true },
     ]),
+    /* WHERE HE IS STANDING, which is where the shop is — he opens one at its
+       counter. It went up on the wire and was never written here, so the shop
+       had no pin on his own phone until a pull brought the office's copy:
+       missing from the map and Nearby, and a check-in with no radius to ask. */
+    gpsLat: args.gpsLat ?? null,
+    gpsLng: args.gpsLng ?? null,
+    /* His own work until the office answers — the outbox writes its answer back
+       here (`ENTITY_TABLE.customer`), so a refusal is on the card. */
+    syncState: 'queued',
     /* Credit, health and outstanding are the office's to decide. A new account
        arrives with none of them rather than with a confident zero. */
     lastSyncedAt: 0,
@@ -839,13 +862,19 @@ export type ShopEdit = {
  * by the first check-in anyway; this is the same act without a visit.
  */
 export async function editShop(customerId: string, edit: ShopEdit): Promise<{ ok: true } | { ok: false; message: string }> {
-  const current = await one<{ gpsLat: number | null; gpsLng: number | null }>(
-    'SELECT gpsLat, gpsLng FROM customers WHERE id = ?',
+  const current = await one<{ gpsLat: number | null; gpsLng: number | null; serverUpdatedAt: number | null }>(
+    'SELECT gpsLat, gpsLng, serverUpdatedAt FROM customers WHERE id = ?',
     [customerId],
   );
   if (!current) return { ok: false, message: 'That shop is not on this phone.' };
 
+  /* WHICH COPY HE EDITED. The office keeps the losing version and tells whoever
+     made it when a field edit lands on a row a desk changed since this phone's
+     copy (`handleCustomerEdit`) — and it can only know that if the edit says
+     which copy it was made against. Absent on a row pulled before the office
+     sent its clock, which the office reads as "no base", as before. */
   const payload: Record<string, unknown> = { customerId };
+  if (current.serverUpdatedAt != null) payload.baseUpdatedAt = current.serverUpdatedAt;
   const local: [string, unknown][] = [];
   if (edit.contactPerson !== undefined) {
     const v = edit.contactPerson.trim();
@@ -870,9 +899,19 @@ export async function editShop(customerId: string, edit: ShopEdit): Promise<{ ok
   if (!local.length) return { ok: false, message: 'Nothing has changed.' };
 
   await run(
-    `UPDATE customers SET ${local.map(([c]) => c + ' = ?').join(', ')} WHERE id = ?`,
+    `UPDATE customers SET ${local.map(([c]) => c + ' = ?').join(', ')}, syncState = 'queued', syncMessage = NULL WHERE id = ?`,
     [...local.map(([, v]) => v as string | number | null), customerId],
   );
   await enqueue({ entityType: 'customer', entityId: customerId, op: 'update', payload });
   return { ok: true };
+}
+
+/**
+ * Why no order can be taken for this shop on this phone, or null. Only a shop
+ * the office REFUSED to open — see `shop-refusal.ts`. A shop whose create is
+ * merely still on its way is fine: the order waits behind it in the outbox.
+ */
+export async function shopOrderBlock(customerId: string, name: string): Promise<string | null> {
+  const refused = await one<{ reason: string }>(SHOP_CREATE_REFUSED_SQL, [customerId]);
+  return refused ? shopOrderRefusal(name, refused.reason) : null;
 }
