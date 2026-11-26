@@ -95,6 +95,40 @@ export async function saveStopOrder(orderedIds: string[]): Promise<void> {
   });
 }
 
+/**
+ * A STOP HE CANNOT MAKE, skipped from the phone with his reason.
+ *
+ * Nothing on the handset ever wrote `skipped`, so a stop he could not make
+ * stayed Next all day and closed as a miss with no word against it. Local
+ * first, like every write here, so the Next card moves on at once; the
+ * office takes it as `stop_skip` and keeps a visit over a skip — a stop he
+ * skipped and then visited after all counts as visited.
+ *
+ * The reason is required here as well as at the office, because a skip
+ * without one is the miss it replaces.
+ */
+export async function skipStop(
+  stopId: string,
+  reason: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const said = reason.trim();
+  if (!said) return { ok: false, message: 'Say why you are skipping it. Your manager needs a reason.' };
+  const stop = await one<{ status: string }>('SELECT status FROM journey_stops WHERE id = ?', [stopId]);
+  if (!stop) return { ok: false, message: 'That stop is not on this phone any more.' };
+  if (stop.status !== 'planned') return { ok: false, message: 'That stop is already done.' };
+  await run(`UPDATE journey_stops SET status = 'skipped', skipReason = ? WHERE id = ?`, [said, stopId]);
+  await enqueue({
+    entityType: 'stop_skip',
+    entityId: stopId,
+    op: 'update',
+    /* Where he decided to skip a shop answers nothing worth a coordinate —
+       it is often decided at breakfast. */
+    location: false,
+    payload: { id: stopId, reason: said },
+  });
+  return { ok: true };
+}
+
 export async function stopCounts(planDate = today()): Promise<{ total: number; done: number }> {
   const row = await one<{ total: number; done: number }>(
     `SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'visited' THEN 1 ELSE 0 END) AS done

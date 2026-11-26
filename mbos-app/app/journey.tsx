@@ -15,7 +15,9 @@ import {
   agreeDay,
   planDays,
   refuseDay,
+  pickedShops,
   saveStopOrder,
+  skipStop,
   stopCountsSince,
   todayStops,
   type JourneyStop,
@@ -396,6 +398,32 @@ export default function JourneyScreen() {
      The DAY rather than a boolean, so the two lines that read its city and
      its count narrow on it instead of asserting past it. */
   const awaitingRoute = stops.length === 0 ? todayPlanned : undefined;
+
+  /*
+   * THE SHOPS HE PICKED, VISITABLE BEFORE THE OFFICE HAS MINTED THEM.
+   *
+   * A morning picked without signal waits for the office to issue the stops,
+   * and until then the day had no Start visit anywhere — so he either sat at
+   * the first shop's door waiting for a bar, or visited off the list and every
+   * one of those visits landed as a miss against a plan that named that very
+   * shop. The office now matches a visit with no stop id to his plan by shop
+   * and date (`handleVisit`), so a visit started from here counts as the
+   * planned stop it is. Read here only while the day is still with the office.
+   */
+  const awaitingId = awaitingRoute?.id ?? null;
+  const [picked, setPicked] = React.useState<{ customerId: string; name: string; area: string | null }[]>([]);
+  React.useEffect(() => {
+    let live = true;
+    if (!awaitingId) return;
+    void pickedShops(awaitingId)
+      .then((r) => {
+        if (live) setPicked(r);
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [awaitingId, now]);
 
   /* TODAY'S DAY IN ANY STATE, for its city. The heading counts stops and the
      subline names areas, so a salesman with a route had no line anywhere on
@@ -863,8 +891,22 @@ export default function JourneyScreen() {
               <Pill text="With the office" icon="upload" bg={C.primaryTint} fg={C.primaryDeep} height={26} />
               <T style={[cardName, { marginTop: 10 }]}>{plural(awaitingRoute.picked, 'shop') + ' picked'}</T>
               <T style={{ fontSize: 13, lineHeight: 18, color: C.muted }}>
-                {(whereOf(awaitingRoute) ? whereOf(awaitingRoute) + ' · ' : '') + 'stops come with the next send'}
+                {(whereOf(awaitingRoute) ? whereOf(awaitingRoute) + ' · ' : '') + 'you can start visits now'}
               </T>
+              {picked.map((shop) => (
+                <View key={shop.customerId} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10 }}>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <T numberOfLines={1} style={[{ fontSize: 15, lineHeight: 20, color: C.ink }, weight(700)]}>{shop.name}</T>
+                    {shop.area ? <T numberOfLines={1} style={{ fontSize: 13, lineHeight: 18, color: C.muted }}>{shop.area}</T> : null}
+                  </View>
+                  <PillButton
+                    label="Start visit"
+                    variant="lime"
+                    a11y={'Start visit to ' + shop.name}
+                    onPress={() => askTravel({ customerId: shop.customerId, customerName: shop.name })}
+                  />
+                </View>
+              ))}
               <PillButton
                 label="See the shops you picked"
                 variant="outline"
@@ -968,6 +1010,36 @@ export default function JourneyScreen() {
                   style={{ flex: 1 }}
                 />
               </View>
+              {/* SKIPPING IS AN ANSWER, and there was no way to give it. A stop
+                  he could not make — shut for a wedding, the owner in hospital,
+                  the road flooded — stayed "Next" all day, every later stop
+                  sat behind it, and the day closed counting it a miss with
+                  no reason anywhere. The reason goes to the office with the
+                  skip; the card moves on to the stop after it. */}
+              <DashedAdd
+                label="Skip, with a reason"
+                onPress={() =>
+                  askConfirm({
+                    title: `Skip ${next.customerName}?`,
+                    body: 'Your reason goes to your manager. The next stop comes up.',
+                    reasonLabel: 'Why · needed',
+                    placeholder: 'Shop shut today for a function.',
+                    confirmLabel: 'Skip this stop',
+                    cancelLabel: 'Back',
+                    tone: 'navy',
+                    run: (reason) => {
+                      void skipStop(next.id, reason)
+                        .then((r) => {
+                          if (!r.ok) return notify(r.message, 'error');
+                          notify('Stop skipped. Your reason is with the office.');
+                          load();
+                        })
+                        .catch(() => notify('The skip could not be saved on this phone. Try again.', 'error'));
+                    },
+                  })
+                }
+                style={{ marginTop: 10 }}
+              />
             </View>
           ) : null}
 
