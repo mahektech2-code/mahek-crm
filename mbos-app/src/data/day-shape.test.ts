@@ -2,7 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { MIGRATIONS } from '../db/schema';
-import { IN_FLIGHT_LEG_SHOPS_SQL, IN_FLIGHT_LEG_WINDOW_MS, PIN_UNPINNED_SHOP_SQL, moveDraft } from './day-shape';
+import {
+  IN_FLIGHT_LEG_SHOPS_SQL,
+  IN_FLIGHT_LEG_WINDOW_MS,
+  PIN_UNPINNED_SHOP_SQL,
+  adoptsServerId,
+  moveDraft,
+  repointDependsOn,
+  repointPayload,
+} from './day-shape';
+import { landedDependencies } from '../sync/ordering';
 
 /**
  * The edges of a field day, run against the REAL handset schema. See
@@ -57,6 +66,59 @@ test('opening another shop mid-visit sets the visit cart aside, and it comes bac
   assert.equal(plain.visitCartStash, null);
   /* Same shop again changes nothing. */
   assert.deepEqual(moveDraft(inVisit, 'shopA', 'shopA'), {});
+});
+
+test('a day the office answered with its own id is adopted, and the picks follow it', () => {
+  assert.equal(adoptsServerId({ entityType: 'plan_day', op: 'create', entityId: 'plan_mine' }, 'plan_office'), true);
+  assert.equal(adoptsServerId({ entityType: 'plan_day', op: 'create', entityId: 'plan_mine' }, 'plan_mine'), false);
+  assert.equal(adoptsServerId({ entityType: 'plan_day', op: 'update', entityId: 'plan_mine' }, 'plan_office'), false);
+  assert.equal(adoptsServerId({ entityType: 'order', op: 'create', entityId: 'o1' }, 'o2'), false);
+
+  const picks = JSON.stringify({ id: 'plan_mine', customerIds: ['c1', 'c2'] });
+  assert.deepEqual(JSON.parse(repointPayload(picks, 'plan_mine', 'plan_office')), { id: 'plan_office', customerIds: ['c1', 'c2'] });
+  assert.equal(repointPayload('{"id":"other"}', 'plan_mine', 'plan_office'), '{"id":"other"}');
+  assert.equal(repointPayload('nonsense', 'plan_mine', 'plan_office'), 'nonsense');
+  assert.equal(repointDependsOn('["plan_mine","x"]', 'plan_mine', 'plan_office'), '["plan_office","x"]');
+  assert.equal(repointDependsOn('[]', 'plan_mine', 'plan_office'), '[]');
+});
+
+test('picks sharing the day id are never held behind themselves', () => {
+  /* The day's create is gone from the outbox (pruned, or the office made it):
+     the picks waiting on that id are waiting on nothing. */
+  const alone = landedDependencies([{ entityId: 'd1', entityType: 'plan_stops', dependsOn: ['d1'] }], [], new Set());
+  assert.ok(alone.has('d1'));
+  /* An earlier set of picks for the same day is not what they wait on either. */
+  const twice = landedDependencies(
+    [
+      { entityId: 'd1', entityType: 'plan_stops', dependsOn: ['d1'] },
+      { entityId: 'd1', entityType: 'plan_stops', dependsOn: ['d1'] },
+    ],
+    [],
+    new Set(),
+  );
+  assert.ok(twice.has('d1'));
+  /* The day's create still waiting: they wait for it. */
+  const behind = landedDependencies(
+    [
+      { entityId: 'd1', entityType: 'plan_day', dependsOn: [] },
+      { entityId: 'd1', entityType: 'plan_stops', dependsOn: ['d1'] },
+    ],
+    [],
+    new Set(),
+  );
+  assert.equal(behind.has('d1'), false);
+  /* Refused: never landed, and the ordering blocks them. */
+  assert.equal(landedDependencies([{ entityId: 'd1', entityType: 'plan_stops', dependsOn: ['d1'] }], [], new Set(['d1'])).has('d1'), false);
+  /* An order waiting on a lead still behaves exactly as before. */
+  const order = landedDependencies(
+    [
+      { entityId: 'lead1', entityType: 'lead', dependsOn: [] },
+      { entityId: 'o1', entityType: 'order', dependsOn: ['lead1'] },
+    ],
+    [],
+    new Set(),
+  );
+  assert.equal(order.has('lead1'), false);
 });
 
 test('the first check-in pins an unpinned shop on the phone, and never moves a pin', () => {

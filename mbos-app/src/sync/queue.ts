@@ -1,5 +1,5 @@
 import { all, newId, one, payloadHash, run } from '../db';
-import { backoffFor as computeBackoff, MAX_ATTEMPTS as MAX, partition } from './ordering';
+import { backoffFor as computeBackoff, MAX_ATTEMPTS as MAX, landedDependencies, partition } from './ordering';
 import { whereNow } from '../native/where';
 import { DROP_PHONE_LEAD_SHOP_SQL } from '../data/lead-shop';
 
@@ -226,14 +226,17 @@ export async function readyItems(now = Date.now(), limit = 50): Promise<QueueIte
   /* A dependency with NO row waiting anywhere in the outbox has landed: its
      create went up and has since been pruned (`pruneSynced`), or it is a record
      the office made. Without this, pruning sent rows would leave anything
-     depending on a fortnight-old record waiting for ever. */
-  const waitingIds = new Set(queued.map((q) => q.entityId));
-  const inFlight = await all<{ entityId: string }>(`SELECT entityId FROM sync_queue WHERE state = 'syncing'`);
-  for (const r of inFlight) waitingIds.add(r.entityId);
-  for (const q of queued) {
-    for (const d of JSON.parse(q.dependsOn) as string[]) {
-      if (!waitingIds.has(d) && !deadIds.has(d)) syncedIds.add(d);
-    }
+     depending on a fortnight-old record waiting for ever. Nor is an item held
+     behind its OWN id — see `landedDependencies` in `ordering.ts`. */
+  const inFlight = await all<{ entityId: string; entityType: string }>(
+    `SELECT entityId, entityType FROM sync_queue WHERE state = 'syncing'`,
+  );
+  for (const d of landedDependencies(
+    queued.map((q) => ({ entityId: q.entityId, entityType: q.entityType, dependsOn: JSON.parse(q.dependsOn) as string[] })),
+    inFlight,
+    deadIds,
+  )) {
+    syncedIds.add(d);
   }
 
   /* The decision itself is pure and lives in `ordering.ts`, so the rule that

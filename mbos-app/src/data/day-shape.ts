@@ -68,6 +68,50 @@ export function moveDraft(
 }
 
 /**
+ * A DAY HE PLANNED THAT THE OFFICE HAD ALREADY PROPOSED, adopted.
+ *
+ * He plans Thursday on the phone; between him opening the form and it
+ * reaching the office, his manager proposes Thursday too. One row per person
+ * per day, so the office answers his create with ITS day's id — and until
+ * this existed the phone kept its own id, so the shops he picked for it went
+ * up against a day the office had never heard of and were retried for ever.
+ * Now the phone takes the office's id: the day row is renamed (or folded into
+ * the office's row where a pull already brought it), and everything still
+ * waiting in the outbox under the old id — the picks above all — is pointed
+ * at the new one.
+ *
+ * These are the two pure halves: an outbox row's payload and its
+ * dependencies, re-pointed. Nothing else in either is touched.
+ */
+/** A day plan the office filed under its own day's id rather than ours. */
+export function adoptsServerId(
+  item: { entityType: string; op: string; entityId: string },
+  serverId: string | undefined,
+): boolean {
+  return item.entityType === 'plan_day' && item.op === 'create' && !!serverId && serverId !== item.entityId;
+}
+
+export function repointPayload(raw: string, from: string, to: string): string {
+  try {
+    const value = JSON.parse(raw) as Record<string, unknown> | null;
+    if (!value || typeof value !== 'object' || value.id !== from) return raw;
+    return JSON.stringify({ ...value, id: to });
+  } catch {
+    return raw;
+  }
+}
+
+export function repointDependsOn(raw: string, from: string, to: string): string {
+  try {
+    const list = JSON.parse(raw) as unknown;
+    if (!Array.isArray(list) || !list.includes(from)) return raw;
+    return JSON.stringify(list.map((d) => (d === from ? to : d)));
+  } catch {
+    return raw;
+  }
+}
+
+/**
  * THE FIRST CHECK-IN PINS THE SHOP ON THE PHONE TOO.
  *
  * The office pins an unpinned shop from the check-in fix (`gps_lat is null`
