@@ -2,6 +2,7 @@ import "server-only";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { APP_TIMEZONE } from "../business-date";
+import { shopNameSql } from "./shop-name-sql";
 import {
   lastKnownPositions,
   trackForDay,
@@ -180,13 +181,13 @@ async function planOf(userId: string, day: string): Promise<DayPlan | null> {
   `)) as unknown as { id: string; city: string | null; dayState: string | null }[];
   if (!plan) return null;
   const stops = (await db.execute(sql`
-    select s.customer_id as "customerId", c.name as "customerName", c.kind::text as "customerKind",
+    select s.customer_id as "customerId", ${shopNameSql("c")} as "customerName", c.kind::text as "customerKind",
            c.third_party as "thirdParty", s.sequence, s.status::text as status,
            s.actual_visit_at as "actualVisitAt", s.skip_reason as "skipReason"
       from mbos_journey_stops s
       join customers c on c.id = s.customer_id
      where s.plan_id = ${plan.id}
-     order by s.sequence asc nulls last, c.name asc
+     order by s.sequence asc nulls last, ${shopNameSql("c")} asc
   `)) as unknown as DayPlan["stops"];
   return {
     city: plan.city,
@@ -197,7 +198,7 @@ async function planOf(userId: string, day: string): Promise<DayPlan | null> {
 
 async function ordersOf(userId: string, day: string): Promise<DayOrder[]> {
   const rows = (await db.execute(sql`
-    select o.id, o.ordered_at as at, o.customer_id as "customerId", c.name as "customerName",
+    select o.id, o.ordered_at as at, o.customer_id as "customerId", ${shopNameSql("c")} as "customerName",
            o.total_amount as "totalPaise", o.status::text as status,
            coalesce(jsonb_array_length(case when jsonb_typeof(o.line_items) = 'array' then o.line_items end), 0)::int as lines,
            o.visit_id as "visitId"
@@ -212,7 +213,7 @@ async function ordersOf(userId: string, day: string): Promise<DayOrder[]> {
 
 async function paymentsOf(userId: string, day: string): Promise<DayPayment[]> {
   const rows = (await db.execute(sql`
-    select r.id, r.created_at as at, r.customer_id as "customerId", c.name as "customerName",
+    select r.id, r.created_at as at, r.customer_id as "customerId", ${shopNameSql("c")} as "customerName",
            r.amount as "amountPaise", r.mode, r.status::text as status, r.visit_id as "visitId"
       from payment_receipts r
       left join customers c on c.id = r.customer_id
@@ -235,7 +236,7 @@ async function actsOf(userId: string, day: string): Promise<DayAct[]> {
            coalesce(a.captured_at, a.created_at) as at,
            a.lat, a.lng, a.reason as "noFixReason",
            coalesce(lc.id, sc.id, cc.id, tc.id) as "customerId",
-           coalesce(lc.name, sc.name, cc.name, tc.name) as "customerName",
+           coalesce(${shopNameSql("lc")}, ${shopNameSql("sc")}, ${shopNameSql("cc")}, ${shopNameSql("tc")}) as "customerName",
            coalesce(lc.kind, sc.kind, cc.kind, tc.kind)::text as "customerKind",
            case a.entity_type
              when 'sample' then concat_ws(' · ', p.name,

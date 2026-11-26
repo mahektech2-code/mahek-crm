@@ -60,7 +60,7 @@ import {
   transportModeLabel,
 } from "../engines/purchase";
 import { lockLot, lotLandings, packingUse, rmLots, type LotLanding } from "../stock";
-import { foldRmLots, lotRowId } from "../engines/stock-fold";
+import { foldRmLots, lotRowId, rmRowShown, shownQuantity } from "../engines/stock-fold";
 import { bindErpFiles } from "../attachments";
 import { type Col, godownField, godownIdByName, godownOptions, has, inTx, refuse, today, type Tx } from "./common";
 import { confirmImpact } from "@/lib/impact/registry";
@@ -3299,13 +3299,14 @@ const rmStock: ScreenModule = {
     const sc = s ?? unscoped();
     /* Every lot that holds something — a can's lot drawn below zero included,
        because its item's total is read across all of them (`stock-fold.ts`). */
-    const folded = foldRmLots(await rmLots());
+    const [folded, config] = await Promise.all([rmLots().then(foldRmLots), getConfig()]);
+    const hideBelow = config["erp.purchase.rmStockHideBelow"];
     /* A chemical lot by its own date; an item's total by its newest lot's, and
        kept whole when its total or any of its lots is the one named. */
     const shown = folded.filter((r) =>
       r.kind === "lot"
-        ? r.lot.stock > 0 && inWindow(r.lot.latestDate, r.id, sc)
-        : r.stock !== 0 &&
+        ? rmRowShown(r, hideBelow) && inWindow(r.lot.latestDate, r.id, sc)
+        : rmRowShown(r, hideBelow) &&
           (inWindow(r.lots.reduce((d, l) => (l.latestDate > d ? l.latestDate : d), ""), r.id, sc) ||
             r.lots.some((l) => sc.ids?.includes(lotRowId(l)) || sc.open === lotRowId(l))),
     );
@@ -3323,13 +3324,14 @@ const rmStock: ScreenModule = {
     ];
     const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
     type Lot = Awaited<ReturnType<typeof rmLots>>[number];
+    /* A lot shown on its own row is a chemical (kept to its fraction); a lot under an item's total is cans or boxes (whole). */
     const lotRow = (l: Lot, sub: boolean) => ({
       id: lotRowId(l),
       v: withoutHidden(
         {
           item: l.item,
           type: l.materialType,
-          stock: l.stock,
+          stock: shownQuantity(l.stock, !sub),
           unit: l.unit,
           lot: l.lotNo,
           godown: l.godown,
@@ -3341,7 +3343,7 @@ const rmStock: ScreenModule = {
       flags: [],
       title: `${l.item} · ${l.lotNo}`,
       header: sub
-        ? `About ${nf(l.stock)} ${l.unit} of this lot at ${l.godown} · received ${fd(l.firstDate)}. Filling and packing do not say which lot they used, so lots are drawn down oldest first: the item's total is exact, this lot's share is an estimate.`
+        ? `About ${nf(shownQuantity(l.stock, false))} ${l.unit} of this lot at ${l.godown} · received ${fd(l.firstDate)}. Filling and packing do not say which lot they used, so lots are drawn down oldest first: the item's total is exact, this lot's share is an estimate.`
         : `${nf(l.stock)} ${l.unit} at ${l.godown} · last entry ${fd(l.latestDate)}`,
       ...(sub ? { subLine: `Lot ${l.lotNo} · received ${fd(l.firstDate)}` } : {}),
       actions: [
@@ -3382,13 +3384,13 @@ const rmStock: ScreenModule = {
         return {
           id: r.id,
           v: withoutHidden(
-            { item: l.item, type: l.materialType, stock: r.stock, unit: l.unit, lot: `${n} ${n === 1 ? "lot" : "lots"}`, godown: l.godown, rate: r.ratePaise, value: r.valuePaise },
+            { item: l.item, type: l.materialType, stock: shownQuantity(r.stock, false), unit: l.unit, lot: `${n} ${n === 1 ? "lot" : "lots"}`, godown: l.godown, rate: r.ratePaise, value: r.valuePaise },
             hiddenKeys,
           ),
           flags: [],
           title: l.item,
-          header: `${nf(r.stock)} ${l.unit} at ${l.godown}, across ${n} ${n === 1 ? "lot" : "lots"}${r.stock < 0 ? " — more has been used than was received" : ""}`,
-          fields: r.lots.map((x) => ({ l: `Lot ${x.lotNo}`, v: `${nf(x.stock)} ${x.unit} · received ${fd(x.firstDate)}` })),
+          header: `${nf(shownQuantity(r.stock, false))} ${l.unit} at ${l.godown}, across ${n} ${n === 1 ? "lot" : "lots"}${r.stock < 0 ? " — more has been used than was received" : ""}`,
+          fields: r.lots.map((x) => ({ l: `Lot ${x.lotNo}`, v: `${nf(shownQuantity(x.stock, false))} ${x.unit} · received ${fd(x.firstDate)}` })),
           sub: r.lots.map((x) => lotRow(x, true)),
           /* An item's total is many lots: it can be looked into; each lot under it is adjusted on its own row. */
           actions: [{ id: "inquiry", l: "Stock inquiry", href: erpStockInquiryHref({ stage: "rm", item: l.rawMaterialId, godown: l.godownId }) }],
