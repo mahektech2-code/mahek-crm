@@ -56,7 +56,7 @@ function Fields({ fields, owner }: { fields: BillingField[]; owner: string }) {
       {fields.map((f) => (
         <div key={f.l} className="contents">
           <dt className="text-muted">{f.l}</dt>
-          <dd>
+          <dd className="min-w-0 whitespace-pre-line">
             <CopyValue label={`${owner} ${f.l}`.trim().toLowerCase()} value={f.v} strong={f.l === "Name"} />
           </dd>
         </div>

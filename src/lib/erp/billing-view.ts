@@ -64,6 +64,8 @@ export type BillingLine = {
   billed: boolean;
   transporter: string | null;
   creditDays: number | null;
+  /** The same value the order's record shows as "Standing instructions" (`OrderLine.si`). Shown on the consignee only. */
+  standingInstructions: string;
 };
 
 export type BillingRow = {
@@ -135,6 +137,7 @@ export function billingSheets(all: BillingLine[], sight: BillingSight): BillingS
       const orderNos = group.map((f) => String(f.l.orderNo));
       const buyers = new Map(group.map((f) => [f.l.billing.id, f.l.billing]));
       const consignees = new Map(group.map((f) => [f.l.delivery.id, f.l.delivery]));
+      const instructionsOf = new Map(group.map((f) => [f.l.delivery.id, f.l.standingInstructions]));
       const transporters = group.map((f) => f.l.transporter?.trim() ?? "").filter((t) => t && t !== "—");
 
       /* Lines that differ in nothing but quantity fold into one row. Display only: the totals
@@ -219,7 +222,7 @@ export function billingSheets(all: BillingLine[], sight: BillingSight): BillingS
           ...field("Terms of payment", listed(group.flatMap((f) => (f.l.creditDays == null ? [] : [`${f.l.creditDays} days`])))),
         ],
         buyers: [...buyers.values()].map((p) => ({ key: p.id, fields: partyFields(p) })),
-        consignees: [...consignees.values()].map((p) => ({ key: p.id, fields: partyFields(p) })),
+        consignees: [...consignees.values()].map((p) => ({ key: p.id, fields: [...partyFields(p), ...field("Standing instructions", instructionsOf.get(p.id))] })),
         rows,
         totals,
         notes,
