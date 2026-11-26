@@ -12,6 +12,7 @@ import {
   bills,
   callAiDrafts,
   complaints,
+  customerAmChanges,
   customerDistributors,
   distributorProfiles,
   customers,
@@ -144,6 +145,7 @@ import {
 } from "../task-form";
 import { applyLinkedAnswers, linkContexts, settleLinkedTasks } from "../services/task-link-service";
 import { kmSchema, litresSchema } from "../decimal-schemas";
+import { stopSkipVerdict, workPredatesMove } from "../engines/field-day-rules";
 
 /* ---------------------------------------------------------------------------
  * MBOS — every write the handset makes.
@@ -840,7 +842,7 @@ async function handleItem(
     }
   }
 
-  const handled = await dispatchItem(principal, item);
+  const handled = await dispatchAndRecord(principal, item);
   if (handled.kind === "accepted") {
     await recordActivityLocation(principal, item).catch(() => {});
   }
@@ -896,6 +898,19 @@ function numberOrNull(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? Math.round(v) : null;
 }
 
+async function dispatchAndRecord(
+  principal: MbosPrincipal,
+  item: SyncItem,
+): Promise<Handled> {
+  const handled = await dispatchItem(principal, item);
+  /* Work let in on a shop that has since moved away is said only once it has
+     LANDED — a visit refused for another reason must not tell a new owner
+     about work that is not there. See `recordWorkAfterMove`. */
+  if (handled.kind === "accepted") await recordWorkAfterMove(principal, item);
+  else workAfterMove.delete(item);
+  return handled;
+}
+
 async function dispatchItem(
   principal: MbosPrincipal,
   item: SyncItem,
@@ -946,6 +961,8 @@ async function dispatchItem(
       return handlePlanDay(principal, item);
     case "plan_stops":
       return handlePlanStops(principal, item);
+    case "stop_skip":
+      return handleStopSkip(principal, item);
     case "expense_day":
       return handleExpenseDay(principal, item);
     case "travel_leg":
@@ -1014,7 +1031,17 @@ type ScopedCustomer = {
 export async function scopedCustomer(
   principal: MbosPrincipal,
   customerId: unknown,
-): Promise<{ ok: true; customer: ScopedCustomer } | { ok: false; value: Rejection }> {
+  /**
+   * WHEN THE WORK WAS DONE, for the three records that are work done at a
+   * shop — a visit, an order, a receipt. Given, a shop that has left his book
+   * since may still take it: see `formerHolding`. Absent, this is exactly the
+   * "whose book is it now" question it always was.
+   */
+  work?: { at: number | null | undefined },
+): Promise<
+  | { ok: true; customer: ScopedCustomer; formerly?: FormerHolding }
+  | { ok: false; value: Rejection }
+> {
   if (typeof customerId !== "string" || !customerId) {
     return {
       ok: false,
@@ -1100,6 +1127,16 @@ export async function scopedCustomer(
         ),
       );
     if (Number(assigned?.n ?? 0) === 0) {
+      /* Work done while it WAS his — see `formerHolding`. Only for the work
+         records that pass `work`, and only on a recorded move away from him;
+         a shop that was never his falls straight through to the refusal. */
+      if (work) {
+        const formerly = await formerHolding(principal.user.id, customer.id);
+        const grace = (await getConfig())["mbos.sync.reassignedWorkGraceHours"];
+        if (formerly && workPredatesMove(work.at, formerly.movedAt.getTime(), grace)) {
+          return { ok: true, customer: customer as ScopedCustomer, formerly };
+        }
+      }
       return {
         ok: false,
         value: reject(
@@ -1112,6 +1149,156 @@ export async function scopedCustomer(
 
   return { ok: true, customer: customer as ScopedCustomer };
 }
+
+/* ------------------------------------ work done before the shop moved away */
+
+/**
+ * The record that a shop WAS his and when it stopped being.
+ *
+ * `scopedCustomer` asks whose book a shop is in NOW, and it was asked of work
+ * done hours earlier: a shop reassigned at 2 pm and visited by him at 11 am
+ * reached the office at 6 pm and was refused for ever — the visit, the order
+ * taken in it and the receipt for cash already in his pocket, all in Not
+ * accepted over a decision made at a desk after the work was done. The phone
+ * cannot have known; the pull that would have told it had not run.
+ *
+ * Two records say a shop moved AWAY from somebody, and both name him: a seat
+ * change in `customer_am_changes` with him as `from_user_id` (any seat — the
+ * sales seat is the book, and the others are what `principalBookClause` also
+ * reads), and a tombstone in `mbos_deletions` written to HIS handset for the
+ * shop. The latest of them is when it left. Nothing else counts — not a name
+ * on a sheet, not a timeline line — because this is the security boundary of
+ * the sync endpoint and a stranger's shop must stay refused.
+ *
+ * Who holds it now is the seat change's `to_user_id` where there is one, and
+ * the shop's own seats otherwise; that is who is told.
+ */
+type FormerHolding = { movedAt: Date; toUserId: string | null };
+
+async function formerHolding(userId: string, customerId: string): Promise<FormerHolding | null> {
+  const [seat] = await db
+    .select({ at: customerAmChanges.changedAt, toUserId: customerAmChanges.toUserId })
+    .from(customerAmChanges)
+    .where(and(eq(customerAmChanges.customerId, customerId), eq(customerAmChanges.fromUserId, userId)))
+    .orderBy(sql`${customerAmChanges.changedAt} desc`)
+    .limit(1);
+  const [stone] = await db
+    .select({ at: mbosDeletions.at })
+    .from(mbosDeletions)
+    .where(
+      and(
+        eq(mbosDeletions.entityId, customerId),
+        eq(mbosDeletions.userId, userId),
+        inArray(mbosDeletions.entity, ["customers", "leads"]),
+      ),
+    )
+    .orderBy(sql`${mbosDeletions.at} desc`)
+    .limit(1);
+  if (!seat && !stone) return null;
+
+  const movedAt = seat && stone ? (seat.at > stone.at ? seat.at : stone.at) : (seat?.at ?? stone!.at);
+  let toUserId = seat?.toUserId ?? null;
+  if (!toUserId) {
+    const [now] = await db
+      .select({ salesAmId: customers.salesAmId, ownerId: customers.ownerId })
+      .from(customers)
+      .where(eq(customers.id, customerId))
+      .limit(1);
+    toUserId = now?.salesAmId ?? now?.ownerId ?? null;
+  }
+  return { movedAt, toUserId: toUserId === userId ? null : toUserId };
+}
+
+/**
+ * The work that came in on a shop he no longer holds, held until the handler
+ * has said whether it landed. Keyed by the item object, which lives exactly as
+ * long as the request, so nothing here outlives it.
+ */
+const workAfterMove = new WeakMap<
+  SyncItem,
+  { customerId: string; customerName: string; what: string; formerly: FormerHolding }
+>();
+
+/**
+ * The door for the three work records: `scopedCustomer` with the work's own
+ * instant, and — where it let the work in on a former holding — a note of it
+ * kept for `recordWorkAfterMove` once the handler has accepted.
+ */
+async function scopedForWork(
+  principal: MbosPrincipal,
+  item: SyncItem,
+  customerId: unknown,
+  at: number | null | undefined,
+  what: "visit" | "order" | "payment",
+) {
+  const found = await scopedCustomer(principal, customerId, { at });
+  if (found.ok && found.formerly) {
+    workAfterMove.set(item, {
+      customerId: found.customer.id,
+      customerName: found.customer.name,
+      what,
+      formerly: found.formerly,
+    });
+  }
+  return found;
+}
+
+/**
+ * ACCEPTED, AND SAID. Work landing on somebody else's shop without a word is
+ * how a new owner finds an order on an account he was given this morning and
+ * has no idea who took it — so he is told, his manager is told, and it is
+ * written to the audit log with the instant the shop moved and the instant the
+ * work was done, which is the whole of the case for accepting it.
+ *
+ * Once per record: a resend of an accepted item must not ring the bell twice,
+ * so the audit row is the memory.
+ */
+async function recordWorkAfterMove(principal: MbosPrincipal, item: SyncItem): Promise<void> {
+  const note = workAfterMove.get(item);
+  if (!note) return;
+  workAfterMove.delete(item);
+
+  const [seen] = await db
+    .select({ id: auditLog.id })
+    .from(auditLog)
+    .where(and(eq(auditLog.action, "mbos.work_after_reassignment"), eq(auditLog.entityId, item.entityId)))
+    .limit(1);
+  if (seen) return;
+
+  await db
+    .insert(auditLog)
+    .values({
+      id: gen("aud"),
+      actorId: principal.user.id,
+      action: "mbos.work_after_reassignment",
+      entityType: item.entityType,
+      entityId: item.entityId,
+      afterState: {
+        customerId: note.customerId,
+        movedAt: note.formerly.movedAt.toISOString(),
+        sentAt: new Date(item.clientCreatedAt).toISOString(),
+        newHolderId: note.formerly.toUserId,
+      } as never,
+    })
+    .catch(() => undefined);
+
+  const Word = note.what[0].toUpperCase() + note.what.slice(1);
+  const body = `${principal.user.name} sent a ${note.what} for ${note.customerName}, made before the shop moved out of his book. It is saved against the shop. Check it.`;
+  if (note.formerly.toUserId) {
+    await notifyUsers([
+      {
+        userId: note.formerly.toUserId,
+        title: `${Word} on an account you were given`,
+        body,
+        kind: "info",
+        href: `/crm/customers/${note.customerId}`,
+        mbosHref: "/notifications",
+      },
+    ]).catch(() => {});
+  }
+  await notifyManagers(principal.user.id, `${Word} after a reassignment`, body);
+}
+
 
 /**
  * WHETHER THIS PRINCIPAL MAY WORK THIS LEAD — asked before a handset writes
@@ -1208,6 +1395,22 @@ const wireBoolean = z
 const visitSchema = z.object({
   customerId: z.string(),
   checkInAt: z.number().nullish(),
+  /**
+   * "I DIDN'T LEAVE" — his answer to the phone saying he walked out without
+   * checking out. The trail can be wrong (a jump in a fix, a godown that
+   * bounces the signal across the road), and the visit is then closed at the
+   * wrong time unless he can say so. Optional, and `.catch(null)` rather than
+   * a refusal: a shape this handler cannot read costs the dispute, never the
+   * visit. Recorded in `audit_log` and to his manager — see `handleVisit`.
+   */
+  leftShopDispute: z
+    .object({
+      reason: z.string().max(1000),
+      seenAt: z.number(),
+      metres: z.number().nullish(),
+    })
+    .nullish()
+    .catch(null),
   checkOutAt: z.number().nullish(),
   checkInLat: z.number().nullish(),
   checkInLng: z.number().nullish(),
@@ -1422,7 +1625,9 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
   if (!parsed.success) return validationRejection(parsed.error);
   const p = parsed.data;
 
-  const found = await scopedCustomer(principal, p.customerId);
+  /* The visit's own check-in instant, which is when he was in the shop — a
+     visit saved at the end of the day was still made at 11. */
+  const found = await scopedForWork(principal, item, p.customerId, p.checkInAt ?? item.clientCreatedAt, "visit");
   if (!found.ok) return { kind: "rejected", value: found.value };
   const customer = found.customer;
 
@@ -1787,6 +1992,56 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
            set status = 'visited', actual_visit_at = ${checkInAtIso}, updated_at = now()
          where id = ${p.journeyPlanStopId}
       `);
+    } else {
+      /*
+       * A VISIT THAT NAMES NO STOP CAN STILL BE ONE, and it used to count as a
+       * miss.
+       *
+       * The handset names a stop only where it holds the stop row, and stop
+       * rows are minted HERE, from the picks, and reach the phone on the next
+       * pull. So a salesman who picked his shops in a doorway with no signal
+       * and walked straight into the first of them sent a visit with no stop
+       * id — and the office marked the shop he planned and visited as planned
+       * and NOT visited, which is the one figure the journey screen is read
+       * for. The same is true of a phone whose pull is a few minutes behind
+       * an office edit to the day.
+       *
+       * So the stop is found by what it IS: his plan, on the day the visit
+       * happened in Asia/Kolkata (named — a bare cast answers in the session
+       * zone and moves a 1 am visit onto yesterday's plan), for this shop,
+       * still planned. One stop at most, the earliest in the walking order:
+       * the same shop picked twice in one day is one visit, not two. A stop
+       * already visited or skipped is left exactly as it is — the visit that
+       * named it, or the answer he gave, is the record.
+       *
+       * The visit is then bound to the stop it turned out to be, exactly as if
+       * the phone had named it, so "planned" on the visit and "visited" on the
+       * stop cannot disagree about one shop.
+       */
+      await tx.execute(sql`
+        with matched as (
+          update mbos_journey_stops
+             set status = 'visited', actual_visit_at = ${checkInAtIso}, updated_at = now(),
+                 updated_by_id = ${principal.user.id}
+           where id = (
+             select s.id
+               from mbos_journey_stops s
+               join mbos_journey_plans j on j.id = s.plan_id
+              where j.user_id = ${principal.user.id}
+                and j.plan_date = (${checkInAtIso}::timestamptz at time zone ${APP_TIMEZONE})::date
+                and s.customer_id = ${customer.id}
+                and s.status = 'planned'
+              order by s.sequence asc, s.id asc
+              limit 1
+           )
+          returning id
+        )
+        update mbos_visits v
+           set journey_plan_stop_id = matched.id, was_planned = true
+          from matched
+         where v.id = ${item.entityId}
+           and v.journey_plan_stop_id is null
+      `);
     }
 
     /*
@@ -1874,6 +2129,47 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
         .where(eq(customers.id, customer.id));
     }
   });
+
+  /*
+   * THE DISPUTE IS WRITTEN DOWN WHERE A MANAGER READS IT, and it needs no
+   * column: the visit's own check-out instant is what he is disputing, and the
+   * audit row beside it says when the phone thought he left, how far it
+   * thought he was, and what he said. Once per visit — a resend of the same
+   * visit is the same dispute. Never allowed to cost the visit, which has
+   * already landed.
+   */
+  if (p.leftShopDispute?.reason?.trim()) {
+    const dispute = p.leftShopDispute;
+    const [seen] = await db
+      .select({ id: auditLog.id })
+      .from(auditLog)
+      .where(and(eq(auditLog.action, "mbos.visit.left_shop_disputed"), eq(auditLog.entityId, item.entityId)))
+      .limit(1);
+    if (!seen) {
+      await db
+        .insert(auditLog)
+        .values({
+          id: gen("aud"),
+          actorId: principal.user.id,
+          action: "mbos.visit.left_shop_disputed",
+          entityType: "mbos_visit",
+          entityId: item.entityId,
+          afterState: {
+            customerId: customer.id,
+            reason: dispute.reason.trim(),
+            seenAt: new Date(dispute.seenAt).toISOString(),
+            metres: dispute.metres ?? null,
+          } as never,
+        })
+        .catch(() => undefined);
+      await notifyManagers(
+        principal.user.id,
+        `${principal.user.name} says he did not leave ${customer.name}`,
+        `His phone said he walked away${dispute.metres != null ? ` (about ${Math.round(dispute.metres)} m)` : ""} without checking out. He said: ${dispute.reason.trim()}`,
+        "/sales/visits",
+      ).catch(() => undefined);
+    }
+  }
 
   let visitMoved = false;
   if (visitMove && p.suspectDecision) {
@@ -2664,8 +2960,16 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
    * The BILLING party, and it is scope-checked. Whose credit limit, term and
    * outstanding this order is judged against is this account, so a salesman
    * may only bill somebody in his own book.
+   *
+   * …or one that WAS in it when he took the order — see `formerHolding`.
    */
-  const found = await scopedCustomer(principal, p.customerId);
+  const found = await scopedForWork(
+    principal,
+    item,
+    p.customerId,
+    p.orderedAt ?? item.clientCreatedAt,
+    "order",
+  );
   if (!found.ok) return { kind: "rejected", value: found.value };
   const customer = found.customer;
   const config = await getConfig();
@@ -3173,7 +3477,10 @@ async function handlePayment(principal: MbosPrincipal, item: SyncItem): Promise<
   if (!parsed.success) return validationRejection(parsed.error);
   const p = parsed.data;
 
-  const found = await scopedCustomer(principal, p.customerId);
+  /* The press of the button, not `receivedAt`, which is a day rather than an
+     instant — and the cash has been in his hand since that press, whoever the
+     shop belongs to now. See `formerHolding`. */
+  const found = await scopedForWork(principal, item, p.customerId, item.clientCreatedAt, "payment");
   if (!found.ok) return { kind: "rejected", value: found.value };
   const customer = found.customer;
 
@@ -8342,6 +8649,112 @@ const planDaySchema = z.object({
  * shops, which is an ordinary stop write; conflating the two would let an
  * empty day claim to be a route.
  */
+/**
+ * HIS DAY LOST A RACE WITH THE OFFICE'S, and the answer is the office's id.
+ *
+ * He planned a date on the phone; between him opening the form and the create
+ * reaching here, the office proposed the same date. One row per person per day
+ * is the right rule, so his insert is dropped — and it used to be REFUSED as a
+ * duplicate. That refusal stranded everything behind it: the shops he picked
+ * went up as `plan_stops` against an id the office never held, which answers
+ * `retry` ("not on the office's plan yet") for ever, and the day on his phone
+ * kept saying "sending" over a plan that would never arrive.
+ *
+ * So it is ACCEPTED, and `serverId` is the day that already exists. A
+ * `serverId` different from the item's own id is the signal: the handset
+ * renames its local day to this id and moves whatever is queued against the
+ * old one — the picks, an answer — onto it, and from then on there is one day
+ * on both sides.
+ *
+ * **Planning the city the office proposed IS agreeing to it.** Where the
+ * office's day is still waiting on his answer and names the same city he chose
+ * (trimmed, ignoring case), the two of them have said the same thing, and
+ * making him press Agree on a day he has already planned would be the app
+ * asking a question it holds the answer to. It is recorded exactly as an
+ * answer is — the same audit action and the same note to his manager — so the
+ * calendar reads the way it would have had he agreed it by hand.
+ *
+ * **A different city is NOT an answer, and nothing about the office's day
+ * moves.** He meant to work Wardha; the office asked for Nagpur. Agreeing on
+ * his behalf would put words in his mouth, and overwriting the city would be
+ * the phone deciding a negotiation. The proposal stays waiting, his picks are
+ * refused by `plan_stops` with a sentence telling him to answer it first, and
+ * he does — on the Journey tab, where the proposal now is.
+ */
+async function adoptClashingDay(
+  principal: MbosPrincipal,
+  item: SyncItem,
+  planDate: string,
+  city: string,
+): Promise<Handled> {
+  const [existing] = await db
+    .select()
+    .from(mbosJourneyPlans)
+    .where(
+      and(
+        eq(mbosJourneyPlans.userId, principal.user.id),
+        eq(mbosJourneyPlans.planDate, planDate),
+      ),
+    )
+    .limit(1);
+
+  /* The insert did nothing and there is no day either: the clash was on
+     something other than his day, which is not a state the handset can act
+     on. Tried again rather than refused, so nothing he planned is lost. */
+  if (!existing) {
+    return {
+      kind: "retry",
+      message: `${planDate} could not be saved just now. It will be tried again.`,
+    };
+  }
+
+  const sameCity =
+    (existing.city ?? "").trim().toLowerCase() === city.trim().toLowerCase() && city.trim() !== "";
+  if (existing.dayState === "proposed" && sameCity) {
+    await db
+      .update(mbosJourneyPlans)
+      .set({
+        dayState: "agreed",
+        refusalReason: null,
+        counterCity: null,
+        respondedAt: new Date(),
+        updatedAt: new Date(),
+        updatedById: principal.user.id,
+      })
+      .where(and(eq(mbosJourneyPlans.id, existing.id), eq(mbosJourneyPlans.dayState, "proposed")));
+
+    await db
+      .insert(auditLog)
+      .values({
+        id: gen("aud"),
+        actorId: principal.user.id,
+        action: "mbos.journey.answered",
+        entityType: "mbos_journey_plan",
+        entityId: existing.id,
+        beforeState: { city: existing.city, dayState: existing.dayState } as never,
+        afterState: {
+          answer: "agreed",
+          reason: null,
+          counterCity: null,
+          planDate: existing.planDate,
+          /* Said, so a reader can tell this from a press of Agree. */
+          via: "planned_on_phone",
+          handsetDayId: item.entityId,
+        } as never,
+      })
+      .catch(() => undefined);
+
+    await notifyManagers(
+      principal.user.id,
+      `${principal.user.name} agreed ${existing.planDate}`,
+      `${existing.city ?? "The day"} is agreed. He planned it on his phone as you proposed it, and picks the shops next.`,
+      "/sales/journeys",
+    );
+  }
+
+  return { kind: "accepted", value: { serverId: existing.id } };
+}
+
 async function handlePlanDay(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
   const parsed = planDaySchema.safeParse(item.payload);
   if (!parsed.success) return validationRejection(parsed.error);
@@ -8453,13 +8866,7 @@ async function handlePlanDay(principal: MbosPrincipal, item: SyncItem): Promise<
       .limit(1);
 
     if (!landed) {
-      return {
-        kind: "rejected",
-        value: reject(
-          "duplicate",
-          `${planDate} is already on your plan — the office proposed it. Answer it on the Journey tab rather than starting a second one.`,
-        ),
-      };
+      return adoptClashingDay(principal, item, planDate, city);
     }
 
     /* The office is not asked, and is told. That is the difference between
@@ -8602,7 +9009,13 @@ async function handlePlanStops(principal: MbosPrincipal, item: SyncItem): Promis
       kind: "rejected",
       value: reject(
         "validation",
-        `${plan.planDate} has not been agreed, so there is nothing to pick shops for yet.`,
+        /* Said as what to DO. The usual way here is a day he planned on the
+           phone that turned out to be one the office had proposed for another
+           city (see `adoptClashingDay`): the proposal is waiting on the Journey
+           tab, and answering it is the step between him and these shops. */
+        plan.dayState === "proposed"
+          ? `The office has proposed ${plan.planDate}${plan.city ? ` in ${plan.city}` : ""}. Answer it on the Journey tab first, then pick the shops again.`
+          : `${plan.planDate} has not been agreed, so there is nothing to pick shops for yet. Answer the office's proposal on the Journey tab first.`,
       ),
     };
   }
@@ -8706,6 +9119,94 @@ async function handlePlanStops(principal: MbosPrincipal, item: SyncItem): Promis
         mbosHref: "/journey",
       },
     ]).catch(() => {});
+  }
+
+  return { kind: "accepted", value: { serverId: item.entityId } };
+}
+
+/* ------------------------------------------------------- skipping a stop */
+
+const stopSkipSchema = z.object({
+  /** Why he is not going. Required — see `stopSkipVerdict`. */
+  reason: z.string().max(500).nullish(),
+});
+
+/**
+ * "SKIP, WITH A REASON", sent from the Next stop card.
+ *
+ * `mbos_journey_stops.status` has carried `skipped` and `skip_reason` since
+ * the table was written, the office's day sheets draw both, and nothing on the
+ * phone could ever set them — so a stop he decided not to make (the shop is
+ * shut for a wedding, the owner rang to say not today) stayed `planned`, the
+ * Next stop card kept pointing at it, and the day closed with it counted as a
+ * miss with no sentence anywhere saying why.
+ *
+ * The decision itself is pure and in `engines/field-day-rules.ts`: a visit
+ * wins over a skip, a second skip changes nothing, and the reason is
+ * required. Here is only the scope — the stop must be on one of HIS plans,
+ * which is checked through the plan rather than trusted from the id, so a
+ * payload naming somebody else's stop finds nothing and is refused in the
+ * same words as a stop that does not exist.
+ */
+async function handleStopSkip(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
+  const parsed = stopSkipSchema.safeParse(item.payload);
+  if (!parsed.success) return validationRejection(parsed.error);
+
+  const [stop] = await db
+    .select({
+      id: mbosJourneyStops.id,
+      status: mbosJourneyStops.status,
+      customerId: mbosJourneyStops.customerId,
+      planDate: mbosJourneyPlans.planDate,
+    })
+    .from(mbosJourneyStops)
+    .innerJoin(mbosJourneyPlans, eq(mbosJourneyPlans.id, mbosJourneyStops.planId))
+    .where(and(eq(mbosJourneyStops.id, item.entityId), eq(mbosJourneyPlans.userId, principal.user.id)))
+    .limit(1);
+
+  if (!stop) {
+    return {
+      kind: "rejected",
+      value: reject(
+        "validation",
+        "That stop is not on your plan any more. The office may have changed the day. Pull to refresh and check the Journey tab.",
+      ),
+    };
+  }
+
+  const verdict = stopSkipVerdict(stop.status, parsed.data.reason);
+  if (verdict.kind === "refuse") {
+    return { kind: "rejected", value: reject("validation", verdict.message) };
+  }
+  if (verdict.kind === "noop") {
+    return { kind: "accepted", value: { serverId: item.entityId } };
+  }
+
+  /* `status = 'planned'` in the statement as well as in the verdict: a visit
+     landing between the read and this write must win, not be overwritten. */
+  const moved = await db
+    .update(mbosJourneyStops)
+    .set({
+      status: "skipped",
+      skipReason: verdict.reason,
+      updatedAt: new Date(),
+      updatedById: principal.user.id,
+    })
+    .where(and(eq(mbosJourneyStops.id, stop.id), eq(mbosJourneyStops.status, "planned")))
+    .returning({ id: mbosJourneyStops.id });
+
+  if (moved.length) {
+    const [shop] = await db
+      .select({ name: customers.name })
+      .from(customers)
+      .where(eq(customers.id, stop.customerId))
+      .limit(1);
+    await notifyManagers(
+      principal.user.id,
+      `${principal.user.name} skipped a stop`,
+      `${shop?.name ?? "A shop"} on ${stop.planDate}: ${verdict.reason}`,
+      "/sales/journeys",
+    );
   }
 
   return { kind: "accepted", value: { serverId: item.entityId } };

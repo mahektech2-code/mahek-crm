@@ -452,6 +452,7 @@ const ROUTES: Record<string, Route> = {
   "plan_day/create": { schema: "planDaySchema" },
   "plan_day/update": { schema: "planDaySchema" },
   "plan_stops/update": { schema: "planStopsSchema" },
+  "stop_skip/update": { schema: "stopSkipSchema" },
   "expense_day/create": { schema: "expenseDaySchema" },
   "expense_day/update": { schema: "expenseDaySchema" },
   "travel_leg/create": { schema: "travelLegSchema" },

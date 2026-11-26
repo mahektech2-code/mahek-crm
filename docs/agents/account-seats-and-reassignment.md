@@ -299,3 +299,24 @@ the owner. Every scoped list reads it — the queue, collections, bills,
 complaints, targets, the inactive watch, WhatsApp replies and global search.
 Reading `owner_id` alone silently drops every customer whose sales AM has been
 set, including off the collections list while they still owe money.
+
+**WORK DONE BEFORE A SHOP MOVED IS STILL ACCEPTED, and the new holder is
+told.** `scopedCustomer` asks whose book a shop is in NOW, and a handset sends
+the day's work hours after it was done — so a shop reassigned at 2 pm, visited
+at 11 am and synced at 6 pm put the visit, the order and the receipt for cash
+already in his pocket into Not accepted for ever. The visit, order and payment
+handlers now pass the work's own instant (`checkInAt`, `orderedAt`, the
+receipt's `clientCreatedAt`) through `scopedForWork`, and a shop out of his
+book is accepted where `formerHolding` finds a recorded move AWAY from him — a
+`customer_am_changes` row with him as `from_user_id`, or an `mbos_deletions`
+tombstone written to his handset for it — and the work predates that move by
+no more than `mbos.sync.reassignedWorkGraceHours` (24; the grace covers a phone
+that had not pulled the news and a handset clock running a little wrong). The
+rule is pure, `workPredatesMove` in `engines/field-day-rules.ts`. A shop that
+was NEVER his has no such record and is refused exactly as before — this is
+the sync endpoint's security boundary, so nothing softer than those two
+records (a name on a sheet, a timeline line) opens it. Accepted work is
+written to `audit_log` as `mbos.work_after_reassignment` and the new holder
+(the change's `to_user_id`, else the shop's seats) and his managers are told —
+once, AFTER the handler accepts (`dispatchAndRecord`), so a visit refused for
+another reason announces nothing and a resend rings no second bell.
