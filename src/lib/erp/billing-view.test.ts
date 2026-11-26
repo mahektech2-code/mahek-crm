@@ -21,6 +21,7 @@ const line = (over: Partial<BillingLine> = {}): BillingLine => ({
   gstBp: 1800,
   billed: false,
   transporter: null,
+  standingInstructions: "",
   creditDays: null,
   ...over,
 });
@@ -262,4 +263,13 @@ test("totals across several orders: loose cans, boxes and weight add up over eve
   assert.equal(total(s, "Total can qty"), "25", "loose cans only: 20 + 5");
   assert.equal(total(s, "Total box qty"), "6", "2 + 1 + 3");
   assert.equal(total(s, "Total weight"), "107.5");
+});
+
+test("standing instructions sit under the consignee's phone, whole, and never on the buyer", () => {
+  const long = "Deliver before 11 am to the rear gate.\nCall the owner first";
+  const [s] = billingSheets([line({ standingInstructions: long })], all);
+  assert.deepEqual(s.consignees[0].fields.at(-1), { l: "Standing instructions", v: { show: long, copy: long } });
+  assert.ok(!s.buyers[0].fields.some((f) => f.l === "Standing instructions"));
+  const [none] = billingSheets([line()], all);
+  assert.ok(!none.consignees[0].fields.some((f) => f.l === "Standing instructions"), "no instructions, no empty row");
 });

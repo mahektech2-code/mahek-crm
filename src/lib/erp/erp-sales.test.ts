@@ -628,6 +628,21 @@ describe("the billing view", () => {
     const [sheet, ...rest] = await billingViewFor(ctx, [ticked.id]);
     assert.equal(rest.length, 0);
     assert.equal(sheet.buyers[0].fields[0].v.show, "No List Traders");
+
+    /* The consignee card says exactly what the order's own record says. */
+    const [party] = await db.select({ id: erpOrders.deliveryCustomerId }).from(erpOrders).where(eq(erpOrders.id, ticked.id));
+    const saved = "Deliver at the rear gate and call the owner first.";
+    await db
+      .insert(erpCustomerProfiles)
+      .values({ customerId: party.id, standingInstructions: saved, weightType: "Net weight" })
+      .onConflictDoUpdate({ target: erpCustomerProfiles.customerId, set: { standingInstructions: saved, weightType: "Net weight" } });
+    const [told] = await billingViewFor(ctx, [ticked.id]);
+    const record = (await mod("orders").load(ctx)).rows.find((r) => r.id === ticked.id)!;
+    const fields = typeof record.fields === "function" ? (record.fields as () => { l: string; v: unknown }[])() : record.fields!;
+    const onRecord = String(fields.find((f) => f.l === "Standing instructions")?.v);
+    assert.ok(onRecord.startsWith(saved) && onRecord.endsWith("Net weight"), onRecord);
+    assert.deepEqual(told.consignees[0].fields.at(-1), { l: "Standing instructions", v: { show: onRecord, copy: onRecord } });
+    assert.ok(!told.buyers[0].fields.some((f) => f.l === "Standing instructions"));
     assert.deepEqual(sheet.rows.map((r) => r.cans.copy).sort(), ["3", "4"]);
     assert.ok(sheet.totals.some((t) => t.l === "Invoice total"));
     assert.ok(sheet.rows.some((r) => r.weight), "the line weights reach the sheet");
