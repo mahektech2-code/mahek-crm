@@ -1,5 +1,6 @@
 import { all, newId, one, run, tx } from '../db';
 import { enqueue } from '../sync/queue';
+import { whereNow } from '../native/where';
 import { insertLocal, stamp } from './write';
 import { getConfig } from './config';
 import { notify } from './notifications';
@@ -73,6 +74,7 @@ export async function collectPayment(args: {
 
   const depositSlaDueAt = args.mode === 'Cash' ? Date.now() + slaHours * 3_600_000 : null;
 
+  const where = await whereNow().catch(() => undefined);
   await tx(async () => {
     await run(
       `INSERT INTO payments (id, customerId, userId, visitId, amountPaise, mode, chequeNumber, bank, chequeDate,
@@ -104,42 +106,44 @@ export async function collectPayment(args: {
       actor: 'You',
       summary: `${args.mode} collected`,
     });
-  });
-
-  await enqueue({
-    entityType: 'payment',
-    entityId: base.id,
-    op: 'create',
-    /* Behind its shop, where the shop was added on this phone — as orders and visits are. */
-    dependsOn: [args.customerId],
-    /* PROTOCOL.md §4.1. Two of these mattered more than the names suggest:
-       `billRefs` reached a server reading `billIds`, so every collection was
-       spread oldest-first however carefully the salesman had named the bills;
-       and the cheque number went as `chequeNumber` to a field called
-       `reference`, which is the string accounts match against the bank
-       statement — so the one thing that identifies the money was dropped. */
-    payload: {
-      id: base.id,
-      customerId: args.customerId,
-      customerName: args.customerName,
-      amountPaise: args.amountPaise,
-      mode: args.mode,
-      /* What identifies this money to whoever holds the statement: the cheque
-         number where there is one, the transfer reference otherwise. */
-      reference: args.chequeNumber?.trim() || args.reference?.trim() || undefined,
-      note: collectionNote(args),
-      /* The date written across a cheque, in its own field — it is what
-         decides whether accounts can bank it this morning. */
-      instrumentDate: args.chequeDate ?? undefined,
-      chequePhotoId: args.chequePhotoId ?? undefined,
-      billIds: args.billRefs ?? undefined,
-      receivedAt: isoDate(new Date()),
-      visitId: args.visitId ?? undefined,
-      localReceiptRef: receiptRef,
-      deviceId: base.deviceId,
-      clientCreatedAt: base.clientCreatedAt,
-    },
-    /* Not behind the visit — see the same note in `saveOrder`. */
+    /* IN THE SAME TRANSACTION AS THE ROW — see `insertAndQueue` in
+       `write.ts`. The location was read before the transaction opened. */
+    await enqueue({
+      where,
+      entityType: 'payment',
+      entityId: base.id,
+      op: 'create',
+      /* Behind its shop, where the shop was added on this phone — as orders and visits are. */
+      dependsOn: [args.customerId],
+      /* PROTOCOL.md §4.1. Two of these mattered more than the names suggest:
+         `billRefs` reached a server reading `billIds`, so every collection was
+         spread oldest-first however carefully the salesman had named the bills;
+         and the cheque number went as `chequeNumber` to a field called
+         `reference`, which is the string accounts match against the bank
+         statement — so the one thing that identifies the money was dropped. */
+      payload: {
+        id: base.id,
+        customerId: args.customerId,
+        customerName: args.customerName,
+        amountPaise: args.amountPaise,
+        mode: args.mode,
+        /* What identifies this money to whoever holds the statement: the cheque
+           number where there is one, the transfer reference otherwise. */
+        reference: args.chequeNumber?.trim() || args.reference?.trim() || undefined,
+        note: collectionNote(args),
+        /* The date written across a cheque, in its own field — it is what
+           decides whether accounts can bank it this morning. */
+        instrumentDate: args.chequeDate ?? undefined,
+        chequePhotoId: args.chequePhotoId ?? undefined,
+        billIds: args.billRefs ?? undefined,
+        receivedAt: isoDate(new Date()),
+        visitId: args.visitId ?? undefined,
+        localReceiptRef: receiptRef,
+        deviceId: base.deviceId,
+        clientCreatedAt: base.clientCreatedAt,
+      },
+      /* Not behind the visit — see the same note in `saveOrder`. */
+    });
   });
 
   if (notifyThreshold > 0 && args.amountPaise >= notifyThreshold) {

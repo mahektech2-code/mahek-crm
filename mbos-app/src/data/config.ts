@@ -215,6 +215,7 @@ const DEFAULTS: Record<string, unknown> = {
   'mbos.sync.imageQualityPercent': 70,
   'mbos.sync.mediaWifiOnly': false,
   'mbos.sync.offlineLoginValidityDays': 7,
+  'mbos.sync.handoverIgnoreDays': 14,
 
   /* ai */
   'mbos.ai.retainAudioAfterTranscription': false,

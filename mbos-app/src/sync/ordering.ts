@@ -130,3 +130,33 @@ export function dependents<T extends Eligible>(items: T[], entityId: string): T[
   }
   return out;
 }
+
+/**
+ * WHICH DEPENDENCIES HAVE LANDED although nothing in the outbox says `synced`.
+ *
+ * A dependency with no item for it waiting anywhere has gone up and been
+ * pruned (`pruneSynced`), or is a record the office made. "Waiting" means an
+ * item for that record still queued or in flight — EXCEPT an edit that itself
+ * waits on that record's create. Edits wait on their own record's create (see
+ * `updateAndQueue`), so counting them would make an edit wait on itself once
+ * the create was pruned: a create sent after a fortnight offline is pruned the
+ * moment it lands, because it is older than the fortnight, and every edit
+ * behind it would then sit in the outbox for ever.
+ */
+export function presumedLanded(
+  pending: { entityId: string; op: string; dependsOn: string[] }[],
+  deadIds: Set<string>,
+): Set<string> {
+  const waiting = new Set<string>();
+  for (const p of pending) {
+    if (p.op === 'update' && p.dependsOn.includes(p.entityId)) continue;
+    waiting.add(p.entityId);
+  }
+  const landed = new Set<string>();
+  for (const p of pending) {
+    for (const d of p.dependsOn) {
+      if (!waiting.has(d) && !deadIds.has(d)) landed.add(d);
+    }
+  }
+  return landed;
+}

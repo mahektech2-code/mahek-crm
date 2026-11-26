@@ -1,5 +1,6 @@
 import { all, getKv, newId, one, run, tx } from '../db';
 import { enqueue } from '../sync/queue';
+import { whereNow } from '../native/where';
 import { insertAndQueue, insertLocal, stamp, updateAndQueue } from './write';
 import { getConfig } from './config';
 import { assessOrder } from '../engines/credit';
@@ -273,6 +274,7 @@ export async function saveOrder(args: {
       ? args.deliveryCustomerId
       : null;
 
+  const where = await whereNow().catch(() => undefined);
   await tx(async () => {
     await run(
       `INSERT INTO orders (id, customerId, deliveryCustomerId, userId, visitId, orderedAt, status, paymentTermDays,
@@ -306,6 +308,8 @@ export async function saveOrder(args: {
         subjectId: base.id,
         reason: args.assessment.reason,
         deviceId: base.deviceId,
+        /* This save's transaction is open; `tx()` does not nest. */
+        inTransaction: true,
       });
       await run('UPDATE orders SET approvalId = ? WHERE id = ?', [approvalId, base.id]);
     }
@@ -347,56 +351,58 @@ export async function saveOrder(args: {
         deliveryId,
       ]);
     }
-  });
-
-  await enqueue({
-    entityType: 'order',
-    entityId: base.id,
-    op: 'create',
-    /* Behind the shops it names, where either was added on this phone and has
-       not reached the office yet — see the same line in `visits.ts`. A shop
-       with nothing in the outbox counts as landed, so an order for a shop the
-       office already has goes exactly as before. */
-    dependsOn: [...new Set([args.customerId, ...(deliveryId ? [deliveryId] : [])])],
-    /* The WIRE names, which are not this table's column names — see
-       PROTOCOL.md §4.1. `cans` is what a telecaller counts and what this app
-       stores; `quantityCans` is what MahekOne calls the same number, and the
-       payload is MahekOne's vocabulary rather than ours. Sending our own put
-       every field order on the rejections screen with a validation message
-       about a field nobody on either end had typed. */
-    payload: {
-      id: base.id,
-      customerId: args.customerId,
-      /* Not read by the server. Kept so a refusal can name the shop on the
-         handset, which is the screen the salesman is actually looking at. */
-      customerName: args.customerName,
-      /* Null where the biller received them. The server folds its own copy of
-         this rule too, because a payload is not a place to trust. */
-      deliveryCustomerId: deliveryId ?? undefined,
-      visitId: args.visitId ?? undefined,
-      orderedAt: base.clientCreatedAt,
-      totalAmountPaise: args.assessment.valuePaise ?? 0,
-      valueUnavailable: args.assessment.valueUnavailable,
-      creditDays: args.paymentTermDays ?? undefined,
-      /* What the phone priced and believed, so the office can say "the rate
-         moved" or "the balance moved under you" rather than a bare refusal —
-         two different conversations with two different people. */
-      priceTag: args.assessment.priceTag ?? undefined,
-      outstandingAsOfPaise: args.assessment.outstandingAsOfPaise,
-      outstandingAsOf: args.assessment.outstandingAsOf ?? undefined,
-      lines: args.assessment.lines.map((p) => ({
-        productId: p.line.productId,
-        quantityCans: p.cans,
-        ratePaise: p.ratePaise ?? undefined,
-      })),
-      duplicate: args.duplicate ?? undefined,
-      deviceId: base.deviceId,
-      clientCreatedAt: base.clientCreatedAt,
-    },
-    /* NOT behind the visit. The visit's id is minted at the door and the
-       visit itself is saved at check-out — or never, if the trip is called
-       off — so waiting on it held a customer's order in the outbox for the
-       length of the visit at best and for ever at worst. */
+    /* IN THE SAME TRANSACTION AS THE ROW — see `insertAndQueue` in
+       `write.ts`. The location was read before the transaction opened. */
+    await enqueue({
+      where,
+      entityType: 'order',
+      entityId: base.id,
+      op: 'create',
+      /* Behind the shops it names, where either was added on this phone and has
+         not reached the office yet — see the same line in `visits.ts`. A shop
+         with nothing in the outbox counts as landed, so an order for a shop the
+         office already has goes exactly as before. */
+      dependsOn: [...new Set([args.customerId, ...(deliveryId ? [deliveryId] : [])])],
+      /* The WIRE names, which are not this table's column names — see
+         PROTOCOL.md §4.1. `cans` is what a telecaller counts and what this app
+         stores; `quantityCans` is what MahekOne calls the same number, and the
+         payload is MahekOne's vocabulary rather than ours. Sending our own put
+         every field order on the rejections screen with a validation message
+         about a field nobody on either end had typed. */
+      payload: {
+        id: base.id,
+        customerId: args.customerId,
+        /* Not read by the server. Kept so a refusal can name the shop on the
+           handset, which is the screen the salesman is actually looking at. */
+        customerName: args.customerName,
+        /* Null where the biller received them. The server folds its own copy of
+           this rule too, because a payload is not a place to trust. */
+        deliveryCustomerId: deliveryId ?? undefined,
+        visitId: args.visitId ?? undefined,
+        orderedAt: base.clientCreatedAt,
+        totalAmountPaise: args.assessment.valuePaise ?? 0,
+        valueUnavailable: args.assessment.valueUnavailable,
+        creditDays: args.paymentTermDays ?? undefined,
+        /* What the phone priced and believed, so the office can say "the rate
+           moved" or "the balance moved under you" rather than a bare refusal —
+           two different conversations with two different people. */
+        priceTag: args.assessment.priceTag ?? undefined,
+        outstandingAsOfPaise: args.assessment.outstandingAsOfPaise,
+        outstandingAsOf: args.assessment.outstandingAsOf ?? undefined,
+        lines: args.assessment.lines.map((p) => ({
+          productId: p.line.productId,
+          quantityCans: p.cans,
+          ratePaise: p.ratePaise ?? undefined,
+        })),
+        duplicate: args.duplicate ?? undefined,
+        deviceId: base.deviceId,
+        clientCreatedAt: base.clientCreatedAt,
+      },
+      /* NOT behind the visit. The visit's id is minted at the door and the
+         visit itself is saved at check-out — or never, if the trip is called
+         off — so waiting on it held a customer's order in the outbox for the
+         length of the visit at best and for ever at worst. */
+    });
   });
 
   return { orderId: base.id, needsApproval };

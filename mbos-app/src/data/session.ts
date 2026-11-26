@@ -5,6 +5,7 @@ import * as api from '../sync/api';
 import { ApiError, NoAnswerError } from '../sync/api';
 import { applyPull } from '../sync/pull';
 import { retryItem } from '../sync/queue';
+import { handoverWork } from '../sync/outbox-ops';
 import { cancelPunchOutReminders } from '../native/punch-out-reminder';
 import { buildLabel } from '../native/updates';
 import {
@@ -119,16 +120,20 @@ async function lastUser(): Promise<LastUser | null> {
  * Work from this phone that has not reached the office: records still to go
  * and photographs behind them. Refused records are NOT counted — the office
  * has already answered them, and counting them would hold the phone hostage to
- * a refusal nobody can clear.
+ * a refusal nobody can clear. Nor is anything the phone gave up on more than
+ * `mbos.sync.handoverIgnoreDays` ago, for the same reason: an entry stuck for
+ * weeks is not going, and it still sits on the phone for him to remove.
  */
 async function unsentWork(): Promise<number> {
-  const records = await one<{ n: number }>(
-    `SELECT COUNT(*) AS n FROM sync_queue WHERE state IN ('queued','syncing','failed','blocked')`,
-  );
-  const media = await one<{ n: number }>(
-    `SELECT COUNT(*) AS n FROM media_queue WHERE state IN ('queued','syncing','failed')`,
-  );
-  return (records?.n ?? 0) + (media?.n ?? 0);
+  return (await handoverCounts()).counted;
+}
+
+/** What the handover counts, and what it now ignores — the Sync screen says both. */
+export async function handoverCounts(now = Date.now()): Promise<{ counted: number; ignored: number; days: number }> {
+  const { getConfig } = await import('./config');
+  const days = Number(await getConfig<number>('mbos.sync.handoverIgnoreDays', 14).catch(() => 14)) || 14;
+  const r = await handoverWork({ all, one, run }, now, days);
+  return { ...r, days };
 }
 
 /* ------------------------------------------------------------ online path */

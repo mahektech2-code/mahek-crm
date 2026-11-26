@@ -390,13 +390,15 @@ test("the delta's own queries send nothing the handset cannot hold either", () =
  * ------------------------------------------------------------------------- */
 
 const QUEUE = "mbos-app/src/sync/queue.ts";
+/* The map moved beside the outbox housekeeping that also reads it. */
+const OUTBOX_OPS = "mbos-app/src/sync/outbox-ops.ts";
 
 test("every table a sync verdict is written onto can hold the verdict", () => {
   const queue = readFileSync(QUEUE, "utf8");
   const tables = handsetTables();
 
-  const map = queue.match(/const ENTITY_TABLE[^=]*=\s*\{([\s\S]*?)\n\};/);
-  assert.ok(map, "ENTITY_TABLE is gone from sync/queue.ts — this test needs updating with it");
+  const map = readFileSync(OUTBOX_OPS, "utf8").match(/const ENTITY_TABLE[^=]*=\s*\{([\s\S]*?)\n\};/);
+  assert.ok(map, "ENTITY_TABLE is gone from sync/outbox-ops.ts — this test needs updating with it");
 
   /* `'visits'` in `visit: 'visits',` — the quoted half, so a comment
      mentioning a table name cannot be read as an entry. */

@@ -215,6 +215,8 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
         customerId: args.customerId,
         priority: 'Normal',
         dueDate: args.nextFollowUpDate,
+        /* This save's transaction is open; `tx()` does not nest. */
+        inTransaction: true,
       });
     }
 
