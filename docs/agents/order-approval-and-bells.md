@@ -20,7 +20,8 @@ so the customer returns to the list on their own cycle. The buying cycle uses
 approved orders only, which is why `writeCycle` takes the placed date
 separately — computing both from the same rows put them in conflict.
 
-**Approving is accounts' and nobody else's.** Not a manager by seniority: the
+**Approving is accounts' and nobody else's.** (So the handset's toast after an
+over-threshold order says "Sent to Accounts", not "to your manager".) Not a manager by seniority: the
 person chasing the target must not sign off the orders that hit it. Declining
 requires a reason, and it lands on the customer timeline, because the telecaller
 has to ring back and say something.

@@ -8,7 +8,7 @@ import { readArrival } from '../data/arrival';
 import { markRead } from '../data/notifications';
 import { syncNow, whenPulled } from '../sync/engine';
 import { useBoot } from './boot';
-import { useStore } from './store';
+import { restoreVisitDraft, useStore } from './store';
 
 /**
  * Where a tapped notification goes. The check-out reminder names a CUSTOMER as
@@ -41,6 +41,20 @@ export async function openFrom(data: unknown): Promise<void> {
   }
   if (d?.kind === 'forgot-checkout' && typeof d.customerId === 'string') {
     const arrival = await readArrival();
+    /*
+     * THE DRAFT FIRST, on a cold start — the order `restoreArrival` keeps.
+     *
+     * A tap that cold-starts the app gets here before, or racing, the launch
+     * restore. Setting the arrival on an empty store made `restoreArrival`
+     * see one already there and skip the draft; and the `custId` set below
+     * then moved the (empty) cart, which is a draft change, so 400 ms later
+     * the draft writer saved that empty form over the note, the photographs
+     * and the order on disk. Restoring the draft before the arrival lands
+     * means the first thing the writer ever sees is his own work.
+     */
+    if (arrival && arrival.checkedInAt != null && !useStore.getState().arrival) {
+      restoreVisitDraft(arrival);
+    }
     useStore.setState({ arrival });
     if (!arrival || arrival.customerId !== d.customerId || arrival.checkedInAt == null) {
       /* Already checked out, or the day moved on — nothing left to close. */

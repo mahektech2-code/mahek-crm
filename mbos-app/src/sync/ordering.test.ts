@@ -170,3 +170,17 @@ test('an edit whose create was pruned does not wait on itself', () => {
   assert.ok(!presumedLanded([...pending, { entityId: 'lv1', op: 'create', dependsOn: [] }], new Set()).has('lv1'), 'a create still waiting keeps them behind it');
   assert.ok(!presumedLanded(pending, new Set(['lv1'])).has('lv1'), 'a refused create is never presumed landed');
 });
+
+test('one rule for what waits: my own create holds my edit; my own earlier edits and edits behind their create do not', async () => {
+  const { landedDependencies } = await import('./ordering');
+  const edit = { entityId: 'lv1', entityType: 'leave', op: 'update', dependsOn: ['lv1'] };
+  const create = { entityId: 'lv1', entityType: 'leave', op: 'create', dependsOn: [] as string[] };
+  assert.ok(!landedDependencies([edit, create], [], new Set()).has('lv1'), 'the create still waiting holds its edit');
+  assert.ok(landedDependencies([edit], [], new Set()).has('lv1'), 'once the create is pruned the edit goes');
+  assert.ok(landedDependencies([edit, { ...edit }], [], new Set()).has('lv1'), 'two edits do not hold each other');
+  const picks = { entityId: 'd1', entityType: 'plan_stops', op: 'update', dependsOn: ['d1'] };
+  const day = { entityId: 'd1', entityType: 'plan_day', op: 'create', dependsOn: [] as string[] };
+  assert.ok(!landedDependencies([picks], [day], new Set()).has('d1'), 'the day in flight holds its picks');
+  assert.ok(landedDependencies([picks, { ...picks }], [], new Set()).has('d1'), 'earlier picks for the day do not');
+  assert.ok(!landedDependencies([edit], [], new Set(['lv1'])).has('lv1'), 'a refused create never lands');
+});

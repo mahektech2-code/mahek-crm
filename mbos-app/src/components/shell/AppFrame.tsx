@@ -419,14 +419,25 @@ export function AppFrame({
     },
   ];
 
+  /*
+   * THE SHOP IT WOULD START FOR, said before it starts.
+   *
+   * `custId` is whatever shop was opened LAST — this morning's statement
+   * check, a record looked up on the way out — and the quick action started a
+   * trip to it unnamed, from a menu on a screen that may have nothing to do
+   * with that shop. A salesman pressing "Start visit" outside shop B set off,
+   * on the record, for shop A. So it names the shop and asks, and with no shop
+   * open it sends him to choose one rather than refusing. The sub-line said
+   * "Pick how you travel", a question this app stopped asking when the vehicle
+   * moved to the punch-in.
+   */
+  const askConfirm = useStore((s) => s.askConfirm);
+  const visitTarget = custId ? customer?.name ?? null : null;
   const actionItems = [
-    /* It asks how he is getting there BEFORE the visit opens — see
-       `TravelGate`. The sub-line says so, because a quick action that raises a
-       question rather than the screen it names reads as the wrong button. */
     {
       glyph: 'visit',
       label: 'Start visit',
-      sub: 'Pick how you travel, then GPS and photos',
+      sub: visitTarget ? `To ${visitTarget}? You confirm first` : 'Choose the shop, then set off',
       run: () => {
         /* One shop at a time. See the bar below: a salesman standing outside a
            shop he has arrived at is not about to set off for another, and
@@ -439,8 +450,20 @@ export function AppFrame({
         if (arrival && arrival.checkedInAt != null) {
           return notify(`Check out of ${arrival.customerName} first. You are still in that visit.`, 'error');
         }
-        if (!custId) return notify('Choose the shop first, then start the visit.', 'error');
-        askTravel({ customerId: custId, customerName: customer?.name ?? 'this shop' });
+        if (!custId || !visitTarget) {
+          notify('Choose the shop, then press Start visit on it.', 'info');
+          router.push(`/customers${fromHere}`);
+          return;
+        }
+        const target = { customerId: custId, customerName: visitTarget };
+        askConfirm({
+          title: `Start visit to ${target.customerName}?`,
+          body: 'Your trip to this shop starts now. To visit a different shop, choose it from Customers.',
+          confirmLabel: 'Start visit',
+          cancelLabel: 'Not now',
+          tone: 'navy',
+          run: () => askTravel(target),
+        });
       },
     },
     { glyph: 'order', tint: C.primary, label: 'Punch order', sub: 'From their usual products', run: () => router.push(`/order${fromHere}`) },

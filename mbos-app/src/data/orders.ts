@@ -6,8 +6,10 @@ import { getConfig } from './config';
 import { assessOrder } from '../engines/credit';
 import { canValueOrders, derivedQuantities, lineValuePaise, type PriceSource } from '../engines/order';
 import { applySchemes, type Predicate, type Scheme } from '../engines/schemes';
-import { isoDate } from '../lib/format';
-import { ratesForTag } from './pricing';
+import { istDayStartMs, todayIst } from '../lib/format';
+import { priceKeyFor, ratesForTag } from './pricing';
+import { officeCreditRefusal, minimumRefusal, overdueRefusal, type OfficeRefusal } from '../engines/order-gates';
+import { OPEN_BILLS_FOR_GATES_SQL, ORDER_QUEUE_ROWS_SQL, UNSENT_CREATE_SQL, UNSENT_ORDERS_PAISE_SQL } from './order-money';
 
 /**
  * Punching an order.
@@ -46,6 +48,15 @@ export type OrderAssessment = {
   billingCreditLimitPaise: number | null;
   canOrder: boolean;
   blockReason: string | null;
+  /**
+   * WHAT THE OFFICE WILL REFUSE AT SYNC, where it will — the limit with
+   * `mbos.credit.blockOnLimitExceeded` on, a bill past
+   * `mbos.credit.overdueDaysBlockOrders`, a line under
+   * `mbos.orders.minimumQuantityCans`. Not a credit block: the cart stays
+   * open so he can make the order smaller, and the button says why it will
+   * not send. See `engines/order-gates.ts`.
+   */
+  officeRefusal: OfficeRefusal | null;
   valuePaise: number | null;
   valueUnavailable: boolean;
   decision: 'blocked' | 'ok' | 'needs_approval';
@@ -123,12 +134,28 @@ function parseScheme(row: { id: string; name: string; eligibility: string; benef
   };
 }
 
-export async function assessCart(billingCustomerId: string, lines: CartLine[]): Promise<OrderAssessment> {
+export async function assessCart(
+  billingCustomerId: string,
+  lines: CartLine[],
+  opts: {
+    /** The order being edited: left out of what is already ordered, and its old value is what the office compares against. */
+    editingOrderId?: string | null;
+    /** A change request after approval: the office re-checks only the lines (`checkOrderLines`), never the credit. */
+    changeRequest?: boolean;
+  } = {},
+): Promise<OrderAssessment> {
   const customer = await one<{
+    name: string;
     creditBlocked: number; creditBlockReason: string | null;
     creditLimitPaise: number | null; outstandingPaise: number; submittedNotInvoicedPaise: number;
     customerType: string | null; priceTag: string | null;
   }>('SELECT * FROM customers WHERE id = ?', [billingCustomerId]);
+  /* Ordered and not yet billed: the office's figure, plus what this phone has
+     taken that the office has not heard about — see `data/order-money.ts`. */
+  const unsent = await one<{ paise: number }>(UNSENT_ORDERS_PAISE_SQL, [billingCustomerId, opts.editingOrderId ?? '']);
+  const editing = opts.editingOrderId
+    ? await one<{ netTotalPaise: number | null }>('SELECT netTotalPaise FROM orders WHERE id = ?', [opts.editingOrderId])
+    : null;
 
   const priceSource = await getConfig<PriceSource>('products.priceSource', 'unset');
   const approvalThreshold = await getConfig<number>('mbos.orders.approvalThresholdPaise', 0);
@@ -151,7 +178,10 @@ export async function assessCart(billingCustomerId: string, lines: CartLine[]): 
    * the rule expects to be told.
    */
   const priceTag = priceSource === 'pricelist' ? customer?.priceTag ?? null : null;
-  const listRates = priceTag ? await ratesForTag(priceTag) : new Map<string, number>();
+  /* The key the office's rates for THIS biller are filed under — the tag, or
+     the tag and the list where shops on one tag sit on different lists. */
+  const priceKey = priceSource === 'pricelist' ? await priceKeyFor(billingCustomerId, customer?.priceTag ?? null) : null;
+  const listRates = priceKey ? await ratesForTag(priceKey) : new Map<string, number>();
 
   const priced = lines.map((line) => {
     const q = derivedQuantities(line.cans, line.cansPerBox ?? 1, line.millilitresPerCan ?? 0);
@@ -202,13 +232,40 @@ export async function assessCart(billingCustomerId: string, lines: CartLine[]): 
     creditBlocked: !!customer?.creditBlocked,
     creditLimitPaise: customer?.creditLimitPaise ?? null,
     outstandingPaise: customer?.outstandingPaise ?? 0,
-    submittedPaise: customer?.submittedNotInvoicedPaise ?? 0,
+    submittedPaise: Math.max(0, customer?.submittedNotInvoicedPaise ?? 0) + (unsent?.paise ?? 0),
     orderValuePaise: valuePaise,
     approvalThresholdPaise: approvalThreshold,
     secondTierThresholdPaise: secondTier,
   });
 
+  const billerName = customer?.name ?? 'This customer';
+  const [blockOnLimit, overdueDays, minimumCans] = await Promise.all([
+    getConfig<boolean>('mbos.credit.blockOnLimitExceeded', true),
+    getConfig<number>('mbos.credit.overdueDaysBlockOrders', 0),
+    getConfig<number>('mbos.orders.minimumQuantityCans', 0),
+  ]);
+  const openBills = !opts.editingOrderId && !opts.changeRequest && overdueDays > 0
+    ? await all<{ billNo: string | null; dueDate: string | null; balancePaise: number | null; paymentPosition: string | null; disputed: number | null }>(
+        OPEN_BILLS_FOR_GATES_SQL,
+        [billingCustomerId],
+      )
+    : [];
+  const officeRefusal =
+    minimumRefusal({ minimumCans, lines: lines.map((l) => ({ productName: l.productName, cans: l.cans })) }) ??
+    /* A new order only — the office checks an edit against the limit, never
+       against the overdue rule. */
+    (opts.editingOrderId || opts.changeRequest ? null : overdueRefusal({ blockDays: overdueDays, billerName, bills: openBills, today: todayIst() })) ??
+    (opts.changeRequest ? null : officeCreditRefusal({
+      blockOnLimitExceeded: blockOnLimit,
+      billerName,
+      creditLimitPaise: customer?.creditLimitPaise ?? null,
+      outstandingPaise: customer?.outstandingPaise ?? 0,
+      orderValuePaise: valuePaise,
+      previousValuePaise: opts.editingOrderId ? editing?.netTotalPaise ?? 0 : null,
+    }));
+
   return {
+    officeRefusal,
     /* The same three the verdict was reached on, handed back so the screen
        draws the biller's credit rather than the shop's. */
     billingCustomerId,
@@ -336,18 +393,18 @@ export async function saveOrder(args: {
     /* `lastOrderDate` moves on capture, not on approval — it is the signal
        that stops the queue chasing somebody who ordered this morning, and a
        slow approval must not cause a second ring. */
-    await run('UPDATE customers SET lastOrderDate = ?, submittedNotInvoicedPaise = submittedNotInvoicedPaise + ? WHERE id = ?', [
-      isoDate(new Date()),
-      args.assessment.valuePaise ?? 0,
-      args.customerId,
-    ]);
+    /* `submittedNotInvoicedPaise` is NOT moved: it is the office's figure,
+       and an order still in the outbox is added to it where it is read
+       (`UNSENT_ORDERS_PAISE_SQL`), so it counts once and stops counting when
+       it is billed, declined or refused. */
+    await run('UPDATE customers SET lastOrderDate = ? WHERE id = ?', [todayIst(), args.customerId]);
 
     /* The shop it was DELIVERED to stops being chased too — being served is
        being served, whoever was invoiced. Only the DATE moves: the money is
        the biller's and `submittedNotInvoicedPaise` stays with them. */
     if (deliveryId) {
       await run('UPDATE customers SET lastOrderDate = ? WHERE id = ?', [
-        isoDate(new Date()),
+        todayIst(),
         deliveryId,
       ]);
     }
@@ -440,10 +497,9 @@ export async function ordersToday(userId: string, from = startOfToday()): Promis
   };
 }
 
+/* The office's day, not the phone's: see `istDayStartMs`. */
 function startOfToday(): number {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
+  return istDayStartMs();
 }
 
 /* --------------------------------------------------- what he has punched */
@@ -540,8 +596,7 @@ export async function orderById(id: string): Promise<(PunchedOrder & { customerC
 
 /** The orders he took today, newest first — "My orders today" under the receipt. */
 export async function ordersTakenToday(): Promise<PunchedOrder[]> {
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
+  const start = istDayStartMs();
   return all<PunchedOrder>(
     `SELECT o.id, o.customerId, c.name AS customerName, o.orderNumber, o.orderedAt,
             o.deliveryDate, o.status, o.netTotalPaise, o.valueUnavailable,
@@ -550,7 +605,7 @@ export async function ordersTakenToday(): Promise<PunchedOrder[]> {
             o.journeyEditable, o.journeySteps
        FROM orders o LEFT JOIN customers c ON c.id = o.customerId
       WHERE o.orderedAt >= ? ORDER BY o.orderedAt DESC LIMIT 20`,
-    [start.getTime()],
+    [start],
   );
 }
 
@@ -599,17 +654,112 @@ export async function orderForChange(orderId: string): Promise<{
   deliveryCustomerId: string | null;
   orderNumber: string | null;
   status: string;
-  lines: { productId: string; cans: number }[];
+  /** EVERY line, including one with no product id — the screen says which cannot carry over. */
+  lines: { productId: string; productName: string; cans: number }[];
 } | null> {
   const order = await one<{
     id: string; customerId: string; deliveryCustomerId: string | null; orderNumber: string | null; status: string;
   }>('SELECT id, customerId, deliveryCustomerId, orderNumber, status FROM orders WHERE id = ?', [orderId]);
   if (!order) return null;
-  const lines = await all<{ productId: string; cans: number }>(
-    'SELECT productId, cans FROM order_lines WHERE orderId = ? AND productId <> ?',
-    [orderId, ''],
+  const lines = await all<{ productId: string; productName: string; cans: number }>(
+    'SELECT productId, productName, cans FROM order_lines WHERE orderId = ?',
+    [orderId],
   );
   return { ...order, lines };
+}
+
+/**
+ * THE REFUSED ORDER, read back off the outbox to take it again.
+ *
+ * "Take the order again" used to let the refused entry go FIRST and open an
+ * empty form on the BILLER — the distributor, on a third-party shop — so the
+ * lines were gone before he had written a single one again, and the order
+ * opened on the wrong shop. This reads what was refused, so the form opens on
+ * the shop the goods were for, with the biller chosen and the lines in the
+ * cart; the refused entry goes only once the new order is saved
+ * (`finishRetake`).
+ */
+export async function refusedOrder(queueId: string): Promise<{
+  queueId: string;
+  customerId: string;
+  deliveryCustomerId: string | null;
+  lines: { productId: string; productName: string; cans: number }[];
+} | null> {
+  const item = await one<{ id: string; entityId: string; payload: string; state: string; op: string; entityType: string }>(
+    'SELECT id, entityId, payload, state, op, entityType FROM sync_queue WHERE id = ?',
+    [queueId],
+  );
+  if (!item || item.entityType !== 'order' || item.op !== 'create') return null;
+  let p: { customerId?: string; deliveryCustomerId?: string | null; lines?: { productId?: string; quantityCans?: number }[] };
+  try {
+    p = JSON.parse(item.payload);
+  } catch {
+    return null;
+  }
+  if (!p.customerId) return null;
+  /* The names from the order's own lines where the phone still has them — a
+     product retired since is still named when the screen says it cannot come. */
+  const named = await all<{ productId: string; productName: string }>(
+    'SELECT productId, productName FROM order_lines WHERE orderId = ?',
+    [item.entityId],
+  );
+  const nameOf = new Map(named.map((l) => [l.productId, l.productName]));
+  return {
+    queueId: item.id,
+    customerId: p.customerId,
+    deliveryCustomerId: p.deliveryCustomerId ?? null,
+    lines: (p.lines ?? [])
+      .filter((l) => typeof l.quantityCans === 'number')
+      .map((l) => ({ productId: l.productId ?? '', productName: nameOf.get(l.productId ?? '') ?? 'A product', cans: l.quantityCans ?? 0 })),
+  };
+}
+
+/** Let the refused order go, now that the new one is saved. */
+export async function finishRetake(queueId: string): Promise<void> {
+  const { discardRefused } = await import('../sync/queue');
+  await discardRefused(queueId);
+}
+
+/**
+ * TAKE BACK AN ORDER THAT HAS NOT LEFT THIS PHONE.
+ *
+ * An order still in the outbox could not be cancelled: the office had no TO
+ * to cancel, so the card offered nothing, and `cancelTo` blamed Accounts for a
+ * decision nobody had made. Its create has not gone, so it is removed here —
+ * the outbox rows for it and anything queued behind it (an approval, an edit),
+ * its lines and the row — and the office never hears of it. Never while it is
+ * `syncing`: it may be landing this second, and the cancel then belongs to the
+ * office.
+ */
+export async function discardUnsentOrder(orderId: string): Promise<{ ok: true } | { ok: false; message: string }> {
+  const unsent = await one<{ id: string; state: string }>(UNSENT_CREATE_SQL, [orderId]);
+  if (!unsent) {
+    const flying = await one<{ id: string }>(
+      "SELECT id FROM sync_queue WHERE entityType = 'order' AND entityId = ? AND op = 'create' AND state = 'syncing'",
+      [orderId],
+    );
+    return {
+      ok: false,
+      message: flying
+        ? 'It is being sent to the office right now. Wait a minute, then cancel it here once the office has it.'
+        : 'The office already has this order, so it cannot be removed from the phone. Cancel it instead.',
+    };
+  }
+  const approvals = await all<{ id: string }>('SELECT id FROM approvals WHERE subjectId = ?', [orderId]);
+  await tx(async () => {
+    for (const q of await all<{ id: string }>(ORDER_QUEUE_ROWS_SQL, [orderId])) {
+      await run('DELETE FROM sync_queue WHERE id = ?', [q.id]);
+    }
+    for (const a of approvals) {
+      await run("DELETE FROM sync_queue WHERE entityId = ? AND state <> 'synced'", [a.id]);
+      await run('DELETE FROM approvals WHERE id = ?', [a.id]);
+    }
+    await run("DELETE FROM sync_queue WHERE entityType = 'order_change_request' AND state <> 'synced' AND payload LIKE ?", [`%${orderId}%`]);
+    await run('DELETE FROM order_lines WHERE orderId = ?', [orderId]);
+    await run("DELETE FROM timeline_events WHERE sourceRecordId = ? AND sourceApp = 'mbos'", [orderId]);
+    await run('DELETE FROM orders WHERE id = ?', [orderId]);
+  });
+  return { ok: true };
 }
 
 /**
@@ -647,10 +797,6 @@ export async function editOrder(args: {
          p.ratePaise, p.schemeNote, p.valuePaise],
       );
     }
-    await run('UPDATE customers SET submittedNotInvoicedPaise = MAX(0, submittedNotInvoicedPaise + ?) WHERE id = ?', [
-      total - (order.netTotalPaise ?? 0),
-      order.customerId,
-    ]);
   });
 
   await updateAndQueue({
@@ -686,13 +832,17 @@ export async function cancelTo(orderId: string, reason: string): Promise<{ ok: t
   );
   if (!order) return { ok: false, message: 'That order is not on this phone.' };
   if (order.journeyEditable !== 1) {
+    /* Still on this phone is not "decided by Accounts" — it is not at the
+       office at all, and is taken back here instead. */
+    if (await one<{ id: string }>(UNSENT_CREATE_SQL, [orderId])) {
+      return { ok: false, message: 'This order has not been sent yet. Remove it from the phone instead — the office never hears of it.' };
+    }
+    if (order.journeyEditable == null && editableStatus(order.status)) {
+      return { ok: false, message: 'The office has not described this order back to the phone yet. Sync, then cancel it.' };
+    }
     return { ok: false, message: 'Accounts have already approved or decided it. Ask the office to change it.' };
   }
   const dependsOn = await waitBehindOrder(orderId);
-  await run('UPDATE customers SET submittedNotInvoicedPaise = MAX(0, submittedNotInvoicedPaise - ?) WHERE id = ?', [
-    order.netTotalPaise ?? 0,
-    order.customerId,
-  ]);
   await updateAndQueue({
     table: 'orders',
     entityType: 'order',

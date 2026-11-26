@@ -21,6 +21,8 @@ export type SalaryMonth = {
   daysWorked: number | null;
   daysOnLeave: number | null;
   reimbursedPaise: number | null;
+  /** Paid back that month (`mbos_expense_payouts`). Null from an older server. */
+  paidBackPaise?: number | null;
 };
 
 export async function listSalary(): Promise<SalaryMonth[]> {

@@ -2,8 +2,11 @@ import { all, getKv, one, run, setKv, tx } from '../db';
 import { deviceId, type PullPayload, type TerritoryState } from './api';
 import { isoDate } from '../lib/format';
 import { CONVERTED_LEAD } from '../data/lead-query';
+import { DROP_REFUSED_LEAD_SHOPS_SQL, REFUSED_LEAD_SHOPS_SQL } from '../data/lead-shop';
 import { storeRemote } from '../data/remote';
-import { noPending, noPendingLead, PENDING_STATES } from './pending';
+import { shopsInFlight } from '../data/arrival';
+import { noPending, noPendingLead, pendingShopEdit, PENDING_STATES, SHOP_EDIT_COLUMNS, upsertSets } from './pending';
+import { expenseTombstoneStatement, myPaymentStatements, openOrderedStatements, priceKeyStatements, type Statement } from './money-channels';
 
 /** Where `storeTerritory` files it, and where `territoryState` reads it back. */
 export const TERRITORY_KEY = 'territory';
@@ -57,11 +60,15 @@ export async function applyPull(pull: PullPayload): Promise<number> {
     await c('customers', () => upsertCustomers(pull.customers, now));
     await c('products', () => upsertProducts(pull.products, now));
     await c('priceList', () => upsertPriceList(pull.priceList));
+    await c('priceKeys', () => runStatements(priceKeyStatements(pull.priceKeys, pull.priceUnoffered)));
     await c('schemes', () => upsertSchemes(pull.schemes));
     await c('timeline', () => upsertTimeline(pull.timeline));
     await c('customerOrders', () => upsertCustomerOrders(pull.customerOrders, now));
     await c('customerPayments', () => upsertCustomerPayments(pull.customerPayments, now, pull.statementFrom));
     await c('customerBills', () => upsertCustomerBills(pull.customerBills, now, pull.statementFrom));
+    /* AFTER the customers: a customer row from an older server carries the
+       figure too, and the office's own answer is this one. */
+    await c('openOrdered', () => runStatements(openOrderedStatements(pull.openOrdered)));
     await c('journeyStops', () => upsertStops(pull.journeyStops, now));
     await c('planDays', () => upsertPlanDays(pull.planDays, now));
     await c('config', () => upsertConfig(pull.config, now));
@@ -100,6 +107,7 @@ export async function applyPull(pull: PullPayload): Promise<number> {
        a manager approval nobody can decide must not read it back to pending. */
     await c('myOrders', () => applyMyOrders(pull.myOrders));
     await c('myComplaints', () => applyMyComplaints(pull.myComplaints));
+    await c('myPayments', () => runStatements(myPaymentStatements(pull.myPayments)));
     await c('orderChanges', () => applyOrderChanges(pull.orderChanges));
     await c('territoryRequests', () => applyTerritoryRequests(pull.territoryRequests));
     await c('attendanceToday', () => restoreAttendance(pull.attendanceToday));
@@ -108,6 +116,10 @@ export async function applyPull(pull: PullPayload): Promise<number> {
        is seen, and BEFORE the book reconcile, which keeps any shop that still
        has a lead row. */
     await c('convertedLeads', () => releaseConvertedLeads());
+    /* A refused lead's phone-only shop, stranded by a build before the refusal
+       dropped it — see `DROP_REFUSED_LEAD_SHOPS_SQL`. Its own helper, beside
+       the reconcile rather than inside it. */
+    await c('refusedLeadShops', () => dropRefusedLeadShops());
     /* AFTER the tombstones and after the customer upsert, because it is the
        backstop for everything neither of them covered. */
     await c('book', () => reconcileBook(pull.bookIds));
@@ -336,6 +348,9 @@ async function upsert(
   rows: unknown[] | undefined,
   extra: Row = {},
   guard?: string,
+  /* Columns that keep their local value while a condition holds — see
+     `SHOP_EDIT_COLUMNS`. A per-column guard, where `guard` is the whole row's. */
+  hold?: { cols: readonly string[]; while: string },
 ): Promise<number> {
   if (!rows?.length) return 0;
   const known = await knownColumns(table);
@@ -344,7 +359,7 @@ async function upsert(
     const cols = Object.keys(row).filter((c) => known.has(c));
     if (!cols.includes(key)) return;
     const marks = cols.map(() => '?').join(',');
-    const sets = cols.filter((c) => c !== key).map((c) => `${c} = excluded.${c}`).join(', ');
+    const sets = upsertSets(table, cols, key, hold);
     await run(
       `INSERT INTO ${table} (${cols.join(',')}) VALUES (${marks})
        ON CONFLICT(${key}) DO UPDATE SET ${sets}${guard ? ` WHERE ${guard}` : ''}`,
@@ -383,8 +398,13 @@ export { PENDING_STATES };
 
 /* ---------------------------------------------------------------- tables */
 
+/* His contact, number and pin corrections stand while they are on their way —
+   `SHOP_EDIT_COLUMNS`. The rest of the row is the office's and always lands. */
 function upsertCustomers(rows: unknown[] | undefined, now: number) {
-  return upsert('customers', 'id', rows, { lastSyncedAt: now });
+  return upsert('customers', 'id', rows, { lastSyncedAt: now }, undefined, {
+    cols: SHOP_EDIT_COLUMNS,
+    while: pendingShopEdit('customers'),
+  });
 }
 
 function upsertProducts(rows: unknown[] | undefined, now: number) {
@@ -437,8 +457,17 @@ async function upsertCustomerBills(
 ) {
   const n = rows?.length ? await upsert('customer_bills', 'id', rows, { lastSyncedAt: now }) : 0;
   /* Only where the server said what the window is. An older server sends no
-     boundary, and pruning against a guess would empty the table. */
-  if (from) await run('DELETE FROM customer_bills WHERE billDate IS NOT NULL AND billDate < ?', [from]);
+     boundary, and pruning against a guess would empty the table.
+     NOT AN OPEN ONE: every open bill is sent whatever its age, because the
+     oldest debt is the one being collected — only a settled bill ages out. The
+     window is kept so the statement can start where the receipts do. */
+  if (from) {
+    await run(
+      'DELETE FROM customer_bills WHERE billDate IS NOT NULL AND billDate < ? AND COALESCE(balancePaise, 0) <= 0',
+      [from],
+    );
+    await setKv('statementFrom', from);
+  }
   return n;
 }
 
@@ -693,6 +722,11 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
          corrected at a desk reached this phone on no pass, ever, and roughly
          half this book has no pin to navigate from instead. */
       address?: string | null;
+      /* What they want in their own words, and why the lead was lost. Both
+         go up from the capture sheet and the Lost sheet and are edited at a
+         desk; `openLeads` sends them in the same change that reads them here. */
+      requirement?: string | null;
+      lostReason?: string | null;
       source?: string | null;
       stage?: string;
       estimatedPotentialPaise?: number | null;
@@ -852,10 +886,10 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
                           commercialTermsAgreed, agreementOnFile, figuresConfirmedAt,
                           qualificationReview, buyer, priority, holdResumeDate,
                           holdReasonCode, sourceDetail, hasCommitment, hasOrder,
-                          backOfficeAmId, backOfficeAmName, createdAt)
+                          backOfficeAmId, backOfficeAmName, createdAt, requirement, lostReason)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced',
                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          name = excluded.name, company = excluded.company, mobile = excluded.mobile,
          city = excluded.city, area = excluded.area, address = excluded.address,
@@ -912,7 +946,9 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
          -- Kept on conflict as well as inserted. A lead is on this phone long
          -- before anybody asks how old it is, so a value written once and
          -- never restated is one that stays null on every row already here.
-         createdAt = excluded.createdAt, syncState = 'synced',
+         createdAt = excluded.createdAt,
+         requirement = excluded.requirement, lostReason = excluded.lostReason,
+         syncState = 'synced',
          -- A ROW THE OFFICE SENDS IS LIVE, by definition: a lead it has filed
          -- away arrives as a tombstone, never as a row. Without this a lead
          -- an administrator restored came back to this phone still archived,
@@ -1053,6 +1089,8 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
            handset happened to pull it, which is the whole reason this column is
            not `clientCreatedAt`. */
         l.createdAt ? Date.parse(l.createdAt) : null,
+        l.requirement ?? null,
+        l.lostReason ?? null,
       ],
     );
   });
@@ -1563,6 +1601,10 @@ async function reconcileBook(bookIds: string[] | undefined): Promise<number> {
                          WHERE q.entityId = customers.id AND q.state <> 'synced')`,
   );
   const keep = new Set(bookIds);
+  /* AND THE SHOP HE IS AT, or on his way to — see `shopsInFlight`. A noon
+     reassignment took the row from under an open visit and Check out had
+     nothing to save against. It goes on the first pull after the visit. */
+  for (const id of await shopsInFlight()) keep.add(id);
   await rememberMissing(bookIds);
   if (!local.length) return 0;
   const gone = local.map((r) => r.id).filter((id) => !keep.has(id));
@@ -1647,6 +1689,14 @@ export async function missingCustomerIds(): Promise<string[]> {
  * Synced rows only. A lead the salesman has changed and not yet sent is his
  * own work, and it waits in the outbox until the office has heard it.
  */
+/** Every phone-only shop row whose lead the office refused — see `lead-shop.ts`. */
+async function dropRefusedLeadShops(): Promise<number> {
+  const found = await one<{ n: number }>(REFUSED_LEAD_SHOPS_SQL);
+  if (!found?.n) return 0;
+  await run(DROP_REFUSED_LEAD_SHOPS_SQL);
+  return found.n;
+}
+
 async function releaseConvertedLeads(): Promise<number> {
   const where = `${noPendingLead('leads')} AND ${CONVERTED_LEAD}`;
   const rows = await all<{ id: string }>(`SELECT id FROM leads WHERE ${where}`);
@@ -1685,7 +1735,21 @@ async function applyDeletionChunk(entity: string, ids: string[]): Promise<number
     await run(`UPDATE leads SET archived = 1 WHERE id IN (${marks})`, ids);
     return ids.length;
   }
+  /* An expense the office entered for him and then deleted — never one with
+     anything still waiting in his outbox. See `expenseTombstoneStatement`. */
+  if (entity === 'expenses') return runStatements([expenseTombstoneStatement(ids)].filter((x): x is Statement => !!x));
   if (!DELETABLE.has(entity)) return 0;
+  /* A tombstoned shop he is standing in, or riding to, waits for the visit —
+     the same rule `reconcileBook` keeps. */
+  if (entity === 'customers') {
+    const held = new Set(await shopsInFlight());
+    const free = ids.filter((id) => !held.has(id));
+    if (free.length !== ids.length) {
+      if (!free.length) return 0;
+      await run(`DELETE FROM customers WHERE id IN (${free.map(() => '?').join(',')})`, free);
+      return free.length;
+    }
+  }
   /* A WITHDRAWN DOCUMENT TAKES ITS FILE WITH IT. The row went and the
      download stayed in the app's storage for good — a price list nobody sells
      at, on a phone with no way left to find or delete it. Deleted after the
@@ -1704,6 +1768,12 @@ async function applyDeletionChunk(entity: string, ids: string[]): Promise<number
     }
   }
   return ids.length;
+}
+
+/** A channel applied as plain statements (`sync/money-channels.ts`). */
+async function runStatements(statements: Statement[]): Promise<number> {
+  for (const [sql, params] of statements) await run(sql, params);
+  return statements.length;
 }
 
 /* ------------------------------------------------------- his own history */

@@ -12,6 +12,9 @@ import {
   visitLegPlan,
   promptsForExpenses,
   travellingFor,
+  parseUnpaidMeters,
+  unpaidMeterCard,
+  withUnpaidMeter,
 } from './travel-leg';
 
 /**
@@ -288,4 +291,22 @@ test('a punch-out reading is refused in the words of a day, not a trip', () => {
   assert.match(v.ok ? '' : v.why, /one day/);
   const t = checkOdometer({ typed: '41700', previousKm: 41208, maxLegKilometres: 400 });
   assert.match(t.ok ? '' : t.why, /one trip/);
+});
+
+test('days closed with no meter reading are a list, and only the newest is offered the camera', () => {
+  /* An older build wrote ONE object; it still reads. */
+  assert.deepEqual(parseUnpaidMeters('{"day":"2026-11-20","legId":"l1"}'), [{ day: '2026-11-20', legId: 'l1' }]);
+  assert.deepEqual(parseUnpaidMeters(''), []);
+  assert.deepEqual(parseUnpaidMeters('not json'), []);
+
+  let list = withUnpaidMeter([], { day: '2026-11-21', legId: 'fri' });
+  list = withUnpaidMeter(list, { day: '2026-11-23', legId: 'sun' });
+  list = withUnpaidMeter(list, { day: '2026-11-22', legId: 'sat' });
+  list = withUnpaidMeter(list, { day: '2026-11-22', legId: 'sat' });
+  assert.equal(list.length, 3, 'a weekend off is three days, not the last one, and never one twice');
+
+  const card = unpaidMeterCard(list);
+  assert.equal(card?.newest.legId, 'sun', 'the meter has not moved since Sunday');
+  assert.deepEqual(card?.earlierDays, ['2026-11-21', '2026-11-22'], 'the rest are named');
+  assert.equal(unpaidMeterCard([]), null);
 });

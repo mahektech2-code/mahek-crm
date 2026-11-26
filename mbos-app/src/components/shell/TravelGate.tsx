@@ -45,6 +45,14 @@ export function TravelGate() {
   const boot = useBoot();
   const userId = boot.session?.user.id ?? '';
   const starting = React.useRef(false);
+  /*
+   * WHILE THE RADIO IS ASKED, HE IS TOLD. The fix below may take its whole
+   * ten seconds, and nothing on screen changed in that time — so "Start
+   * visit" looked dead, was pressed again, and on a slow phone the second
+   * press arrived as the first was landing. A sheet that says what is
+   * happening costs nothing and is gone the moment the visit screen opens.
+   */
+  const [pending, setPending] = React.useState<string | null>(null);
 
   const close = () => set({ travelTo: null });
 
@@ -86,6 +94,7 @@ export function TravelGate() {
     starting.current = true;
     void (async () => {
       try {
+        setPending(to.customerName);
         const plan = visitLegPlan(await openSessionLeg(userId).then((s) =>
           s ? { modeKey: s.modeKey, odometerStartKm: s.odometerStartKm } : null,
         ));
@@ -119,6 +128,7 @@ export function TravelGate() {
         notify('Could not start this visit. Nothing is lost. Try again.', 'error');
       } finally {
         starting.current = false;
+        setPending(null);
       }
     })();
     /* `beginVisit`, `set` and `notify` are stable store actions. */
@@ -160,6 +170,20 @@ export function TravelGate() {
             style={{ marginTop: 14 }}
           />
           <PillButton label="Not now" variant="outline" onPress={close} style={{ marginTop: 10 }} />
+        </View>
+      </BottomSheet>
+    );
+  }
+
+  if (pending) {
+    return (
+      <BottomSheet open onClose={() => undefined}>
+        <View accessible accessibilityLiveRegion="polite" style={{ paddingBottom: 4, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <Icon name="locate" size={20} color={C.primaryDeep} strokeWidth={2} />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <T style={[{ fontSize: 18, lineHeight: 23, color: C.ink }, weight(800)]}>{'Starting trip to ' + pending + '…'}</T>
+            <T style={{ fontSize: 13, lineHeight: 18, color: C.muted, marginTop: 4 }}>Finding where you are. This takes a few seconds.</T>
+          </View>
         </View>
       </BottomSheet>
     );

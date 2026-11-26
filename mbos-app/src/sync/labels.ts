@@ -35,6 +35,7 @@ export const ENTITY_LABEL: Record<string, string> = {
   customer: 'New shop',
   plan_day: 'Day plan',
   plan_stops: 'Shops for the day',
+  stop_skip: 'Stop skipped',
   territory_request: 'Area request',
 };
 

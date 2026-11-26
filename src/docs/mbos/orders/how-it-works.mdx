@@ -53,10 +53,11 @@ When the order arrives the office repeats the checks with **today's** figures, b
 2. **Not credit-blocked**, with the block reason in the refusal.
 3. **Real products, at least <Setting k="mbos.orders.minimumQuantityCans" /> cans.**
 4. **The quoted rate is still the list rate.** A changed price is refused with the new rate, so the salesman confirms it with the shop rather than accounts discovering it.
-5. **Credit today**, when <Setting k="mbos.credit.blockOnLimitExceeded" /> is on. If the phone's outstanding was older than <Setting k="mbos.credit.outstandingStaleHours" /> hours and differed from today's, the refusal says "the limit moved under you" rather than "you went over it" — they send him to different people.
+5. **No bill too far overdue** — a new order is refused (`overdue_blocked`) where the billing party has a bill at least <Setting k="mbos.credit.overdueDaysBlockOrders" /> days past due (0 is off; unstated and disputed bills never block).
+6. **Credit today**, when <Setting k="mbos.credit.blockOnLimitExceeded" /> is on. If the phone's outstanding was older than <Setting k="mbos.credit.outstandingStaleHours" /> hours and differed from today's, the refusal says "the limit moved under you" rather than "you went over it" — they send him to different people.
 
 <Callout kind="money">
-With <Setting k="mbos.credit.blockOnLimitExceeded" /> on, an order that would take the customer over the limit **at the office** is refused outright, even where the phone treated the same overshoot as an approval. With it off, the phone's approval route stands.
+With <Setting k="mbos.credit.blockOnLimitExceeded" /> on, an order that would take the customer over the limit **at the office** is refused outright. The phone now asks the same question before it saves: the dock says the office will not accept it, holds the button, and offers Call accounts and Collect payment. With it off, the phone's approval route stands.
 </Callout>
 
 A resend of the same order from the same salesman is accepted as itself, never as a duplicate: the id is minted on the phone, and a slow answer that made the phone send again must not put the order on his Not accepted list while it sits in accounts' queue.
@@ -81,12 +82,10 @@ An order carries three parties' words: **status** is ours (accepted, dispatched,
 
 ## Settings
 
-<SettingsTable keys={["products.priceSource", "mbos.orders.approvalThresholdPaise", "mbos.orders.secondTierThresholdPaise", "mbos.orders.minimumQuantityCans", "mbos.orders.numberSeriesPrefix", "mbos.credit.blockOnLimitExceeded", "mbos.credit.outstandingStaleHours", "products.starterListCount", "products.frequentCount"]} />
+<SettingsTable keys={["products.priceSource", "mbos.orders.approvalThresholdPaise", "mbos.orders.secondTierThresholdPaise", "mbos.orders.minimumQuantityCans", "mbos.orders.numberSeriesPrefix", "mbos.credit.blockOnLimitExceeded", "mbos.credit.outstandingStaleHours", "mbos.credit.overdueDaysBlockOrders", "mbos.credit.openOrderWindowDays", "mbos.credit.accountsPhone", "products.starterListCount", "products.frequentCount"]} />
 
 ## Where the code and the intent disagree today
 
 - AGENTS.md says a lead becomes a customer on the **first** order; the code converts on the **second** (`src/lib/services/lead-conversion-service.ts` `convertLeadOnSecondOrder`, called from `handleOrder`).
 - AGENTS.md says a decline notification carries **no** handset link; the code sends `/orders`, which exists on the phone (`src/lib/services/order-approval-service.ts` `tellTheAuthor`).
-- <Setting k="mbos.credit.overdueDaysBlockOrders" /> is on the Settings screen but nothing reads it — overdue bills never block an order.
 - The server accepts delivery and customer confirmations on an order update (`handleOrderProgress`), but no screen on the phone sends one.
-- The phone's credit engine says over-limit is "an approval, never a refusal"; with <Setting k="mbos.credit.blockOnLimitExceeded" /> on, the office refuses the same order outright.

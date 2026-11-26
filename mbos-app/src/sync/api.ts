@@ -613,6 +613,13 @@ export type PullPayload = {
   customers?: unknown[];
   products?: unknown[];
   priceList?: unknown[];
+  /** Shops priced under a key other than their tag, and what their list does not sell — see `sync/money-channels.ts`. */
+  priceKeys?: unknown[];
+  priceUnoffered?: unknown[];
+  /** Ordered, not yet invoiced, per billing party — the office's figure. */
+  openOrdered?: unknown[];
+  /** The office's word on each receipt he reported. */
+  myPayments?: unknown[];
   schemes?: unknown[];
   timeline?: unknown[];
   journeyStops?: unknown[];

@@ -1153,6 +1153,14 @@ export async function recordPayment(
 export type BillFilters = {
   customerId?: string;
   /**
+   * Bills dated on or after this day, OR still open whatever their date — the
+   * handset's statement window with the debt it is collecting kept whole. A
+   * bill from fourteen months ago that is still unpaid is the oldest debt on
+   * the account and the first thing chased; a window alone took it off the
+   * collection picker the month it turned thirteen.
+   */
+  openOrFrom?: string;
+  /**
    * `unpaid`, `partially_paid` or `paid` — the stored column, not a derived
    * word. It sat here unread for as long as it has existed: the Bills ledger
    * declared it and then filtered on it in the browser, over an array it had
@@ -1300,6 +1308,9 @@ function billsWhere(ids: string[] | null, filters?: BillFilters) {
        read would disagree about which bills are in the list — which is the
        exact drift the helper exists to prevent. */
     filters?.from ? gte(bills.billDate, filters.from) : undefined,
+    filters?.openOrFrom
+      ? sql`(${bills.billDate} >= ${filters.openOrFrom} or ${bills.amount} > ${bills.paidAmount})`
+      : undefined,
     filters?.updatedSince ? gt(bills.updatedAt, filters.updatedSince) : undefined,
   );
 }

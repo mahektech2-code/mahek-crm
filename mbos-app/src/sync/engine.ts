@@ -21,6 +21,7 @@ import { applyPull, missingCustomerIds } from './pull';
 import { flush as flushTrail } from './trail';
 import { flushErrors } from '../native/crash-log';
 import { runMediaQueue } from './media';
+import { adoptsServerId } from '../data/day-shape';
 import { isoDate } from '../lib/format';
 import { buildLabel } from '../native/updates';
 import { needsRebootstrap } from '../engines/rebootstrap';
@@ -214,6 +215,16 @@ async function onePass(empty: SyncOutcome, _opts: { manual?: boolean }): Promise
          for ever, for a write that had landed on the first attempt. */
       await markSynced(item, result.serverReceivedAt ?? null);
       if (result.serverNumber) await stampServerNumber(item, result.serverNumber);
+      /* A day he planned that the office had already proposed: the office
+         answers with ITS id, and the phone takes it — see `adoptPlanDay`. */
+      if (adoptsServerId(item, result.serverId)) {
+        try {
+          const { adoptPlanDay } = await import('../data/journey');
+          await adoptPlanDay(item.entityId, result.serverId as string);
+        } catch {
+          /* The day landed; the next pull still brings the office's row. */
+        }
+      }
       accepted += 1;
     } else if (result.status === 'rejected' && isOwnDuplicate(item, result.code)) {
       /*

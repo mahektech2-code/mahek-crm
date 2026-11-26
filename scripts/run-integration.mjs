@@ -95,6 +95,9 @@ const files = [
   "src/lib/order-change.test.ts",
   // A field payment's remainder is on account once, not twice.
   "src/lib/mbos-payment-on-account.test.ts",
+  // Money at the edges of a field sync: a settled bill named, the overdue
+  // block, the order's financial year, ordered-not-billed, receipt decisions.
+  "src/lib/mbos-money-edges.test.ts",
   // A reminder is due on a real day, not in the past, and only its people move it.
   "src/lib/reminder-guards.test.ts",
   // The ERP: access, powers, working location and the masters.

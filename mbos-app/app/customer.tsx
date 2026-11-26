@@ -32,7 +32,7 @@ import {
   type CustomerPayment,
   type TimelineEvent,
 } from '../src/data/customers';
-import { accountType, isLiveLead } from '../src/lib/account-label';
+import { accountType, FILED_LEAD_WORD, isFiledLead, isLiveLead } from '../src/lib/account-label';
 import {
   buildStatement,
   countsAsMoney,
@@ -48,6 +48,7 @@ import { cleanAmount, paiseFromTyped } from '../src/lib/money-input';
 import { Appear, DUR, Stagger, animateLayoutFor } from '../src/components/ui/motion';
 import { feedback } from '../src/components/ui/feedback';
 import { complaintStatusBadge, syncBadge } from '../src/sync/labels';
+import { shopRefusalLine } from '../src/data/shop-refusal';
 
 /**
  * The customer record.
@@ -210,6 +211,8 @@ export default function CustomerRecord() {
   const [lead, setLead] = React.useState<Lead | null>(null);
   /* Whether the phone holds ANY lead row for this shop, live or not. */
   const [leadRowHeld, setLeadRowHeld] = React.useState(false);
+  /* A lead filed away on this phone — `isFiledLead`, the list's own rule. */
+  const [filedLead, setFiledLead] = React.useState(false);
   const pTab = useStore((s) => s.pTab);
   const tlFilter = useStore((s) => s.tlFilter);
   const set = useStore((s) => s.set);
@@ -389,6 +392,7 @@ export default function CustomerRecord() {
       if (!live) return;
       setLeadRowHeld(!!row);
       setLead(row && isLiveLead(facts, row) ? row : null);
+      setFiledLead(isFiledLead(facts, row ?? null));
     });
     return () => {
       live = false;
@@ -406,6 +410,7 @@ export default function CustomerRecord() {
   }
 
   const dues = c.outstandingPaise / 100;
+  const refusedLine = shopRefusalLine(c);
   const owner = c.contactPerson ?? c.name;
 
   /* WHAT KIND OF ACCOUNT THIS IS, from the shared pure rule rather than from
@@ -416,6 +421,7 @@ export default function CustomerRecord() {
     /* A live lead row, or — where the phone holds no lead row at all — the
        office's own `kind = 'lead'`, exactly as the list reads it. */
     isLead: lead || (!leadRowHeld && isLiveLead({ kind: c.kind ?? null, thirdParty: c.thirdParty }, null)) ? 1 : 0,
+    isFiledLead: filedLead ? 1 : 0,
   });
 
   /* The statement for the window on screen. Derived rather than held in state:
@@ -502,6 +508,28 @@ export default function CustomerRecord() {
             </View>
           ) : null}
 
+          {/* A SHOP HE ADDED THAT THE OFFICE REFUSED, said at the top — it used
+              to look like every other shop for ever, and the order he opened it
+              for would be saved and then blocked. `order.tsx` refuses a new
+              order against it in the same words; see `shop-refusal.ts`. */}
+          {refusedLine ? (
+            <View style={{ marginTop: 12, backgroundColor: C.dangerBg, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <Icon name="warn" size={20} color={C.danger} strokeWidth={2.2} />
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={[{ fontSize: 14, lineHeight: 19, color: C.danger }, weight(700)]}>Office did not accept this shop</Text>
+                <Text style={[{ marginTop: 2, fontSize: 12, lineHeight: 17, color: C.danger }, weight(400)]}>{refusedLine}</Text>
+              </View>
+              <Pressable
+                onPress={() => router.push('/rejections?from=customers')}
+                accessibilityRole="button"
+                accessibilityLabel="Open Not accepted"
+                hitSlop={6}
+                style={({ pressed }) => ({ minHeight: 36, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 18, backgroundColor: pressed ? C.wash : C.surface, justifyContent: 'center' })}>
+                <Text style={[{ fontSize: 12, lineHeight: 17, color: C.danger }, weight(700)]}>Open</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
           {/*
             THE WAY TO THE FUNNEL, from the record.
 
@@ -534,6 +562,31 @@ export default function CustomerRecord() {
               <Text numberOfLines={1} style={[{ flex: 1, minWidth: 0, fontSize: 14, color: C.primaryDeep }, weight(700)]}>
                 {'Lead · ' + stageLabel(stageOf(lead))}
                 <Text style={[{ color: C.muted }, weight(500)]}>{' · next stage / pending'}</Text>
+              </Text>
+              <Text style={[{ fontSize: 18, lineHeight: 20, color: C.primaryDeep }, weight(700)]}>›</Text>
+            </Pressable>
+          ) : filedLead && c ? (
+            /* A lead filed away: its history and its way back are on the lead
+               record, not in these ledgers — the same door the list opens. */
+            <Pressable
+              onPress={() => router.push(`/lead?id=${c.id}&from=customer`)}
+              accessibilityRole="button"
+              accessibilityLabel={FILED_LEAD_WORD + ' · open the lead'}
+              style={({ pressed }) => ({
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 10,
+                marginTop: 12,
+                minHeight: 48,
+                paddingVertical: 6,
+                paddingHorizontal: 16,
+                borderRadius: 24,
+                backgroundColor: pressed ? C.primaryTint : C.surface,
+              })}>
+              <Icon name="person" size={16} color={C.primaryDeep} strokeWidth={2} />
+              <Text numberOfLines={1} style={[{ flex: 1, minWidth: 0, fontSize: 14, color: C.primaryDeep }, weight(700)]}>
+                {FILED_LEAD_WORD}
+                <Text style={[{ color: C.muted }, weight(500)]}>{' · open the lead'}</Text>
               </Text>
               <Text style={[{ fontSize: 18, lineHeight: 20, color: C.primaryDeep }, weight(700)]}>›</Text>
             </Pressable>
@@ -740,6 +793,14 @@ export default function CustomerRecord() {
                     <Pill text="Not pinned yet" height={24} bg={C.warnBg} fg={C.warnInk} a11y="Map pin not pinned yet" />
                   )}
                 </InfoRow>
+                {/* The written address, which a lead carried down its own
+                    channel and lost the day it converted — for the half of the
+                    book with no pin, it is the way to the door. */}
+                {c.address ? (
+                  <InfoRow word="Address">
+                    <Text numberOfLines={3} style={{ flex: 1, minWidth: 0, fontSize: 14, lineHeight: 20, color: C.ink }}>{c.address}</Text>
+                  </InfoRow>
+                ) : null}
                 <InfoRow word="Beat">
                   <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, fontSize: 14, color: C.ink }}>{c.beat ?? '—'}</Text>
                 </InfoRow>
@@ -994,7 +1055,11 @@ export default function CustomerRecord() {
                       </View>
                       <View style={{ alignItems: 'flex-end', gap: 4 }}>
                         <Text style={{ fontSize: 12, lineHeight: 17, color: C.muted }}>{pretty(o.orderedAt)}</Text>
-                        {o.status ? <Badge tone={orderTone(o.status)}>{o.status}</Badge> : null}
+                        {o.pending ? (
+                          <Badge tone="amber">Not sent yet</Badge>
+                        ) : o.status ? (
+                          <Badge tone={orderTone(o.status)}>{o.status}</Badge>
+                        ) : null}
                       </View>
                     </View>
                   </Stagger>
@@ -1020,7 +1085,10 @@ export default function CustomerRecord() {
               sentence the Accounts app puts above its own ledger for the same
               account, one screen over.
             */}
-            {accountKind === 'Lead' ? (
+            {/* Only while there is nothing to show: a lead that ordered once
+                has a bill, and the bill is the point — hiding it behind
+                "a lead has never ordered" told him the opposite of the truth. */}
+            {accountKind === 'Lead' && bills.length === 0 && receipts.length === 0 ? (
               <Empty
                 head="Nothing billed to a lead"
                 body="A lead has never ordered from us. When the first order is billed, it will show here."

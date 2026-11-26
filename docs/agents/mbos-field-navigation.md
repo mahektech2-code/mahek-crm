@@ -88,3 +88,53 @@ a reading good to a city block cannot answer. Neither the cadence nor that range
 is in the registry — nothing is priced, refused or paid on either. What IS
 configuration is `mbos.location.activityFixMaxAgeSeconds`, because that decides
 what a screen ASSERTS about a reading rather than how often one is taken.
+
+**A VISIT THAT NAMES NO STOP STILL MARKS THE STOP IT WAS.** Stop rows are
+minted on the server from the picks and reach the phone on the next pull, so
+a man who picked offline and walked into the first shop sent a visit with no
+`journeyPlanStopId` — and the office counted the stop he planned and made as a
+miss. `handleVisit` now finds it by what it is: his plan on the visit's
+Asia/Kolkata date (named in the SQL), this shop, still `planned`, earliest in
+the walking order; marks it visited and binds the visit to it
+(`journey_plan_stop_id`, `was_planned`). A stop already visited or skipped is
+left alone.
+
+**A STOP IS SKIPPED FROM THE PHONE, WITH A REASON.** `stop_skip` (op `update`,
+entityId = the stop id, payload `{ id, reason }`). The stop must be on one of
+HIS plans (checked through the plan, never trusted from the id). The verdict
+is pure, `stopSkipVerdict`: a VISIT WINS — a visited stop is never moved to
+skipped and the skip is accepted as nothing to do; a second skip changes
+nothing, its reason included; no reason is refused. The write is guarded by
+`status = 'planned'` so a visit landing in between wins. His manager is told.
+
+**A DAY HE PLANNED THAT CLASHES WITH AN OFFICE PROPOSAL IS ADOPTED, not
+refused.** One row per person per day stays the rule, so his `plan_day` create
+loses the race — and it used to come back `duplicate`, which stranded his
+picks as `plan_stops` against an id the office never held, retrying for ever.
+`adoptClashingDay` accepts it with `serverId` = the office's day; a `serverId`
+different from the item's id is the handset's signal to rename its local day
+and repoint what is queued against it. Planning the SAME city the office
+proposed (trimmed, case-insensitive) is his agreement and is recorded exactly
+as one (`mbos.journey.answered`, `via: planned_on_phone`, the manager told); a
+different city moves nothing — the proposal waits, and `plan_stops` against it
+is refused with a sentence sending him to answer it on the Journey tab.
+
+**The handset half of those three.** `adoptPlanDay` (data/journey.ts), called
+by the sync engine on an accepted `plan_day` create whose `serverId` differs
+(`adoptsServerId`), renames the local day — or folds its picks into the
+office's row if a pull brought it first — and repoints every outbox row still
+under the old id, payload `id` and `dependsOn` included. `pickShops` now
+depends on the day's create WHERE that create is still in the outbox, so a
+refused create blocks the picks with a reason instead of leaving them retrying;
+and `landedDependencies` (sync/ordering.ts) never holds an item behind its OWN
+id, because `plan_stops` shares its id with the day it waits on. The Next stop
+card offers "Skip, with a reason" (`skipStop`, local first, queued as
+`stop_skip`), and the card moves on. A day still with the office lists its
+picked shops with Start visit on the Journey card, and the Journeys day sheet
+reads the queued picks instead of "No shops picked yet".
+
+**Navigate needs `<queries>` on Android 11+.** `openMaps` asks
+`canOpenURL('google.navigation:…')`, and package visibility answers false for
+any scheme the manifest has not declared — so Navigate always fell through to
+the browser's maps page. `plugins/withNavigationQueries.js` declares
+`google.navigation`, `geo` and `whatsapp` by scheme on every prebuild.

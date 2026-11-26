@@ -69,6 +69,13 @@ export const ENTITY_TABLE: Record<string, string> = {
    * one state this model exists to prevent.
    */
   plan_stops: 'journey_days',
+  /*
+   * A SHOP HE ADDED. Reference data everywhere else, but a field shop is the
+   * one customers row this phone authors, and without this the office refusing
+   * it reached the outbox and nothing else: the card read like any other shop
+   * and went on taking orders that could only ever be blocked behind it.
+   */
+  customer: 'customers',
 };
 
 /** Rows that belong to a record and go when its create is let go. */

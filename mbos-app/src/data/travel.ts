@@ -1,4 +1,5 @@
 import { all, getKv, one, run, setKv } from '../db';
+import { parseUnpaidMeters, unpaidMeterCard, withUnpaidMeter, type UnpaidMeterEntry } from '../lib/travel-leg';
 import { insertAndQueue, stamp } from './write';
 import {
   computeDay,
@@ -640,8 +641,10 @@ export async function arrivedLegFor(userId: string, customerId: string): Promise
     `SELECT * FROM travel_legs
       WHERE userId = ? AND customerId = ? AND origin = 'visit'
         AND endedAt IS NOT NULL AND visitId IS NULL
+        AND COALESCE(note, '') NOT LIKE ?
       ORDER BY endedAt DESC LIMIT 1`,
-    [userId, customerId],
+    /* Not a journey he walked away from — see `walkAway`. */
+    [userId, customerId, `%${NOT_GOING_IN}%`],
   );
 }
 
@@ -753,6 +756,44 @@ export async function abandonLeg(legId: string, reason: string): Promise<{ ok: b
   const leg = await one<TravelLeg>('SELECT * FROM travel_legs WHERE id = ?', [legId]);
   if (!leg) return { ok: false };
   await closeAbandoned(leg, reason);
+  return { ok: true };
+}
+
+/**
+ * WHAT A "NOT GOING IN" IS WRITTEN AS on the journey that got him there.
+ *
+ * Public so `arrivedLegFor` can recognise it — see `walkAway`.
+ */
+export const NOT_GOING_IN = 'Arrived and did not go in';
+
+/**
+ * He got there and is not going in — the shutter is down, the owner has gone
+ * to Pune, the godown is shut for stock-taking.
+ *
+ * Until this existed an arrival had exactly one way out: checking in. So a
+ * shop found shut was a visit opened, a clock run up to the dwell floor and a
+ * record saved "not checked" — or an arrival left on the one bar he cannot
+ * dismiss, with `TravelGate` refusing every other journey for the rest of the
+ * day.
+ *
+ * **The journey is KEPT, not called off.** He really rode there: the leg is
+ * already closed at its arrival reading and its meter photograph, and those
+ * kilometres are owed to him exactly as any other ride's. What changes is the
+ * sentence on it, which is why it is a note and not `closeAbandoned` — that
+ * resets the closing reading to the opening one and would pay him nothing for
+ * a ride he made. And it is marked so `arrivedLegFor` does not hand the same
+ * journey to a visit he makes to this shop later in the day.
+ */
+export async function walkAway(legId: string, reason: string): Promise<{ ok: boolean }> {
+  const leg = await one<TravelLeg>('SELECT * FROM travel_legs WHERE id = ?', [legId]);
+  if (!leg) return { ok: false };
+  const said = `${NOT_GOING_IN}: ${reason.trim()}`;
+  await patchLeg(leg, {
+    /* Normally closed already, at the arrival. Closed here only if somehow
+       still open, at NOW with no meter — never at its start reading. */
+    endedAt: leg.endedAt ?? Date.now(),
+    note: leg.note ? `${leg.note} · ${said}` : said,
+  });
   return { ok: true };
 }
 
@@ -876,13 +917,22 @@ type LegRow = TravelLeg & { manualReason?: string | null };
  * zero-kilometre row on every such day for the policy to reason about.
  */
 
-/** The session he is punched in on, if he is on one. */
-export async function openSessionLeg(userId: string): Promise<TravelLeg | null> {
+/**
+ * The session he is punched in on, if he is on one.
+ *
+ * `startedSince` bounds it to the punch-in stretch being asked about — the
+ * punch-out passes the start of the stretch it is ending, so a session left
+ * open from an earlier day is not taken for today's. See `endDay` on Home.
+ */
+export async function openSessionLeg(userId: string, startedSince?: number): Promise<TravelLeg | null> {
   return one<TravelLeg>(
     `SELECT * FROM travel_legs
-      WHERE userId = ? AND origin = 'session' AND endedAt IS NULL
-      ORDER BY startedAt DESC, clientCreatedAt DESC LIMIT 1`,
-    [userId],
+      WHERE userId = ? AND origin = 'session' AND endedAt IS NULL` +
+      /* A minute's grace: the session leg is written just AFTER the punch-in
+         it belongs to, never before, so this only guards clock rounding. */
+      (startedSince == null ? '' : ' AND startedAt >= ?') +
+      ` ORDER BY startedAt DESC, clientCreatedAt DESC LIMIT 1`,
+    startedSince == null ? [userId] : [userId, startedSince - 60_000],
   );
 }
 
@@ -986,31 +1036,41 @@ export async function closeStaleSessions(userId: string, dayBoundaryMs: number):
        leg on such a day is excluded in favour of the meter. That was true and
        said nowhere: he found out when the claim came back. Home says so the
        next morning and offers the camera — see `addLateClosingReading`. */
-    if (leg.odometerStartKm != null) {
-      await setKv(UNPAID_METER_KEY, JSON.stringify({ day: leg.day, legId: leg.id })).catch(() => {});
+    if (leg.odometerStartKm != null && leg.day) {
+      /* ADDED to the list, never written over it — see `parseUnpaidMeters`. */
+      const kept = parseUnpaidMeters(await getKv(UNPAID_METER_KEY).catch(() => null));
+      await setKv(UNPAID_METER_KEY, JSON.stringify(withUnpaidMeter(kept, { day: leg.day, legId: leg.id }))).catch(() => {});
     }
   }
   return open.length;
 }
 
-/** The kv key for the last day closed with no end reading. See `closeStaleSessions`. */
+/** The kv key for the days closed with no end reading — a list. See `closeStaleSessions`. */
 export const UNPAID_METER_KEY = 'travel.unpaidMeterDay';
 
-/** What the morning card needs: the day, the leg, and the reading it opened on. */
-export type UnpaidMeter = { day: string; legId: string; startKm: number | null };
+/**
+ * What the morning card needs: the day, the leg, the reading it opened on —
+ * and any EARLIER days closed the same way, which can no longer be answered by
+ * photograph and are named so he can ask the office. See `parseUnpaidMeters`.
+ */
+export type UnpaidMeter = { day: string; legId: string; startKm: number | null; earlierDays: string[] };
 
 /** The day whose vehicle km went unpaid for want of a punch-out, until he has answered it. */
 export async function unpaidMeterDay(): Promise<UnpaidMeter | null> {
-  const raw = await getKv(UNPAID_METER_KEY);
-  if (!raw) return null;
   try {
-    const kept = JSON.parse(raw) as { day?: string; legId?: string };
-    if (!kept.day || !kept.legId) return null;
-    const leg = await one<TravelLeg>('SELECT * FROM travel_legs WHERE id = ?', [kept.legId]);
-    /* A leg already given its reading — on this phone, or a day the office
-       corrected — is not asked about twice. */
-    if (!leg || leg.odometerStartKm == null || leg.odometerEndKm !== leg.odometerStartKm) return null;
-    return { day: kept.day, legId: kept.legId, startKm: leg.odometerStartKm };
+    const kept = parseUnpaidMeters(await getKv(UNPAID_METER_KEY));
+    const open: { entry: UnpaidMeterEntry; startKm: number }[] = [];
+    for (const entry of kept) {
+      const leg = await one<TravelLeg>('SELECT * FROM travel_legs WHERE id = ?', [entry.legId]);
+      /* A leg already given its reading — on this phone, or a day the office
+         corrected — is not asked about twice. */
+      if (!leg || leg.odometerStartKm == null || leg.odometerEndKm !== leg.odometerStartKm) continue;
+      open.push({ entry, startKm: leg.odometerStartKm });
+    }
+    const card = unpaidMeterCard(open.map((o) => o.entry));
+    if (!card) return null;
+    const startKm = open.find((o) => o.entry.legId === card.newest.legId)?.startKm ?? null;
+    return { day: card.newest.day, legId: card.newest.legId, startKm, earlierDays: card.earlierDays };
   } catch {
     return null;
   }

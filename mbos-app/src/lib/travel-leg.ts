@@ -335,3 +335,56 @@ export function legPricedBySession(session: SessionFacts): boolean {
 export function promptsForExpenses(session: SessionFacts): boolean {
   return !legPricedBySession(session);
 }
+
+/* ══════════════════════════════════════ metered days closed with no reading */
+
+/** One metered day the app closed for want of a punch-out. */
+export type UnpaidMeterEntry = { day: string; legId: string };
+
+/**
+ * THE DAYS CLOSED WITH NO READING ARE A LIST, and it was one slot.
+ *
+ * `closeStaleSessions` wrote the last such day over whatever was there, so a
+ * phone switched off for a long weekend — Friday, Saturday and Sunday each
+ * closed on the next launch — said only Sunday's kilometres were unpaid, and
+ * Friday's and Saturday's went unpaid with nothing on any screen saying so.
+ * A run that closed Monday's before he had answered Sunday's did the same.
+ *
+ * Only the NEWEST can be answered by photograph: the meter has not moved since
+ * then, so what it reads now is where that day ended, and it has moved since
+ * every earlier one. So the newest is offered the camera and the rest are
+ * NAMED — the office can still correct them, and he cannot ask it to about a
+ * day he was never told of. Answering or leaving the newest settles the card;
+ * the earlier ones were said on it.
+ *
+ * `raw` is the stored value: a list, or the single object an older build
+ * wrote, or nothing.
+ */
+export function parseUnpaidMeters(raw: string | null): UnpaidMeterEntry[] {
+  if (!raw) return [];
+  try {
+    const value = JSON.parse(raw) as unknown;
+    const list = Array.isArray(value) ? value : [value];
+    return list.filter(
+      (e): e is UnpaidMeterEntry =>
+        !!e && typeof (e as UnpaidMeterEntry).day === 'string' && typeof (e as UnpaidMeterEntry).legId === 'string',
+    );
+  } catch {
+    return [];
+  }
+}
+
+/** Add one, once — the same leg closed twice is one unpaid day. */
+export function withUnpaidMeter(list: UnpaidMeterEntry[], entry: UnpaidMeterEntry): UnpaidMeterEntry[] {
+  return list.some((e) => e.legId === entry.legId) ? list : [...list, entry];
+}
+
+/** The newest still-unanswered day, and the earlier ones only to be named. */
+export function unpaidMeterCard(
+  open: UnpaidMeterEntry[],
+): { newest: UnpaidMeterEntry; earlierDays: string[] } | null {
+  if (!open.length) return null;
+  const sorted = [...open].sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
+  const newest = sorted[sorted.length - 1];
+  return { newest, earlierDays: sorted.slice(0, -1).map((e) => e.day) };
+}

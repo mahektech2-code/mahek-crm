@@ -231,6 +231,8 @@ export function receiptMessage(args: {
   mode: string;
   reference: string;
   confirmed: boolean;
+  /** The office has issued the real receipt number (`reference` is it), whether or not the money is confirmed yet. */
+  numbered?: boolean;
   collectedBy: string;
   when: string;
   chequeNumber?: string | null;
@@ -244,7 +246,7 @@ export function receiptMessage(args: {
     `Date: ${args.when}`,
     `Collected by: ${args.collectedBy}`,
     '',
-    args.confirmed
+    args.confirmed || args.numbered
       ? `Receipt no: ${args.reference}`
       : `Reference: ${args.reference}. The office will send the receipt number.`,
   ];

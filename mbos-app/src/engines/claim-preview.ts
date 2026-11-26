@@ -21,6 +21,7 @@ import {
   type ExpenseLineFacts,
   type Policy,
   type PolicySubject,
+  type TravelLegFacts,
 } from './generated/expense-policy';
 import { inrFromPaise } from '../lib/format';
 
@@ -57,6 +58,12 @@ export type ClaimPreview = {
   remainingBeforePaise: number | null;
   /** What would be left AFTER it. Null where no cap bites. */
   remainingAfterPaise: number | null;
+  /**
+   * "Bills OR travel logs": the policy accepts a trip the app recorded that
+   * day as the proof for this kind (`travelLogCounts`), and there is one — so
+   * the claim may go with no bill. False wherever either half is missing.
+   */
+  tripStandsAsProof: boolean;
 };
 
 /**
@@ -65,6 +72,20 @@ export type ClaimPreview = {
  * a line he settled this morning would light up the box he is typing in now.
  */
 const PREVIEW_ID = 'preview';
+
+/** A recorded trip, as the engine reads one — a distance, from the app. Only ever
+    priced on both sides of a comparison, so its own worth cancels out. */
+const RECORDED_TRIP: TravelLegFacts = {
+  id: 'recorded-trip',
+  modeKey: 'recorded',
+  gpsMetres: 1,
+  gpsCoveragePct: 100,
+  manualMetres: null,
+  odometerMetres: null,
+  hasOdometerPhoto: false,
+  ticketAmountPaise: null,
+  hasTicketProof: false,
+};
 
 /**
  * An amount no policy has a ceiling above, used to ASK the engine what is left
@@ -151,10 +172,13 @@ export function previewClaim(args: {
   day: string;
   /** What is already claimed on that day, this one excluded. */
   alreadyClaimed: readonly ClaimedLine[];
+  /** A trip the app recorded on that day — a travel leg with a start and an end, or a distance. */
+  recordedTrip?: boolean;
 }): ClaimPreview {
   const { policy, kind, claimedPaise, hasBill, day, alreadyClaimed } = args;
   if (!policy) {
     return {
+      tripStandsAsProof: false,
       eligiblePaise: 0,
       excessPaise: 0,
       unpriced: true,
@@ -193,6 +217,22 @@ export function previewClaim(args: {
   });
 
   const without = priceWith(null);
+
+  /* WHETHER THE TRIP IS THE BILL, asked of the engine rather than read off
+     the rules: the same unproven line with and without a recorded leg beside
+     it. Only where the leg is what lifts the "needs a bill" exception does the
+     policy accept the trip (`travelLogCounts`). */
+  const proofAsked = (legs: TravelLegFacts[]) =>
+    computeDay(policy.policy, policy.subject, {
+      day,
+      clock: { departedMinutes: null, returnedMinutes: null, arrivedAtDestinationMinutes: null },
+      departedFromHometown: true,
+      stayedInHotel: kind === 'lodging',
+      overnight: kind === 'lodging',
+      legs,
+      lines: [...standing, { ...previewLine(Math.max(1, claimedPaise)), hasProof: false }],
+    }).exceptions.some((e) => e.lineId === PREVIEW_ID && e.kind === 'missing_proof');
+  const tripStandsAsProof = !!args.recordedTrip && proofAsked([]) && !proofAsked([RECORDED_TRIP]);
 
   /* What a day of this kind could still take, measured rather than derived.
      `probeAt` prices the standing day plus n lines nothing could pay in full;
@@ -244,6 +284,7 @@ export function previewClaim(args: {
      headroom he reads as an accusation rather than as a budget. */
   if (claimedPaise <= 0) {
     return {
+      tripStandsAsProof,
       eligiblePaise: 0,
       excessPaise: 0,
       unpriced: false,
@@ -263,12 +304,13 @@ export function previewClaim(args: {
   const eligible = Math.max(0, computed.totalEligiblePaise - without.totalEligiblePaise);
   const excess = Math.max(0, claimedPaise - eligible);
   const remainingAfter = remainingBefore === null ? null : Math.max(0, remainingBefore - eligible);
-  const proofRequired = computed.exceptions.some(
-    (e) => e.lineId === PREVIEW_ID && e.kind === 'missing_proof',
-  );
+  const proofRequired =
+    !tripStandsAsProof &&
+    computed.exceptions.some((e) => e.lineId === PREVIEW_ID && e.kind === 'missing_proof');
 
   if (excess > 0) {
     return {
+      tripStandsAsProof,
       eligiblePaise: eligible,
       excessPaise: excess,
       unpriced: false,
@@ -280,6 +322,7 @@ export function previewClaim(args: {
   }
   if (proofRequired && !hasBill) {
     return {
+      tripStandsAsProof,
       eligiblePaise: eligible,
       excessPaise: 0,
       unpriced: false,
@@ -290,6 +333,7 @@ export function previewClaim(args: {
     };
   }
   return {
+    tripStandsAsProof,
     eligiblePaise: eligible,
     excessPaise: 0,
     unpriced: false,

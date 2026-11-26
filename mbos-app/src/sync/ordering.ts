@@ -97,6 +97,51 @@ export function partition<T extends Eligible>(args: {
 }
 
 /**
+ * THE DEPENDENCIES THAT HAVE LANDED although no synced row says so.
+ *
+ * A dependency with NO row waiting anywhere in the outbox has landed: its
+ * create went up and has since been pruned (`pruneSynced`), or it is a record
+ * the office made. Without this, pruning sent rows would leave anything
+ * depending on a fortnight-old record waiting for ever.
+ *
+ * And an item is never held behind ITSELF. The day's picks (`plan_stops`)
+ * share their id with the day they depend on, so "is a row with that id still
+ * waiting" was always yes — the picks' own row — and once the day's create had
+ * been pruned they waited for ever. A row of the same KIND under that id (an
+ * earlier set of picks for the same day) is not what it waits on either; only
+ * a different kind of record under the id is — or my own record's create
+ * while it still waits (edits wait on it; see `updateAndQueue`). Both rules
+ * in one place: `presumedLanded` below is the same answer for callers that
+ * only know `op`.
+ */
+export function landedDependencies(
+  queued: { entityId: string; entityType: string; op?: string; dependsOn: string[] }[],
+  inFlight: { entityId: string; entityType: string; op?: string; dependsOn?: string[] }[],
+  deadIds: Set<string>,
+): Set<string> {
+  const rows = [...queued, ...inFlight];
+  const landed = new Set<string>();
+  for (const q of queued) {
+    for (const d of q.dependsOn) {
+      if (deadIds.has(d)) continue;
+      const holding = rows.some((r) => {
+        if (r === q || r.entityId !== d) return false;
+        /* An edit waiting on its own record's create is not what anything
+           waits on (`presumedLanded`) — counting it made edits wait on
+           themselves once the create was pruned. */
+        if (r.op === 'update' && (r.dependsOn ?? []).includes(r.entityId)) return false;
+        /* Nor is an earlier row of the same kind under my own id; my own
+           record's CREATE, still waiting, is. */
+        if (q.entityId === d && r.entityType === q.entityType && r.op !== 'create') return false;
+        return true;
+      });
+      if (!holding) landed.add(d);
+    }
+  }
+  return landed;
+}
+
+/**
  * Backoff: six attempts across roughly forty minutes, then surfaced as failed.
  *
  * A queue that retries forever is a queue nobody ever looks at, and the record

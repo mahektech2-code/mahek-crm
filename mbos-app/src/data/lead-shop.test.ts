@@ -78,3 +78,67 @@ test("a refused lead's phone-only shop goes; one the office sent stays", async (
   assert.ok(db.prepare(LEAD_CREATE_REFUSED_SQL).get(lead.id), 'the refusal is read off the outbox');
   assert.equal(db.prepare(LEAD_CREATE_REFUSED_SQL).get('someone_else'), undefined);
 });
+
+function leadCreate(db: DatabaseSync, id: string, entityId: string, state: string, code: string | null = null) {
+  db.prepare(
+    `INSERT INTO sync_queue (id, entityType, entityId, op, payload, dependsOn, idempotencyKey, nextAttemptAt, state, failureCode, createdAt)
+     VALUES (?, 'lead', ?, 'create', '{}', '[]', ?, 0, ?, ?, 0)`,
+  ).run(id, entityId, id, state, code);
+}
+
+test('ghosts stranded by an older build go on the next pull — only refused, only the phone’s own', async () => {
+  const { DROP_REFUSED_LEAD_SHOPS_SQL, REFUSED_LEAD_SHOPS_SQL } = await import('./lead-shop');
+  const db = handset();
+  const ghost = (id: string) => db.prepare(LEAD_SHOP_SQL).run(...leadShopParams({ ...lead, id }));
+  ghost('refused');
+  ghost('waiting');
+  db.prepare("INSERT INTO customers (id, name, kind, lastSyncedAt) VALUES ('office_copy', 'Office', 'lead', 9)").run();
+  leadCreate(db, 'q1', 'refused', 'rejected', 'duplicate');
+  leadCreate(db, 'q2', 'waiting', 'queued');
+  leadCreate(db, 'q3', 'office_copy', 'rejected', 'duplicate');
+  assert.equal((db.prepare(REFUSED_LEAD_SHOPS_SQL).get() as { n: number }).n, 1);
+  db.prepare(DROP_REFUSED_LEAD_SHOPS_SQL).run();
+  const left = (db.prepare('SELECT id FROM customers ORDER BY id').all() as { id: string }[]).map((r) => r.id);
+  assert.deepEqual(left, ['office_copy', 'waiting'], 'a lead still on its way keeps its shop; the office’s copy is the reconcile’s');
+});
+
+test('a refusal as a duplicate is told apart from any other, so the banner can open the existing shop', async () => {
+  const { DUPLICATE_REFUSAL_SQL } = await import('./lead-shop');
+  const db = handset();
+  leadCreate(db, 'q1', 'dup', 'rejected', 'duplicate');
+  leadCreate(db, 'q2', 'outside', 'rejected', 'not_permitted');
+  assert.equal((db.prepare(DUPLICATE_REFUSAL_SQL).get('dup') as { code: string }).code, 'duplicate');
+  assert.equal((db.prepare(DUPLICATE_REFUSAL_SQL).get('outside') as { code: string }).code, 'not_permitted');
+  assert.equal(db.prepare(DUPLICATE_REFUSAL_SQL).get('none'), undefined);
+});
+
+test('A FILED LEAD is one rule for the list and the duplicate check: a lead, and filed', async () => {
+  const { DUPLICATE_CUSTOMERS_SQL, DUPLICATE_LEADS_SQL, filedLeadClause, leadCustomerClause } = await import('./lead-query');
+  const db = handset();
+  const addLead = db.prepare(
+    `INSERT INTO leads (id, name, mobile, stage, funnelStage, archived, clientCreatedAt, deviceId) VALUES (?, ?, ?, ?, ?, ?, 1, 'dev')`,
+  );
+  addLead.run('filed', 'Filed Paints', '9822000001', 'Lost', 'lost', 1);
+  addLead.run('live', 'Live Paints', '9822000002', 'New', 'suspect', 0);
+  addLead.run('won', 'Won Paints', '9822000003', 'Converted', 'won', 1);
+  const shop = db.prepare(`INSERT INTO customers (id, name, phone, kind) VALUES (?, ?, ?, ?)`);
+  shop.run('filed', 'Filed Paints', '9822000001', 'lead');
+  shop.run('live', 'Live Paints', '9822000002', 'lead');
+  shop.run('won', 'Won Paints', '9822000003', 'customer');
+  const rows = db
+    .prepare(`SELECT id, ${leadCustomerClause('customers')} AS live, ${filedLeadClause('customers')} AS filed FROM customers ORDER BY id`)
+    .all()
+    .map((r) => ({ ...(r as Record<string, unknown>) }));
+  assert.deepEqual(rows, [
+    { id: 'filed', live: 0, filed: 1 },
+    { id: 'live', live: 1, filed: 0 },
+    { id: 'won', live: 0, filed: 0 },
+  ]);
+  const dupCustomers = db.prepare(DUPLICATE_CUSTOMERS_SQL).all().map((r) => ({ ...(r as Record<string, unknown>) }));
+  assert.deepEqual(
+    dupCustomers.map((r) => [r.id, r.isLead, r.isFiled]),
+    [['filed', 1, 1], ['live', 1, 0], ['won', 0, 0]],
+  );
+  const dupLeads = (db.prepare(DUPLICATE_LEADS_SQL).all() as { id: string }[]).map((r) => r.id).sort();
+  assert.deepEqual(dupLeads, ['filed', 'live'], 'a lost lead is still found by its number; a converted one is the customer');
+});

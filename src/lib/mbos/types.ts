@@ -14,6 +14,9 @@
 export const REJECTION_CODES = [
   "credit_blocked",
   "credit_exceeded",
+  /* A bill past `mbos.credit.overdueDaysBlockOrders` days overdue. A debt
+     policy, not the limit — so its own code, and its own answer: collect. */
+  "overdue_blocked",
   "product_inactive",
   "price_changed",
   "bill_settled",
@@ -194,6 +197,13 @@ export const SYNC_ENTITY_TYPES = [
    * which doors — he knows which of them are worth the walk on a Tuesday.
    */
   "plan_stops",
+  /**
+   * One stop he will not make today, and why. The office's day sheets have
+   * always drawn a skipped stop and its reason; nothing on the phone could
+   * set one, so a stop he decided against stayed planned and counted as a
+   * miss with no sentence against it.
+   */
+  "stop_skip",
   /**
    * The day itself: when he left, when he got back, where he went and whether
    * he slept in a hotel.
@@ -380,6 +390,27 @@ export type PullDelta = {
    * order priced from a rate nobody sells at any more.
    */
   priceList: unknown[];
+  /**
+   * Which shops' rates are filed under a key other than their tag — shops on a
+   * tag split across office price lists, or untagged shops a list resolves
+   * for — and which products their list prints a dash for. Both replaced
+   * wholesale. See `phonePriceTables`. Optional: an older server sends neither.
+   */
+  priceKeys?: { customerId: string; priceKey: string }[];
+  priceUnoffered?: { priceKey: string; productId: string }[];
+  /**
+   * ORDERED, NOT YET INVOICED, per billing party — open field and CRM orders
+   * (pending approval or approved, not yet on a bill) inside
+   * `mbos.credit.openOrderWindowDays`, in paise. Sent whole every pass; the
+   * handset zeroes what is not listed. See `openOrderedFor`.
+   */
+  openOrdered?: { customerId: string; paise: number }[];
+  /**
+   * The office's word on each receipt HE reported — reported, held,
+   * confirmed, rejected or reversed — with the reason and the receipt number,
+   * so Collections can say what Accounts decided. See `myReceiptStates`.
+   */
+  myPayments?: { id: string; status: string; receiptNo: string | null; reason: string | null; decidedAt: number | null }[];
   /** Live promotions. Eligibility and benefit are data, so no rule ships. */
   schemes: unknown[];
   /**

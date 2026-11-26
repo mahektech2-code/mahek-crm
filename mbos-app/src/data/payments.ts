@@ -6,7 +6,7 @@ import { getConfig } from './config';
 import { notify } from './notifications';
 import { cashPosition, collectionMode } from '../engines/cash';
 import { createTask } from './tasks';
-import { isoDate } from '../lib/format';
+import { todayIst } from '../lib/format';
 
 /**
  * Collecting money.
@@ -136,7 +136,7 @@ export async function collectPayment(args: {
         instrumentDate: args.chequeDate ?? undefined,
         chequePhotoId: args.chequePhotoId ?? undefined,
         billIds: args.billRefs ?? undefined,
-        receivedAt: isoDate(new Date()),
+        receivedAt: todayIst(),
         visitId: args.visitId ?? undefined,
         localReceiptRef: receiptRef,
         deviceId: base.deviceId,
@@ -304,7 +304,7 @@ export async function markBounced(paymentId: string, reason?: string): Promise<v
       (reason?.trim() ? ` (${reason.trim()})` : ''),
     customerId: payment.customerId,
     priority: 'High',
-    dueDate: isoDate(new Date()),
+    dueDate: todayIst(),
   });
 
   await notify({
@@ -343,6 +343,13 @@ export type CollectedPayment = {
   syncState: string;
   /** Why the office would not take it, where it would not. */
   syncMessage: string | null;
+  /** The office's own receipt number, once it has issued one — `TMP-…` is ours until then. */
+  receiptNumber: string | null;
+  /** Accounts' word on it (`myPayments`): reported, held, confirmed, rejected, reversed. */
+  officeStatus: string | null;
+  officeReason: string | null;
+  /** The shop's number, to send the receipt again. */
+  customerPhone: string | null;
 };
 
 /**
@@ -358,10 +365,11 @@ export type CollectedPayment = {
  * Capped like every other read of a list that grows for ever.
  */
 export async function listPayments(customerId?: string): Promise<CollectedPayment[]> {
-  const select = `SELECT p.id, p.customerId, c.name AS customerName, p.amountPaise, p.mode,
-                         p.chequeNumber, p.chequeDate, p.collectedAt, p.localReceiptRef,
+  const select = `SELECT p.id, p.customerId, c.name AS customerName, c.phone AS customerPhone, p.amountPaise, p.mode,
+                         p.chequeNumber, p.chequeDate, p.collectedAt, p.localReceiptRef, p.receiptNumber,
                          p.deposited, p.depositedAt, p.depositSlaDueAt,
-                         p.bounced, p.bouncedAt, p.syncState, p.syncMessage
+                         p.bounced, p.bouncedAt, p.syncState, p.syncMessage,
+                         p.officeStatus, p.officeReason
                     FROM payments p LEFT JOIN customers c ON c.id = p.customerId`;
   return customerId
     ? all<CollectedPayment>(
@@ -369,4 +377,25 @@ export async function listPayments(customerId?: string): Promise<CollectedPaymen
         [customerId],
       )
     : all<CollectedPayment>(`${select} ORDER BY p.collectedAt DESC LIMIT 100`);
+}
+
+/**
+ * THE REFUSED COLLECTION, read back off the outbox so "Collect it again" opens
+ * on the same shop with the same amount and mode. The refused entry is let go
+ * only once the new receipt is saved (`finishRetake`).
+ */
+export async function refusedPayment(queueId: string): Promise<{ customerId: string; amountPaise: number | null; mode: string | null } | null> {
+  const item = await one<{ payload: string; entityType: string; op: string }>(
+    'SELECT payload, entityType, op FROM sync_queue WHERE id = ?',
+    [queueId],
+  );
+  if (!item || item.entityType !== 'payment' || item.op !== 'create') return null;
+  try {
+    const p = JSON.parse(item.payload) as { customerId?: string; amountPaise?: number; mode?: string };
+    return p.customerId
+      ? { customerId: p.customerId, amountPaise: typeof p.amountPaise === 'number' ? p.amountPaise : null, mode: p.mode ?? null }
+      : null;
+  } catch {
+    return null;
+  }
 }

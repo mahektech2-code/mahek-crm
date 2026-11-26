@@ -52,6 +52,9 @@ const DATA = import.meta.dirname;
  */
 const UNCAPPED_ON_PURPOSE = [
   'SELECT id, name, phone FROM customers WHERE phone IS NOT NULL',
+  /* The same `findDuplicate` read, as `DUPLICATE_CUSTOMERS_SQL` in lead-query.ts
+     now builds it — with the list's own lead and filed-lead rule beside it. */
+  'SELECT id, name, phone, ( X OR X ) AS isLead, X AS isFiled FROM customers WHERE phone IS NOT NULL',
   /* customerPageQuery({ limit: -1 }) — the lookup above, built in customer-query.ts. */
   'X',
   'SELECT id, area, city, gpsLat AS lat, gpsLng AS lng FROM customers WHERE gpsLat IS NOT NULL AND gpsLng IS NOT NULL',

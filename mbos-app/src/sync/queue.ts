@@ -1,5 +1,5 @@
 import { all, newId, one, payloadHash, run } from '../db';
-import { backoffFor as computeBackoff, MAX_ATTEMPTS as MAX, partition, presumedLanded } from './ordering';
+import { backoffFor as computeBackoff, MAX_ATTEMPTS as MAX, landedDependencies, partition } from './ordering';
 import { whereNow, type Where } from '../native/where';
 import { DROP_PHONE_LEAD_SHOP_SQL } from '../data/lead-shop';
 import {
@@ -248,16 +248,19 @@ export async function readyItems(now = Date.now(), limit = 50): Promise<QueueIte
   /* A dependency with NO row waiting anywhere in the outbox has landed: its
      create went up and has since been pruned (`pruneSynced`), or it is a record
      the office made. Without this, pruning sent rows would leave anything
-     depending on a fortnight-old record waiting for ever. */
-  const inFlight = await all<{ entityId: string; op: string; dependsOn: string }>(
-    `SELECT entityId, op, dependsOn FROM sync_queue WHERE state = 'syncing'`,
+     depending on a fortnight-old record waiting for ever. Nor is an item held
+     behind its OWN id, nor behind an edit waiting on its own create — see
+     `landedDependencies` in `ordering.ts`. */
+  const inFlight = await all<{ entityId: string; entityType: string; op: string; dependsOn: string }>(
+    `SELECT entityId, entityType, op, dependsOn FROM sync_queue WHERE state = 'syncing'`,
   );
-  const pending = [...queued, ...inFlight].map((q) => ({
-    entityId: q.entityId,
-    op: q.op,
-    dependsOn: JSON.parse(q.dependsOn) as string[],
-  }));
-  for (const d of presumedLanded(pending, deadIds)) syncedIds.add(d);
+  for (const d of landedDependencies(
+    queued.map((q) => ({ entityId: q.entityId, entityType: q.entityType, op: q.op, dependsOn: JSON.parse(q.dependsOn) as string[] })),
+    inFlight.map((r) => ({ ...r, dependsOn: JSON.parse(r.dependsOn) as string[] })),
+    deadIds,
+  )) {
+    syncedIds.add(d);
+  }
 
   /* The decision itself is pure and lives in `ordering.ts`, so the rule that
      keeps a payment behind its order is covered by tests that need neither a

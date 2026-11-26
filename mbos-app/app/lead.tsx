@@ -22,6 +22,7 @@ import {
   leadThresholds,
   leadVisitRefusal,
   setArchived,
+  shopThatRefusedLead,
   touchLead,
   type Lead,
 } from '../src/data/leads';
@@ -52,7 +53,7 @@ import {
   type LeadFunnelView,
 } from '../src/data/lead-funnel';
 import { currentSession } from '../src/data/session';
-import { gateAsRun, leadAlert, type LeadThresholds } from '../src/engines/leads';
+import { gateAsRun, leadAlert, type DuplicateMatch, type LeadThresholds } from '../src/engines/leads';
 import {
   bandOf,
   findingLabel,
@@ -238,6 +239,9 @@ export default function LeadRecord() {
      reading "nothing sent" over a record that has had six would be worse than
      drawing nothing for a moment. */
   const [comms, setComms] = React.useState<CommunicationLog | null>(null);
+  /* The shop the office meant when it refused this lead as a duplicate, where
+     it is on this phone — the refusal offers to open it. */
+  const [existingShop, setExistingShop] = React.useState<DuplicateMatch | null>(null);
 
   const load = React.useCallback(() => {
     let live = true;
@@ -269,6 +273,9 @@ export default function LeadRecord() {
       setFieldChecks(verifications);
       setPhoto(shot);
       setComms(reach);
+      void shopThatRefusedLead(id, v?.lead.mobile ?? null).then((m) => {
+        if (live) setExistingShop(m);
+      });
     });
     return () => {
       live = false;
@@ -620,8 +627,27 @@ export default function LeadRecord() {
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={[{ fontSize: 14, lineHeight: 19, color: C.danger }, weight(700)]}>Office did not accept this lead</Text>
             <Text style={[{ marginTop: 2, fontSize: 12, lineHeight: 17, color: C.danger }, weight(400)]}>
-              Anything you add here will not reach them. See why on Not accepted.
+              {existingShop
+                ? `This number is already ${existingShop.name}. Work that one — anything you add here will not reach them.`
+                : 'Anything you add here will not reach them. See why on Not accepted.'}
             </Text>
+            {existingShop ? (
+              <Pressable
+                onPress={() => {
+                  if (existingShop.kind === 'customer') {
+                    set({ custId: existingShop.id, pTab: 0 });
+                    router.push('/customer');
+                  } else {
+                    router.push(`/lead?id=${existingShop.id}&from=lead`);
+                  }
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={'Open the existing shop, ' + existingShop.name}
+                hitSlop={6}
+                style={({ pressed }) => ({ alignSelf: 'flex-start', marginTop: 8, minHeight: 36, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 18, backgroundColor: pressed ? C.wash : C.surface, justifyContent: 'center' })}>
+                <Text style={[{ fontSize: 12, lineHeight: 17, color: C.danger }, weight(700)]}>{'Open ' + existingShop.name}</Text>
+              </Pressable>
+            ) : null}
           </View>
           <Pressable
             onPress={() => router.push('/rejections?from=leads')}

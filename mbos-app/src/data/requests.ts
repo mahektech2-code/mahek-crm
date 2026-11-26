@@ -170,6 +170,24 @@ export async function expenseTotals(month: string): Promise<{
  * a rejected ₹300 counted here would read as ₹300 already spent the moment he
  * opened it to put it right.
  */
+/**
+ * WHETHER THE APP RECORDED A TRIP ON THIS DAY — a leg with a start and an
+ * end, a typed distance or two odometer readings. "Bills OR travel logs": the
+ * policy may accept that as the proof for a travel claim (`travelLogCounts`),
+ * and the claim sheet asked for a bill regardless.
+ */
+export async function recordedTripOn(spentOn: string): Promise<boolean> {
+  const row = await one<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM travel_legs
+      WHERE day = ?
+        AND ((startedAt IS NOT NULL AND endedAt IS NOT NULL AND endedAt > startedAt)
+             OR COALESCE(manualMetres, 0) > 0
+             OR COALESCE(odometerEndKm, 0) > COALESCE(odometerStartKm, 0))`,
+    [spentOn],
+  );
+  return (row?.n ?? 0) > 0;
+}
+
 export async function expensesOn(spentOn: string): Promise<ClaimedLine[]> {
   const rows = await all<{
     id: string;
