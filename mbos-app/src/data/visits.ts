@@ -341,6 +341,14 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
       entityType: 'visit',
       entityId: base.id,
       op: 'create',
+      /* BEHIND ITS SHOP, where the shop is still on its way up. A lead (or a
+         shop) added on this phone and visited at once would otherwise reach
+         the office before the shop it is a visit to, and be refused for an
+         unknown customer. A shop the office already has has nothing in the
+         outbox, and a dependency with nothing waiting counts as landed — so
+         for every ordinary visit this changes nothing. A shop the office
+         REFUSED blocks the visit rather than sending it to be refused too. */
+      dependsOn: [args.customerId],
       /* Spelled out rather than spread — see PROTOCOL.md §4.1. Spreading `args`
          sent the handset's own shapes, so a `checkIn: { lat, lng, at }` reached
          a server reading `checkInLat`, `checkInLng`, `checkInAt` and every fix,

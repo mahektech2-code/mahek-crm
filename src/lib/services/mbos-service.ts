@@ -1376,7 +1376,15 @@ async function changedCustomersForDevice(ids: string[], sinceIso: string) {
 async function customersForDevice(ids: string[]) {
   if (!ids.length) return [];
   const rows = await db.execute<Record<string, unknown>>(sql`
-    select c.id, c.name, c.contact_person as "contactPerson", c.phone,
+    select c.id,
+           -- THE SHOP, not the person: a lead raised on the handset keeps the
+           -- person spoken to in name and the shop in company_name. The phone
+           -- writes its own copy of a new lead this way (lead-shop.ts), and
+           -- this is the copy that replaces it — the two have to agree, or the
+           -- card turns into somebody's name on the first sync.
+           coalesce(nullif(trim(c.company_name), ''), c.name) as name,
+           coalesce(c.contact_person, case when nullif(trim(c.company_name), '') is not null then c.name end) as "contactPerson",
+           c.phone,
            c.city, c.area, c.beat,
            c.territory_region as "territoryRegion", c.dealer_code as "dealerCode",
            -- what mbos_price_list is keyed on for this account

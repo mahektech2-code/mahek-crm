@@ -17,7 +17,9 @@ import { RelationshipChain } from '../src/components/leads/relationship-chain';
 import { ReasonSheet } from '../src/components/leads/reason-sheet';
 import { color as C, weight, type BadgeTone } from '../src/theme/tokens';
 import {
+  ensureLeadShop,
   leadThresholds,
+  leadVisitRefusal,
   setArchived,
   touchLead,
   type Lead,
@@ -69,7 +71,7 @@ import {
   type LeadSalesType,
   type LeadStage,
 } from '../src/engines/funnel';
-import { compactInrFromPaise, dmy, inrFromPaise, isoDate, plural, pretty } from '../src/lib/format';
+import { compactInrFromPaise, dmy, hhmm, inrFromPaise, isoDate, plural, pretty } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 import { Appear, Pop, Presence, Stagger, useShake } from '../src/components/ui/motion';
 import { feedback } from '../src/components/ui/feedback';
@@ -147,6 +149,8 @@ export default function LeadRecord() {
   const back = useCameFrom('leads');
   const notify = useStore((s) => s.notify);
   const set = useStore((s) => s.set);
+  const arrival = useStore((s) => s.arrival);
+  const askTravel = useStore((s) => s.askTravel);
 
   const [view, setView] = React.useState<LeadFunnelView | null>(null);
   const [events, setEvents] = React.useState<LeadEvent[]>([]);
@@ -478,6 +482,16 @@ export default function LeadRecord() {
   const ladder = ladderFor(salesType);
 
   const refused = lead.syncState === 'rejected' || lead.syncState === 'blocked';
+  const visitRefusal = leadVisitRefusal(lead);
+  const startLeadVisit = async () => {
+    if (visitRefusal) return notify(visitRefusal, 'warn');
+    if (arrival && arrival.checkedInAt == null) return notify(`Check in at ${arrival.customerName} first. You reached there at ${hhmm(arrival.arrivedAt)}.`, 'error');
+    if (arrival && arrival.checkedInAt != null) return notify(`Check out of ${arrival.customerName} first. You are still in that visit.`, 'error');
+    /* A lead created before this build has no shop row on the phone yet. */
+    await ensureLeadShop({ id: lead.id, name: lead.name, company: lead.company, mobile: lead.mobile, city: lead.city, area: null, customerType: lead.customerType, gpsLat: lead.gpsLat, gpsLng: lead.gpsLng });
+    set({ custId: lead.id });
+    askTravel({ customerId: lead.id, customerName: title });
+  };
   const hero = (
     <View style={{ marginTop: 16 }}>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
@@ -615,6 +629,22 @@ export default function LeadRecord() {
             <Text style={[{ fontSize: 12, lineHeight: 17, color: C.danger }, weight(700)]}>Open</Text>
           </Pressable>
         </View>
+      ) : null}
+
+      {/* ------------------------------------------------- visit the shop --
+
+          A lead is a shop he walks into, and this screen had no way in: the
+          only door to a visit was the customer card, which a lead added on
+          this phone did not have until a sync had gone both ways. The same
+          rules as the quick action — one shop and one visit at a time — and
+          the same question about how he is getting there (`TravelGate`). */}
+      {!lead.convertedCustomerId ? (
+        <PrimaryButton
+          label="Start visit"
+          disabled={!!visitRefusal}
+          whyDisabled={visitRefusal ?? undefined}
+          onPress={() => void startLeadVisit()}
+        />
       ) : null}
 
       {/* ---------------------------------------------------- the figures */}

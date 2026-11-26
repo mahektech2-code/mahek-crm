@@ -1,5 +1,6 @@
 import { all, one, run } from '../db';
 import { insertAndQueue, stamp, updateAndQueue } from './write';
+import { LEAD_SHOP_SQL, leadShopParams, leadVisitRefusal, type LeadShopInput } from './lead-shop';
 import { getConfig } from './config';
 import { isoDate } from '../lib/format';
 import { wireNotes, wireSource } from '../lib/wire';
@@ -700,8 +701,28 @@ export async function createLead(args: {
     await run('UPDATE media_queue SET parentId = ? WHERE id = ?', [id, args.shopPhotoId]);
   }
 
+  await ensureLeadShop({
+    id,
+    name: args.name,
+    company: args.company ?? null,
+    contactPerson: args.contactPerson ?? null,
+    mobile: mobile || null,
+    city: args.city ?? null,
+    area: args.area ?? null,
+    customerType: args.customerType ?? null,
+    gpsLat: fix?.lat ?? null,
+    gpsLng: fix?.lng ?? null,
+  });
+
   return { ok: true, value: id };
 }
+
+/** Write the lead's shop row on this phone — see `lead-shop.ts`. */
+export async function ensureLeadShop(l: LeadShopInput): Promise<void> {
+  await run(LEAD_SHOP_SQL, leadShopParams(l));
+}
+
+export { leadVisitRefusal };
 
 /* `setStage` was here — the six-word ladder's own move, written before the
    funnel and called by nothing since `advanceStage` and `markLost` replaced it.
