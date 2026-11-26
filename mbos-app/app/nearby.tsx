@@ -9,6 +9,7 @@ import { NavigateButton } from '../src/components/ui/navigate';
 import { DashedAdd, GroupCard, Pill, PillButton } from '../src/components/ui/v3';
 import { color as C, weight } from '../src/theme/tokens';
 import { whatIsNearby, type NearbyAnswer } from '../src/data/nearby';
+import { openLocationSettings } from '../src/native/location';
 /* No `navigateTo` here either — both buttons on this screen are
    `NavigateButton`, so one failure message cannot drift from the other. */
 import { inrFromPaise, plural, shopName } from '../src/lib/format';
@@ -162,6 +163,18 @@ export default function Nearby() {
                   ? 'Turn on Location from the top of your phone screen. Then come back.'
                   : 'Step outside for a minute so GPS can find you.'}
             </T>
+            {/* "Then come back" had nothing to come back TO: the screen read its
+                fix once on open, so the only way to try again was to leave
+                and re-enter. The switch is offered where one cures it, and
+                every case can ask again from here. */}
+            {answer?.reason === 'denied' || answer?.reason === 'off' ? (
+              <DashedAdd
+                label={answer.reason === 'denied' ? 'Allow location' : 'Turn location on'}
+                onPress={() => void openLocationSettings(answer.reason === 'denied' ? 'permission' : 'services_off')}
+                style={{ marginTop: 10 }}
+              />
+            ) : null}
+            <DashedAdd label="Try again" onPress={() => load(within ?? undefined)} style={{ marginTop: 10 }} />
           </View>
         </View>
       ) : (

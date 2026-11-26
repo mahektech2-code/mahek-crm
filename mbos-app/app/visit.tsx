@@ -50,7 +50,7 @@ import {
   visitLocationVerdict,
   type CheckInVerdict,
 } from '../src/engines/geo';
-import { fixOf, getFix, type Fix } from '../src/native/location';
+import { fixOf, getFix, noFixCauseOf, openLocationSettings, type Fix } from '../src/native/location';
 import { queueOdometerPhoto, queueRecording, takePhoto } from '../src/native/capture';
 import { discardQueuedMedia } from '../src/sync/media';
 import { VoiceField } from '../src/components/ui/dictate';
@@ -722,6 +722,7 @@ export default function Visit() {
         c && c.gpsLat != null && c.gpsLng != null ? { lat: c.gpsLat, lng: c.gpsLng } : null,
         radiusM,
         threshold,
+        noFixCauseOf(result),
       );
       if (!gate.accepted && !(override && gate.reason === 'too_far')) {
         /* NOTHING IS WRITTEN. The leg stays open because he is still
@@ -2957,6 +2958,21 @@ function RefusalBox({ verdict, radiusM }: { verdict: CheckInVerdict; radiusM: nu
             ? 'Walk to the shop and press again. Nothing is saved yet.'
             : 'Nothing is saved yet.'}
         </Text>
+        {/* A switch cures these two, not a window — so the switch is offered
+            where the sentence names it. See `CheckInVerdict.fixCause`. */}
+        {verdict.fixCause === 'permission' || verdict.fixCause === 'services_off' ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={verdict.fixCause === 'permission' ? 'Open settings to allow location' : 'Open settings to turn location on'}
+            hitSlop={HIT}
+            onPress={() => void openLocationSettings(verdict.fixCause as 'permission' | 'services_off')}
+            style={{ marginTop: 10, minHeight: 44, alignSelf: 'flex-start', paddingHorizontal: 14, borderRadius: 22, backgroundColor: C.surface, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Icon name="locate" size={16} color={C.warnInk} strokeWidth={2.2} />
+            <Text style={[{ fontSize: 14, lineHeight: 20, color: C.warnInk }, weight(700)]}>
+              {verdict.fixCause === 'permission' ? 'Allow location' : 'Turn location on'}
+            </Text>
+          </Pressable>
+        ) : null}
       </View>
     </View>
   );

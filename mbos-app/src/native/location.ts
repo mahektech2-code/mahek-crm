@@ -24,8 +24,36 @@ export type Fix = {
 export type FixResult =
   | { status: 'ok'; fix: Fix }
   | { status: 'coarse'; fix: Fix; reason: string }
-  | { status: 'denied'; reason: string }
-  | { status: 'unavailable'; reason: string };
+  | { status: 'denied'; reason: string; cause: 'permission' }
+  /* `cause` says WHICH kind of nothing — see `NoFixCause` in engines/geo.ts.
+     Location switched off and no signal were one status and one sentence,
+     and the cure for one is a switch while the cure for the other is a
+     window. */
+  | { status: 'unavailable'; reason: string; cause: 'services_off' | 'no_signal' | 'error' };
+
+/** Why a result carries no fix, or null where it carries one. */
+export function noFixCauseOf(result: FixResult): 'permission' | 'services_off' | 'no_signal' | 'error' | null {
+  return result.status === 'denied' || result.status === 'unavailable' ? result.cause : null;
+}
+
+/**
+ * Where to send him to cure a missing reading: the app's own settings page
+ * for a permission, the phone's location switch for location turned off.
+ * Android takes the intent directly; anything else falls back to the app's
+ * settings page, from which location is one tap away.
+ */
+export async function openLocationSettings(cause: 'permission' | 'services_off'): Promise<void> {
+  const { Linking, Platform } = await import('react-native');
+  if (cause === 'services_off' && Platform.OS === 'android') {
+    try {
+      await Linking.sendIntent('android.settings.LOCATION_SOURCE_SETTINGS');
+      return;
+    } catch {
+      /* An OEM build without the activity: the app page still gets him there. */
+    }
+  }
+  await Linking.openSettings();
+}
 
 export async function requestPermission(): Promise<boolean> {
   const { status } = await Location.requestForegroundPermissionsAsync();
@@ -73,8 +101,29 @@ export async function getFix(opts: { accuracyThresholdM: number; timeoutMs?: num
   if (!granted) {
     const ok = await requestPermission();
     if (!ok) {
-      return { status: 'denied', reason: 'Location permission is off. The visit will be saved and marked for your manager to check.' };
+      /* Said as what it is and what cures it. The old sentence promised the
+         visit would be "saved and marked", which is not true of the one act
+         that now needs a reading — the check-in is refused without one. */
+      return {
+        status: 'denied',
+        cause: 'permission',
+        reason: 'MahekOne is not allowed to use your location. Allow it in settings.',
+      };
     }
+  }
+
+  /* Switched off is not the same as no signal, and the radio would wait the
+     whole timeout to say nothing. Asked first, where it costs a millisecond. */
+  try {
+    if (!(await Location.hasServicesEnabledAsync())) {
+      return {
+        status: 'unavailable',
+        cause: 'services_off',
+        reason: 'Location is switched off on this phone. Turn it on in settings.',
+      };
+    }
+  } catch {
+    /* Cannot tell — try the radio, which answers either way. */
   }
 
   try {
@@ -87,7 +136,11 @@ export async function getFix(opts: { accuracyThresholdM: number; timeoutMs?: num
     ]);
 
     if (!position) {
-      return { status: 'unavailable', reason: 'No GPS signal. The visit will be saved and marked for your manager to check.' };
+      return {
+        status: 'unavailable',
+        cause: 'no_signal',
+        reason: 'No GPS signal here. Step outside or near a window and try again.',
+      };
     }
 
     const fix: Fix = {
@@ -111,7 +164,11 @@ export async function getFix(opts: { accuracyThresholdM: number; timeoutMs?: num
 
     return { status: 'ok', fix };
   } catch {
-    return { status: 'unavailable', reason: 'The phone could not get your location. Saved without a location.' };
+    return {
+      status: 'unavailable',
+      cause: 'error',
+      reason: 'The phone could not read your location. Try again in a moment.',
+    };
   }
 }
 
