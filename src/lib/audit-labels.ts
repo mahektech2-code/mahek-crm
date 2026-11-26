@@ -997,6 +997,7 @@ const DESCRIBE: Record<string, Describer> = {
   "mbos.visit.pin.accept": (c) => ({ says: ["moved the map pin of", c.subject(), "to where the salesman checked in"], changes: false }),
   "mbos.visit.pin.reject": (c) => ({ says: ["kept the map pin of", c.subject(), "where it was"], changes: false }),
   "mbos.visit.ask": () => ({ says: ["asked a salesman about a visit"], changes: false }),
+  "mbos.visit.stop_relinked": () => ({ says: ["saved a visit whose journey stop had since been removed or replaced"], changes: false }),
   "leave.entitlement.set": (c) => ({ says: ["set the leave entitlement of", c.user(c.e.entityId), "to", strong(plural(num(c.a.days) ?? 0, "day")), "for", strong(str(c.a.year) ?? "")], changes: false }),
   "employee.reporting_set": (c) => ({ says: ["made", c.employee(c.e.entityId), "report to", c.employee(c.a.managerId)], changes: false }),
   "employee.reporting_moved": (c) => ({ says: ["moved", c.employee(c.e.entityId), "from reporting to", c.employee(c.b.managerId), "to", c.employee(c.a.managerId)], changes: false }),

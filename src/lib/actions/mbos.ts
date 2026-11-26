@@ -1649,6 +1649,50 @@ async function applyVisitSuspectDecision(
   return { moved: true, why: null };
 }
 
+/**
+ * The journey stop a visit may be linked to, or null.
+ *
+ * A stop is deleted when it is taken off a day, and recreated under a new id
+ * when the day's shops are saved again from the phone. A visit already on the
+ * handset still names the old one, and `journey_plan_stop_id` is a foreign key:
+ * stored as sent, the insert failed and the visit could never be saved.
+ *
+ * The id the phone sent is used where it is still this salesman's stop for this
+ * shop. Otherwise it is his stop for the SAME shop on the day he checked in, and
+ * failing that there is none — never another shop's or another salesman's, and
+ * no stop is created. A visit that named no stop is left without one.
+ *
+ * The row is locked, so an office save cannot delete it before the visit lands.
+ */
+async function visitStopFor(
+  tx: Pick<typeof db, "execute">,
+  visit: { claimed: string | null; salesmanId: string; customerId: string; day: string },
+): Promise<string | null> {
+  if (!visit.claimed) return null;
+
+  const [same] = await tx.execute<{ id: string }>(sql`
+    select s.id from mbos_journey_stops s
+      join mbos_journey_plans p on p.id = s.plan_id
+     where s.id = ${visit.claimed}
+       and s.customer_id = ${visit.customerId}
+       and p.user_id = ${visit.salesmanId}
+       for update of s
+  `);
+  if (same) return same.id;
+
+  const [replacement] = await tx.execute<{ id: string }>(sql`
+    select s.id from mbos_journey_stops s
+      join mbos_journey_plans p on p.id = s.plan_id
+     where p.user_id = ${visit.salesmanId}
+       and p.plan_date = ${visit.day}::date
+       and s.customer_id = ${visit.customerId}
+     order by (s.status = 'visited'), s.sequence
+     limit 1
+       for update of s
+  `);
+  return replacement?.id ?? null;
+}
+
 async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
   const parsed = visitSchema.safeParse(item.payload);
   if (!parsed.success) return validationRejection(parsed.error);
@@ -1864,6 +1908,13 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
   const checkOutAt = p.checkOutAt ? new Date(p.checkOutAt) : null;
 
   await db.transaction(async (tx) => {
+    const stopId = await visitStopFor(tx, {
+      claimed: p.journeyPlanStopId ?? null,
+      salesmanId: principal.user.id,
+      customerId: customer.id,
+      day: calendarDate(checkInAt),
+    });
+
     /*
      * What the assistant's proposal became, in the visit's own transaction —
      * a visit that landed with its draft unmarked would read as a suggestion
@@ -1890,7 +1941,7 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
           ),
         );
     }
-    await tx
+    const inserted = await tx
       .insert(mbosVisits)
       .values({
         id: item.entityId,
@@ -1915,7 +1966,7 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
         outcome: p.outcome,
         notes: p.notes ?? null,
         nextFollowUpDate: p.nextFollowUpDate ?? null,
-        journeyPlanStopId: p.journeyPlanStopId ?? null,
+        journeyPlanStopId: stopId,
         wasPlanned: p.wasPlanned ?? false,
         deviationReason: p.deviationReason ?? null,
         locationMismatch,
@@ -1929,7 +1980,8 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
         updatedById: principal.user.id,
         deviceId: principal.deviceId,
       })
-      .onConflictDoNothing({ target: mbosVisits.id });
+      .onConflictDoNothing({ target: mbosVisits.id })
+      .returning({ id: mbosVisits.id });
 
     /*
      * THE ORDER AND THE RECEIPT OFTEN GOT HERE FIRST.
@@ -2015,11 +2067,16 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
       `);
     }
 
-    if (p.journeyPlanStopId) {
+    /* The stop the phone named is marked as before. One found for it in its
+       place is marked only by the delivery that actually saved the visit, and
+       never over a stop that already records one. */
+    const asClaimed = stopId !== null && stopId === p.journeyPlanStopId;
+    if (stopId && (asClaimed || inserted.length)) {
       await tx.execute(sql`
         update mbos_journey_stops
            set status = 'visited', actual_visit_at = ${checkInAtIso}, updated_at = now()
-         where id = ${p.journeyPlanStopId}
+         where id = ${stopId}
+           ${asClaimed ? sql`` : sql`and status <> 'visited'`}
       `);
     } else {
       /*
@@ -2071,6 +2128,20 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
          where v.id = ${item.entityId}
            and v.journey_plan_stop_id is null
       `);
+    }
+
+    /* The phone's own stop id is kept where it could not be used: the visit row
+       can only name a stop that exists. */
+    if (inserted.length && p.journeyPlanStopId && !asClaimed) {
+      await tx.insert(auditLog).values({
+        id: `aud_${randomUUID()}`,
+        actorId: principal.user.id,
+        action: "mbos.visit.stop_relinked",
+        entityType: "mbos_visit",
+        entityId: item.entityId,
+        beforeState: { journeyPlanStopId: p.journeyPlanStopId },
+        afterState: { journeyPlanStopId: stopId, customerId: customer.id, day: calendarDate(checkInAt) },
+      });
     }
 
     /*
