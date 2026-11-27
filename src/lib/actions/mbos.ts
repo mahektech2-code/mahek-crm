@@ -785,6 +785,24 @@ async function missingDependencies(
     }
 
     const entity = entityOfClientId(dep);
+
+    /*
+     * A SHOP THE OFFICE MADE HAS NO HANDSET PREFIX, and 1.31.0 names the shop
+     * on every visit, order and payment (`dependsOn: [customerId]`), so a
+     * phone-made shop is waited for. An office shop is `cus_…`: no prefix, no
+     * entry in the map, and every visit to a shop on the book was refused as
+     * "not a kind of record MahekOne holds" — the visit gone, only its
+     * follow-up task reaching the dashboard. An id the server minted is here
+     * already or not at all, so it is looked up in the one table the handset
+     * ever names one from, and never waited for.
+     */
+    if (!entity) {
+      const shop = await db.execute<{ n: number }>(
+        sql`select count(*)::int as n from customers where id = ${dep}`,
+      );
+      if (Number(shop[0]?.n ?? 0) > 0) continue;
+    }
+
     const table = entity ? DEPENDENCY_TABLES[entity] : null;
     if (!table) {
       return {
