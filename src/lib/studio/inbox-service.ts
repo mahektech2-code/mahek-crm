@@ -27,6 +27,8 @@ import {
   type MessageStatus,
   type NormalConversation,
   type NormalMessage,
+  listText,
+  mediaWords,
 } from "./domain/inbox";
 import * as kapso from "./kapso";
 import { previewConversation, previewEnabled, previewList, previewMarkRead, previewSend, previewThread } from "./inbox-preview";
@@ -370,7 +372,7 @@ function toRow(r: RawConversation, now: Date): ConversationRow {
     nameSource: r.customer_name ? "crm" : r.contact_name ? "whatsapp" : "number",
     customerId: r.customer_id,
     contactName: r.contact_name,
-    lastMessageText: r.last_message_text,
+    lastMessageText: listText(r.last_message_text),
     lastMessageAt: r.last_message_at ? new Date(r.last_message_at) : null,
     lastInboundAt: r.last_inbound_at ? new Date(r.last_inbound_at) : null,
     unread: Number(r.unread ?? 0),
@@ -488,8 +490,7 @@ export async function threadMessages(conversationId: string, scopeIds: string[] 
     id: r.id,
     direction: r.direction,
     type: r.type,
-    body: r.body,
-    caption: r.caption,
+    ...mediaWords(r.has_media, r.body, r.caption),
     hasMedia: r.has_media,
     mediaType: r.media_type,
     status: r.status,

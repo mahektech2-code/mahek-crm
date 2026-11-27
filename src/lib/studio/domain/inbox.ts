@@ -139,6 +139,27 @@ const date = (v: unknown): Date | null => {
   return null;
 };
 
+/* Kapso describes a picture or file in words of its own - "Image attached (name) [Size | Type] URL: …", or the caption followed
+   by "[Image attached]". That is a note for software, with a long download link in it, not anything either person wrote. */
+const MEDIA_NOTE = /^(Image|Video|Audio|Document|Sticker) attached\b/;
+const MEDIA_TAG = /\s*\[(?:Image|Video|Audio|Document|Sticker) attached\][\s\S]*$/;
+
+/** What the two people wrote on a message with a file. Applied as it arrives AND as it is read, so rows already stored are shown clean. */
+export function mediaWords(hasMedia: boolean, body: string | null, caption: string | null): { body: string | null; caption: string | null } {
+  if (!hasMedia || !body) return { body, caption };
+  if (MEDIA_NOTE.test(body)) return { body: null, caption };
+  if (MEDIA_TAG.test(body)) return { body: null, caption: caption ?? str(body.replace(MEDIA_TAG, "").trim()) };
+  return { body, caption };
+}
+
+/** The same for the one line in the conversation list, where only the text is stored. */
+export function listText(text: string | null): string | null {
+  if (!text) return text;
+  const note = MEDIA_NOTE.exec(text);
+  if (note) return note[1] === "Image" ? "📷 Photo" : note[1] === "Video" ? "🎞 Video" : note[1] === "Audio" ? "🎤 Voice message" : note[1] === "Document" ? "📄 Document" : "Attachment";
+  return text.replace(MEDIA_TAG, "").trim() || "Attachment";
+}
+
 /** A Kapso message (the shape `GET /whatsapp/messages` and every webhook share) → ours. Null where it names no id. */
 export function normalizeMessage(raw: unknown): NormalMessage | null {
   const m = obj(raw);
@@ -156,12 +177,13 @@ export function normalizeMessage(raw: unknown): NormalMessage | null {
   const err = lastError ? obj((lastError.errors as unknown[])[0]) : null;
   const body = type === "text" ? str(text?.body) : str(k.content) ?? str(payload?.caption);
   const hasMedia = Boolean(k.has_media) || (type !== "text" && ["image", "video", "audio", "document", "sticker"].includes(type));
+  const words = mediaWords(hasMedia, body, str(payload?.caption));
   return {
     wamid,
     direction,
     type,
-    body,
-    caption: str(payload?.caption),
+    body: words.body,
+    caption: words.caption,
     hasMedia,
     mediaType: str(media?.content_type) ?? (hasMedia ? type : null),
     mediaUrl: str(k.media_url) ?? str(media?.url),
