@@ -443,3 +443,21 @@ describe("editing a day's shops from the office", () => {
     assert.equal(day?.picked, 2);
   });
 });
+
+describe("adding cities to a day the office arranged", () => {
+  test("cities can be added more than once, and the shops and state do not change", async () => {
+    const d = DAY(6);
+    const [a, b] = await shops(2);
+    await edit(d, [a.id, b.id]);
+    const before = await stopsOn(d);
+
+    for (const cities of [["Mumbai", "Palghar"], ["Mumbai", "Palghar", "Boisar"]]) {
+      const r = await editJourneyDayStops({ salesmanId: salesman.id, planDate: d, city: cities[0], cities, add: [], remove: [] });
+      assert.ok(landed(r), r.ok ? "" : r.error);
+      const p = await planOn(d);
+      assert.deepEqual(p.cities, cities);
+      assert.equal(p.dayState, "planned");
+    }
+    assert.deepEqual(await stopsOn(d), before);
+  });
+});

@@ -10,7 +10,7 @@ import { useToast } from "@/components/ui/toast";
 import { citiesInWords, normaliseCities, sameCityList } from "@/lib/journey-cities";
 import { CityListInput } from "./city-list-input";
 import { Drawer, DrawerHeader } from "@/components/ui/overlays";
-import { answerRefusal, proposeJourneyDays } from "@/lib/actions/sales";
+import { answerRefusal, editJourneyDayStops, proposeJourneyDays } from "@/lib/actions/sales";
 import type { JourneyPlan, PlanStop, Salesman, VisitRow } from "@/lib/services/sales-service";
 import type {
   CalendarFacts,
@@ -721,7 +721,9 @@ function DayDrawer({
   /* The cities being proposed for this day — every one of them, the first the
      primary. (`cities` above is where he works plus what his book names, offered as a shortcut.) */
   const [chosen, setChosen] = React.useState<string[]>(
-    plan?.dayState === "planned" || plan?.dayState === "refused" ? [] : (plan?.cities ?? []),
+    plan?.dayState === "refused" || (plan?.dayState === "planned" && !plan.officeArranged)
+      ? []
+      : (plan?.cities ?? []),
   );
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -924,6 +926,42 @@ function DayDrawer({
               >
                 Propose instead
               </Button>
+            </div>
+          ) : future && plan?.dayState === "planned" && plan.officeArranged ? (
+            /* A day the office arranged still takes more cities, as many times
+               as wanted. Its shops are not touched. */
+            <div className="mt-3 flex flex-wrap items-center gap-2 rounded-[6px] border border-line bg-canvas px-3 py-2.5">
+              <CityListInput
+                value={chosen}
+                options={cities}
+                onChange={setChosen}
+                disabled={busy}
+                label={`City for ${shortDate(day.date)}`}
+                placeholder="Add a city"
+                emptyHint="No allocated or book city matches — what you type is still added"
+                className="min-w-[260px]"
+              />
+              <Button
+                size="sm"
+                tone="primary"
+                disabled={busy || !chosen.length || sameCityList(chosen, plan.cities)}
+                title={!chosen.length ? "A day needs at least one city." : undefined}
+                onClick={() =>
+                  void run(() =>
+                    editJourneyDayStops({
+                      salesmanId: salesman.id,
+                      planDate: day.date,
+                      city: chosen[0],
+                      cities: chosen,
+                      add: [],
+                      remove: [],
+                    }),
+                  )
+                }
+              >
+                Save cities
+              </Button>
+              <span className="text-[12px] text-muted">Shops stay as they are.</span>
             </div>
           ) : canPropose ? (
             <div className="mt-3 flex flex-wrap items-center gap-2 rounded-[6px] border border-line bg-canvas px-3 py-2.5">
