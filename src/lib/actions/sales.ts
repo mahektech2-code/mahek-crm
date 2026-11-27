@@ -1714,10 +1714,13 @@ export async function editJourneyDayStops(input: {
     });
 
     const counted = `${result.added.length} added, ${result.removed.length} removed`;
+    const citiesOnly = !result.added.length && !result.removed.length && dayCities.city;
     await tell(
       input.salesmanId,
       `Your route for ${input.planDate}`,
-      `${user.name} changed your shops: ${counted}. It will be on your handset at the next sync.`,
+      citiesOnly
+        ? `${user.name} set your cities: ${citiesInWords(normaliseCities(input.city, input.cities))}. It will be on your handset at the next sync.`
+        : `${user.name} changed your shops: ${counted}. It will be on your handset at the next sync.`,
       "/journey",
     );
 
