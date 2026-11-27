@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { Badge, Button, Callout, Input } from "@/components/ui/primitives";
 import { openConversation, refreshFromKapso, sendForward, sendPoster, sendText } from "@/lib/actions/studio-inbox";
 import { clock, stamp, stampDate } from "@/lib/format";
@@ -42,12 +43,15 @@ type Msg = {
 type Snapshot = { connection: PublicConnection; conversations: Conv[]; active: Conv | null; messages: Msg[] };
 type Item = { id: string; title: string; sub?: string; thumb: string };
 
+/** Somebody with no chat on the company number yet. Nothing here is a conversation or a sent message. */
+type NewChat = { title: string; phone: string; poster: { id: string; thumb: string } | null };
+
 const POLL_MS = 4000;
 const newKey = () => `k${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`;
 
 const dayLabel = (iso: string) => stampDate(iso);
 
-export function InboxApp({ initial, openId, readyPoster = null }: { initial: Snapshot; openId: string | null; readyPoster?: Item | null }) {
+export function InboxApp({ initial, openId, readyPoster = null, newChat = null }: { initial: Snapshot; openId: string | null; readyPoster?: Item | null; newChat?: NewChat | null }) {
   const [snap, setSnap] = useState<Snapshot>(initial);
   const [openIdState, setOpenId] = useState<string | null>(openId);
   const [q, setQ] = useState("");
@@ -195,7 +199,9 @@ export function InboxApp({ initial, openId, readyPoster = null }: { initial: Sna
 
         {/* Conversation */}
         <section className="flex min-h-0 flex-col">
-          {!active ? (
+          {!active && newChat && !openIdState ? (
+            <NewChatPane chat={newChat} />
+          ) : !active ? (
             <div className="grid flex-1 place-items-center p-8 text-center text-[13px] text-muted">
               {ready ? "Choose a conversation on the left." : "The inbox opens here once Kapso holds the company number."}
             </div>
@@ -287,6 +293,41 @@ export function InboxApp({ initial, openId, readyPoster = null }: { initial: Sna
         />
       ) : null}
     </div>
+  );
+}
+
+function NewChatPane({ chat }: { chat: NewChat }) {
+  return (
+    <>
+      <header className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
+        <div className="min-w-0">
+          <div className="truncate text-[15px] font-semibold">{chat.title}</div>
+          <div className="text-[12px] text-muted">{chat.phone} · Name from the CRM</div>
+        </div>
+        <Badge tone="warn">No messages yet</Badge>
+      </header>
+      <div className="flex min-h-0 flex-1 flex-col items-end justify-end gap-2 overflow-y-auto bg-surface-2 px-4 py-3">
+        {chat.poster ? (
+          <div className="rounded-card border border-dashed border-line bg-surface p-2">
+            {/* eslint-disable-next-line @next/next/no-img-element -- drawn by our own route from the stored recipe */}
+            <img src={chat.poster.thumb} alt={`Poster for ${chat.title}`} className="max-h-60 w-auto rounded-control" />
+            <div className="mt-1 flex items-center justify-between gap-4 text-[12px] text-muted">
+              <span>Not sent</span>
+              <Link href={`/studio/posters/${encodeURIComponent(chat.poster.id)}`}>Back to the poster</Link>
+            </div>
+          </div>
+        ) : null}
+      </div>
+      <footer className="space-y-2 border-t border-line p-3">
+        <Callout tone="warn">WhatsApp lets the company number write first only with an approved template. You can type here once they message the company number.</Callout>
+        <div className="flex items-end gap-2">
+          <textarea disabled rows={2} placeholder="Waiting for their first message" aria-label="Message" className="min-h-[44px] flex-1 resize-none rounded-control border border-line bg-surface-2 px-3 py-2 text-[14px]" />
+          <Button variant="whatsapp" disabled title="They have not messaged the company number yet">
+            Send
+          </Button>
+        </div>
+      </footer>
+    </>
   );
 }
 

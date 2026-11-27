@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Card, PageHeader, buttonClass } from "@/components/ui/primitives";
+import { PageHeader } from "@/components/ui/primitives";
 import { resolveScope } from "@/lib/access-control";
 import { getRecipient } from "@/lib/studio/recipients";
 import { getPoster } from "@/lib/studio/service";
@@ -37,29 +36,13 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
      one the person may not open is simply not offered. */
   const poster = active && posterParam ? await getPoster(posterParam) : null;
   const readyPoster = poster && !poster.removedAt ? { id: poster.id, title: poster.recipient.company, sub: poster.templateName, thumb: `/api/studio/posters/${encodeURIComponent(poster.id)}/image?format=jpeg` } : null;
+  const newChat = person?.whatsappPhone
+    ? { title: person.company, phone: person.whatsappPhone, poster: starting ? { id: starting.id, thumb: `/api/studio/posters/${encodeURIComponent(starting.id)}/image?format=jpeg` } : null }
+    : null;
   return (
     <div className="mx-auto w-full min-w-0 px-6 py-6">
       <PageHeader title="WhatsApp Inbox" subtitle="Your leads' and customers' conversations on the company number — read and answered here, without leaving the Studio." />
-      {person ? (
-        <Card className="mb-3 flex flex-wrap items-center gap-4 p-4">
-          {starting ? (
-            // eslint-disable-next-line @next/next/no-img-element -- drawn by our own route from the stored recipe
-            <img src={`/api/studio/posters/${encodeURIComponent(starting.id)}/image?format=jpeg`} alt="" className="h-20 w-auto rounded-control" />
-          ) : null}
-          <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold text-ink">
-              {person.company} · {person.whatsappPhone}
-            </div>
-            <p className="text-[13px] text-muted">There is no chat with this number yet. WhatsApp lets the company number write first only with an approved template. A chat opens here once they message the company number.</p>
-          </div>
-          {starting ? (
-            <Link href={`/studio/posters/${encodeURIComponent(starting.id)}`} className={buttonClass({ variant: "secondary" })}>
-              Back to the poster
-            </Link>
-          ) : null}
-        </Card>
-      ) : null}
-      <InboxApp initial={JSON.parse(JSON.stringify({ connection: publicConnection(connection), conversations: rows, active, messages }))} openId={active?.id ?? null} readyPoster={readyPoster} />
+      <InboxApp initial={JSON.parse(JSON.stringify({ connection: publicConnection(connection), conversations: rows, active, messages }))} openId={active?.id ?? null} readyPoster={readyPoster} newChat={newChat} />
     </div>
   );
 }
