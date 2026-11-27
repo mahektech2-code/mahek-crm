@@ -9,6 +9,8 @@ import { resolveScope } from "@/lib/access-control";
 import { requireUser } from "@/lib/auth";
 import { recordActivity } from "@/lib/studio/timeline-service";
 import { waLink } from "@/lib/erp/engines/logistics";
+import { conversationForNumber } from "@/lib/studio/inbox-service";
+import { resolveStudioScope } from "@/lib/studio/scope";
 import { err, ok, type Result } from "@/lib/result";
 import { alreadyForwarded, canMove, captionProblem, checkRecipientIds, FORWARD_STATUSES, type ForwardStatus } from "@/lib/studio/domain/forward";
 import { alreadySentTo, getForward } from "@/lib/studio/forward-service";
@@ -160,7 +162,7 @@ async function ownedRecipient(userId: string, recipientId: string) {
  * only for this one press; the page never carries a list of phone numbers.
  * Opening a chat is NOT sending: the status says "Chat opened" and no more.
  */
-export async function openRecipientChat(recipientId: string): Promise<Result<{ href: string }>> {
+export async function openRecipientChat(recipientId: string, where: "studio" | "app" = "app"): Promise<Result<{ href: string }>> {
   const user = await guard();
   if (!user) return err("You do not have this part of the Studio.", "not_permitted");
   const row = await ownedRecipient(user.id, recipientId);
@@ -172,8 +174,13 @@ export async function openRecipientChat(recipientId: string): Promise<Result<{ h
   if (!rec) return err("The record is no longer in your book, so there is no number to open a chat on.");
   if (rec.doNotContact) return err("Marked Do Not Contact — no chat is offered.");
   if (rec.whatsappDnd) return err("They asked not to be messaged on WhatsApp — no chat is offered.");
-  const href = waLink(rec.whatsappPhone, row.caption);
+  let href = waLink(rec.whatsappPhone, row.caption);
   if (!href) return err("There is no usable phone number on their record.");
+  /* Whoever holds the Studio Inbox gets their chat there; the app link is what is left for everybody else. */
+  if (where === "studio" && (await canOpenModule(user.id, "studio.inbox"))) {
+    const conv = await conversationForNumber(rec.whatsappPhone, (await resolveStudioScope()).scope.userIds);
+    href = conv ? `/studio/inbox?c=${encodeURIComponent(conv.id)}` : `/studio/inbox?new=${encodeURIComponent(row.r.customerId)}`;
+  }
   if (row.r.status === "pending") {
     await db
       .update(studioForwardRecipients)

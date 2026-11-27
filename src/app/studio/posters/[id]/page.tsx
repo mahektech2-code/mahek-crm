@@ -50,6 +50,8 @@ export default async function PosterPage({ params }: { params: Promise<{ id: str
   let inboxHref: string | null = null;
   let inboxNote: string | null = null;
   let templateSend = false;
+  /* Where the Inbox cannot send yet, the chat button still opens in the Studio rather than leaving for WhatsApp. */
+  let studioChatHref: string | null = null;
   if (recipient && !recipient.doNotContact && !recipient.whatsappDnd && (await canOpenModule(user.id, "studio.inbox"))) {
     const studio = await resolveStudioScope();
     const conv = await conversationForNumber(recipient.whatsappPhone, studio.scope.userIds);
@@ -65,6 +67,8 @@ export default async function PosterPage({ params }: { params: Promise<{ id: str
         ? "Their 24-hour reply window is closed, so the poster goes as the approved template message instead of a free message."
         : "They have not messaged the company number yet, so the poster goes as the approved template message and the chat then opens in the Inbox.";
     } else {
+      /* No poster is named for a closed chat: naming one opens the send dialog, which could not send it. */
+      if (whatsappHref) studioChatHref = conv ? `/studio/inbox?c=${encodeURIComponent(conv.id)}` : `/studio/inbox?start=${encodeURIComponent(id)}`;
       inboxNote = (conv ? "Their 24-hour reply window is closed" : "They have not messaged the company number yet") + ", and no approved WhatsApp template is set up for posters, so the Inbox cannot send this. An administrator can set one up in Settings.";
     }
   }
@@ -96,7 +100,7 @@ export default async function PosterPage({ params }: { params: Promise<{ id: str
           <img src={imageUrl} alt={`Poster for ${poster.recipient.company}`} className="mx-auto block max-h-[78vh] w-auto rounded-control" />
         </Card>
         <div className="flex flex-col gap-3">
-          <PosterActions posterId={id} imageUrl={imageUrl} fileName={fileName} caption={caption} whatsappHref={whatsappHref} whatsappBlocked={whatsappBlocked} inboxHref={inboxHref} inboxNote={inboxNote} templateSend={templateSend} canRemove={poster.mine} />
+          <PosterActions posterId={id} imageUrl={imageUrl} fileName={fileName} caption={caption} whatsappHref={whatsappHref} whatsappBlocked={whatsappBlocked} inboxHref={inboxHref} inboxNote={inboxNote} studioChatHref={studioChatHref} templateSend={templateSend} canRemove={poster.mine} />
           <Card>
             <CardHeader title="Sent" hint={shares.length ? undefined : "Nothing recorded yet."} />
             {shares.length ? (

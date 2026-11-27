@@ -24,9 +24,9 @@ export function ForwardRun({ title, imageUrl, rows, cancelled = false, forwardId
   const [busyId, setBusyId] = useState<string | null>(null);
   const t = tally(rows.map((r) => r.status));
 
-  async function open(id: string) {
+  async function open(id: string, where: "studio" | "app") {
     setBusyId(id);
-    const res = await openRecipientChat(id);
+    const res = await openRecipientChat(id, where);
     setBusyId(null);
     if (!res.ok) return void toast.push(res.error, "error");
     window.open(res.data.href, "_blank", "noopener");
@@ -61,7 +61,15 @@ export function ForwardRun({ title, imageUrl, rows, cancelled = false, forwardId
         ) : null}
         <Callout tone="info">
           <span className="block">
-            For each person: press <b>Open WhatsApp chat</b>, attach the poster you downloaded, send it, then press <b>Mark sent</b>. MahekOne cannot see whether WhatsApp delivered it, so “Marked sent” means you said you sent it.
+            {inbox ? (
+              <>
+                <b>Open WhatsApp chat</b> opens their chat in the Studio Inbox. To send this picture yourself, use <b>WhatsApp app</b>, attach the download, then press <b>Mark sent</b>. “Marked sent” means you said you sent it.
+              </>
+            ) : (
+              <>
+                For each person: press <b>Open WhatsApp chat</b>, attach the poster you downloaded, send it, then press <b>Mark sent</b>. MahekOne cannot see whether WhatsApp delivered it, so “Marked sent” means you said you sent it.
+              </>
+            )}
           </span>
         </Callout>
         <Card>
@@ -75,9 +83,14 @@ export function ForwardRun({ title, imageUrl, rows, cancelled = false, forwardId
                 <Badge tone={TONE[r.status]}>{STATUS_LABEL[r.status]}</Badge>
                 {cancelled ? null : (
                   <>
-                    <Button size="sm" variant="whatsapp" onClick={() => void open(r.id)} disabled={busyId === r.id || r.status === "sent" || r.status === "skipped"}>
+                    <Button size="sm" variant="whatsapp" onClick={() => void open(r.id, "studio")} disabled={busyId === r.id || r.status === "sent" || r.status === "skipped"}>
                       Open WhatsApp chat
                     </Button>
+                    {inbox ? (
+                      <Button size="sm" variant="ghost" onClick={() => void open(r.id, "app")} disabled={busyId === r.id || r.status === "sent" || r.status === "skipped"}>
+                        WhatsApp app
+                      </Button>
+                    ) : null}
                     {r.status === "sent" || r.status === "skipped" ? (
                       <Button size="sm" variant="ghost" onClick={() => void mark(r.id, "pending")} disabled={busyId === r.id}>
                         Undo
