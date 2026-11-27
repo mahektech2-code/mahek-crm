@@ -27,7 +27,7 @@ export function ForwardSend({ forwardId }: { forwardId: string }) {
   }
   return (
     <div>
-      <Button variant="primary" onClick={go} disabled={busy}>
+      <Button variant="primary" onClick={go} disabled={busy} className="h-auto! w-full whitespace-normal! py-2">
         {busy ? "Sending…" : "Send to everyone on WhatsApp (company number)"}
       </Button>
       <p className="mt-1.5 text-[12.5px] text-muted">Sends only to people whose 24-hour WhatsApp window is open. Delivered and Read appear in the Inbox when Kapso reports them.</p>

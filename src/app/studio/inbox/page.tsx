@@ -1,7 +1,11 @@
 import type { Metadata } from "next";
-import { PageHeader } from "@/components/ui/primitives";
+import Link from "next/link";
+import { redirect } from "next/navigation";
+import { Card, PageHeader, buttonClass } from "@/components/ui/primitives";
+import { resolveScope } from "@/lib/access-control";
+import { getRecipient } from "@/lib/studio/recipients";
 import { getPoster } from "@/lib/studio/service";
-import { getConversation, listConversationRows, threadMessages } from "@/lib/studio/inbox-service";
+import { conversationForNumber, getConversation, listConversationRows, threadMessages } from "@/lib/studio/inbox-service";
 import { publicConnection } from "@/lib/studio/inbox-view";
 import { resolveStudioScope } from "@/lib/studio/scope";
 import { InboxApp } from "../_ui/inbox-app";
@@ -12,11 +16,20 @@ export const dynamic = "force-dynamic";
 /* The Studio's WhatsApp Inbox. Everything on it is read from what Kapso said
    about the company number — there is no sample data anywhere. Where Kapso is
    not ready the screen says what is missing instead of drawing a chat. */
-export default async function InboxPage({ searchParams }: { searchParams: Promise<{ c?: string | string[]; poster?: string | string[] }> }) {
+export default async function InboxPage({ searchParams }: { searchParams: Promise<{ c?: string | string[]; poster?: string | string[]; start?: string | string[]; new?: string | string[] }> }) {
   const sp = await searchParams;
   const open = Array.isArray(sp.c) ? sp.c[0] : sp.c;
   const posterParam = Array.isArray(sp.poster) ? sp.poster[0] : sp.poster;
+  const startParam = Array.isArray(sp.start) ? sp.start[0] : sp.start;
   const { scope } = await resolveStudioScope();
+  /* `start` is a poster whose customer has no chat yet. Once they have one, the address leads to it. */
+  const starting = startParam && !open ? await getPoster(startParam) : null;
+  /* `new` is a person with no chat and no single poster: a row of a bulk forward. getRecipient is the scope check. */
+  const newParam = Array.isArray(sp.new) ? sp.new[0] : sp.new;
+  const customerId = starting && !starting.removedAt ? starting.customerId : open ? null : newParam;
+  const person = customerId ? await getRecipient((await resolveScope()).scope.userIds, customerId) : null;
+  const existing = person ? await conversationForNumber(person.whatsappPhone, scope.userIds) : null;
+  if (existing) redirect(`/studio/inbox?c=${encodeURIComponent(existing.id)}${starting && existing.windowOpen ? `&poster=${encodeURIComponent(starting.id)}` : ""}`);
   const { connection, rows } = await listConversationRows({ scopeIds: scope.userIds });
   const active = open ? await getConversation(open, scope.userIds) : null;
   const messages = active ? await threadMessages(active.id, scope.userIds) : [];
@@ -27,6 +40,25 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
   return (
     <div className="mx-auto w-full min-w-0 px-6 py-6">
       <PageHeader title="WhatsApp Inbox" subtitle="Your leads' and customers' conversations on the company number — read and answered here, without leaving the Studio." />
+      {person ? (
+        <Card className="mb-3 flex flex-wrap items-center gap-4 p-4">
+          {starting ? (
+            // eslint-disable-next-line @next/next/no-img-element -- drawn by our own route from the stored recipe
+            <img src={`/api/studio/posters/${encodeURIComponent(starting.id)}/image?format=jpeg`} alt="" className="h-20 w-auto rounded-control" />
+          ) : null}
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold text-ink">
+              {person.company} · {person.whatsappPhone}
+            </div>
+            <p className="text-[13px] text-muted">There is no chat with this number yet. WhatsApp lets the company number write first only with an approved template. A chat opens here once they message the company number.</p>
+          </div>
+          {starting ? (
+            <Link href={`/studio/posters/${encodeURIComponent(starting.id)}`} className={buttonClass({ variant: "secondary" })}>
+              Back to the poster
+            </Link>
+          ) : null}
+        </Card>
+      ) : null}
       <InboxApp initial={JSON.parse(JSON.stringify({ connection: publicConnection(connection), conversations: rows, active, messages }))} openId={active?.id ?? null} readyPoster={readyPoster} />
     </div>
   );

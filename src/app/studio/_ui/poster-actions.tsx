@@ -30,6 +30,8 @@ export function PosterActions(props: {
   whatsappHref: string | null;
   whatsappBlocked: string | null;
   inboxHref?: string | null;
+  /** Their chat in the Studio when the Inbox cannot send yet. */
+  studioChatHref?: string | null;
   inboxNote?: string | null;
   templateSend?: boolean;
   canRemove: boolean;
@@ -132,6 +134,14 @@ export function PosterActions(props: {
           <p className="mt-1.5 text-[12.5px] text-muted">Opens their chat in the WhatsApp Inbox with this poster and message ready. It is sent through Kapso, and you can see when it is delivered and read.</p>
         </div>
       ) : null}
+      {props.studioChatHref ? (
+        <div>
+          <Link href={props.studioChatHref} className={buttonClass({ variant: "whatsapp" })}>
+            Open WhatsApp chat
+          </Link>
+          <p className="mt-1.5 text-[12.5px] text-muted">Opens their chat here in the Studio.</p>
+        </div>
+      ) : null}
       {props.templateSend ? (
         <div>
           <Button variant="whatsapp" onClick={() => void sendAsTemplate()} disabled={busy}>
@@ -144,8 +154,8 @@ export function PosterActions(props: {
       ) : null}
       {props.whatsappHref ? (
         <div>
-          <Button variant={props.inboxHref || props.templateSend ? "secondary" : "whatsapp"} onClick={openWhatsapp}>
-            {props.inboxHref || props.templateSend ? "Open in the WhatsApp app instead" : "Open WhatsApp chat"}
+          <Button variant={props.inboxHref || props.templateSend || props.studioChatHref ? "secondary" : "whatsapp"} onClick={openWhatsapp}>
+            {props.inboxHref || props.templateSend || props.studioChatHref ? "Open in the WhatsApp app instead" : "Open WhatsApp chat"}
           </Button>
           <p className="mt-1.5 text-[12.5px] text-muted">Opens their chat with the message written. Attach the poster you downloaded, then send — MahekOne sends nothing itself.</p>
         </div>
