@@ -1,18 +1,6 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import {
-  CAPTION_MAX,
-  checkCaption,
-  checkText,
-  mergeStatus,
-  normalizeMessage,
-  parseWebhook,
-  phoneKey,
-  previewOf,
-  sendableNumber,
-  statusOf,
-  windowState,
-} from "./inbox";
+import { CAPTION_MAX, checkCaption, checkText, mergeStatus, normalizeMessage, parseWebhook, phoneKey, previewOf, sendableNumber, statusOf, windowState, listText, mediaWords } from "./inbox";
 import { signBody, verifySignature } from "./inbox-signature";
 
 describe("inbox — a status only moves forward", () => {
@@ -79,6 +67,25 @@ const inbound = {
   message: { id: "wamid.IN1", timestamp: "1795000000", type: "text", from: "919820011111", text: { body: "Hi, poster?" }, kapso: { direction: "inbound", status: "received", origin: "cloud_api", has_media: false, content: "Hi, poster?" } },
   conversation: { id: "conv-1", phone_number: "919820011111", phone_number_id: "PN1", kapso: { contact_name: "Shree Paints", last_inbound_at: "2026-11-20T08:00:00Z" } },
 };
+
+describe("inbox — Kapso's note on a file is not a message", () => {
+  const note = "Image attached (image_a8.jpeg) [Size: 173.3 KB | Type: image/jpeg] URL: https://app.kapso.ai/rails/active_storage/blobs/x/image_a8.jpeg";
+  test("the note is dropped and the person's own caption stays", () => {
+    assert.deepEqual(mediaWords(true, note, null), { body: null, caption: null });
+    assert.deepEqual(mediaWords(true, note, "Happy Diwali"), { body: null, caption: "Happy Diwali" });
+    assert.deepEqual(mediaWords(true, "Happy Diwali [Image attached]", "Happy Diwali"), { body: null, caption: "Happy Diwali" });
+    assert.deepEqual(mediaWords(true, "Happy Diwali [Image attached]", null), { body: null, caption: "Happy Diwali" });
+    const m = normalizeMessage({ id: "wamid.IMG", type: "image", image: {}, kapso: { direction: "outbound", has_media: true, content: note } });
+    assert.equal(m?.body, null);
+    assert.equal(previewOf(m!), "📷 Photo");
+  });
+  test("a typed message is never touched, and the list line reads as words", () => {
+    assert.deepEqual(mediaWords(false, note, null), { body: note, caption: null });
+    assert.equal(listText(note.slice(0, 140)), "📷 Photo");
+    assert.equal(listText("Happy Diwali [Image attached]"), "Happy Diwali");
+    assert.equal(listText("Hi"), "Hi");
+  });
+});
 
 describe("inbox — a Kapso v2 webhook body", () => {
   test("received: an inbound message and its conversation", () => {
